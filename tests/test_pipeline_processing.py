@@ -74,3 +74,4 @@ def test_processing_filters_noise_dedupes_and_ranks():
     # Ranking: title-hit should beat snippet-hit
     assert ctx.results[0].title.lower().startswith("hello")
     assert "网络搜索结果" in ctx.markdown
+

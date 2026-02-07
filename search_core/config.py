@@ -156,7 +156,7 @@ class SearchConfig(ConfigBaseModel):
         *,
         env: Mapping[str, str] = os.environ,
     ) -> SearchConfig:
-        """Load SearchConfigFile from path/env/default, then apply env overrides.
+        """Load SearchConfig from path/env/default, then apply env overrides.
 
         Precedence:
         1) explicit `path`

@@ -19,6 +19,9 @@ class SearchResult(BaseModel):
     raw: dict[str, Any]
     score: float = 0.0
     hit_keywords: list[str] = Field(default_factory=list)
+    page_chunks: list[str] = Field(default_factory=list)
+    page_chunk_scores: list[float] = Field(default_factory=list)
+    page_crawl_error: str | None = None
 
 
 class SearchContext(BaseModel):

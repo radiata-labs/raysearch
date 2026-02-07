@@ -12,7 +12,14 @@ def main(query: str, max_results: int = 1) -> dict[str, Any]:
         "D:/WjjFiles/code/google-ai-overview-api/search_config.yaml"
     )
     pipeline = SearchPipeline(config_file)
-    result = pipeline.search_markdown(query, max_results=max_results, fuzzy_threshold=0.3)
+    result = pipeline.search_markdown(
+        query,
+        max_results=max_results,
+        fuzzy_threshold=0.3,
+        chunk_chars=200,
+        chunk_overlap=10,
+        depth="high",  # simple|low|medium|high
+    )
     return {"search_result": result}
 
 

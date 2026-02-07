@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 from .client import SearxngClient
 from .config import RANKING_STRATEGIES, SearchConfig, SearchContextConfig
 from .models import SearchContext, SearchResult
 from .utils import PUNCTUATION_RE, TextUtils
+from .web import chunk_text, fetch_url, html_to_text, score_chunk
 
 try:
     from rank_bm25 import BM25Okapi
@@ -21,9 +24,11 @@ except ImportError:  # pragma: no cover - optional dependency fallback
     BM25_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
 logger = logging.getLogger(__name__)
+
+SearchDepth = Literal["simple", "low", "medium", "high"]
 
 
 class SearchPipeline:
@@ -37,9 +42,11 @@ class SearchPipeline:
         config: SearchConfig,
         *,
         client: SearxngClient | None = None,
+        page_fetcher: Callable[[str], str] | None = None,
     ) -> None:
         self.config = config
         self.client = client or SearxngClient(config)
+        self._page_fetcher = page_fetcher
 
     def search_raw(
         self, query: str, *, params: Mapping[str, object] | None = None
@@ -60,42 +67,28 @@ class SearchPipeline:
         show_source_url: bool = False,
         show_source_engine: bool = False,
         fuzzy_threshold: float | None = None,
+        depth: SearchDepth = "simple",
+        chunk_chars: int = 1200,
+        chunk_overlap: int = 200,
+        max_chunk_chars: int = 800,
     ) -> SearchContext:
         """Search and build LLM-friendly context."""
 
         raw = self.search_raw(query, params=params)
-        query = TextUtils.clean_whitespace(query)
-        if not query:
-            return SearchContext(
-                query="",
-                results=[],
-                json_data={},
-                markdown=self._render_empty("用户问题为空。"),
-            )
-
-        processed = self.process_response(
+        return self.build_context(
             raw,
             query,
             profile=profile,
             max_results=max_results,
-            fuzzy_threshold=fuzzy_threshold,
-        )
-        json_data = {
-            "query": query,
-            "number_of_results": len(processed),
-            "results": [item.model_dump() for item in processed],
-        }
-        markdown = self._render_markdown(
-            query,
-            processed,
             max_snippet_chars=max_snippet_chars,
             show_source_domain=show_source_domain,
             show_source_url=show_source_url,
             show_source_engine=show_source_engine,
-        )
-
-        return SearchContext(
-            query=query, results=processed, json_data=json_data, markdown=markdown
+            fuzzy_threshold=fuzzy_threshold,
+            depth=depth,
+            chunk_chars=chunk_chars,
+            chunk_overlap=chunk_overlap,
+            max_chunk_chars=max_chunk_chars,
         )
 
     def search_json(
@@ -106,6 +99,9 @@ class SearchPipeline:
         profile: str | None = None,
         max_results: int = 16,
         fuzzy_threshold: float | None = None,
+        depth: SearchDepth = "simple",
+        chunk_chars: int = 1200,
+        chunk_overlap: int = 200,
     ) -> dict[str, object]:
         """Search and return JSON data only."""
         raw = self.search_raw(query, params=params)
@@ -119,9 +115,13 @@ class SearchPipeline:
             profile=profile,
             max_results=max_results,
             fuzzy_threshold=fuzzy_threshold,
+            depth=depth,
+            chunk_chars=chunk_chars,
+            chunk_overlap=chunk_overlap,
         )
         return {
             "query": query,
+            "depth": depth,
             "number_of_results": len(processed),
             "results": [item.model_dump() for item in processed],
         }
@@ -138,28 +138,87 @@ class SearchPipeline:
         show_source_url: bool = False,
         show_source_engine: bool = False,
         fuzzy_threshold: float | None = None,
+        depth: SearchDepth = "simple",
+        chunk_chars: int = 1200,
+        chunk_overlap: int = 200,
+        max_chunk_chars: int = 800,
     ) -> str:
         """Search and return markdown only."""
 
         raw = self.search_raw(query, params=params)
-        query = TextUtils.clean_whitespace(query)
-        if not query:
-            return self._render_empty("用户问题为空。")
-
-        processed = self.process_response(
+        return self.build_context(
             raw,
             query,
             profile=profile,
             max_results=max_results,
-            fuzzy_threshold=fuzzy_threshold,
-        )
-        return self._render_markdown(
-            query,
-            processed,
             max_snippet_chars=max_snippet_chars,
             show_source_domain=show_source_domain,
             show_source_url=show_source_url,
             show_source_engine=show_source_engine,
+            fuzzy_threshold=fuzzy_threshold,
+            depth=depth,
+            chunk_chars=chunk_chars,
+            chunk_overlap=chunk_overlap,
+            max_chunk_chars=max_chunk_chars,
+        ).markdown
+
+    def build_context(
+        self,
+        searxng_response: Mapping[str, object],
+        user_query: str,
+        *,
+        profile: str | None = None,
+        max_results: int = 16,
+        max_snippet_chars: int = 1000,
+        show_source_domain: bool = True,
+        show_source_url: bool = False,
+        show_source_engine: bool = False,
+        fuzzy_threshold: float | None = None,
+        depth: SearchDepth = "simple",
+        chunk_chars: int = 1200,
+        chunk_overlap: int = 200,
+        max_chunk_chars: int = 800,
+    ) -> SearchContext:
+        """Build context from a raw SearxNG response (no HTTP)."""
+
+        query = TextUtils.clean_whitespace(user_query)
+        if not query:
+            return SearchContext(
+                query="",
+                results=[],
+                json_data={},
+                markdown=self._render_empty("用户问题为空。"),
+            )
+
+        processed = self.process_response(
+            searxng_response,
+            query,
+            profile=profile,
+            max_results=max_results,
+            fuzzy_threshold=fuzzy_threshold,
+            depth=depth,
+            chunk_chars=chunk_chars,
+            chunk_overlap=chunk_overlap,
+        )
+
+        json_data = {
+            "query": query,
+            "depth": depth,
+            "number_of_results": len(processed),
+            "results": [item.model_dump() for item in processed],
+        }
+        markdown = self._render_markdown(
+            query,
+            processed,
+            max_snippet_chars=max_snippet_chars,
+            max_chunk_chars=max_chunk_chars,
+            show_source_domain=show_source_domain,
+            show_source_url=show_source_url,
+            show_source_engine=show_source_engine,
+        )
+
+        return SearchContext(
+            query=query, results=processed, json_data=json_data, markdown=markdown
         )
 
     def process_response(
@@ -170,8 +229,15 @@ class SearchPipeline:
         profile: str | None = None,
         max_results: int = 16,
         fuzzy_threshold: float | None = None,
+        depth: SearchDepth = "simple",
+        chunk_chars: int = 1200,
+        chunk_overlap: int = 200,
     ) -> list[SearchResult]:
-        """Build context from a raw SearxNG response (no HTTP)."""
+        """Process a raw SearXNG response into ranked results (no HTTP)."""
+
+        self._validate_depth(depth)
+        if chunk_overlap >= chunk_chars:
+            raise ValueError("chunk_overlap must be < chunk_chars")
 
         env_profile = os.getenv("SEARCH_PROFILE")
         explicit_profile = profile or env_profile
@@ -183,7 +249,17 @@ class SearchPipeline:
         results_data = (response or {}).get("results", [])
         raw_results = list(results_data if isinstance(results_data, list) else [])
 
-        return self._run_processing(query, config, raw_results)[:max_results]
+        processed = self._run_processing(query, config, raw_results)[:max_results]
+        if depth != "simple" and processed:
+            self._enrich_results_with_crawl(
+                processed,
+                query,
+                config,
+                depth=depth,
+                chunk_chars=chunk_chars,
+                chunk_overlap=chunk_overlap,
+            )
+        return processed
 
     def _select_profile_name(self, query: str, explicit_profile: str | None) -> str:
         """Select a profile based on explicit input or keyword rules.
@@ -257,6 +333,120 @@ class SearchPipeline:
                 logger.warning("Invalid auto profile regex: %s", pattern)
         return hits
 
+    @staticmethod
+    def _validate_depth(depth: SearchDepth) -> None:
+        if depth not in {"simple", "low", "medium", "high"}:
+            raise ValueError(f"Invalid depth: {depth}")
+
+    @staticmethod
+    def _depth_settings(depth: SearchDepth) -> tuple[float, int, int, int]:
+        """Return (ratio, min_pages, max_pages, top_chunks_per_page)."""
+
+        if depth == "simple":
+            return (0.0, 0, 0, 0)
+        if depth == "low":
+            return (0.25, 1, 3, 2)
+        if depth == "medium":
+            return (0.50, 2, 6, 3)
+        # high
+        return (0.75, 3, 10, 5)
+
+    def _enrich_results_with_crawl(
+        self,
+        results: list[SearchResult],
+        query: str,
+        config: SearchContextConfig,
+        *,
+        depth: SearchDepth,
+        chunk_chars: int,
+        chunk_overlap: int,
+    ) -> None:
+        """Fetch top pages and attach best-matching page chunks to results (in-place)."""
+
+        ratio, min_pages, max_pages, top_k = self._depth_settings(depth)
+        if ratio <= 0 or top_k <= 0:
+            return
+
+        n = len(results)
+        target = int(math.ceil(n * ratio))
+        m = max(min_pages, min(max_pages, target))
+        m = min(m, n)
+        if m <= 0:
+            return
+
+        query_tokens = self._split_query_tokens(query)
+        intent_tokens = self._extract_intent_tokens(query, config)
+        if not query_tokens:
+            return
+
+        max_workers = min(6, m)
+
+        def crawl_one(  # noqa: PLR0911
+            item: SearchResult,
+        ) -> tuple[SearchResult, list[str], list[float], str | None]:
+            url = (item.url or "").strip()
+            if not url:
+                return (item, [], [], "empty url")
+
+            try:
+                if self._page_fetcher is not None:
+                    html = self._page_fetcher(url)
+                    if not html:
+                        return (item, [], [], "empty response")
+                    page_text = html_to_text(html)
+                else:
+                    fetched = fetch_url(
+                        url,
+                        timeout=10.0,
+                        max_bytes=2_000_000,
+                        user_agent=self.config.searxng.user_agent,
+                    )
+                    if fetched.error:
+                        return (item, [], [], fetched.error)
+                    page_text = html_to_text(fetched.text)
+
+                if not page_text:
+                    return (item, [], [], "no text extracted")
+
+                page_text = page_text[:50_000]
+                chunks = chunk_text(
+                    page_text,
+                    chunk_chars=chunk_chars,
+                    overlap=chunk_overlap,
+                )
+                if not chunks:
+                    return (item, [], [], "no chunks")
+
+                scored: list[tuple[float, str]] = []
+                for ch in chunks:
+                    s = score_chunk(
+                        ch,
+                        query_tokens=query_tokens,
+                        intent_tokens=intent_tokens,
+                    )
+                    if s > 0:
+                        scored.append((s, ch))
+
+                if not scored:
+                    return (item, [], [], "no matching chunks")
+
+                scored.sort(key=lambda t: t[0], reverse=True)
+                top = scored[:top_k]
+                return (item, [c for _, c in top], [float(s) for s, _ in top], None)
+            except Exception as exc:  # noqa: BLE001
+                return (item, [], [], str(exc))
+
+        futures = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            for item in results[:m]:
+                futures[ex.submit(crawl_one, item)] = item
+
+            for fut in as_completed(futures):
+                item, chunks, scores, err = fut.result()
+                item.page_chunks = chunks
+                item.page_chunk_scores = scores
+                item.page_crawl_error = err
+
     def _run_processing(
         self,
         query: str,
@@ -313,6 +503,7 @@ class SearchPipeline:
         results: list[SearchResult],
         *,
         max_snippet_chars: int = 1000,
+        max_chunk_chars: int = 800,
         show_source_domain: bool = True,
         show_source_url: bool = False,
         show_source_engine: bool = False,
@@ -349,6 +540,17 @@ class SearchPipeline:
 
             if snippet:
                 lines.append(f"- 内容: {snippet}")
+
+            if result.page_chunks:
+                lines.append("- 页面片段:")
+                for j, chunk in enumerate(result.page_chunks, 1):
+                    rendered = chunk
+                    if max_chunk_chars and len(rendered) > max_chunk_chars:
+                        rendered = rendered[:max_chunk_chars].rstrip() + "..."
+                    score_str = ""
+                    if j - 1 < len(result.page_chunk_scores):
+                        score_str = f"(score={result.page_chunk_scores[j - 1]:.2f}) "
+                    lines.append(f"  - {score_str}{rendered}")
 
             if result.hit_keywords:
                 lines.append(f"- 命中: {', '.join(result.hit_keywords[:12])}")
