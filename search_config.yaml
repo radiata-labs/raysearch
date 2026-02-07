@@ -1,62 +1,22 @@
-﻿searxng:
+searxng:
   base_url: https://searxng.lycoreco.dpdns.org/search
-  user_agent: searxng-bot/0.1
-  timeout: 20.0
-  allow_redirects: false
-  search_api_key: "YOUR_API_KEY"
-  extra_headers: {}
+  search_api_key: "sk-63133540a039c3443e874d71928b0d0d777a39f0"
+
 default_profile: general
-web_enrichment:
-  enabled: true
-  fetch:
-    timeout: 10.0
-    max_bytes: 2000000
-    max_extracted_chars: 50000
-    max_workers: 6
-    allow_content_types: ["text/html", "text/plain"]
-  chunking:
-    target_chars: 1200
-    overlap_sentences: 1
-    min_chunk_chars: 200
-    max_sentence_chars: 600
-  scoring:
-    strategy: hybrid
-    bm25_weight: 0.7
-    heuristic_weight: 0.3
-    min_chunk_score: 0.0
-    phrase_bonus: 8.0
-    early_bonus: 1.15
-  depth_presets:
-    low: { pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2 }
-    medium: { pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3 }
-    high: { pages_ratio: 0.75, min_pages: 3, max_pages: 10, top_chunks_per_page: 5 }
+
+# Output score normalization (per-candidate-set, not cross-query comparable).
+score_normalization:
+  min_items_for_sigmoid: 1
+
 profiles:
-  general:
-    auto_match:
-      enabled: false
-      keywords: []
-      regex: []
-      priority: 0
-    fuzzy_threshold: 0.88
-    intent_terms: []
-    noise_words: []
-    noise_extensions: [txt, dic, pdf, zip, rar, 7z]
-    domain_bonus: {}
-    domain_groups: {}
-    title_tail_patterns: []
-    ranking:
-      strategy: hybrid
-      bm25_weight: 0.7
-      heuristic_weight: 0.3
-      min_relevance_score: 8
-      min_intent_score: 12
+  general: {}
+
   music:
     auto_match:
       enabled: true
       keywords: [新曲, 新歌, アルバム, MV, single, album]
-      regex: []
       priority: 10
-    fuzzy_threshold: 0.88
+
     intent_terms:
       - 新曲
       - 新歌
@@ -78,6 +38,7 @@ profiles:
       - album
       - "2024"
       - "2025"
+
     noise_words:
       - base_dic_full.txt
       - main.dic.txt
@@ -91,7 +52,7 @@ profiles:
       - aliyun-doc
       - paddlenlp
       - oss-cn-
-    noise_extensions: [txt, dic, pdf, zip, rar, 7z]
+
     domain_bonus:
       kaf.kamitsubaki.jp: 10
       kamitsubaki.jp: 8
@@ -105,6 +66,7 @@ profiles:
       open.spotify.com: 1
       music.apple.com: 1
       x.com: 1
+
     domain_groups:
       moegirl: [moegirl]
       wikipedia: [wikipedia]
@@ -113,11 +75,11 @@ profiles:
       nicovideo: [nicovideo]
       youtube: [youtube]
       streaming: [spotify, music.apple.com]
+
     title_tail_patterns:
       - "(?:-?\\s*)?(萌娘百科.*|万物皆可萌.*)$"
+
     ranking:
       strategy: hybrid
-      bm25_weight: 0.7
-      heuristic_weight: 0.3
       min_relevance_score: 10
       min_intent_score: 14

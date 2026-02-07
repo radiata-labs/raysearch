@@ -14,7 +14,6 @@ DEFAULT_BASE_URL = "https://searxng.lycoreco.dpdns.org/search"
 DEFAULT_USER_AGENT = "searxng-bot/0.1"
 DEFAULT_CONFIG_PATH = "search_config.yaml"
 DEFAULT_NOISE_EXTENSIONS = ("txt", "dic", "pdf", "zip", "rar", "7z")
-RANKING_STRATEGIES = {"heuristic", "bm25", "hybrid"}
 
 
 class ConfigBaseModel(BaseModel):
@@ -77,7 +76,7 @@ class SearxngConfig(ConfigBaseModel):
 class RankingConfig(ConfigBaseModel):
     """Ranking configuration."""
 
-    strategy: str = "heuristic"
+    strategy: Literal["heuristic", "bm25", "hybrid"] = "heuristic"
     bm25_weight: float = 0.7
     heuristic_weight: float = 0.3
     min_relevance_score: int = 10
@@ -135,21 +134,29 @@ class WebChunkingConfig(ConfigBaseModel):
     overlap_sentences: int = 1
     min_chunk_chars: int = 200
     max_sentence_chars: int = 600
+    max_blocks: int = 120
+    max_sentences: int = 400
+    max_chunks: int = 80
 
 
 class WebScoringConfig(ConfigBaseModel):
-    strategy: Literal["heuristic", "bm25", "hybrid"] = "hybrid"
-    bm25_weight: float = 0.7
-    heuristic_weight: float = 0.3
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     min_chunk_score: float = 0.0
     phrase_bonus: float = 8.0
     early_bonus: float = 1.15
+    intent_missing_penalty: float = 2.0
 
-    def normalized_weights(self) -> tuple[float, float]:
-        total = self.bm25_weight + self.heuristic_weight
-        if total <= 0:
-            return (0.5, 0.5)
-        return (self.bm25_weight / total, self.heuristic_weight / total)
+    # Template scoring: prefer soft penalties (1B), only hard-drop extreme boilerplate.
+    template_penalty_weight: float = 0.75
+    template_penalty_bias: float = 2.0
+    template_hard_drop_threshold: float = 0.95
+    block_hard_drop_threshold: float = 0.90
+
+    # Chunk gating and output stability.
+    min_query_hits: int = 1
+    min_final_score: float = 0.0
+    dedupe_threshold: float = 0.92
 
 
 class WebEnrichmentConfig(ConfigBaseModel):
@@ -159,11 +166,27 @@ class WebEnrichmentConfig(ConfigBaseModel):
     scoring: WebScoringConfig = Field(default_factory=WebScoringConfig)
     depth_presets: dict[Literal["low", "medium", "high"], WebDepthPreset] = Field(
         default_factory=lambda: {
-            "low": WebDepthPreset(pages_ratio=0.25, min_pages=1, max_pages=3, top_chunks_per_page=2),
-            "medium": WebDepthPreset(pages_ratio=0.50, min_pages=2, max_pages=6, top_chunks_per_page=3),
-            "high": WebDepthPreset(pages_ratio=0.75, min_pages=3, max_pages=10, top_chunks_per_page=5),
+            "low": WebDepthPreset(
+                pages_ratio=0.25, min_pages=1, max_pages=3, top_chunks_per_page=2
+            ),
+            "medium": WebDepthPreset(
+                pages_ratio=0.50, min_pages=2, max_pages=6, top_chunks_per_page=3
+            ),
+            "high": WebDepthPreset(
+                pages_ratio=0.75, min_pages=3, max_pages=10, top_chunks_per_page=5
+            ),
         }
     )
+
+
+class ScoreNormalizationConfig(ConfigBaseModel):
+    """Configuration for mapping raw scores to [0, 1] for output."""
+
+    method: Literal["robust_sigmoid", "rank"] = "robust_sigmoid"
+    temperature: float = 1.0
+    min_items_for_sigmoid: int = 5
+    flat_spread_eps: float = 1e-9
+    z_clip: float = 8.0
 
 
 class SearchConfig(ConfigBaseModel):
@@ -173,6 +196,9 @@ class SearchConfig(ConfigBaseModel):
     default_profile: str = "general"
     profiles: dict[str, SearchContextConfig] = Field(default_factory=dict)
     web_enrichment: WebEnrichmentConfig = Field(default_factory=WebEnrichmentConfig)
+    score_normalization: ScoreNormalizationConfig = Field(
+        default_factory=ScoreNormalizationConfig
+    )
 
     def get_profile(self, name: str) -> SearchContextConfig | None:
         return self.profiles.get(name)
@@ -235,7 +261,6 @@ __all__ = [
     "DEFAULT_USER_AGENT",
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_NOISE_EXTENSIONS",
-    "RANKING_STRATEGIES",
     "SearxngConfig",
     "RankingConfig",
     "AutoMatchConfig",
@@ -245,5 +270,6 @@ __all__ = [
     "WebChunkingConfig",
     "WebScoringConfig",
     "WebEnrichmentConfig",
+    "ScoreNormalizationConfig",
     "SearchConfig",
 ]

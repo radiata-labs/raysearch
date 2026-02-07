@@ -25,7 +25,7 @@ def test_depth_preset_controls_pages_and_top_chunks(monkeypatch):
 
     def fetcher(url: str) -> str:
         calls.append(url)
-        return "<html><body>hello。hello。hello。</body></html>"
+        return "<html><body>hello\u3002hello\u3002hello\u3002</body></html>"
 
     pipeline = SearchPipeline(cfg, page_fetcher=fetcher)
     response = {
@@ -52,6 +52,6 @@ def test_depth_preset_controls_pages_and_top_chunks(monkeypatch):
 
     # max_pages=2 => only 2 pages crawled
     assert len(calls) == 2
-    assert len(ctx.results[0].page_chunks) == 1
-    assert len(ctx.results[1].page_chunks) == 1
-    assert ctx.results[2].page_chunks == []
+    assert len(ctx.results[0].page.chunks) == 1
+    assert len(ctx.results[1].page.chunks) == 1
+    assert ctx.results[2].page.chunks == []

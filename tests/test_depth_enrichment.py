@@ -5,7 +5,7 @@ from search_core.pipeline import SearchPipeline
 
 
 def _make_html_sentences(sentences: list[str]) -> str:
-    return "<html><body>" + "".join(f"{s}。" for s in sentences) + "</body></html>"
+    return "<html><body>" + "".join(f"{s}\u3002" for s in sentences) + "</body></html>"
 
 
 def test_depth_simple_does_not_crawl():
@@ -36,7 +36,7 @@ def test_depth_simple_does_not_crawl():
     }
 
     ctx = pipeline.build_context(response, "hello", "simple")
-    assert ctx.results[0].page_chunks == []
+    assert ctx.results[0].page.chunks == []
 
 
 def test_depth_low_enriches_top_results_with_sentence_overlap():
@@ -89,11 +89,11 @@ def test_depth_low_enriches_top_results_with_sentence_overlap():
     assert "页面片段" in ctx.markdown
 
     # low: crawls only the top result, and keeps 2 chunks per page
-    assert len(ctx.results[0].page_chunks) == 2
-    assert ctx.results[1].page_chunks == []
+    assert len(ctx.results[0].page.chunks) == 2
+    assert all(0.0 <= c.score <= 1.0 for c in ctx.results[0].page.chunks)
+    assert ctx.results[1].page.chunks == []
 
-    a0, a1 = ctx.results[0].page_chunks[:2]
+    a0, a1 = [c.text for c in ctx.results[0].page.chunks[:2]]
     # overlap_sentences=1 => chunk2 starts with chunk1's last sentence
-    last_sentence = a0.split("。")[-2].strip() + "。"
+    last_sentence = a0.split("\u3002")[-2].strip() + "\u3002"
     assert a1.strip().startswith(last_sentence)
-

@@ -1,17 +1,14 @@
-from __future__ import annotations
-
-import pytest
+﻿from __future__ import annotations
 
 from search_core.config import SearchConfig, SearchContextConfig
-from search_core.web import BM25_AVAILABLE, WebEnricher
+from search_core.web import WebEnricher
 
 
-@pytest.mark.skipif(not BM25_AVAILABLE, reason="rank_bm25 not installed")
-def test_bm25_scoring_prefers_chunk_with_query_term():
+def test_chunk_scoring_prefers_relevant_text():
     profile_cfg = SearchContextConfig.model_validate(
         {
             "ranking": {
-                "strategy": "bm25",
+                "strategy": "hybrid",
                 "min_relevance_score": 1,
                 "min_intent_score": 1,
             }
@@ -25,6 +22,7 @@ def test_bm25_scoring_prefers_chunk_with_query_term():
         "rareterm appears here rareterm",
         "another chunk without it",
     ]
+
     scored = enricher.score_chunks(
         chunks,
         query="rareterm",
@@ -34,5 +32,6 @@ def test_bm25_scoring_prefers_chunk_with_query_term():
         context_config=profile_cfg,
         ranking_config=profile_cfg.ranking,
     )
+
     best = max(scored, key=lambda item: item[0])[1]
     assert best == chunks[1]

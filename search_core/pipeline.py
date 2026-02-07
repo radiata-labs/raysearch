@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import os
@@ -8,18 +8,11 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 from .client import SearxngClient
-from .config import RANKING_STRATEGIES, SearchConfig, SearchContextConfig
+from .config import SearchConfig, SearchContextConfig
 from .models import SearchContext, SearchResult
+from .scoring import BM25_AVAILABLE, blend_scores, bm25_scores, normalize_scores
 from .utils import PUNCTUATION_RE, TextUtils
 from .web import WebEnricher
-
-try:
-    from rank_bm25 import BM25Okapi
-
-    BM25_AVAILABLE = True
-except ImportError:  # pragma: no cover - optional dependency fallback
-    BM25Okapi = None
-    BM25_AVAILABLE = False
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
@@ -49,6 +42,7 @@ class SearchPipeline:
             self.config.web_enrichment,
             user_agent=self.config.searxng.user_agent,
             fetcher=page_fetcher,
+            score_normalization=self.config.score_normalization,
         )
 
     def search_raw(
@@ -267,16 +261,21 @@ class SearchPipeline:
         if depth != "simple" and processed and self.config.web_enrichment.enabled:
             preset = self.config.web_enrichment.depth_presets.get(depth)
             if preset is None:
-                logger.warning("No depth preset configured for '%s'; skipping web enrichment.", depth)
+                logger.warning(
+                    "No depth preset configured for '%s'; skipping web enrichment.",
+                    depth,
+                )
                 return processed
 
-            query_tokens = self._split_query_tokens(query)
+            query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
             intent_tokens = self._extract_intent_tokens(query, config)
             self.web_enricher.enrich_results(
                 processed,
                 query=query,
                 query_tokens=query_tokens,
                 intent_tokens=intent_tokens,
+                context_config=config,
+                ranking_config=config.ranking,
                 preset=preset,
                 chunk_target_chars=chunk_target_chars,
                 chunk_overlap_sentences=chunk_overlap_sentences,
@@ -373,9 +372,9 @@ class SearchPipeline:
         title_tail_patterns = self._compile_title_patterns(config.title_tail_patterns)
         domain_groups = config.domain_groups or {}
 
-        query_tokens = self._split_query_tokens(query)
+        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
         intent_tokens = self._extract_intent_tokens(query, config)
-        ranking_strategy = self._normalize_ranking_strategy(config.ranking.strategy)
+        ranking_strategy = config.ranking.strategy
 
         normalized = [
             result
@@ -455,15 +454,13 @@ class SearchPipeline:
             if snippet:
                 lines.append(f"- 内容: {snippet}")
 
-            if result.page_chunks:
+            if result.page.chunks:
                 lines.append("- 页面片段:")
-                for j, chunk in enumerate(result.page_chunks, 1):
-                    rendered = chunk
+                for _, chunk in enumerate(result.page.chunks, 1):
+                    rendered = chunk.text
                     if max_chunk_chars and len(rendered) > max_chunk_chars:
                         rendered = rendered[:max_chunk_chars].rstrip() + "..."
-                    score_str = ""
-                    if j - 1 < len(result.page_chunk_scores):
-                        score_str = f"(score={result.page_chunk_scores[j - 1]:.2f}) "
+                    score_str = f"(score={chunk.score:.2f}) "
                     lines.append(f"  - {score_str}{rendered}")
 
             if result.hit_keywords:
@@ -602,33 +599,37 @@ class SearchPipeline:
         config: SearchContextConfig,
         query_tokens: list[str],
         intent_tokens: list[str],
-        ranking_strategy: str,
+        ranking_strategy: Literal["heuristic", "bm25", "hybrid"],
     ) -> list[SearchResult]:
-        bm25_scaled: list[float] | None = None
-        if ranking_strategy in {"bm25", "hybrid"}:
-            bm25_scores = self._compute_bm25_scores(results, query)
-            bm25_scaled = self._normalize_scores(bm25_scores)
-
         heuristic_scores = [
             self._heuristic_score(result, config, query_tokens, intent_tokens)
             for result in results
         ]
-        max_heuristic = max(heuristic_scores) if heuristic_scores else 1.0
 
-        for index, result in enumerate(results):
-            heuristic_score = heuristic_scores[index]
-            if ranking_strategy == "bm25" and bm25_scaled is not None:
-                result.score = bm25_scaled[index] * max_heuristic
-            elif ranking_strategy == "hybrid" and bm25_scaled is not None:
-                bm25_weight, heuristic_weight = config.ranking.normalized_weights()
-                result.score = (
-                    bm25_scaled[index] * bm25_weight * max_heuristic
-                    + heuristic_score * heuristic_weight
-                )
-            else:
-                result.score = heuristic_score
+        bm25: list[float] | None = None
+        if ranking_strategy in {"bm25", "hybrid"} and BM25_AVAILABLE:
+            docs = [f"{r.title} {r.snippet}" for r in results]
+            bm25 = bm25_scores(docs, query=query)
 
-        return sorted(results, key=lambda item: item.score, reverse=True)
+        raw_scores = blend_scores(
+            strategy=ranking_strategy,
+            heuristic=heuristic_scores,
+            bm25=bm25,
+            weights=config.ranking.normalized_weights(),
+        )
+
+        # Sort by raw score, then overwrite scores with normalized [0,1] values for output.
+        ranked = [
+            r
+            for _, r in sorted(
+                zip(raw_scores, results, strict=False), key=lambda t: t[0], reverse=True
+            )
+        ]
+        ranked_raw = sorted(raw_scores, reverse=True)
+        norm = normalize_scores(ranked_raw, self.config.score_normalization)
+        for i, result in enumerate(ranked):
+            result.score = float(norm[i])
+        return ranked
 
     def _heuristic_score(
         self,
@@ -787,29 +788,6 @@ class SearchPipeline:
         return max(seq * 0.95, jac)
 
     @staticmethod
-    def _split_query_tokens(query: str) -> list[str]:
-        cleaned = query.strip()
-        if not cleaned:
-            return []
-
-        parts = re.split(r"[\s,，、|]+", cleaned)
-        parts = [part.strip().lower() for part in parts if part.strip()]
-        tokens = [part for part in parts if len(part) >= 2]
-
-        if len(tokens) < 2:
-            cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", cleaned)
-            grams: list[str] = []
-            for run in cjk_runs:
-                if len(run) <= 3:
-                    grams.append(run)
-                else:
-                    grams.extend(TextUtils.ngrams(run, 2))
-                    grams.extend(TextUtils.ngrams(run, 3))
-            tokens.extend([gram.lower() for gram in grams])
-
-        return TextUtils.unique_preserve_order(tokens)
-
-    @staticmethod
     def _extract_intent_tokens(query: str, config: SearchContextConfig) -> list[str]:
         lowered = query.lower()
         return [term for term in config.intent_terms if term.lower() in lowered]
@@ -827,28 +805,6 @@ class SearchPipeline:
             if normalized.endswith(key):
                 return value
         return 0
-
-    @staticmethod
-    def _normalize_scores(scores: list[float]) -> list[float]:
-        if not scores:
-            return []
-        min_score = min(scores)
-        max_score = max(scores)
-        if max_score == min_score:
-            return [0.0 for _ in scores]
-        return [(score - min_score) / (max_score - min_score) for score in scores]
-
-    def _normalize_ranking_strategy(self, strategy: str) -> str:
-        normalized = (strategy or "heuristic").lower()
-        if normalized not in RANKING_STRATEGIES:
-            logger.warning(
-                "Unknown ranking strategy '%s'; fallback to heuristic.", normalized
-            )
-            return "heuristic"
-        if normalized in {"bm25", "hybrid"} and not BM25_AVAILABLE:
-            logger.warning("BM25 not available; fallback to heuristic.")
-            return "heuristic"
-        return normalized
 
     @staticmethod
     def _compile_title_patterns(patterns: Iterable[str]) -> list[re.Pattern[str]]:
@@ -875,24 +831,6 @@ class SearchPipeline:
             return False
         path = urlparse(url).path.lower()
         return any(path.endswith(f".{ext}") for ext in noise_extensions)
-
-    def _compute_bm25_scores(
-        self, results: list[SearchResult], query: str
-    ) -> list[float]:
-        if not BM25_AVAILABLE or BM25Okapi is None:
-            return [0.0 for _ in results]
-
-        corpus = [TextUtils.tokenize(f"{r.title} {r.snippet}") for r in results]
-        if not corpus:
-            return [0.0 for _ in results]
-
-        query_tokens = TextUtils.tokenize(query)
-        if not query_tokens:
-            return [0.0 for _ in results]
-
-        bm25 = BM25Okapi(corpus)
-        scores = bm25.get_scores(query_tokens)
-        return [float(score) for score in scores]
 
 
 __all__ = ["SearchPipeline"]

@@ -70,8 +70,8 @@ def test_processing_filters_noise_dedupes_and_ranks():
     ctx = pipeline.build_context(response, "hello", max_results=10)
     assert len(ctx.results) == 2
     assert all(not r.url.endswith(".pdf") for r in ctx.results)
+    assert all(0.0 <= r.score <= 1.0 for r in ctx.results)
 
     # Ranking: title-hit should beat snippet-hit
     assert ctx.results[0].title.lower().startswith("hello")
     assert "网络搜索结果" in ctx.markdown
-

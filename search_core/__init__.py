@@ -11,7 +11,7 @@ from .config import (
     WebFetchConfig,
     WebScoringConfig,
 )
-from .models import SearchContext, SearchResult
+from .models import PageChunk, PageEnrichment, SearchContext, SearchResult
 from .pipeline import SearchPipeline
 from .web import WebEnricher
 
@@ -31,4 +31,6 @@ __all__ = [
     "WebEnricher",
     "SearchResult",
     "SearchContext",
+    "PageChunk",
+    "PageEnrichment",
 ]

@@ -42,9 +42,12 @@ markdown = engine.search_markdown(
 
 `depth` is a runtime parameter (not stored in config):
 - `simple`: only uses SearxNG snippets (default)
-- `low|medium|high`: crawls the top-scoring pages, extracts full page text, chunks it with overlap, scores chunks, then appends best chunks into each result (`page_chunks`)
+- `low|medium|high`: crawls the top-scoring pages, extracts full page text, chunks it with overlap, scores chunks, then appends best chunks into each result (`result.page.chunks`)
 
 Depth presets and crawler/chunk/scoring defaults are configurable under top-level `web_enrichment` in `search_config.yaml`.
+
+Chunk scoring strategy/weights (`heuristic|bm25|hybrid`) are taken from the selected profile's `ranking` config
+(`profiles.<name>.ranking`). `web_enrichment.scoring` only contains chunk-specific thresholds/penalties.
 
 Chunk parameters (runtime, overrides config when provided):
 - `chunk_target_chars`: approximate chunk size in characters (sentence boundaries preserved)
