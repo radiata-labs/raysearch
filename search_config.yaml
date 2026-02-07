@@ -1,0 +1,99 @@
+﻿searxng:
+  base_url: https://searxng.lycoreco.dpdns.org/search
+  user_agent: searxng-bot/0.1
+  timeout: 20.0
+  allow_redirects: false
+  search_api_key: "sk-63133540a039c3443e874d71928b0d0d777a39f0"
+  extra_headers: {}
+default_profile: general
+profiles:
+  general:
+    auto_match:
+      enabled: false
+      keywords: []
+      regex: []
+      priority: 0
+    fuzzy_threshold: 0.88
+    intent_terms: []
+    noise_words: []
+    noise_extensions: [txt, dic, pdf, zip, rar, 7z]
+    domain_bonus: {}
+    domain_groups: {}
+    title_tail_patterns: []
+    ranking:
+      strategy: hybrid
+      bm25_weight: 0.7
+      heuristic_weight: 0.3
+      min_relevance_score: 8
+      min_intent_score: 12
+  music:
+    auto_match:
+      enabled: true
+      keywords: [新曲, 新歌, アルバム, MV, single, album]
+      regex: []
+      priority: 10
+    fuzzy_threshold: 0.88
+    intent_terms:
+      - 新曲
+      - 新歌
+      - 发布
+      - 公布
+      - 上线
+      - 上架
+      - 单曲
+      - 首发
+      - 专辑
+      - アルバム
+      - シングル
+      - 配信
+      - MV
+      - ミュージックビデオ
+      - release
+      - new song
+      - single
+      - album
+      - "2024"
+      - "2025"
+    noise_words:
+      - base_dic_full.txt
+      - main.dic.txt
+      - dict.txt
+      - 技术参数表
+      - 招标
+      - 采购
+      - 公告
+      - downfile.aspx
+      - tibettravel
+      - aliyun-doc
+      - paddlenlp
+      - oss-cn-
+    noise_extensions: [txt, dic, pdf, zip, rar, 7z]
+    domain_bonus:
+      kaf.kamitsubaki.jp: 10
+      kamitsubaki.jp: 8
+      prtimes.jp: 7
+      natalie.mu: 6
+      ototoy.jp: 6
+      zh.wikipedia.org: 4
+      ja.wikipedia.org: 4
+      wikipedia.org: 3
+      youtube.com: 2
+      open.spotify.com: 1
+      music.apple.com: 1
+      x.com: 1
+    domain_groups:
+      moegirl: [moegirl]
+      wikipedia: [wikipedia]
+      kamitsubaki: [kamitsubaki]
+      bilibili: [bilibili]
+      nicovideo: [nicovideo]
+      youtube: [youtube]
+      streaming: [spotify, music.apple.com]
+    title_tail_patterns:
+      - "(?:-?\\s*)?(萌娘百科.*|万物皆可萌.*)$"
+    ranking:
+      strategy: hybrid
+      bm25_weight: 0.7
+      heuristic_weight: 0.3
+      min_relevance_score: 10
+      min_intent_score: 14
