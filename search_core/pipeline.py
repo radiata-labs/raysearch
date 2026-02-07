@@ -13,7 +13,6 @@ from .scorer import ScoringEngine
 from .tools import (
     canonical_site,
     compile_patterns,
-    domain_bonus,
     fuzzy_normalize,
     hybrid_similarity,
     strip_title_tails,
@@ -46,14 +45,12 @@ class SearchPipeline:
     ) -> None:
         self.config = config
         self.client = client or SearxngClient(config)
-        self.scorer = scorer or ScoringEngine(
-            score_norm_cfg=self.config.score_normalization
-        )
+        self.scorer = scorer or ScoringEngine(self.config.scoring)
         self.web_enricher = web_enricher or WebEnricher(
             self.config.web_enrichment,
             user_agent=self.config.searxng.user_agent,
             fetcher=page_fetcher,
-            score_normalization=self.config.score_normalization,
+            scorer=self.scorer,
         )
 
     def search_raw(
@@ -286,7 +283,6 @@ class SearchPipeline:
                 query_tokens=query_tokens,
                 intent_tokens=intent_tokens,
                 context_config=config,
-                ranking_config=config.ranking,
                 preset=preset,
                 chunk_target_chars=chunk_target_chars,
                 chunk_overlap_sentences=chunk_overlap_sentences,
@@ -395,9 +391,7 @@ class SearchPipeline:
             return []
 
         normalized = [
-            result
-            for result in normalized
-            if self._is_relevant(result, config, query_tokens, intent_tokens)
+            result for result in normalized if self._is_relevant(result, query_tokens)
         ]
         if not normalized:
             return []
@@ -406,20 +400,60 @@ class SearchPipeline:
         normalized = self._dedupe_fuzzy(
             normalized,
             config.fuzzy_threshold,
-            config=config,
             title_tail_patterns=title_tail_patterns,
             domain_groups=domain_groups,
         )
 
-        return self.scorer.rank_results(
+        return self._rank_results(
             normalized,
             query=query,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
-            context_config=config,
-            ranking_config=config.ranking,
-            score_norm_cfg=self.config.score_normalization,
         )
+
+    def _rank_results(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+    ) -> list[SearchResult]:
+        if not results:
+            return []
+
+        docs = [TextUtils.clean_whitespace(f"{r.title} {r.snippet}") for r in results]
+        scored = self.scorer.score(
+            docs,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        scores = [float(s) for s, _ in scored]
+
+        hit_keywords: list[list[str]] = []
+        for r in results:
+            title = (r.title or "").lower()
+            snippet = (r.snippet or "").lower()
+            hits: list[str] = [
+                token for token in query_tokens if token in title or token in snippet
+            ]
+            hit_keywords.append(TextUtils.unique_preserve_order(hits))
+
+        ranked_pairs = sorted(
+            zip(scores, results, hit_keywords, strict=False),
+            key=lambda t: t[0],
+            reverse=True,
+        )
+        ranked = [r for _, r, _ in ranked_pairs]
+        ranked_hits = [hits for _, _, hits in ranked_pairs]
+        ranked_scores = [float(s) for s, _, _ in ranked_pairs]
+
+        for i, result in enumerate(ranked):
+            result.score = float(ranked_scores[i])
+            result.hit_keywords = ranked_hits[i]
+
+        return ranked
 
     def _render_markdown(
         self,
@@ -562,45 +596,16 @@ class SearchPipeline:
     def _is_relevant(
         self,
         result: SearchResult,
-        config: SearchContextConfig,
         query_tokens: list[str],
-        intent_tokens: list[str],
     ) -> bool:
         title = result.title.lower()
         snippet = result.snippet.lower()
-        domain = result.domain.lower()
-        blob = f"{title} {snippet}"
-
         core_hits = 0
-        score = 0
-
         for token in query_tokens:
-            if token in title:
-                score += 10
-                core_hits += 1
-            elif token in snippet:
-                score += 5
+            if token in title or token in snippet:
                 core_hits += 1
 
-        intent_hits = 0
-        for token in intent_tokens:
-            if token in blob:
-                score += 4
-                intent_hits += 1
-
-        score += domain_bonus(domain, config.domain_bonus)
-
-        if core_hits == 0:
-            return False
-
-        if score < config.ranking.min_relevance_score:
-            return False
-
-        return not (
-            intent_tokens
-            and intent_hits == 0
-            and score < config.ranking.min_intent_score
-        )
+        return core_hits != 0
 
     @staticmethod
     def _dedupe_exact(results: list[SearchResult]) -> list[SearchResult]:
@@ -621,7 +626,6 @@ class SearchPipeline:
         results: list[SearchResult],
         threshold: float,
         *,
-        config: SearchContextConfig,
         title_tail_patterns: list[re.Pattern[str]],
         domain_groups: Mapping[str, tuple[str, ...]],
     ) -> list[SearchResult]:
@@ -629,7 +633,7 @@ class SearchPipeline:
 
         for candidate in sorted(
             results,
-            key=lambda r: self._quality_score(r, config),
+            key=self._quality_score,
             reverse=True,
         ):
             if not kept:
@@ -650,16 +654,14 @@ class SearchPipeline:
                     else min(0.94, threshold + 0.06)
                 )
 
-                if (
-                    hybrid_similarity(candidate_key, existing_key) >= threshold_value
-                ):
+                if hybrid_similarity(candidate_key, existing_key) >= threshold_value:
                     duplicate_index = index
                     break
 
             if duplicate_index < 0:
                 kept.append(candidate)
-            elif self._quality_score(candidate, config) > self._quality_score(
-                kept[duplicate_index], config
+            elif self._quality_score(candidate) > self._quality_score(
+                kept[duplicate_index]
             ):
                 kept[duplicate_index] = candidate
 
@@ -680,18 +682,13 @@ class SearchPipeline:
     def _quality_score(
         self,
         result: SearchResult,
-        config: SearchContextConfig,
     ) -> int:
-        bonus = domain_bonus(result.domain, config.domain_bonus)
-        return (
-            bonus * 1000 + min(len(result.snippet), 1200) + min(len(result.title), 220)
-        )
+        return min(len(result.snippet), 1200) + min(len(result.title), 220)
 
     @staticmethod
     def _extract_intent_tokens(query: str, config: SearchContextConfig) -> list[str]:
         lowered = query.lower()
         return [term for term in config.intent_terms if term.lower() in lowered]
-
 
     @staticmethod
     def _is_noise_extension(url: str, noise_extensions: set[str]) -> bool:

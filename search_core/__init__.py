@@ -1,7 +1,8 @@
 from .client import SearxngClient
 from .config import (
     AutoMatchConfig,
-    RankingConfig,
+    HeuristicScoringConfig,
+    ScoringConfig,
     SearchConfig,
     SearchContextConfig,
     SearxngConfig,
@@ -9,7 +10,7 @@ from .config import (
     WebDepthPreset,
     WebEnrichmentConfig,
     WebFetchConfig,
-    WebScoringConfig,
+    WebChunkSelectConfig,
 )
 from .models import PageChunk, PageEnrichment, SearchContext, SearchResult
 from .pipeline import SearchPipeline
@@ -20,12 +21,13 @@ __all__ = [
     "SearchConfig",
     "SearchContextConfig",
     "SearxngConfig",
-    "RankingConfig",
+    "HeuristicScoringConfig",
+    "ScoringConfig",
     "AutoMatchConfig",
     "WebDepthPreset",
     "WebFetchConfig",
     "WebChunkingConfig",
-    "WebScoringConfig",
+    "WebChunkSelectConfig",
     "WebEnrichmentConfig",
     "SearxngClient",
     "SearchPipeline",

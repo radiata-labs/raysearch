@@ -46,8 +46,8 @@ markdown = engine.search_markdown(
 
 Depth presets and crawler/chunk/scoring defaults are configurable under top-level `web_enrichment` in `search_config.yaml`.
 
-Chunk scoring strategy/weights (`heuristic|bm25|hybrid`) are taken from the selected profile's `ranking` config
-(`profiles.<name>.ranking`). `web_enrichment.scoring` only contains chunk-specific thresholds/penalties.
+Scoring strategy/weights are configured globally under `scoring.providers` in `search_config.yaml`.
+`web_enrichment.select` only contains chunk-specific thresholds/penalties.
 
 Chunk parameters (runtime, overrides config when provided):
 - `chunk_target_chars`: approximate chunk size in characters (sentence boundaries preserved)

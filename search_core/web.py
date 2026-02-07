@@ -13,10 +13,9 @@ from urllib.parse import urlparse
 
 import requests
 
-from .config import ScoreNormalizationConfig
+from .config import ScoringConfig
 from .models import PageChunk, PageEnrichment
 from .scorer import ScoringEngine
-from .scoring import BM25_AVAILABLE
 from .tools import compile_patterns, is_duplicate_text
 from .utils import TextUtils
 
@@ -24,7 +23,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .config import (
-        RankingConfig,
         SearchContextConfig,
         WebChunkingConfig,
         WebDepthPreset,
@@ -99,14 +97,12 @@ class WebEnricher:
         *,
         user_agent: str,
         fetcher: Callable[[str], str] | None = None,
-        score_normalization: ScoreNormalizationConfig | None = None,
         scorer: ScoringEngine | None = None,
     ) -> None:
         self.config = config
         self.user_agent = user_agent
         self._fetcher = fetcher
-        self.score_normalization = score_normalization or ScoreNormalizationConfig()
-        self.scorer = scorer or ScoringEngine(score_norm_cfg=self.score_normalization)
+        self.scorer = scorer or ScoringEngine(ScoringConfig())
 
     def fetch(self, url: str) -> FetchResult:
         parsed = urlparse(url)
@@ -240,7 +236,7 @@ class WebEnricher:
                 title_patterns=title_patterns,
                 mode="block",
             )
-            if t >= float(self.config.scoring.block_hard_drop_threshold):
+            if t >= float(self.config.select.block_hard_drop_threshold):
                 continue
             kept.append(block)
             if len(kept) >= int(self.config.chunking.max_blocks):
@@ -341,20 +337,79 @@ class WebEnricher:
         intent_tokens: list[str],
         domain: str | None,
         context_config: SearchContextConfig,
-        ranking_config: RankingConfig,
     ) -> list[tuple[float, str]]:
+        _ = domain  # Domain bonus is intentionally not part of scoring.
+        if not chunks:
+            return []
+
         title_patterns = compile_patterns(context_config.title_tail_patterns)
-        return self.scorer.score_and_filter_chunks(
-            chunks,
+        query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
+        min_query_hits = max(0, int(self.config.select.min_query_hits))
+
+        filtered: list[tuple[int, str]] = []
+        for idx, chunk in enumerate(chunks):
+            if self._hard_drop_chunk(
+                chunk,
+                context_config=context_config,
+                query_has_cjk=query_has_cjk,
+                title_patterns=title_patterns,
+            ):
+                continue
+            if (
+                min_query_hits > 0
+                and self._query_hit_count(chunk, query_tokens=query_tokens)
+                < min_query_hits
+            ):
+                continue
+            filtered.append((idx, chunk))
+
+        if not filtered:
+            return []
+
+        base = self.scorer.score(
+            [c for _, c in filtered],
             query=query,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
-            domain=domain,
-            context_config=context_config,
-            ranking_config=ranking_config,
-            web_config=self.config,
-            title_patterns=title_patterns,
         )
+        base_scores = [float(s) for s, _ in base]
+
+        min_score = max(
+            float(self.config.select.min_chunk_score),
+            float(self.config.select.min_final_score),
+        )
+        intent_missing_penalty = float(self.config.select.intent_missing_penalty)
+        tpl_w = float(self.config.select.template_penalty_weight)
+        tpl_b = float(self.config.select.template_penalty_bias)
+        tpl_hard = float(self.config.select.template_hard_drop_threshold)
+        early_bonus = float(self.config.select.early_bonus)
+
+        scored: list[tuple[float, str]] = []
+        for (pos, chunk), base_score in zip(filtered, base_scores, strict=False):
+            tpl = self.template_score(
+                chunk,
+                query_has_cjk=query_has_cjk,
+                title_patterns=title_patterns,
+                mode="chunk",
+            )
+            if tpl >= tpl_hard:
+                continue
+
+            final = float(base_score)
+            if early_bonus > 1.0:
+                final *= early_bonus ** (-pos)
+            final = final * (1.0 - tpl * tpl_w) - tpl * tpl_b
+
+            if intent_tokens and not self._has_any_token(chunk, intent_tokens):
+                final -= intent_missing_penalty
+
+            final = max(0.0, min(1.0, float(final)))
+            if final < min_score:
+                continue
+
+            scored.append((final, chunk))
+
+        return scored
 
     @staticmethod
     def _has_noise_word(text: str, context_config: SearchContextConfig) -> bool:
@@ -372,12 +427,170 @@ class WebEnricher:
         title_patterns: list[re.Pattern[str]],
         mode: Literal["block", "chunk"],
     ) -> float:
-        return self.scorer.template_score(
-            text,
+        if not text:
+            return 1.0
+
+        lowered = TextUtils.normalize_text(text)
+        if not lowered:
+            return 1.0
+
+        kw_strong = {
+            "archive",
+            "archives",
+            "sitemap",
+            "privacy",
+            "terms",
+            "cookie",
+            "cookies",
+            "アーカイブ",
+            "サイトマップ",
+            "プライバシー",
+            "利用規約",
+            "月を選択",
+            "站点地图",
+            "隐私",
+            "条款",
+        }
+        kw_weak = {
+            "next",
+            "previous",
+            "older",
+            "newer",
+            "page",
+            "pages",
+            "category",
+            "categories",
+            "tag",
+            "tags",
+            "上一页",
+            "下一页",
+            "一览",
+            "目录",
+        }
+
+        kw_hits = 0.0
+        for kw in kw_strong:
+            if kw in lowered:
+                kw_hits += 0.35
+        for kw in kw_weak:
+            if kw in lowered:
+                kw_hits += 0.15
+        kw_component = min(1.0, kw_hits)
+
+        date_component = min(
+            1.0,
+            0.25 * len(re.findall(r"\d{4}年\d{1,2}月", text))
+            + 0.15 * len(re.findall(r"\b(?:19|20)\d{2}\b", text)),
+        )
+
+        token_count, unique_ratio, digits, digits_ratio, cjk_ratio = self._chunk_stats(
+            text
+        )
+        uniq_component = 0.0
+        if token_count >= 8 and unique_ratio < 0.45:
+            uniq_component = min(1.0, (0.45 - unique_ratio) / 0.45)
+
+        digit_component = 0.0
+        if digits_ratio > 0.18:
+            digit_component = min(1.0, (digits_ratio - 0.18) / 0.32)
+
+        sep_component = 0.0
+        sep_ratio = len(re.findall(r"[\|/>\u00bb]", text)) / max(1, len(text))
+        if mode == "block" and sep_ratio > 0.03:
+            sep_component = min(1.0, (sep_ratio - 0.03) / 0.10)
+        elif mode == "chunk" and sep_ratio > 0.05:
+            sep_component = min(1.0, (sep_ratio - 0.05) / 0.10)
+
+        list_component = 0.0
+        parts = [p for p in re.split(r"[\s\|/>\u00bb]+", lowered) if p]
+        if len(parts) >= 20:
+            short = sum(1 for p in parts if len(p) <= 3)
+            if short / len(parts) > 0.6:
+                list_component = 0.8
+
+        lang_component = 0.0
+        if query_has_cjk and cjk_ratio > 0 and cjk_ratio < 0.10:
+            lang_component = 0.35
+
+        title_component = 0.0
+        for pattern in title_patterns:
+            if pattern.search(text):
+                title_component = 0.6
+                break
+
+        tpl = 0.0
+        for comp in (
+            kw_component,
+            date_component,
+            digit_component,
+            sep_component,
+            uniq_component,
+            list_component,
+            lang_component,
+            title_component,
+        ):
+            comp = max(0.0, min(1.0, float(comp)))
+            tpl = 1.0 - (1.0 - tpl) * (1.0 - comp)
+
+        if mode == "block" and len(lowered) <= 64 and kw_component >= 0.35:
+            tpl = max(tpl, 0.9)
+
+        return float(max(0.0, min(1.0, tpl)))
+
+    @staticmethod
+    def _has_any_token(text: str, tokens: list[str]) -> bool:
+        lowered = (text or "").lower()
+        return any(t and t.lower() in lowered for t in tokens)
+
+    @staticmethod
+    def _query_hit_count(chunk: str, *, query_tokens: list[str]) -> int:
+        lowered = (chunk or "").lower()
+        return sum(1 for t in set(query_tokens) if t and t.lower() in lowered)
+
+    @staticmethod
+    def _chunk_stats(chunk: str) -> tuple[int, float, int, float, float]:
+        tokens = TextUtils.tokenize(chunk)
+        token_count = len(tokens)
+        unique_ratio = len(set(tokens)) / token_count if tokens else 0.0
+        digits = sum(ch.isdigit() for ch in chunk)
+        digits_ratio = digits / max(1, len(chunk))
+        cjk_count = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]", chunk))
+        cjk_ratio = cjk_count / max(1, len(chunk))
+        return token_count, unique_ratio, digits, digits_ratio, cjk_ratio
+
+    def _hard_drop_chunk(
+        self,
+        chunk: str,
+        *,
+        context_config: SearchContextConfig,
+        query_has_cjk: bool,
+        title_patterns: list[re.Pattern[str]],
+    ) -> bool:
+        if not chunk:
+            return True
+
+        normalized = TextUtils.normalize_text(chunk)
+        if not normalized:
+            return True
+
+        if self._has_noise_word(chunk, context_config):
+            return True
+
+        _token_count, _unique_ratio, digits, digits_ratio, cjk_ratio = (
+            self._chunk_stats(chunk)
+        )
+        if digits >= 18 and digits_ratio > 0.2:
+            return True
+        if query_has_cjk and cjk_ratio > 0 and cjk_ratio < 0.06:
+            return True
+
+        tpl = self.template_score(
+            chunk,
             query_has_cjk=query_has_cjk,
             title_patterns=title_patterns,
-            mode=mode,
+            mode="chunk",
         )
+        return tpl >= float(self.config.select.template_hard_drop_threshold)
 
     def enrich_results(
         self,
@@ -387,7 +600,6 @@ class WebEnricher:
         query_tokens: list[str],
         intent_tokens: list[str],
         context_config: SearchContextConfig,
-        ranking_config: RankingConfig,
         preset: WebDepthPreset,
         chunk_target_chars: int | None = None,
         chunk_overlap_sentences: int | None = None,
@@ -473,23 +685,17 @@ class WebEnricher:
                     intent_tokens=intent_tokens,
                     domain=item.domain,
                     context_config=context_config,
-                    ranking_config=ranking_config,
                 )
                 if not scored:
                     return (item, [], [], "no matching chunks")
 
-                # Normalize per-page chunk scores to [0,1] for output (ordering preserved).
-                raw_scores = [float(s) for s, _ in scored]
-                norm_scores = self.scorer.normalize_chunk_scores(raw_scores)
-                scored_norm = [
-                    (float(norm_scores[i]), scored[i][1]) for i in range(len(scored))
-                ]
-
-                scored_norm.sort(key=lambda t: t[0], reverse=True)
+                scored.sort(key=lambda t: t[0], reverse=True)
                 top: list[tuple[float, str]] = []
-                dedupe_th = float(self.config.scoring.dedupe_threshold)
-                for score, chunk in scored_norm:
-                    if is_duplicate_text(chunk, [c for _, c in top], threshold=dedupe_th):
+                dedupe_th = float(self.config.select.dedupe_threshold)
+                for score, chunk in scored:
+                    if is_duplicate_text(
+                        chunk, [c for _, c in top], threshold=dedupe_th
+                    ):
                         continue
                     top.append((score, chunk))
                     if len(top) >= top_k:

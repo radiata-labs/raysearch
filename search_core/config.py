@@ -73,58 +73,17 @@ class SearxngConfig(ConfigBaseModel):
         return headers
 
 
-class RankingConfig(ConfigBaseModel):
-    """Ranking configuration."""
+class HeuristicScoringConfig(ConfigBaseModel):
+    """Generic heuristic scoring weights shared by any input text strings."""
 
-    strategy: Literal["heuristic", "bm25", "hybrid"] = "heuristic"
-    bm25_weight: float = 0.7
-    heuristic_weight: float = 0.3
-    # Optional generalized provider weights. If provided, it overrides `strategy`.
-    # Example: {"bm25": 0.5, "heuristic": 0.2, "vector": 0.3}
-    providers: dict[str, float] | None = None
-    min_relevance_score: int = 10
-    min_intent_score: int = 14
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    def normalized_weights(self) -> tuple[float, float]:
-        """Normalize weights to sum to 1."""
-
-        total = self.bm25_weight + self.heuristic_weight
-        if total <= 0:
-            return (0.5, 0.5)
-        return (self.bm25_weight / total, self.heuristic_weight / total)
-
-    def weights_map(self) -> dict[str, float]:
-        """Return normalized provider weights.
-
-        Backward-compatible behavior:
-        - If `providers` is set: use it (normalized; non-positive ignored).
-        - Else: derive from `strategy` and legacy bm25/heuristic weights.
-        """
-
-        if self.providers:
-            raw = {k: float(v) for k, v in self.providers.items() if float(v) > 0}
-            total = sum(raw.values())
-            if total > 0:
-                return {k: float(v) / total for k, v in raw.items()}
-
-        strat = (self.strategy or "heuristic").lower()
-        if strat not in {"heuristic", "bm25", "hybrid"}:
-            strat = "heuristic"
-
-        if strat == "heuristic":
-            return {"heuristic": 1.0}
-        if strat == "bm25":
-            return {"bm25": 1.0}
-
-        bm25_w, heur_w = self.normalized_weights()
-        out: dict[str, float] = {}
-        if bm25_w > 0:
-            out["bm25"] = float(bm25_w)
-        if heur_w > 0:
-            out["heuristic"] = float(heur_w)
-        if not out:
-            return {"heuristic": 1.0}
-        return out
+    unique_hit_weight: float = 6.0
+    count_weight: float = 1.5
+    intent_hit_weight: float = 5.0
+    phrase_bonus: float = 8.0
+    min_token_len: int = 2
+    max_count_per_token: int = 5
 
 
 class AutoMatchConfig(ConfigBaseModel):
@@ -147,7 +106,6 @@ class SearchContextConfig(ConfigBaseModel):
     domain_bonus: dict[str, int] = Field(default_factory=dict)
     domain_groups: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     title_tail_patterns: tuple[str, ...] = Field(default_factory=tuple)
-    ranking: RankingConfig = Field(default_factory=RankingConfig)
 
 
 class WebDepthPreset(ConfigBaseModel):
@@ -175,11 +133,10 @@ class WebChunkingConfig(ConfigBaseModel):
     max_chunks: int = 80
 
 
-class WebScoringConfig(ConfigBaseModel):
+class WebChunkSelectConfig(ConfigBaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     min_chunk_score: float = 0.0
-    phrase_bonus: float = 8.0
     early_bonus: float = 1.15
     intent_missing_penalty: float = 2.0
 
@@ -199,7 +156,7 @@ class WebEnrichmentConfig(ConfigBaseModel):
     enabled: bool = True
     fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
     chunking: WebChunkingConfig = Field(default_factory=WebChunkingConfig)
-    scoring: WebScoringConfig = Field(default_factory=WebScoringConfig)
+    select: WebChunkSelectConfig = Field(default_factory=WebChunkSelectConfig)
     depth_presets: dict[Literal["low", "medium", "high"], WebDepthPreset] = Field(
         default_factory=lambda: {
             "low": WebDepthPreset(
@@ -225,6 +182,21 @@ class ScoreNormalizationConfig(ConfigBaseModel):
     z_clip: float = 8.0
 
 
+class ScoringConfig(ConfigBaseModel):
+    """Global scoring config: provider weights + heuristic + normalization."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    # Provider weights. Keys outside {"heuristic","bm25"} are ignored by ScoringEngine.
+    providers: dict[Literal["heuristic", "bm25"], float] = Field(
+        default_factory=lambda: {"heuristic": 1.0}
+    )
+    heuristic: HeuristicScoringConfig = Field(default_factory=HeuristicScoringConfig)
+    normalization: ScoreNormalizationConfig = Field(
+        default_factory=ScoreNormalizationConfig
+    )  # type: ignore[name-defined]
+
+
 class SearchConfig(ConfigBaseModel):
     """Config file model (single source of truth)."""
 
@@ -232,9 +204,7 @@ class SearchConfig(ConfigBaseModel):
     default_profile: str = "general"
     profiles: dict[str, SearchContextConfig] = Field(default_factory=dict)
     web_enrichment: WebEnrichmentConfig = Field(default_factory=WebEnrichmentConfig)
-    score_normalization: ScoreNormalizationConfig = Field(
-        default_factory=ScoreNormalizationConfig
-    )
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
 
     def get_profile(self, name: str) -> SearchContextConfig | None:
         return self.profiles.get(name)
@@ -298,13 +268,14 @@ __all__ = [
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_NOISE_EXTENSIONS",
     "SearxngConfig",
-    "RankingConfig",
+    "HeuristicScoringConfig",
+    "ScoringConfig",
     "AutoMatchConfig",
     "SearchContextConfig",
     "WebDepthPreset",
     "WebFetchConfig",
     "WebChunkingConfig",
-    "WebScoringConfig",
+    "WebChunkSelectConfig",
     "WebEnrichmentConfig",
     "ScoreNormalizationConfig",
     "SearchConfig",

@@ -4,9 +4,14 @@ searxng:
 
 default_profile: general
 
-# Output score normalization (per-candidate-set, not cross-query comparable).
-score_normalization:
-  min_items_for_sigmoid: 1
+# Global scoring (single source of truth).
+scoring:
+  providers:
+    bm25: 0.7
+    heuristic: 0.3
+  normalization:
+    # Per-candidate-set, not cross-query comparable.
+    min_items_for_sigmoid: 1
 
 profiles:
   general: {}
@@ -78,8 +83,3 @@ profiles:
 
     title_tail_patterns:
       - "(?:-?\\s*)?(萌娘百科.*|万物皆可萌.*)$"
-
-    ranking:
-      strategy: hybrid
-      min_relevance_score: 10
-      min_intent_score: 14
