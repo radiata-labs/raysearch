@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 try:
     from rank_bm25 import BM25Okapi
@@ -47,6 +47,41 @@ class ScoringEngine:
         if not texts:
             return []
 
+        heuristic_raw = self.get_heuristic_scores(
+            texts,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+
+        weights = self.normalize_provider_weights()
+        heur_w = float(weights.get("heuristic", 0.0))
+        bm25_w = float(weights.get("bm25", 0.0))
+
+        blended = [float(s) * heur_w for s in heuristic_raw]
+        if bm25_w > 0:
+            bm25_raw = self.get_bm25_scores(texts, query=query)
+            scaled = self.rank_scales(bm25_raw)
+            max_heur = max(heuristic_raw) if heuristic_raw else 0.0
+            anchor = float(max_heur) if float(max_heur) > 0 else 1.0
+            for i in range(len(blended)):
+                blended[i] += float(scaled[i]) * bm25_w * anchor
+
+        norm = self.normalize_scores(blended)
+        # If the distribution is flat but still has a positive signal, return a
+        # neutral non-zero baseline so downstream penalties can still apply.
+        if norm and max(norm) <= 0.0 and max(blended) > 0.0:
+            norm = [0.5 for _ in norm]
+        return [(float(norm[i]), texts[i]) for i in range(len(texts))]
+
+    def get_heuristic_scores(
+        self,
+        texts: list[str],
+        *,
+        query: str,
+        query_tokens: list[str] | None = None,
+        intent_tokens: list[str] | None = None,
+    ) -> list[float]:
         hcfg = self.config.heuristic
         q_tokens = (
             query_tokens if query_tokens is not None else TextUtils.tokenize(query)
@@ -55,7 +90,6 @@ class ScoringEngine:
         i_tokens = intent_tokens or []
 
         normalized_query = TextUtils.normalize_text(query)
-
         heuristic_raw: list[float] = []
         for text in texts:
             normalized_text = TextUtils.normalize_text(text)
@@ -88,28 +122,9 @@ class ScoringEngine:
                 score += float(hcfg.phrase_bonus)
 
             heuristic_raw.append(float(score))
+        return heuristic_raw
 
-        weights = self.normalize_provider_weights()
-        heur_w = float(weights.get("heuristic", 0.0))
-        bm25_w = float(weights.get("bm25", 0.0))
-
-        blended = [float(s) * heur_w for s in heuristic_raw]
-        if bm25_w > 0:
-            bm25_raw = self.bm25_scores(texts, query=query)
-            scaled = self.rank_scale(bm25_raw)
-            max_heur = max(heuristic_raw) if heuristic_raw else 0.0
-            anchor = float(max_heur) if float(max_heur) > 0 else 1.0
-            for i in range(len(blended)):
-                blended[i] += float(scaled[i]) * bm25_w * anchor
-
-        norm = self.normalize_scores(blended)
-        # If the distribution is flat but still has a positive signal, return a
-        # neutral non-zero baseline so downstream penalties can still apply.
-        if norm and max(norm) <= 0.0 and max(blended) > 0.0:
-            norm = [0.5 for _ in norm]
-        return [(float(norm[i]), texts[i]) for i in range(len(texts))]
-
-    def bm25_scores(self, docs: list[str], *, query: str) -> list[float]:
+    def get_bm25_scores(self, docs: list[str], *, query: str, **_: Any) -> list[float]:
         """Compute BM25 scores for docs against query.
 
         Returns a list aligned with `docs`. If BM25 isn't available, returns zeros.
@@ -131,7 +146,7 @@ class ScoringEngine:
         scores = bm25.get_scores(query_tokens)
         return [float(s) for s in scores]
 
-    def rank_scale(self, scores: list[float]) -> list[float]:
+    def rank_scales(self, scores: list[float]) -> list[float]:
         """Rank-based scaling to [0,1] (top=1, bottom=0), stable with ties.
 
         Intentionally robust for near-flat distributions (returns all zeros).
@@ -183,7 +198,7 @@ class ScoringEngine:
 
         method = (self.config.normalization.method or "robust_sigmoid").lower()
         if method == "rank" or n < int(self.config.normalization.min_items_for_sigmoid):
-            return self.rank_scale(cleaned)
+            return self.rank_scales(cleaned)
 
         # Robust sigmoid: z = (x - median) / (1.4826*MAD + eps), then sigmoid(z / T).
         m = statistics.median(cleaned)
