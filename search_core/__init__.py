@@ -5,9 +5,15 @@ from .config import (
     SearchConfig,
     SearchContextConfig,
     SearxngConfig,
+    WebChunkingConfig,
+    WebDepthPreset,
+    WebEnrichmentConfig,
+    WebFetchConfig,
+    WebScoringConfig,
 )
 from .models import SearchContext, SearchResult
 from .pipeline import SearchPipeline
+from .web import WebEnricher
 
 __all__ = [
     "SearchConfig",
@@ -15,8 +21,14 @@ __all__ = [
     "SearxngConfig",
     "RankingConfig",
     "AutoMatchConfig",
+    "WebDepthPreset",
+    "WebFetchConfig",
+    "WebChunkingConfig",
+    "WebScoringConfig",
+    "WebEnrichmentConfig",
     "SearxngClient",
     "SearchPipeline",
+    "WebEnricher",
     "SearchResult",
     "SearchContext",
 ]

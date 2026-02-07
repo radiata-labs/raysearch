@@ -4,13 +4,8 @@ from search_core.config import SearchConfig, SearchContextConfig
 from search_core.pipeline import SearchPipeline
 
 
-def _make_html_with_tokens(*, length: int = 650, positions: tuple[int, ...] = (0, 200, 400)) -> str:
-    buf = ["x"] * length
-    for pos in positions:
-        if pos + 5 <= length:
-            buf[pos : pos + 5] = list("hello")
-    text = "".join(buf)
-    return f"<html><body>{text}</body></html>"
+def _make_html_sentences(sentences: list[str]) -> str:
+    return "<html><body>" + "".join(f"{s}。" for s in sentences) + "</body></html>"
 
 
 def test_depth_simple_does_not_crawl():
@@ -20,7 +15,7 @@ def test_depth_simple_does_not_crawl():
                 "strategy": "heuristic",
                 "min_relevance_score": 1,
                 "min_intent_score": 1,
-            },
+            }
         }
     )
     cfg = SearchConfig(default_profile="general", profiles={"general": profile_cfg})
@@ -31,27 +26,33 @@ def test_depth_simple_does_not_crawl():
     pipeline = SearchPipeline(cfg, page_fetcher=fetcher)
     response = {
         "results": [
-            {"url": "https://a.example/page", "title": "hello", "snippet": "hello", "engine": "x"},
+            {
+                "url": "https://a.example/page",
+                "title": "hello",
+                "snippet": "hello",
+                "engine": "x",
+            }
         ]
     }
-    ctx = pipeline.build_context(response, "hello", depth="simple")
+
+    ctx = pipeline.build_context(response, "hello", "simple")
     assert ctx.results[0].page_chunks == []
 
 
-def test_depth_low_enriches_top_results_with_overlapping_chunks():
+def test_depth_low_enriches_top_results_with_sentence_overlap():
     profile_cfg = SearchContextConfig.model_validate(
         {
             "ranking": {
                 "strategy": "heuristic",
                 "min_relevance_score": 1,
                 "min_intent_score": 1,
-            },
+            }
         }
     )
     cfg = SearchConfig(default_profile="general", profiles={"general": profile_cfg})
 
-    html_a = _make_html_with_tokens()
-    html_b = _make_html_with_tokens(positions=(0, 300))
+    html_a = _make_html_sentences(["S1 hello", "S2 hello", "S3 hello"])
+    html_b = _make_html_sentences(["B1 hello", "B2 hello", "B3 hello"])
 
     def fetcher(url: str) -> str:
         return html_a if "a.example" in url else html_b
@@ -59,18 +60,29 @@ def test_depth_low_enriches_top_results_with_overlapping_chunks():
     pipeline = SearchPipeline(cfg, page_fetcher=fetcher)
     response = {
         "results": [
-            {"url": "https://a.example/page", "title": "hello title", "snippet": "hello", "engine": "x"},
-            {"url": "https://b.example/page", "title": "other", "snippet": "hello", "engine": "x"},
+            {
+                "url": "https://a.example/page",
+                "title": "hello title",
+                "snippet": "hello",
+                "engine": "x",
+            },
+            {
+                "url": "https://b.example/page",
+                "title": "other",
+                "snippet": "hello",
+                "engine": "x",
+            },
         ]
     }
 
     ctx = pipeline.build_context(
         response,
         "hello",
-        depth="low",
+        "low",
         max_results=2,
-        chunk_chars=240,
-        chunk_overlap=40,
+        chunk_target_chars=18,  # force chunking into 2-sentence chunks
+        chunk_overlap_sentences=1,
+        min_chunk_chars=1,
     )
 
     assert ctx.json_data["depth"] == "low"
@@ -81,5 +93,7 @@ def test_depth_low_enriches_top_results_with_overlapping_chunks():
     assert ctx.results[1].page_chunks == []
 
     a0, a1 = ctx.results[0].page_chunks[:2]
-    assert a0[-40:] == a1[:40]
+    # overlap_sentences=1 => chunk2 starts with chunk1's last sentence
+    last_sentence = a0.split("。")[-2].strip() + "。"
+    assert a1.strip().startswith(last_sentence)
 

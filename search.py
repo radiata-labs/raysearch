@@ -14,11 +14,11 @@ def main(query: str, max_results: int = 1) -> dict[str, Any]:
     pipeline = SearchPipeline(config_file)
     result = pipeline.search_markdown(
         query,
+        "high",  # depth: simple|low|medium|high
         max_results=max_results,
         fuzzy_threshold=0.3,
-        chunk_chars=200,
-        chunk_overlap=10,
-        depth="high",  # simple|low|medium|high
+        chunk_target_chars=200,
+        chunk_overlap_sentences=1,
     )
     return {"search_result": result}
 

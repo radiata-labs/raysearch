@@ -3,9 +3,33 @@
   user_agent: searxng-bot/0.1
   timeout: 20.0
   allow_redirects: false
-  search_api_key: "sk-63133540a039c3443e874d71928b0d0d777a39f0"
+  search_api_key: "YOUR_API_KEY"
   extra_headers: {}
 default_profile: general
+web_enrichment:
+  enabled: true
+  fetch:
+    timeout: 10.0
+    max_bytes: 2000000
+    max_extracted_chars: 50000
+    max_workers: 6
+    allow_content_types: ["text/html", "text/plain"]
+  chunking:
+    target_chars: 1200
+    overlap_sentences: 1
+    min_chunk_chars: 200
+    max_sentence_chars: 600
+  scoring:
+    strategy: hybrid
+    bm25_weight: 0.7
+    heuristic_weight: 0.3
+    min_chunk_score: 0.0
+    phrase_bonus: 8.0
+    early_bonus: 1.15
+  depth_presets:
+    low: { pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2 }
+    medium: { pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3 }
+    high: { pages_ratio: 0.75, min_pages: 3, max_pages: 10, top_chunks_per_page: 5 }
 profiles:
   general:
     auto_match:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -115,12 +115,64 @@ class SearchContextConfig(ConfigBaseModel):
     ranking: RankingConfig = Field(default_factory=RankingConfig)
 
 
+class WebDepthPreset(ConfigBaseModel):
+    pages_ratio: float = 0.25
+    min_pages: int = 1
+    max_pages: int = 3
+    top_chunks_per_page: int = 2
+
+
+class WebFetchConfig(ConfigBaseModel):
+    timeout: float = 10.0
+    max_bytes: int = 2_000_000
+    max_extracted_chars: int = 50_000
+    max_workers: int = 6
+    allow_content_types: tuple[str, ...] = ("text/html", "text/plain")
+
+
+class WebChunkingConfig(ConfigBaseModel):
+    target_chars: int = 1200
+    overlap_sentences: int = 1
+    min_chunk_chars: int = 200
+    max_sentence_chars: int = 600
+
+
+class WebScoringConfig(ConfigBaseModel):
+    strategy: Literal["heuristic", "bm25", "hybrid"] = "hybrid"
+    bm25_weight: float = 0.7
+    heuristic_weight: float = 0.3
+    min_chunk_score: float = 0.0
+    phrase_bonus: float = 8.0
+    early_bonus: float = 1.15
+
+    def normalized_weights(self) -> tuple[float, float]:
+        total = self.bm25_weight + self.heuristic_weight
+        if total <= 0:
+            return (0.5, 0.5)
+        return (self.bm25_weight / total, self.heuristic_weight / total)
+
+
+class WebEnrichmentConfig(ConfigBaseModel):
+    enabled: bool = True
+    fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
+    chunking: WebChunkingConfig = Field(default_factory=WebChunkingConfig)
+    scoring: WebScoringConfig = Field(default_factory=WebScoringConfig)
+    depth_presets: dict[Literal["low", "medium", "high"], WebDepthPreset] = Field(
+        default_factory=lambda: {
+            "low": WebDepthPreset(pages_ratio=0.25, min_pages=1, max_pages=3, top_chunks_per_page=2),
+            "medium": WebDepthPreset(pages_ratio=0.50, min_pages=2, max_pages=6, top_chunks_per_page=3),
+            "high": WebDepthPreset(pages_ratio=0.75, min_pages=3, max_pages=10, top_chunks_per_page=5),
+        }
+    )
+
+
 class SearchConfig(ConfigBaseModel):
     """Config file model (single source of truth)."""
 
     searxng: SearxngConfig = Field(default_factory=SearxngConfig)
     default_profile: str = "general"
     profiles: dict[str, SearchContextConfig] = Field(default_factory=dict)
+    web_enrichment: WebEnrichmentConfig = Field(default_factory=WebEnrichmentConfig)
 
     def get_profile(self, name: str) -> SearchContextConfig | None:
         return self.profiles.get(name)
@@ -188,5 +240,10 @@ __all__ = [
     "RankingConfig",
     "AutoMatchConfig",
     "SearchContextConfig",
+    "WebDepthPreset",
+    "WebFetchConfig",
+    "WebChunkingConfig",
+    "WebScoringConfig",
+    "WebEnrichmentConfig",
     "SearchConfig",
 ]

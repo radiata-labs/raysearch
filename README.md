@@ -28,10 +28,10 @@ engine = SearchPipeline(cfg)
 
 markdown = engine.search_markdown(
     "example query",
+    "simple",  # depth: simple|low|medium|high
     profile=None,  # if None: uses SEARCH_PROFILE env var or auto-match rules
     max_results=16,
     max_snippet_chars=1000,
-    depth="simple",  # simple|low|medium|high
     show_source_domain=True,
     show_source_url=False,
     show_source_engine=False,
@@ -44,7 +44,10 @@ markdown = engine.search_markdown(
 - `simple`: only uses SearxNG snippets (default)
 - `low|medium|high`: crawls the top-scoring pages, extracts full page text, chunks it with overlap, scores chunks, then appends best chunks into each result (`page_chunks`)
 
-Chunk parameters (runtime):
-- `chunk_chars`: chunk size in characters
-- `chunk_overlap`: overlap in characters (`chunk_overlap < chunk_chars`)
+Depth presets and crawler/chunk/scoring defaults are configurable under top-level `web_enrichment` in `search_config.yaml`.
+
+Chunk parameters (runtime, overrides config when provided):
+- `chunk_target_chars`: approximate chunk size in characters (sentence boundaries preserved)
+- `chunk_overlap_sentences`: overlap in number of sentences
+- `min_chunk_chars`: minimum chunk size to keep
 - `max_chunk_chars`: how many characters to show per chunk in markdown

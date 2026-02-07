@@ -27,6 +27,7 @@ dependencies = [
     "numpy",
     "PySide6",
     "rank-bm25",
+    "jieba",
     "pyyaml",
 ]
 
