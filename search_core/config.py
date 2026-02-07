@@ -79,6 +79,9 @@ class RankingConfig(ConfigBaseModel):
     strategy: Literal["heuristic", "bm25", "hybrid"] = "heuristic"
     bm25_weight: float = 0.7
     heuristic_weight: float = 0.3
+    # Optional generalized provider weights. If provided, it overrides `strategy`.
+    # Example: {"bm25": 0.5, "heuristic": 0.2, "vector": 0.3}
+    providers: dict[str, float] | None = None
     min_relevance_score: int = 10
     min_intent_score: int = 14
 
@@ -89,6 +92,39 @@ class RankingConfig(ConfigBaseModel):
         if total <= 0:
             return (0.5, 0.5)
         return (self.bm25_weight / total, self.heuristic_weight / total)
+
+    def weights_map(self) -> dict[str, float]:
+        """Return normalized provider weights.
+
+        Backward-compatible behavior:
+        - If `providers` is set: use it (normalized; non-positive ignored).
+        - Else: derive from `strategy` and legacy bm25/heuristic weights.
+        """
+
+        if self.providers:
+            raw = {k: float(v) for k, v in self.providers.items() if float(v) > 0}
+            total = sum(raw.values())
+            if total > 0:
+                return {k: float(v) / total for k, v in raw.items()}
+
+        strat = (self.strategy or "heuristic").lower()
+        if strat not in {"heuristic", "bm25", "hybrid"}:
+            strat = "heuristic"
+
+        if strat == "heuristic":
+            return {"heuristic": 1.0}
+        if strat == "bm25":
+            return {"bm25": 1.0}
+
+        bm25_w, heur_w = self.normalized_weights()
+        out: dict[str, float] = {}
+        if bm25_w > 0:
+            out["bm25"] = float(bm25_w)
+        if heur_w > 0:
+            out["heuristic"] = float(heur_w)
+        if not out:
+            return {"heuristic": 1.0}
+        return out
 
 
 class AutoMatchConfig(ConfigBaseModel):

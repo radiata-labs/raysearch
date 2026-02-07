@@ -3,15 +3,22 @@
 import logging
 import os
 import re
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 from .client import SearxngClient
 from .config import SearchConfig, SearchContextConfig
 from .models import SearchContext, SearchResult
-from .scoring import BM25_AVAILABLE, blend_scores, bm25_scores, normalize_scores
-from .utils import PUNCTUATION_RE, TextUtils
+from .scorer import ScoringEngine
+from .tools import (
+    canonical_site,
+    compile_patterns,
+    domain_bonus,
+    fuzzy_normalize,
+    hybrid_similarity,
+    strip_title_tails,
+)
+from .utils import TextUtils
 from .web import WebEnricher
 
 if TYPE_CHECKING:
@@ -34,10 +41,14 @@ class SearchPipeline:
         *,
         client: SearxngClient | None = None,
         page_fetcher: Callable[[str], str] | None = None,
+        scorer: ScoringEngine | None = None,
         web_enricher: WebEnricher | None = None,
     ) -> None:
         self.config = config
         self.client = client or SearxngClient(config)
+        self.scorer = scorer or ScoringEngine(
+            score_norm_cfg=self.config.score_normalization
+        )
         self.web_enricher = web_enricher or WebEnricher(
             self.config.web_enrichment,
             user_agent=self.config.searxng.user_agent,
@@ -369,12 +380,11 @@ class SearchPipeline:
         normalized = [self._normalize_result(result) for result in raw_results]
 
         noise_extensions = {ext.lower().lstrip(".") for ext in config.noise_extensions}
-        title_tail_patterns = self._compile_title_patterns(config.title_tail_patterns)
+        title_tail_patterns = compile_patterns(config.title_tail_patterns)
         domain_groups = config.domain_groups or {}
 
         query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
         intent_tokens = self._extract_intent_tokens(query, config)
-        ranking_strategy = config.ranking.strategy
 
         normalized = [
             result
@@ -401,13 +411,14 @@ class SearchPipeline:
             domain_groups=domain_groups,
         )
 
-        return self._rank_results(
+        return self.scorer.rank_results(
             normalized,
             query=query,
-            config=config,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
-            ranking_strategy=ranking_strategy,
+            context_config=config,
+            ranking_config=config.ranking,
+            score_norm_cfg=self.config.score_normalization,
         )
 
     def _render_markdown(
@@ -577,7 +588,7 @@ class SearchPipeline:
                 score += 4
                 intent_hits += 1
 
-        score += self._domain_bonus(domain, config)
+        score += domain_bonus(domain, config.domain_bonus)
 
         if core_hits == 0:
             return False
@@ -590,81 +601,6 @@ class SearchPipeline:
             and intent_hits == 0
             and score < config.ranking.min_intent_score
         )
-
-    def _rank_results(
-        self,
-        results: list[SearchResult],
-        *,
-        query: str,
-        config: SearchContextConfig,
-        query_tokens: list[str],
-        intent_tokens: list[str],
-        ranking_strategy: Literal["heuristic", "bm25", "hybrid"],
-    ) -> list[SearchResult]:
-        heuristic_scores = [
-            self._heuristic_score(result, config, query_tokens, intent_tokens)
-            for result in results
-        ]
-
-        bm25: list[float] | None = None
-        if ranking_strategy in {"bm25", "hybrid"} and BM25_AVAILABLE:
-            docs = [f"{r.title} {r.snippet}" for r in results]
-            bm25 = bm25_scores(docs, query=query)
-
-        raw_scores = blend_scores(
-            strategy=ranking_strategy,
-            heuristic=heuristic_scores,
-            bm25=bm25,
-            weights=config.ranking.normalized_weights(),
-        )
-
-        # Sort by raw score, then overwrite scores with normalized [0,1] values for output.
-        ranked = [
-            r
-            for _, r in sorted(
-                zip(raw_scores, results, strict=False), key=lambda t: t[0], reverse=True
-            )
-        ]
-        ranked_raw = sorted(raw_scores, reverse=True)
-        norm = normalize_scores(ranked_raw, self.config.score_normalization)
-        for i, result in enumerate(ranked):
-            result.score = float(norm[i])
-        return ranked
-
-    def _heuristic_score(
-        self,
-        result: SearchResult,
-        config: SearchContextConfig,
-        query_tokens: list[str],
-        intent_tokens: list[str],
-    ) -> float:
-        title = result.title.lower()
-        snippet = result.snippet.lower()
-        domain = result.domain.lower()
-
-        score = 0
-        hits: list[str] = []
-
-        for token in query_tokens:
-            if token in title:
-                score += 12
-                hits.append(token)
-            elif token in snippet:
-                score += 6
-                hits.append(token)
-
-        blob = f"{title} {snippet}"
-        for token in intent_tokens:
-            if token in blob:
-                score += 5
-
-        score += self._domain_bonus(domain, config) * 2
-
-        if len(result.snippet.strip()) < 60:
-            score -= 2
-
-        result.hit_keywords = TextUtils.unique_preserve_order(hits)
-        return float(score)
 
     @staticmethod
     def _dedupe_exact(results: list[SearchResult]) -> list[SearchResult]:
@@ -701,12 +637,12 @@ class SearchPipeline:
                 continue
 
             candidate_key = self._fuzzy_key(candidate, title_tail_patterns)
-            candidate_site = self._canonical_site(candidate.domain, domain_groups)
+            candidate_site = canonical_site(candidate.domain, dict(domain_groups))
 
             duplicate_index = -1
             for index, existing in enumerate(kept):
                 existing_key = self._fuzzy_key(existing, title_tail_patterns)
-                existing_site = self._canonical_site(existing.domain, domain_groups)
+                existing_site = canonical_site(existing.domain, dict(domain_groups))
 
                 threshold_value = (
                     threshold
@@ -715,8 +651,7 @@ class SearchPipeline:
                 )
 
                 if (
-                    self._hybrid_similarity(candidate_key, existing_key)
-                    >= threshold_value
+                    hybrid_similarity(candidate_key, existing_key) >= threshold_value
                 ):
                     duplicate_index = index
                     break
@@ -737,11 +672,9 @@ class SearchPipeline:
         title = result.title.strip()
         snippet = result.snippet.strip()
 
-        base = self._fuzzy_normalize(
-            self._strip_title_tails(title, title_tail_patterns)
-        )
+        base = fuzzy_normalize(strip_title_tails(title, title_tail_patterns))
         if len(base) < 8 and snippet:
-            base = f"{base} {self._fuzzy_normalize(snippet[:240])}".strip()
+            base = f"{base} {fuzzy_normalize(snippet[:240])}".strip()
         return base
 
     def _quality_score(
@@ -749,81 +682,16 @@ class SearchPipeline:
         result: SearchResult,
         config: SearchContextConfig,
     ) -> int:
-        bonus = self._domain_bonus(result.domain, config)
+        bonus = domain_bonus(result.domain, config.domain_bonus)
         return (
             bonus * 1000 + min(len(result.snippet), 1200) + min(len(result.title), 220)
         )
-
-    @staticmethod
-    def _canonical_site(
-        domain: str, domain_groups: Mapping[str, tuple[str, ...]]
-    ) -> str:
-        normalized = (domain or "").lower()
-        if not normalized:
-            return "other"
-
-        if domain_groups:
-            for group, needles in domain_groups.items():
-                if any(needle in normalized for needle in needles):
-                    return group
-            return normalized
-
-        return normalized
-
-    def _fuzzy_normalize(self, text: str) -> str:
-        lowered = (text or "").lower()
-        lowered = PUNCTUATION_RE.sub(" ", lowered)
-        return re.sub(r"\s+", " ", lowered).strip()
-
-    @staticmethod
-    def _hybrid_similarity(a: str, b: str) -> float:
-        if not a or not b:
-            return 0.0
-        if a == b:
-            return 1.0
-        seq = SequenceMatcher(None, a, b).ratio()
-        jac = TextUtils.jaccard(
-            TextUtils.char_ngrams(a, 2), TextUtils.char_ngrams(b, 2)
-        )
-        return max(seq * 0.95, jac)
 
     @staticmethod
     def _extract_intent_tokens(query: str, config: SearchContextConfig) -> list[str]:
         lowered = query.lower()
         return [term for term in config.intent_terms if term.lower() in lowered]
 
-    @staticmethod
-    def _domain_bonus(domain: str, config: SearchContextConfig | None) -> int:
-        if not config:
-            return 0
-        normalized = (domain or "").lower()
-        if not normalized:
-            return 0
-        if normalized in config.domain_bonus:
-            return config.domain_bonus[normalized]
-        for key, value in config.domain_bonus.items():
-            if normalized.endswith(key):
-                return value
-        return 0
-
-    @staticmethod
-    def _compile_title_patterns(patterns: Iterable[str]) -> list[re.Pattern[str]]:
-        compiled: list[re.Pattern[str]] = []
-        for pattern in patterns:
-            if not pattern:
-                continue
-            try:
-                compiled.append(re.compile(pattern, re.IGNORECASE))
-            except re.error:
-                logger.warning("Invalid title_tail_patterns regex: %s", pattern)
-        return compiled
-
-    @staticmethod
-    def _strip_title_tails(title: str, patterns: list[re.Pattern[str]]) -> str:
-        cleaned = title
-        for pattern in patterns:
-            cleaned = pattern.sub("", cleaned).strip()
-        return cleaned
 
     @staticmethod
     def _is_noise_extension(url: str, noise_extensions: set[str]) -> bool:

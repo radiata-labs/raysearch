@@ -13,6 +13,7 @@ from .config import (
 )
 from .models import PageChunk, PageEnrichment, SearchContext, SearchResult
 from .pipeline import SearchPipeline
+from .scorer import ScoringEngine
 from .web import WebEnricher
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "WebEnrichmentConfig",
     "SearxngClient",
     "SearchPipeline",
+    "ScoringEngine",
     "WebEnricher",
     "SearchResult",
     "SearchContext",
