@@ -268,30 +268,50 @@ class SearchPipeline:
         results_data = (response or {}).get("results", [])
         raw_results = list(results_data if isinstance(results_data, list) else [])
 
-        processed = self._run_processing(query, config, raw_results)[:max_results]
-        if depth != "simple" and processed and self.config.web_enrichment.enabled:
+        processed = self._run_processing(query, config, raw_results)
+        if not processed:
+            return []
+
+        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
+        intent_tokens = extract_intent_tokens(query, config)
+
+        if depth != "simple" and self.config.web_enrichment.enabled and query_tokens:
             preset = self.config.web_enrichment.depth_presets.get(depth)
             if preset is None:
                 logger.warning(
                     "No depth preset configured for '%s'; skipping web enrichment.",
                     depth,
                 )
-                return processed
+            else:
+                self.web_enricher.enrich_results(
+                    processed,
+                    query=query,
+                    query_tokens=query_tokens,
+                    intent_tokens=intent_tokens,
+                    context_config=config,
+                    preset=preset,
+                    chunk_target_chars=chunk_target_chars,
+                    chunk_overlap_sentences=chunk_overlap_sentences,
+                    min_chunk_chars=min_chunk_chars,
+                )
 
-            query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
-            intent_tokens = extract_intent_tokens(query, config)
-            self.web_enricher.enrich_results(
-                processed,
-                query=query,
-                query_tokens=query_tokens,
-                intent_tokens=intent_tokens,
-                context_config=config,
-                preset=preset,
-                chunk_target_chars=chunk_target_chars,
-                chunk_overlap_sentences=chunk_overlap_sentences,
-                min_chunk_chars=min_chunk_chars,
-            )
-        return processed
+                # If pages were fetched successfully for some results, let page quality
+                # influence the final ordering (page is weighted higher than snippet).
+                processed = self._rerank_with_page_scores(
+                    processed,
+                    query=query,
+                    query_tokens=query_tokens,
+                    intent_tokens=intent_tokens,
+                )
+
+        # Apply the global score floor only once at the end so page scores can
+        # "rescue" weaker snippet results.
+        min_score = float(self.config.score_filter.min_score)
+        processed = [
+            r for r in processed if float(r.score) > 0.0 and float(r.score) >= min_score
+        ]
+
+        return processed[:max_results]
 
     def _select_profile_name(self, query: str, explicit_profile: str | None) -> str:
         """Select a profile based on explicit input or keyword rules.
@@ -406,17 +426,69 @@ class SearchPipeline:
             domain_groups=domain_groups,
         )
 
-        ranked = self._rank_results(
+        return self._rank_results(
             normalized,
             query=query,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
         )
-        min_score = float(self.config.score_filter.min_score)
-        # Always drop zero-score items; also enforce a configurable global floor.
-        return [
-            r for r in ranked if float(r.score) > 0.0 and float(r.score) >= min_score
-        ]
+
+    def _rerank_with_page_scores(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+    ) -> list[SearchResult]:
+        """Blend snippet score with page score and rerank.
+
+        Fixed weights (no config):
+        - snippet: 0.4
+        - page: 0.6
+        """
+        if not results:
+            return []
+
+        page_docs: list[str] = []
+        has_any_page = False
+        for r in results:
+            if r.page and r.page.chunks:
+                doc = TextUtils.clean_whitespace(
+                    " ".join(c.text for c in r.page.chunks)
+                )
+                page_docs.append(doc)
+                if doc:
+                    has_any_page = True
+            else:
+                page_docs.append("")
+
+        if not has_any_page:
+            return results
+
+        page_scored = self.scorer.score(
+            page_docs,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        page_scores = [float(s) for s, _ in page_scored]
+
+        combined_raw: list[float] = []
+        for i, r in enumerate(results):
+            snippet_s = float(r.score)
+            page_s = float(page_scores[i]) if i < len(page_scores) else 0.0
+            combined_raw.append(0.4 * snippet_s + 0.6 * page_s)
+
+        combined_norm = self.scorer.normalize_scores(combined_raw)
+        if combined_norm and max(combined_norm) <= 0.0 and max(combined_raw) > 0.0:
+            combined_norm = [0.5 for _ in combined_norm]
+
+        for i, r in enumerate(results):
+            if i < len(combined_norm):
+                r.score = float(combined_norm[i])
+
+        return sorted(results, key=lambda r: float(r.score), reverse=True)
 
     def _rank_results(
         self,
