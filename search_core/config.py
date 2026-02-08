@@ -1,3 +1,9 @@
+"""Configuration models for SerpSage.
+
+The configuration is loaded from JSON/YAML into Pydantic models. Most runtime
+behavior is controlled by :class:`SearchConfig`.
+"""
+
 from __future__ import annotations
 
 import json
@@ -109,6 +115,8 @@ class SearchContextConfig(ConfigBaseModel):
 
 
 class WebDepthPreset(ConfigBaseModel):
+    """Runtime preset for how many pages/chunks to crawl at a given depth."""
+
     pages_ratio: float = 0.25
     min_pages: int = 1
     max_pages: int = 3
@@ -116,6 +124,8 @@ class WebDepthPreset(ConfigBaseModel):
 
 
 class WebFetchConfig(ConfigBaseModel):
+    """HTTP fetching limits for page crawling."""
+
     timeout: float = 10.0
     max_bytes: int = 2_000_000
     max_extracted_chars: int = 50_000
@@ -128,6 +138,8 @@ class WebFetchConfig(ConfigBaseModel):
 
 
 class WebChunkingConfig(ConfigBaseModel):
+    """Chunking parameters for splitting page text into LLM-friendly chunks."""
+
     target_chars: int = 1200
     overlap_sentences: int = 1
     min_chunk_chars: int = 200
@@ -138,6 +150,8 @@ class WebChunkingConfig(ConfigBaseModel):
 
 
 class WebChunkSelectConfig(ConfigBaseModel):
+    """Selection/penalty parameters applied after chunk scoring."""
+
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     early_bonus: float = 1.15
@@ -146,6 +160,8 @@ class WebChunkSelectConfig(ConfigBaseModel):
 
 
 class WebEnrichmentConfig(ConfigBaseModel):
+    """Configuration for optional web page crawling/enrichment."""
+
     enabled: bool = True
     fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
     chunking: WebChunkingConfig = Field(default_factory=WebChunkingConfig)
@@ -209,12 +225,15 @@ class SearchConfig(ConfigBaseModel):
     score_filter: ScoreFilterConfig = Field(default_factory=ScoreFilterConfig)
 
     def get_profile(self, name: str) -> SearchContextConfig | None:
+        """Return the named profile config, if present."""
         return self.profiles.get(name)
 
     def has_profile(self, name: str) -> bool:
+        """Return True if the named profile exists in this config."""
         return name in self.profiles
 
     def resolve_profile_name(self, name: str | None) -> str:
+        """Resolve an optional profile name to a concrete one."""
         return name or self.default_profile
 
     def apply_env_overrides(

@@ -1,3 +1,5 @@
+"""Pydantic models used by SerpSage public APIs."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class PageChunk(BaseModel):
+    """A single extracted chunk from a crawled page."""
+
     model_config = ConfigDict(validate_assignment=True)
 
     text: str
@@ -13,6 +17,8 @@ class PageChunk(BaseModel):
 
 
 class PageEnrichment(BaseModel):
+    """Page-level enrichment attached to a search result."""
+
     model_config = ConfigDict(validate_assignment=True)
 
     chunks: list[PageChunk] = Field(default_factory=list)

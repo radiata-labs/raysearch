@@ -1,3 +1,10 @@
+"""Text scoring utilities.
+
+The scoring engine ranks plain-text documents (snippets/chunks) against a query.
+It supports a heuristic scorer by default and an optional BM25 backend when
+``rank-bm25`` is installed.
+"""
+
 from __future__ import annotations
 
 import math
@@ -19,6 +26,7 @@ if TYPE_CHECKING:
 
 
 def _safe_float(x: float) -> float:
+    """Coerce a value into a finite float, returning 0.0 on invalid inputs."""
     try:
         xf = float(x)
     except Exception:  # noqa: BLE001
@@ -44,6 +52,17 @@ class ScoringEngine:
         query_tokens: list[str] | None = None,
         intent_tokens: list[str] | None = None,
     ) -> list[tuple[float, str]]:
+        """Score texts against a query and normalize results into [0, 1].
+
+        Args:
+            texts: Documents to score.
+            query: User query string.
+            query_tokens: Optional pre-tokenized query.
+            intent_tokens: Optional intent tokens extracted from query.
+
+        Returns:
+            A list of (normalized_score, original_text) tuples.
+        """
         if not texts:
             return []
 
@@ -82,6 +101,7 @@ class ScoringEngine:
         query_tokens: list[str] | None = None,
         intent_tokens: list[str] | None = None,
     ) -> list[float]:
+        """Compute raw heuristic scores (unnormalized)."""
         hcfg = self.config.heuristic
         q_tokens = (
             query_tokens if query_tokens is not None else TextUtils.tokenize(query)
@@ -226,6 +246,7 @@ class ScoringEngine:
         return [min(1.0, max(0.0, x)) for x in out]
 
     def normalize_provider_weights(self) -> dict[str, float]:
+        """Normalize provider weights from config so they sum to 1.0."""
         raw = {
             k: float(v)
             for k, v in (self.config.providers or {}).items()

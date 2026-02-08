@@ -1,10 +1,12 @@
-# Google AI Overview API
 
-This repo provides a small search utility built on top of SearxNG:
+# SerpSage
 
-- **Config**: a single `SearchConfig` (Pydantic) loaded from `search_config.yaml` (JSON/YAML).
-- **Client**: `SearxngClient` only fetches raw JSON results.
-- **Pipeline**: `SearchPipeline` selects a profile (auto-match) and processes/ranks results, then renders markdown.
+SerpSage is a small SERP utility built on top of SearxNG. It fetches results,
+ranks/filters them, and optionally crawls top pages to enrich the context (AI-overview style).
+
+- **Config**: `SearchConfig` (Pydantic), loaded from `search_config.yaml` (JSON/YAML).
+- **Client**: `SearxngClient` (sync) / `AsyncSearxngClient` (async) fetch raw JSON results.
+- **Core**: `Searcher` / `AsyncSearcher` process, rank, and render output.
 
 ## Configuration
 
@@ -25,10 +27,10 @@ Score filtering:
 ## Python usage
 
 ```python
-from search_core import SearchConfig, SearchPipeline
+from search_core import SearchConfig, Searcher
 
 cfg = SearchConfig.load()
-engine = SearchPipeline(cfg)
+engine = Searcher(cfg)
 
 markdown = engine.search_markdown(
     "example query",
@@ -47,12 +49,12 @@ markdown = engine.search_markdown(
 ```python
 import anyio
 
-from search_core import AsyncSearchPipeline, SearchConfig
+from search_core import AsyncSearcher, SearchConfig
 
 
 async def run() -> None:
     cfg = SearchConfig.load()
-    async with AsyncSearchPipeline(cfg) as engine:
+    async with AsyncSearcher(cfg) as engine:
         md = await engine.asearch_markdown(
             "example query",
             "high",  # depth: simple|low|medium|high

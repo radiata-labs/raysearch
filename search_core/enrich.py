@@ -1,4 +1,11 @@
-﻿from __future__ import annotations
+"""Web enrichment (sync + async).
+
+Given ranked SERP results, the enricher optionally crawls top pages and appends
+high-scoring page chunks to each result. This improves downstream LLM context
+quality compared to using snippets alone.
+"""
+
+from __future__ import annotations
 
 import logging
 import math
@@ -33,6 +40,8 @@ _LONG_SENT_SPLIT_RE = re.compile(r"([,\uFF0C\u3001\t ])")
 
 
 class _WebEnricherBase:
+    """Shared chunking/scoring/filtering logic for sync/async enrichers."""
+
     def __init__(
         self,
         config: WebEnrichmentConfig,
@@ -75,6 +84,16 @@ class _WebEnricherBase:
         context_config: SearchContextConfig,
         query_has_cjk: bool,
     ) -> list[str]:
+        """Filter raw visible blocks to remove boilerplate/noise.
+
+        Args:
+            blocks: Raw visible blocks extracted from HTML/text.
+            context_config: Profile config containing noise words and title tail patterns.
+            query_has_cjk: Whether the query contains CJK characters.
+
+        Returns:
+            Filtered blocks to be used for sentence splitting/chunking.
+        """
         if not blocks:
             return []
 
@@ -100,6 +119,15 @@ class _WebEnricherBase:
     def split_sentences(
         self, text: str, *, max_sentence_chars: int | None = None
     ) -> list[str]:
+        """Split text into sentences with length caps for chunking.
+
+        Args:
+            text: Input text.
+            max_sentence_chars: Optional override of the maximum sentence length.
+
+        Returns:
+            A list of sentence strings.
+        """
         cleaned = TextUtils.clean_whitespace(text or "")
         if not cleaned:
             return []
@@ -147,6 +175,15 @@ class _WebEnricherBase:
         *,
         chunking: WebChunkingConfig,
     ) -> list[str]:
+        """Pack sentences into overlapping chunks.
+
+        Args:
+            sentences: Sentence list.
+            chunking: Chunking configuration.
+
+        Returns:
+            A list of chunk strings.
+        """
         if not sentences:
             return []
 
@@ -192,6 +229,19 @@ class _WebEnricherBase:
         domain: str | None,
         context_config: SearchContextConfig,
     ) -> list[tuple[float, str]]:
+        """Score chunks and apply hard drops/dedupe.
+
+        Args:
+            chunks: Chunk candidates.
+            query: Original user query.
+            query_tokens: Tokenized query.
+            intent_tokens: Profile-specific intent tokens found in query.
+            domain: Source domain (currently not used in scoring).
+            context_config: Profile config (noise, thresholds).
+
+        Returns:
+            A list of (score, chunk) pairs sorted by score desc.
+        """
         _ = domain  # Domain bonus is intentionally not part of scoring.
         if not chunks:
             return []
@@ -266,6 +316,19 @@ class _WebEnricherBase:
         title_patterns: list[re.Pattern[str]],
         mode: Literal["block", "chunk"],
     ) -> float:
+        """Estimate whether a text looks like boilerplate/template content.
+
+        Higher score means more likely to be boilerplate and should be dropped.
+
+        Args:
+            text: Input block/chunk text.
+            query_has_cjk: Whether the query contains CJK characters.
+            title_patterns: Compiled title-tail patterns.
+            mode: "block" for block-level filtering or "chunk" for chunk-level drops.
+
+        Returns:
+            A float in [0, 1].
+        """
         if not text:
             return 1.0
 
@@ -418,6 +481,8 @@ class _WebEnricherBase:
 
 
 class WebEnricher(_WebEnricherBase):
+    """Sync page crawler/enricher for SERP results."""
+
     def __init__(
         self,
         config: WebEnrichmentConfig,
@@ -448,6 +513,10 @@ class WebEnricher(_WebEnricherBase):
         chunk_overlap_sentences: int | None = None,
         min_chunk_chars: int | None = None,
     ) -> None:
+        """Enrich top results by fetching pages and attaching page chunks (sync).
+
+        This method mutates ``results`` in-place by setting ``result.page``.
+        """
         if not self.config.enabled:
             return
         if not results:
@@ -547,6 +616,8 @@ class WebEnricher(_WebEnricherBase):
 
 
 class AsyncWebEnricher(_WebEnricherBase):
+    """Async page crawler/enricher for SERP results."""
+
     def __init__(
         self,
         config: WebEnrichmentConfig,
@@ -577,6 +648,10 @@ class AsyncWebEnricher(_WebEnricherBase):
         chunk_overlap_sentences: int | None = None,
         min_chunk_chars: int | None = None,
     ) -> None:
+        """Enrich top results by fetching pages and attaching page chunks (async).
+
+        This method mutates ``results`` in-place by setting ``result.page``.
+        """
         if not self.config.enabled:
             return
         if not results:
@@ -682,6 +757,7 @@ class AsyncWebEnricher(_WebEnricherBase):
                 tg.start_soon(crawl_one, item)
 
     async def aclose(self) -> None:
+        """Close any internally-owned async resources (HTTP client)."""
         await self.crawler.aclose()
 
 

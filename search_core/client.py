@@ -1,3 +1,14 @@
+"""SearxNG HTTP clients (sync + async).
+
+This module provides two small clients that only fetch *raw* SearxNG JSON:
+
+- :class:`SearxngClient`: sync HTTP via ``requests``.
+- :class:`AsyncSearxngClient`: async HTTP via ``httpx`` (anyio backend).
+
+All result processing/ranking/rendering is implemented in :class:`search_core.searcher.Searcher`
+and :class:`search_core.searcher.AsyncSearcher`.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self
@@ -12,6 +23,8 @@ if TYPE_CHECKING:
 
 
 class _SearxngClientBase:
+    """Shared request construction and validation for SearxNG clients."""
+
     config: SearchConfig
 
     def __init__(self, config: SearchConfig) -> None:
@@ -128,6 +141,7 @@ class AsyncSearxngClient(_SearxngClientBase):
         return resp.json()
 
     async def aclose(self) -> None:
+        """Close the internally-owned ``httpx.AsyncClient`` if present."""
         if self._async_client is None:
             return
         if not self._owns_async_client:

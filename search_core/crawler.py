@@ -1,3 +1,11 @@
+"""Web page crawler (sync + async) for enrichment.
+
+The crawler is responsible for:
+- fetching bytes from a URL with size/time limits
+- decoding with best-effort charset detection (header/meta/BOM/heuristics)
+- extracting visible text blocks (HTML -> text) suitable for chunking/scoring
+"""
+
 from __future__ import annotations
 
 import codecs
@@ -27,6 +35,8 @@ ContentKind = Literal["html", "text"]
 
 
 class _WebCrawlerBase:
+    """Shared decoding/extraction logic for both sync and async crawlers."""
+
     fetch_cfg: WebFetchConfig
     user_agent: str
 
@@ -223,12 +233,16 @@ class _WebCrawlerBase:
 
 @dataclass(frozen=True)
 class CrawlBlocksResult:
+    """Result of fetching and extracting visible blocks from a page."""
+
     blocks: list[str]
     content_type: str | None = None
     error: str | None = None
 
 
 class VisibleTextParser(HTMLParser):
+    """Very small HTML parser that keeps only visible text."""
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self._buf: list[str] = []
@@ -236,12 +250,14 @@ class VisibleTextParser(HTMLParser):
 
     @override
     def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        """Start tag handler (skips script/style/noscript)."""
         lowered = (tag or "").lower()
         if lowered in {"script", "style", "noscript"}:
             self._skip_stack.append(lowered)
 
     @override
     def handle_endtag(self, tag: str) -> None:
+        """End tag handler (adds newlines for common block tags)."""
         lowered = (tag or "").lower()
         if self._skip_stack and self._skip_stack[-1] == lowered:
             self._skip_stack.pop()
@@ -250,6 +266,7 @@ class VisibleTextParser(HTMLParser):
 
     @override
     def handle_data(self, data: str) -> None:
+        """Text node handler."""
         if self._skip_stack:
             return
         if data:
@@ -257,17 +274,20 @@ class VisibleTextParser(HTMLParser):
 
     @override
     def handle_entityref(self, name: str) -> None:
+        """Entity reference handler (keeps raw entity)."""
         if self._skip_stack:
             return
         self._buf.append(f"&{name};")
 
     @override
     def handle_charref(self, name: str) -> None:
+        """Numeric character reference handler (keeps raw reference)."""
         if self._skip_stack:
             return
         self._buf.append(f"&#{name};")
 
     def get_text(self) -> str:
+        """Return concatenated visible text."""
         return "".join(self._buf)
 
 
@@ -295,6 +315,14 @@ class WebCrawler(_WebCrawlerBase):
         self._fetcher = fetcher
 
     def fetch_blocks(self, url: str) -> CrawlBlocksResult:  # noqa: PLR0911
+        """Fetch a URL and extract visible text blocks (sync).
+
+        Args:
+            url: Target URL (http/https).
+
+        Returns:
+            A :class:`CrawlBlocksResult` containing extracted blocks or an error message.
+        """
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"}:
             return CrawlBlocksResult(
@@ -415,6 +443,14 @@ class AsyncWebCrawler(_WebCrawlerBase):
         return self._async_client
 
     async def afetch_blocks(self, url: str) -> CrawlBlocksResult:  # noqa: PLR0911
+        """Fetch a URL and extract visible text blocks (async).
+
+        Args:
+            url: Target URL (http/https).
+
+        Returns:
+            A :class:`CrawlBlocksResult` containing extracted blocks or an error message.
+        """
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"}:
             return CrawlBlocksResult(
@@ -510,6 +546,7 @@ class AsyncWebCrawler(_WebCrawlerBase):
         )
 
     async def aclose(self) -> None:
+        """Close the internally-owned ``httpx.AsyncClient`` if present."""
         if self._async_client is None:
             return
         if not self._owns_async_client:

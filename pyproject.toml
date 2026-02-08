@@ -1,11 +1,12 @@
 [project]
-name = "kafubot"
+name = "serpsage"
 version = "0.1.0"
 authors = [
     {name = "Kotodama",email = "2682064633@qq.com"}
 ]
 license = {text = "MIT"}
 readme = "README.md"
+description = "AI-overview style SERP context builder on top of SearxNG (sync + async)."
 keywords = ["bot", "chatbot", "qq", "qqbot", "cqhttp", "coolq"]
 classifiers = [
     "Development Status :: 3 - Alpha",

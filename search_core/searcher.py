@@ -1,4 +1,14 @@
-﻿from __future__ import annotations
+﻿"""Search pipeline (sync + async) built on top of SearxNG.
+
+`Searcher` and `AsyncSearcher` orchestrate:
+1) fetching raw JSON results from SearxNG
+2) profile selection (auto match or explicit)
+3) normalization, filtering, dedupe, ranking
+4) optional web page crawling + chunk scoring enrichment
+5) rendering output (JSON/markdown/context)
+"""
+
+from __future__ import annotations
 
 import logging
 import os
@@ -34,8 +44,8 @@ class _SearcherBase:
     """Shared, non-I/O pipeline logic for both sync and async variants.
 
     Concrete pipelines are responsible for performing I/O:
-    - SearchPipeline: sync HTTP + sync web enrichment
-    - AsyncSearchPipeline: async HTTP + async web enrichment
+    - Searcher: sync HTTP + sync web enrichment
+    - AsyncSearcher: async HTTP + async web enrichment
     """
 
     config: SearchConfig
@@ -808,6 +818,7 @@ class AsyncSearcher(_SearcherBase):
         )
 
     async def aclose(self) -> None:
+        """Close async resources owned by this instance."""
         await self.client.aclose()
         await self.web_enricher.aclose()
 
@@ -820,6 +831,7 @@ class AsyncSearcher(_SearcherBase):
     async def asearch_raw(
         self, query: str, *, params: Mapping[str, object] | None = None
     ) -> dict:
+        """Async fetch raw results from SearxNG (no processing)."""
         return await self.client.asearch(query, params=params)
 
     async def asearch_json(
@@ -835,6 +847,7 @@ class AsyncSearcher(_SearcherBase):
         chunk_overlap_sentences: int | None = None,
         min_chunk_chars: int | None = None,
     ) -> dict[str, object]:
+        """Async search and return JSON data only."""
         raw = await self.asearch_raw(query, params=params)
         query = TextUtils.clean_whitespace(query)
         if not query:
@@ -876,6 +889,7 @@ class AsyncSearcher(_SearcherBase):
         min_chunk_chars: int | None = None,
         max_chunk_chars: int = 800,
     ) -> str:
+        """Async search and return markdown only."""
         raw = await self.asearch_raw(query, params=params)
         ctx = await self.abuild_context(
             raw,
@@ -913,6 +927,7 @@ class AsyncSearcher(_SearcherBase):
         min_chunk_chars: int | None = None,
         max_chunk_chars: int = 800,
     ) -> SearchContext:
+        """Async search and build LLM-friendly context."""
         raw = await self.asearch_raw(query, params=params)
         return await self.abuild_context(
             raw,
@@ -949,6 +964,7 @@ class AsyncSearcher(_SearcherBase):
         min_chunk_chars: int | None = None,
         max_chunk_chars: int = 800,
     ) -> SearchContext:
+        """Async build context from a raw SearxNG response (no SearxNG HTTP in here)."""
         query = TextUtils.clean_whitespace(user_query)
         if not query:
             return SearchContext(
@@ -1003,6 +1019,7 @@ class AsyncSearcher(_SearcherBase):
         chunk_overlap_sentences: int | None = None,
         min_chunk_chars: int | None = None,
     ) -> list[SearchResult]:
+        """Async process a raw SearxNG response into ranked results."""
         self._validate_depth(depth)
         if chunk_target_chars is not None and chunk_target_chars <= 0:
             raise ValueError("chunk_target_chars must be > 0")
