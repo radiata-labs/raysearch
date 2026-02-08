@@ -14,7 +14,7 @@ def main(query: str, max_results: int = 1) -> dict[str, Any]:
     result = json.dumps(
         pipeline.search_json(
             query,
-            "low",  # depth: simple|low|medium|high
+            "high",  # depth: simple|low|medium|high
             max_results=max_results,
             # fuzzy_threshold=0.3,
             chunk_target_chars=1200,

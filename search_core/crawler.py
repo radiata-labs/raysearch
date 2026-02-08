@@ -4,6 +4,7 @@ import codecs
 import html as html_mod
 import logging
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Literal
@@ -182,11 +183,12 @@ class WebCrawler:
             resp.close()
 
         data = b"".join(chunks)
+        apparent = self._guess_apparent_encoding(data)
         text, kind = self._decode_best_effort(
             data,
             content_type=content_type or None,
             resp_encoding=resp.encoding,
-            apparent_encoding=getattr(resp, "apparent_encoding", None),
+            apparent_encoding=apparent,
         )
         blocks = self._extract_blocks(text, kind=kind)
         return CrawlBlocksResult(
@@ -194,6 +196,31 @@ class WebCrawler:
             content_type=content_type or None,
             error=None if blocks else "no blocks extracted",
         )
+
+    def _guess_apparent_encoding(self, data: bytes) -> str | None:
+        """Best-effort charset guess from bytes without consuming streamed responses."""
+
+        sample = data[:65536]
+
+        # requests depends on charset_normalizer on py3; use it if available.
+        with suppress(Exception):
+            from charset_normalizer import from_bytes  # noqa: PLC0415
+
+            best = from_bytes(sample).best()
+            enc = getattr(best, "encoding", None) if best is not None else None
+            if enc:
+                return str(enc)
+
+        # Fallback for environments that still have chardet.
+        with suppress(Exception):
+            import chardet  # noqa: PLC0415
+
+            det = chardet.detect(sample)
+            enc = det.get("encoding") if isinstance(det, dict) else None
+            if enc:
+                return str(enc)
+
+        return None
 
     def _extract_blocks(self, raw: str, *, kind: ContentKind) -> list[str]:
         if not raw:
