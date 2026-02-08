@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 import anyio
 
-from search_core import AsyncSearcher, SearchConfig, Searcher
+from src.serpsage.core import AsyncSearcher, SearchConfig, Searcher
 
 
 def main(
@@ -16,7 +16,7 @@ def main(
 ) -> dict[str, Any]:
     """Convenience entry point for simple usage."""
 
-    cfg = SearchConfig.load()
+    cfg = SearchConfig.load("search_config_example.yaml")
     searcher = Searcher(cfg)
 
     if type == "markdown":
@@ -44,7 +44,7 @@ async def async_main(
 ) -> dict[str, Any]:
     """Convenience entry point for simple usage."""
 
-    cfg = SearchConfig.load()
+    cfg = SearchConfig.load("search_config_example.yaml")
     async with AsyncSearcher(cfg) as searcher:
         if type == "markdown":
             result = await searcher.asearch_markdown(

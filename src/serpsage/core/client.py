@@ -15,8 +15,7 @@ from typing import TYPE_CHECKING, Self
 
 import httpx
 import requests
-
-from search_core.config import DEFAULT_BASE_URL, SearchConfig
+from core.config import DEFAULT_BASE_URL, SearchConfig
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

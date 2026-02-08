@@ -21,13 +21,12 @@ from urllib.parse import urlparse
 
 import httpx
 import requests
-
-from search_core.text import TextUtils
+from core.text import TextUtils
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from search_core.config import WebFetchConfig
+    from core.config import SearchConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +36,11 @@ ContentKind = Literal["html", "text"]
 class _WebCrawlerBase:
     """Shared decoding/extraction logic for both sync and async crawlers."""
 
-    fetch_cfg: WebFetchConfig
+    config: SearchConfig
     user_agent: str
 
-    def __init__(self, *, fetch_cfg: WebFetchConfig, user_agent: str) -> None:
-        self.fetch_cfg = fetch_cfg
+    def __init__(self, *, config: SearchConfig, user_agent: str) -> None:
+        self.config = config
         self.user_agent = user_agent
 
     def _guess_apparent_encoding(self, data: bytes) -> str | None:
@@ -84,10 +83,10 @@ class _WebCrawlerBase:
                 logger.exception("Failed to parse HTML")
             text = html_mod.unescape(parser.get_text())
 
-        if self.fetch_cfg.max_extracted_chars and len(text) > int(
-            self.fetch_cfg.max_extracted_chars
+        if self.config.web_enrichment.fetch.max_extracted_chars and len(text) > int(
+            self.config.web_enrichment.fetch.max_extracted_chars
         ):
-            text = text[: int(self.fetch_cfg.max_extracted_chars)]
+            text = text[: int(self.config.web_enrichment.fetch.max_extracted_chars)]
 
         # Preserve newlines for block segmentation; only normalize spaces/tabs.
         text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -307,11 +306,11 @@ class WebCrawler(_WebCrawlerBase):
     def __init__(
         self,
         *,
-        fetch_cfg: WebFetchConfig,
+        config: SearchConfig,
         user_agent: str,
         fetcher: Callable[[str], bytes | str] | None = None,
     ) -> None:
-        super().__init__(fetch_cfg=fetch_cfg, user_agent=user_agent)
+        super().__init__(config=config, user_agent=user_agent)
         self._fetcher = fetcher
 
     def fetch_blocks(self, url: str) -> CrawlBlocksResult:  # noqa: PLR0911
@@ -365,7 +364,7 @@ class WebCrawler(_WebCrawlerBase):
             resp = requests.get(
                 url,
                 headers=headers,
-                timeout=self.fetch_cfg.timeout,
+                timeout=self.config.web_enrichment.fetch.timeout,
                 stream=True,
             )  # noqa: S113
         except requests.RequestException as exc:
@@ -383,7 +382,7 @@ class WebCrawler(_WebCrawlerBase):
         content_type = resp.headers.get("content-type") or ""
         if content_type:
             ct_lower = content_type.lower()
-            allowed = tuple(self.fetch_cfg.allow_content_types or ())
+            allowed = tuple(self.config.web_enrichment.fetch.allow_content_types or ())
             if allowed and not any(a in ct_lower for a in allowed):
                 # If header looks wrong but content looks like HTML, still try.
                 pass
@@ -395,11 +394,11 @@ class WebCrawler(_WebCrawlerBase):
                 if not part:
                     continue
                 total += len(part)
-                if total > int(self.fetch_cfg.max_bytes):
+                if total > int(self.config.web_enrichment.fetch.max_bytes):
                     return CrawlBlocksResult(
                         blocks=[],
                         content_type=content_type,
-                        error=f"exceeded max_bytes={self.fetch_cfg.max_bytes}",
+                        error=f"exceeded max_bytes={self.config.web_enrichment.fetch.max_bytes}",
                     )
                 chunks.append(part)
         finally:
@@ -427,12 +426,12 @@ class AsyncWebCrawler(_WebCrawlerBase):
     def __init__(
         self,
         *,
-        fetch_cfg: WebFetchConfig,
+        config: SearchConfig,
         user_agent: str,
         afetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
         async_client: httpx.AsyncClient | None = None,
     ) -> None:
-        super().__init__(fetch_cfg=fetch_cfg, user_agent=user_agent)
+        super().__init__(config=config, user_agent=user_agent)
         self._afetcher = afetcher
         self._async_client: httpx.AsyncClient | None = async_client
         self._owns_async_client = async_client is None
@@ -495,13 +494,15 @@ class AsyncWebCrawler(_WebCrawlerBase):
                 "GET",
                 url,
                 headers=headers,
-                timeout=self.fetch_cfg.timeout,
+                timeout=self.config.web_enrichment.fetch.timeout,
                 follow_redirects=True,
             ) as resp:
                 content_type = resp.headers.get("content-type")
                 if content_type:
                     ct_lower = content_type.lower()
-                    allowed = tuple(self.fetch_cfg.allow_content_types or ())
+                    allowed = tuple(
+                        self.config.web_enrichment.fetch.allow_content_types or ()
+                    )
                     if allowed and not any(a in ct_lower for a in allowed):
                         pass
 
@@ -520,11 +521,11 @@ class AsyncWebCrawler(_WebCrawlerBase):
                     if not part:
                         continue
                     total += len(part)
-                    if total > int(self.fetch_cfg.max_bytes):
+                    if total > int(self.config.web_enrichment.fetch.max_bytes):
                         return CrawlBlocksResult(
                             blocks=[],
                             content_type=content_type,
-                            error=f"exceeded max_bytes={self.fetch_cfg.max_bytes}",
+                            error=f"exceeded max_bytes={self.config.web_enrichment.fetch.max_bytes}",
                         )
                     chunks.append(part)
         except httpx.HTTPError as exc:

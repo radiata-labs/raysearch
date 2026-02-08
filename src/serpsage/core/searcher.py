@@ -16,13 +16,13 @@ import re
 from typing import TYPE_CHECKING, Literal, Self
 from urllib.parse import urlparse
 
-from search_core.client import AsyncSearxngClient, SearxngClient
-from search_core.config import SearchConfig, SearchContextConfig
-from search_core.enrich import AsyncWebEnricher, WebEnricher
-from search_core.models import SearchContext, SearchResult
-from search_core.scorer import ScoringEngine
-from search_core.text import TextUtils
-from search_core.tools import (
+from core.client import AsyncSearxngClient, SearxngClient
+from core.config import SearchConfig, SearchContextConfig
+from core.enrich import AsyncWebEnricher, WebEnricher
+from core.models import SearchContext, SearchResult
+from core.scorer import AsyncScoringEngine, ScoringEngine
+from core.text import TextUtils
+from core.tools import (
     canonical_site,
     compile_patterns,
     extract_intent_tokens,
@@ -49,16 +49,9 @@ class _SearcherBase:
     """
 
     config: SearchConfig
-    scorer: ScoringEngine
 
-    def __init__(
-        self,
-        config: SearchConfig,
-        *,
-        scorer: ScoringEngine | None = None,
-    ) -> None:
+    def __init__(self, config: SearchConfig) -> None:
         self.config = config
-        self.scorer = scorer or ScoringEngine(self.config.scoring)
 
     def _select_profile_name(self, query: str, explicit_profile: str | None) -> str:
         """Select a profile based on explicit input or keyword rules.
@@ -135,151 +128,6 @@ class _SearcherBase:
     def _validate_depth(self, depth: SearchDepth) -> None:
         if depth not in {"simple", "low", "medium", "high"}:
             raise ValueError(f"Invalid depth: {depth}")
-
-    def _run_processing(
-        self,
-        query: str,
-        config: SearchContextConfig,
-        raw_results: list[Mapping[str, object]],
-    ) -> list[SearchResult]:
-        normalized = [self._normalize_result(result) for result in raw_results]
-
-        noise_extensions = {ext.lower().lstrip(".") for ext in config.noise_extensions}
-        title_tail_patterns = compile_patterns(config.title_tail_patterns)
-        domain_groups = config.domain_groups or {}
-
-        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
-        intent_tokens = extract_intent_tokens(query, config)
-
-        normalized = [
-            result
-            for result in normalized
-            if self._is_not_noise(result, config, noise_extensions)
-        ]
-        if not normalized:
-            return []
-
-        normalized = [
-            result for result in normalized if self._is_relevant(result, query_tokens)
-        ]
-        if not normalized:
-            return []
-
-        normalized = self._dedupe_exact(normalized)
-        normalized = self._dedupe_fuzzy(
-            normalized,
-            config.fuzzy_threshold,
-            title_tail_patterns=title_tail_patterns,
-            domain_groups=domain_groups,
-        )
-
-        return self._rank_results(
-            normalized,
-            query=query,
-            query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
-        )
-
-    def _rerank_with_page_scores(
-        self,
-        results: list[SearchResult],
-        *,
-        query: str,
-        query_tokens: list[str],
-        intent_tokens: list[str],
-    ) -> list[SearchResult]:
-        """Blend snippet score with page score and rerank.
-
-        Fixed weights (no config):
-        - snippet: 0.4
-        - page: 0.6
-        """
-        if not results:
-            return []
-
-        page_docs: list[str] = []
-        has_any_page = False
-        for r in results:
-            if r.page and r.page.chunks:
-                doc = TextUtils.clean_whitespace(
-                    " ".join(c.text for c in r.page.chunks)
-                )
-                page_docs.append(doc)
-                if doc:
-                    has_any_page = True
-            else:
-                page_docs.append("")
-
-        if not has_any_page:
-            return results
-
-        page_scored = self.scorer.score(
-            page_docs,
-            query=query,
-            query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
-        )
-        page_scores = [float(s) for s, _ in page_scored]
-
-        combined_raw: list[float] = []
-        for i, r in enumerate(results):
-            snippet_s = float(r.score)
-            page_s = float(page_scores[i]) if i < len(page_scores) else 0.0
-            combined_raw.append(0.4 * snippet_s + 0.6 * page_s)
-
-        combined_norm = self.scorer.normalize_scores(combined_raw)
-        if combined_norm and max(combined_norm) <= 0.0 and max(combined_raw) > 0.0:
-            combined_norm = [0.5 for _ in combined_norm]
-
-        for i, r in enumerate(results):
-            if i < len(combined_norm):
-                r.score = float(combined_norm[i])
-
-        return sorted(results, key=lambda r: float(r.score), reverse=True)
-
-    def _rank_results(
-        self,
-        results: list[SearchResult],
-        *,
-        query: str,
-        query_tokens: list[str],
-        intent_tokens: list[str],
-    ) -> list[SearchResult]:
-        if not results:
-            return []
-
-        docs = [TextUtils.clean_whitespace(f"{r.title} {r.snippet}") for r in results]
-        scored = self.scorer.score(
-            docs,
-            query=query,
-            query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
-        )
-        scores = [float(s) for s, _ in scored]
-
-        hit_keywords: list[list[str]] = []
-        for r in results:
-            title = (r.title or "").lower()
-            snippet = (r.snippet or "").lower()
-            hits: list[str] = [
-                token for token in query_tokens if token in title or token in snippet
-            ]
-            hit_keywords.append(TextUtils.unique_preserve_order(hits))
-
-        ranked_pairs = sorted(
-            zip(scores, results, hit_keywords, strict=False),
-            key=lambda t: t[0],
-            reverse=True,
-        )
-        ranked = [r for _, r, _ in ranked_pairs]
-        ranked_hits = [hits for _, _, hits in ranked_pairs]
-        ranked_scores = [float(s) for s, _, _ in ranked_pairs]
-
-        for i, result in enumerate(ranked):
-            result.score = float(ranked_scores[i])
-            result.hit_keywords = ranked_hits[i]
-
-        return ranked
 
     def _render_markdown(
         self,
@@ -514,6 +362,8 @@ class Searcher(_SearcherBase):
     """High-level search pipeline: profile selection + result processing + rendering."""
 
     client: SearxngClient
+    scorer: ScoringEngine
+    web_enricher: WebEnricher
 
     def __init__(
         self,
@@ -524,10 +374,11 @@ class Searcher(_SearcherBase):
         scorer: ScoringEngine | None = None,
         web_enricher: WebEnricher | None = None,
     ) -> None:
-        super().__init__(config, scorer=scorer)
+        super().__init__(config)
+        self.scorer = scorer or ScoringEngine(self.config)
         self.client = client or SearxngClient(self.config)
         self.web_enricher = web_enricher or WebEnricher(
-            self.config.web_enrichment,
+            self.config,
             user_agent=self.config.searxng.user_agent,
             fetcher=page_fetcher,
             scorer=self.scorer,
@@ -791,11 +642,157 @@ class Searcher(_SearcherBase):
 
         return processed[:max_results]
 
+    def _run_processing(
+        self,
+        query: str,
+        config: SearchContextConfig,
+        raw_results: list[Mapping[str, object]],
+    ) -> list[SearchResult]:
+        normalized = [self._normalize_result(result) for result in raw_results]
+
+        noise_extensions = {ext.lower().lstrip(".") for ext in config.noise_extensions}
+        title_tail_patterns = compile_patterns(config.title_tail_patterns)
+        domain_groups = config.domain_groups or {}
+
+        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
+        intent_tokens = extract_intent_tokens(query, config)
+
+        normalized = [
+            result
+            for result in normalized
+            if self._is_not_noise(result, config, noise_extensions)
+        ]
+        if not normalized:
+            return []
+
+        normalized = [
+            result for result in normalized if self._is_relevant(result, query_tokens)
+        ]
+        if not normalized:
+            return []
+
+        normalized = self._dedupe_exact(normalized)
+        normalized = self._dedupe_fuzzy(
+            normalized,
+            config.fuzzy_threshold,
+            title_tail_patterns=title_tail_patterns,
+            domain_groups=domain_groups,
+        )
+
+        return self._rank_results(
+            normalized,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+
+    def _rerank_with_page_scores(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+    ) -> list[SearchResult]:
+        """Blend snippet score with page score and rerank.
+
+        Fixed weights (no config):
+        - snippet: 0.4
+        - page: 0.6
+        """
+        if not results:
+            return []
+
+        page_docs: list[str] = []
+        has_any_page = False
+        for r in results:
+            if r.page and r.page.chunks:
+                doc = TextUtils.clean_whitespace(
+                    " ".join(c.text for c in r.page.chunks)
+                )
+                page_docs.append(doc)
+                if doc:
+                    has_any_page = True
+            else:
+                page_docs.append("")
+
+        if not has_any_page:
+            return results
+
+        page_scored = self.scorer.score(
+            page_docs,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        page_scores = [float(s) for s, _ in page_scored]
+
+        combined_raw: list[float] = []
+        for i, r in enumerate(results):
+            snippet_s = float(r.score)
+            page_s = float(page_scores[i]) if i < len(page_scores) else 0.0
+            combined_raw.append(0.4 * snippet_s + 0.6 * page_s)
+
+        combined_norm = self.scorer.normalize_scores(combined_raw)
+        if combined_norm and max(combined_norm) <= 0.0 and max(combined_raw) > 0.0:
+            combined_norm = [0.5 for _ in combined_norm]
+
+        for i, r in enumerate(results):
+            if i < len(combined_norm):
+                r.score = float(combined_norm[i])
+
+        return sorted(results, key=lambda r: float(r.score), reverse=True)
+
+    def _rank_results(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+    ) -> list[SearchResult]:
+        if not results:
+            return []
+
+        docs = [TextUtils.clean_whitespace(f"{r.title} {r.snippet}") for r in results]
+        scored = self.scorer.score(
+            docs,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        scores = [float(s) for s, _ in scored]
+
+        hit_keywords: list[list[str]] = []
+        for r in results:
+            title = (r.title or "").lower()
+            snippet = (r.snippet or "").lower()
+            hits: list[str] = [
+                token for token in query_tokens if token in title or token in snippet
+            ]
+            hit_keywords.append(TextUtils.unique_preserve_order(hits))
+
+        ranked_pairs = sorted(
+            zip(scores, results, hit_keywords, strict=False),
+            key=lambda t: t[0],
+            reverse=True,
+        )
+        ranked = [r for _, r, _ in ranked_pairs]
+        ranked_hits = [hits for _, _, hits in ranked_pairs]
+        ranked_scores = [float(s) for s, _, _ in ranked_pairs]
+
+        for i, result in enumerate(ranked):
+            result.score = float(ranked_scores[i])
+            result.hit_keywords = ranked_hits[i]
+
+        return ranked
+
 
 class AsyncSearcher(_SearcherBase):
     """Async pipeline variant: async SearxNG search + async web enrichment."""
 
     client: AsyncSearxngClient
+    scorer: AsyncScoringEngine
     web_enricher: AsyncWebEnricher
 
     def __init__(
@@ -804,13 +801,14 @@ class AsyncSearcher(_SearcherBase):
         *,
         client: AsyncSearxngClient | None = None,
         apage_fetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
-        scorer: ScoringEngine | None = None,
+        scorer: AsyncScoringEngine | None = None,
         web_enricher: AsyncWebEnricher | None = None,
     ) -> None:
-        super().__init__(config, scorer=scorer)
+        super().__init__(config)
+        self.scorer = scorer or AsyncScoringEngine(self.config)
         self.client = client or AsyncSearxngClient(self.config)
         self.web_enricher = web_enricher or AsyncWebEnricher(
-            self.config.web_enrichment,
+            self.config,
             user_agent=self.config.searxng.user_agent,
             afetcher=apage_fetcher,
             scorer=self.scorer,
@@ -1036,7 +1034,7 @@ class AsyncSearcher(_SearcherBase):
         results_data = (response or {}).get("results", [])
         raw_results = list(results_data if isinstance(results_data, list) else [])
 
-        processed = self._run_processing(query, config, raw_results)
+        processed = await self._arun_processing(query, config, raw_results)
         if not processed:
             return []
 
@@ -1063,7 +1061,7 @@ class AsyncSearcher(_SearcherBase):
                     min_chunk_chars=min_chunk_chars,
                 )
 
-                processed = self._rerank_with_page_scores(
+                processed = await self._arerank_with_page_scores(
                     processed,
                     query=query,
                     query_tokens=query_tokens,
@@ -1076,6 +1074,145 @@ class AsyncSearcher(_SearcherBase):
         ]
 
         return processed[:max_results]
+
+    async def _arun_processing(
+        self,
+        query: str,
+        config: SearchContextConfig,
+        raw_results: list[Mapping[str, object]],
+    ) -> list[SearchResult]:
+        normalized = [self._normalize_result(result) for result in raw_results]
+
+        noise_extensions = {ext.lower().lstrip(".") for ext in config.noise_extensions}
+        title_tail_patterns = compile_patterns(config.title_tail_patterns)
+        domain_groups = config.domain_groups or {}
+
+        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
+        intent_tokens = extract_intent_tokens(query, config)
+
+        normalized = [
+            result
+            for result in normalized
+            if self._is_not_noise(result, config, noise_extensions)
+        ]
+        if not normalized:
+            return []
+
+        normalized = [
+            result for result in normalized if self._is_relevant(result, query_tokens)
+        ]
+        if not normalized:
+            return []
+
+        normalized = self._dedupe_exact(normalized)
+        normalized = self._dedupe_fuzzy(
+            normalized,
+            config.fuzzy_threshold,
+            title_tail_patterns=title_tail_patterns,
+            domain_groups=domain_groups,
+        )
+
+        return await self._arank_results(
+            normalized,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+
+    async def _arerank_with_page_scores(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+    ) -> list[SearchResult]:
+        if not results:
+            return []
+
+        page_docs: list[str] = []
+        has_any_page = False
+        for r in results:
+            if r.page and r.page.chunks:
+                doc = TextUtils.clean_whitespace(
+                    " ".join(c.text for c in r.page.chunks)
+                )
+                page_docs.append(doc)
+                if doc:
+                    has_any_page = True
+            else:
+                page_docs.append("")
+
+        if not has_any_page:
+            return results
+
+        page_scored = await self.scorer.score(
+            page_docs,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        page_scores = [float(s) for s, _ in page_scored]
+
+        combined_raw: list[float] = []
+        for i, r in enumerate(results):
+            snippet_s = float(r.score)
+            page_s = float(page_scores[i]) if i < len(page_scores) else 0.0
+            combined_raw.append(0.4 * snippet_s + 0.6 * page_s)
+
+        combined_norm = self.scorer.normalize_scores(combined_raw)
+        if combined_norm and max(combined_norm) <= 0.0 and max(combined_raw) > 0.0:
+            combined_norm = [0.5 for _ in combined_norm]
+
+        for i, r in enumerate(results):
+            if i < len(combined_norm):
+                r.score = float(combined_norm[i])
+
+        return sorted(results, key=lambda r: float(r.score), reverse=True)
+
+    async def _arank_results(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+    ) -> list[SearchResult]:
+        if not results:
+            return []
+
+        docs = [TextUtils.clean_whitespace(f"{r.title} {r.snippet}") for r in results]
+        scored = await self.scorer.score(
+            docs,
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        scores = [float(s) for s, _ in scored]
+
+        hit_keywords: list[list[str]] = []
+        for r in results:
+            title = (r.title or "").lower()
+            snippet = (r.snippet or "").lower()
+            hits: list[str] = [
+                token for token in query_tokens if token in title or token in snippet
+            ]
+            hit_keywords.append(TextUtils.unique_preserve_order(hits))
+
+        ranked_pairs = sorted(
+            zip(scores, results, hit_keywords, strict=False),
+            key=lambda t: t[0],
+            reverse=True,
+        )
+        ranked = [r for _, r, _ in ranked_pairs]
+        ranked_hits = [hits for _, _, hits in ranked_pairs]
+        ranked_scores = [float(s) for s, _, _ in ranked_pairs]
+
+        for i, result in enumerate(ranked):
+            result.score = float(ranked_scores[i])
+            result.hit_keywords = ranked_hits[i]
+
+        return ranked
 
 
 __all__ = ["Searcher", "AsyncSearcher"]

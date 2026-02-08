@@ -1,5 +1,5 @@
-from search_core.client import AsyncSearxngClient, SearxngClient
-from search_core.config import (
+from core.client import AsyncSearxngClient, SearxngClient
+from core.config import (
     AutoMatchConfig,
     HeuristicScoringConfig,
     ScoreFilterConfig,
@@ -13,11 +13,11 @@ from search_core.config import (
     WebEnrichmentConfig,
     WebFetchConfig,
 )
-from search_core.crawler import AsyncWebCrawler, WebCrawler
-from search_core.enrich import AsyncWebEnricher, WebEnricher
-from search_core.models import PageChunk, PageEnrichment, SearchContext, SearchResult
-from search_core.scorer import ScoringEngine
-from search_core.searcher import AsyncSearcher, Searcher
+from core.crawler import AsyncWebCrawler, WebCrawler
+from core.enrich import AsyncWebEnricher, WebEnricher
+from core.models import PageChunk, PageEnrichment, SearchContext, SearchResult
+from core.scorer import AsyncScoringEngine, ScoringEngine
+from core.searcher import AsyncSearcher, Searcher
 
 __all__ = [
     "SearchConfig",
@@ -37,6 +37,7 @@ __all__ = [
     "Searcher",
     "AsyncSearcher",
     "ScoringEngine",
+    "AsyncScoringEngine",
     "WebEnricher",
     "AsyncWebEnricher",
     "WebCrawler",

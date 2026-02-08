@@ -14,24 +14,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Literal
 
 import anyio
-
-from search_core.config import ScoringConfig
-from search_core.crawler import AsyncWebCrawler, WebCrawler
-from search_core.models import PageChunk, PageEnrichment
-from search_core.scorer import ScoringEngine
-from search_core.text import TextUtils
-from search_core.tools import compile_patterns, has_noise_word, is_duplicate_text
+from core.crawler import AsyncWebCrawler, WebCrawler
+from core.models import PageChunk, PageEnrichment
+from core.scorer import AsyncScoringEngine, ScoringEngine
+from core.text import TextUtils
+from core.tools import compile_patterns, has_noise_word, is_duplicate_text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from search_core.config import (
+    from core.config import (
+        SearchConfig,
         SearchContextConfig,
         WebChunkingConfig,
         WebDepthPreset,
-        WebEnrichmentConfig,
     )
-    from search_core.models import SearchResult
+    from core.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,40 +40,18 @@ _LONG_SENT_SPLIT_RE = re.compile(r"([,\uFF0C\u3001\t ])")
 class _WebEnricherBase:
     """Shared chunking/scoring/filtering logic for sync/async enrichers."""
 
+    config: SearchConfig
+
     def __init__(
         self,
-        config: WebEnrichmentConfig,
+        config: SearchConfig,
         *,
         user_agent: str,
-        scorer: ScoringEngine | None = None,
         min_score: float = 0.5,
     ) -> None:
         self.config = config
         self._min_score = float(min_score)
-        self.scorer = scorer or ScoringEngine(ScoringConfig())
         self._user_agent = user_agent
-
-    def _make_webcrawler(
-        self,
-        *,
-        fetcher: Callable[[str], bytes | str] | None = None,
-    ) -> WebCrawler:
-        return WebCrawler(
-            fetch_cfg=self.config.fetch,
-            user_agent=self._user_agent,
-            fetcher=fetcher,
-        )
-
-    def _make_async_webcrawler(
-        self,
-        *,
-        afetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
-    ) -> AsyncWebCrawler:
-        return AsyncWebCrawler(
-            fetch_cfg=self.config.fetch,
-            user_agent=self._user_agent,
-            afetcher=afetcher,
-        )
 
     def filter_blocks(
         self,
@@ -109,10 +85,10 @@ class _WebEnricherBase:
                 title_patterns=title_patterns,
                 mode="block",
             )
-            if t >= float(self.config.select.block_hard_drop_threshold):
+            if t >= float(self.config.web_enrichment.select.block_hard_drop_threshold):
                 continue
             kept.append(block)
-            if len(kept) >= int(self.config.chunking.max_blocks):
+            if len(kept) >= int(self.config.web_enrichment.chunking.max_blocks):
                 break
         return kept
 
@@ -132,7 +108,9 @@ class _WebEnricherBase:
         if not cleaned:
             return []
 
-        max_len = max_sentence_chars or self.config.chunking.max_sentence_chars
+        max_len = (
+            max_sentence_chars or self.config.web_enrichment.chunking.max_sentence_chars
+        )
         parts = _SENTENCE_BOUNDARY_RE.split(cleaned)
 
         sentences: list[str] = []
@@ -218,64 +196,6 @@ class _WebEnricherBase:
             cur_len += len(s) + 1
         flush()
         return chunks
-
-    def score_chunks(
-        self,
-        chunks: list[str],
-        *,
-        query: str,
-        query_tokens: list[str],
-        intent_tokens: list[str],
-        domain: str | None,
-        context_config: SearchContextConfig,
-    ) -> list[tuple[float, str]]:
-        """Score chunks and apply hard drops/dedupe.
-
-        Args:
-            chunks: Chunk candidates.
-            query: Original user query.
-            query_tokens: Tokenized query.
-            intent_tokens: Profile-specific intent tokens found in query.
-            domain: Source domain (currently not used in scoring).
-            context_config: Profile config (noise, thresholds).
-
-        Returns:
-            A list of (score, chunk) pairs sorted by score desc.
-        """
-        _ = domain  # Domain bonus is intentionally not part of scoring.
-        if not chunks:
-            return []
-
-        title_patterns = compile_patterns(context_config.title_tail_patterns)
-        query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
-
-        filtered: list[tuple[int, str]] = []
-        for idx, chunk in enumerate(chunks):
-            if self._hard_drop_chunk(
-                chunk,
-                context_config=context_config,
-                query_has_cjk=query_has_cjk,
-                title_patterns=title_patterns,
-            ):
-                continue
-            filtered.append((idx, chunk))
-
-        if not filtered:
-            return []
-
-        base = self.scorer.score(
-            [c for _, c in filtered],
-            query=query,
-            query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
-        )
-        base_scores = [float(s) for s, _ in base]
-        return self._post_process_chunk_scores(
-            filtered,
-            base_scores=base_scores,
-            early_bonus=float(self.config.select.early_bonus),
-            dedupe_threshold=float(context_config.fuzzy_threshold),
-        )
 
     def _post_process_chunk_scores(
         self,
@@ -467,7 +387,9 @@ class _WebEnricherBase:
             title_patterns=title_patterns,
             mode="chunk",
         )
-        return tpl >= float(self.config.select.template_hard_drop_threshold)
+        return tpl >= float(
+            self.config.web_enrichment.select.template_hard_drop_threshold
+        )
 
     def _chunk_stats(self, chunk: str) -> tuple[int, float, int, float, float]:
         tokens = TextUtils.tokenize(chunk)
@@ -485,7 +407,7 @@ class WebEnricher(_WebEnricherBase):
 
     def __init__(
         self,
-        config: WebEnrichmentConfig,
+        config: SearchConfig,
         *,
         user_agent: str,
         fetcher: Callable[[str], bytes | str] | None = None,
@@ -495,10 +417,79 @@ class WebEnricher(_WebEnricherBase):
         super().__init__(
             config,
             user_agent=user_agent,
-            scorer=scorer,
             min_score=min_score,
         )
+        self.scorer = scorer or ScoringEngine(self.config)
         self.crawler = self._make_webcrawler(fetcher=fetcher)
+
+    def _make_webcrawler(
+        self,
+        *,
+        fetcher: Callable[[str], bytes | str] | None = None,
+    ) -> WebCrawler:
+        return WebCrawler(
+            config=self.config,
+            user_agent=self._user_agent,
+            fetcher=fetcher,
+        )
+
+    def score_chunks(
+        self,
+        chunks: list[str],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+        domain: str | None,
+        context_config: SearchContextConfig,
+    ) -> list[tuple[float, str]]:
+        """Score chunks and apply hard drops/dedupe.
+
+        Args:
+            chunks: Chunk candidates.
+            query: Original user query.
+            query_tokens: Tokenized query.
+            intent_tokens: Profile-specific intent tokens found in query.
+            domain: Source domain (currently not used in scoring).
+            context_config: Profile config (noise, thresholds).
+
+        Returns:
+            A list of (score, chunk) pairs sorted by score desc.
+        """
+        _ = domain  # Domain bonus is intentionally not part of scoring.
+        if not chunks:
+            return []
+
+        title_patterns = compile_patterns(context_config.title_tail_patterns)
+        query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
+
+        filtered: list[tuple[int, str]] = []
+        for idx, chunk in enumerate(chunks):
+            if self._hard_drop_chunk(
+                chunk,
+                context_config=context_config,
+                query_has_cjk=query_has_cjk,
+                title_patterns=title_patterns,
+            ):
+                continue
+            filtered.append((idx, chunk))
+
+        if not filtered:
+            return []
+
+        base = self.scorer.score(
+            [c for _, c in filtered],
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        base_scores = [float(s) for s, _ in base]
+        return self._post_process_chunk_scores(
+            filtered,
+            base_scores=base_scores,
+            early_bonus=float(self.config.web_enrichment.select.early_bonus),
+            dedupe_threshold=float(context_config.fuzzy_threshold),
+        )
 
     def enrich_results(
         self,
@@ -517,7 +508,7 @@ class WebEnricher(_WebEnricherBase):
 
         This method mutates ``results`` in-place by setting ``result.page``.
         """
-        if not self.config.enabled:
+        if not self.config.web_enrichment.enabled:
             return
         if not results:
             return
@@ -531,7 +522,7 @@ class WebEnricher(_WebEnricherBase):
         if m <= 0:
             return
 
-        chunking = self.config.chunking
+        chunking = self.config.web_enrichment.chunking
         if chunk_target_chars is not None:
             chunking = chunking.with_overrides(target_chars=int(chunk_target_chars))
         if chunk_overlap_sentences is not None:
@@ -542,7 +533,7 @@ class WebEnricher(_WebEnricherBase):
             chunking = chunking.with_overrides(min_chunk_chars=int(min_chunk_chars))
 
         top_k = int(preset.top_chunks_per_page)
-        max_workers = min(int(self.config.fetch.max_workers), m)
+        max_workers = min(int(self.config.web_enrichment.fetch.max_workers), m)
 
         def crawl_one(  # noqa: PLR0911
             item: SearchResult,
@@ -618,22 +609,83 @@ class WebEnricher(_WebEnricherBase):
 class AsyncWebEnricher(_WebEnricherBase):
     """Async page crawler/enricher for SERP results."""
 
+    scorer: AsyncScoringEngine
+
     def __init__(
         self,
-        config: WebEnrichmentConfig,
+        config: SearchConfig,
         *,
         user_agent: str,
         afetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
-        scorer: ScoringEngine | None = None,
+        scorer: AsyncScoringEngine | None = None,
         min_score: float = 0.5,
     ) -> None:
         super().__init__(
             config,
             user_agent=user_agent,
-            scorer=scorer,
             min_score=min_score,
         )
+        self.scorer = scorer or AsyncScoringEngine(self.config)
         self.crawler = self._make_async_webcrawler(afetcher=afetcher)
+
+    def _make_async_webcrawler(
+        self,
+        *,
+        afetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
+    ) -> AsyncWebCrawler:
+        return AsyncWebCrawler(
+            config=self.config,
+            user_agent=self._user_agent,
+            afetcher=afetcher,
+        )
+
+    async def ascore_chunks(
+        self,
+        chunks: list[str],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+        domain: str | None,
+        context_config: SearchContextConfig,
+    ) -> list[tuple[float, str]]:
+        """Async variant of `score_chunks()` using an async scoring engine."""
+        _ = domain
+        if not chunks:
+            return []
+
+        title_patterns = compile_patterns(context_config.title_tail_patterns)
+        query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
+
+        filtered: list[tuple[int, str]] = []
+        for idx, chunk in enumerate(chunks):
+            if self._hard_drop_chunk(
+                chunk,
+                context_config=context_config,
+                query_has_cjk=query_has_cjk,
+                title_patterns=title_patterns,
+            ):
+                continue
+            filtered.append((idx, chunk))
+
+        if not filtered:
+            return []
+
+        # Async scorer API: returns list[(score, text)] aligned with input.
+        scorer = self.scorer
+        base = await scorer.score(
+            [c for _, c in filtered],
+            query=query,
+            query_tokens=query_tokens,
+            intent_tokens=intent_tokens,
+        )
+        base_scores = [float(s) for s, _ in base]
+        return self._post_process_chunk_scores(
+            filtered,
+            base_scores=base_scores,
+            early_bonus=float(self.config.web_enrichment.select.early_bonus),
+            dedupe_threshold=float(context_config.fuzzy_threshold),
+        )
 
     async def aenrich_results(
         self,
@@ -652,7 +704,7 @@ class AsyncWebEnricher(_WebEnricherBase):
 
         This method mutates ``results`` in-place by setting ``result.page``.
         """
-        if not self.config.enabled:
+        if not self.config.web_enrichment.enabled:
             return
         if not results:
             return
@@ -666,7 +718,7 @@ class AsyncWebEnricher(_WebEnricherBase):
         if m <= 0:
             return
 
-        chunking = self.config.chunking
+        chunking = self.config.web_enrichment.chunking
         if chunk_target_chars is not None:
             chunking = chunking.with_overrides(target_chars=int(chunk_target_chars))
         if chunk_overlap_sentences is not None:
@@ -677,7 +729,7 @@ class AsyncWebEnricher(_WebEnricherBase):
             chunking = chunking.with_overrides(min_chunk_chars=int(min_chunk_chars))
 
         top_k = int(preset.top_chunks_per_page)
-        max_workers = min(int(self.config.fetch.max_workers), m)
+        max_workers = min(int(self.config.web_enrichment.fetch.max_workers), m)
 
         sem = anyio.Semaphore(max_workers)
         cancelled_exc = anyio.get_cancelled_exc_class()
@@ -723,7 +775,7 @@ class AsyncWebEnricher(_WebEnricherBase):
                 if len(chunks) > int(chunking.max_chunks):
                     chunks = chunks[: int(chunking.max_chunks)]
 
-                scored = self.score_chunks(
+                scored = await self.ascore_chunks(
                     chunks,
                     query=query,
                     query_tokens=query_tokens,

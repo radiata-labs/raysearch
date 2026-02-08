@@ -11,12 +11,12 @@ import re
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
-from search_core.text import PUNCTUATION_RE, TextUtils
+from core.text import PUNCTUATION_RE, TextUtils
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from search_core.config import SearchContextConfig
+    from core.config import SearchContextConfig
 
 logger = logging.getLogger(__name__)
 
