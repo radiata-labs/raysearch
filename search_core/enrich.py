@@ -6,15 +6,17 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Literal
 
+import anyio
+
 from search_core.config import ScoringConfig
-from search_core.crawler import WebCrawler
+from search_core.crawler import AsyncWebCrawler, WebCrawler
 from search_core.models import PageChunk, PageEnrichment
 from search_core.scorer import ScoringEngine
 from search_core.text import TextUtils
 from search_core.tools import compile_patterns, has_noise_word, is_duplicate_text
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from search_core.config import (
         SearchContextConfig,
@@ -30,23 +32,40 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"([\u3002\uFF01\uFF1F!?;\uFF1B.\n])")
 _LONG_SENT_SPLIT_RE = re.compile(r"([,\uFF0C\u3001\t ])")
 
 
-class WebEnricher:
+class _WebEnricherBase:
     def __init__(
         self,
         config: WebEnrichmentConfig,
         *,
         user_agent: str,
-        fetcher: Callable[[str], bytes | str] | None = None,
         scorer: ScoringEngine | None = None,
         min_score: float = 0.5,
     ) -> None:
         self.config = config
         self._min_score = float(min_score)
         self.scorer = scorer or ScoringEngine(ScoringConfig())
-        self.crawler = WebCrawler(
+        self._user_agent = user_agent
+
+    def _make_webcrawler(
+        self,
+        *,
+        fetcher: Callable[[str], bytes | str] | None = None,
+    ) -> WebCrawler:
+        return WebCrawler(
             fetch_cfg=self.config.fetch,
-            user_agent=user_agent,
+            user_agent=self._user_agent,
             fetcher=fetcher,
+        )
+
+    def _make_async_webcrawler(
+        self,
+        *,
+        afetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
+    ) -> AsyncWebCrawler:
+        return AsyncWebCrawler(
+            fetch_cfg=self.config.fetch,
+            user_agent=self._user_agent,
+            afetcher=afetcher,
         )
 
     def filter_blocks(
@@ -216,12 +235,6 @@ class WebEnricher:
         early_bonus: float,
         dedupe_threshold: float,
     ) -> list[tuple[float, str]]:
-        """Post-process chunk scores after ScoringEngine.
-
-        By design this only applies:
-        - position-based early bonus/decay
-        - dedupe (reusing pipeline's fuzzy threshold)
-        """
         scored: list[tuple[float, str]] = []
         for (pos, chunk), base_score in zip(filtered_chunks, base_scores, strict=False):
             final = float(base_score)
@@ -403,6 +416,25 @@ class WebEnricher:
         cjk_ratio = cjk_count / max(1, len(chunk))
         return token_count, unique_ratio, digits, digits_ratio, cjk_ratio
 
+
+class WebEnricher(_WebEnricherBase):
+    def __init__(
+        self,
+        config: WebEnrichmentConfig,
+        *,
+        user_agent: str,
+        fetcher: Callable[[str], bytes | str] | None = None,
+        scorer: ScoringEngine | None = None,
+        min_score: float = 0.5,
+    ) -> None:
+        super().__init__(
+            config,
+            user_agent=user_agent,
+            scorer=scorer,
+            min_score=min_score,
+        )
+        self.crawler = self._make_webcrawler(fetcher=fetcher)
+
     def enrich_results(
         self,
         results: list[SearchResult],
@@ -514,4 +546,143 @@ class WebEnricher:
                 )
 
 
-__all__ = ["WebEnricher"]
+class AsyncWebEnricher(_WebEnricherBase):
+    def __init__(
+        self,
+        config: WebEnrichmentConfig,
+        *,
+        user_agent: str,
+        afetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
+        scorer: ScoringEngine | None = None,
+        min_score: float = 0.5,
+    ) -> None:
+        super().__init__(
+            config,
+            user_agent=user_agent,
+            scorer=scorer,
+            min_score=min_score,
+        )
+        self.crawler = self._make_async_webcrawler(afetcher=afetcher)
+
+    async def aenrich_results(
+        self,
+        results: list[SearchResult],
+        *,
+        query: str,
+        query_tokens: list[str],
+        intent_tokens: list[str],
+        context_config: SearchContextConfig,
+        preset: WebDepthPreset,
+        chunk_target_chars: int | None = None,
+        chunk_overlap_sentences: int | None = None,
+        min_chunk_chars: int | None = None,
+    ) -> None:
+        if not self.config.enabled:
+            return
+        if not results:
+            return
+        if not query_tokens:
+            return
+
+        n = len(results)
+        target = int(math.ceil(n * float(preset.pages_ratio)))
+        m = max(int(preset.min_pages), min(int(preset.max_pages), target))
+        m = min(m, n)
+        if m <= 0:
+            return
+
+        chunking = self.config.chunking
+        if chunk_target_chars is not None:
+            chunking = chunking.with_overrides(target_chars=int(chunk_target_chars))
+        if chunk_overlap_sentences is not None:
+            chunking = chunking.with_overrides(
+                overlap_sentences=int(chunk_overlap_sentences)
+            )
+        if min_chunk_chars is not None:
+            chunking = chunking.with_overrides(min_chunk_chars=int(min_chunk_chars))
+
+        top_k = int(preset.top_chunks_per_page)
+        max_workers = min(int(self.config.fetch.max_workers), m)
+
+        sem = anyio.Semaphore(max_workers)
+        cancelled_exc = anyio.get_cancelled_exc_class()
+
+        async def crawl_one(item: SearchResult) -> None:  # noqa: PLR0915
+            await sem.acquire()
+            try:
+                url = (item.url or "").strip()
+                if not url:
+                    item.page = PageEnrichment(chunks=[], error="empty url")
+                    return
+
+                crawl = await self.crawler.afetch_blocks(url)
+                if crawl.error:
+                    item.page = PageEnrichment(chunks=[], error=crawl.error)
+                    return
+                blocks = crawl.blocks
+                if not blocks:
+                    item.page = PageEnrichment(chunks=[], error="no blocks extracted")
+                    return
+
+                query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
+                kept_blocks = self.filter_blocks(
+                    blocks,
+                    context_config=context_config,
+                    query_has_cjk=query_has_cjk,
+                )
+                if not kept_blocks:
+                    item.page = PageEnrichment(
+                        chunks=[],
+                        error="no blocks after filtering",
+                    )
+                    return
+
+                text_for_chunking = "\n\n".join(kept_blocks)
+                sents = self.split_sentences(text_for_chunking)
+                if len(sents) > int(chunking.max_sentences):
+                    sents = sents[: int(chunking.max_sentences)]
+                chunks = self.chunk_sentences(sents, chunking=chunking)
+                if not chunks:
+                    item.page = PageEnrichment(chunks=[], error="no chunks")
+                    return
+                if len(chunks) > int(chunking.max_chunks):
+                    chunks = chunks[: int(chunking.max_chunks)]
+
+                scored = self.score_chunks(
+                    chunks,
+                    query=query,
+                    query_tokens=query_tokens,
+                    intent_tokens=intent_tokens,
+                    domain=item.domain,
+                    context_config=context_config,
+                )
+                if not scored:
+                    item.page = PageEnrichment(chunks=[], error="no matching chunks")
+                    return
+
+                top: list[tuple[float, str]] = []
+                for score, chunk in scored:
+                    top.append((float(score), chunk))
+                    if len(top) >= top_k:
+                        break
+
+                item.page = PageEnrichment(
+                    chunks=[PageChunk(text=c, score=float(s)) for s, c in top],
+                    error=None,
+                )
+            except cancelled_exc:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                item.page = PageEnrichment(chunks=[], error=str(exc))
+            finally:
+                sem.release()
+
+        async with anyio.create_task_group() as tg:
+            for item in results[:m]:
+                tg.start_soon(crawl_one, item)
+
+    async def aclose(self) -> None:
+        await self.crawler.aclose()
+
+
+__all__ = ["WebEnricher", "AsyncWebEnricher"]

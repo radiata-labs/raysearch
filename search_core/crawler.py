@@ -11,12 +11,13 @@ from typing import TYPE_CHECKING, Literal
 from typing_extensions import override
 from urllib.parse import urlparse
 
+import httpx
 import requests
 
 from search_core.text import TextUtils
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from search_core.config import WebFetchConfig
 
@@ -25,177 +26,13 @@ logger = logging.getLogger(__name__)
 ContentKind = Literal["html", "text"]
 
 
-@dataclass(frozen=True)
-class CrawlBlocksResult:
-    blocks: list[str]
-    content_type: str | None = None
-    error: str | None = None
+class _WebCrawlerBase:
+    fetch_cfg: WebFetchConfig
+    user_agent: str
 
-
-class VisibleTextParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=False)
-        self._buf: list[str] = []
-        self._skip_stack: list[str] = []
-
-    @override
-    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
-        lowered = (tag or "").lower()
-        if lowered in {"script", "style", "noscript"}:
-            self._skip_stack.append(lowered)
-
-    @override
-    def handle_endtag(self, tag: str) -> None:
-        lowered = (tag or "").lower()
-        if self._skip_stack and self._skip_stack[-1] == lowered:
-            self._skip_stack.pop()
-        if lowered in {"p", "br", "div", "li", "section", "article", "h1", "h2", "h3"}:
-            self._buf.append("\n")
-
-    @override
-    def handle_data(self, data: str) -> None:
-        if self._skip_stack:
-            return
-        if data:
-            self._buf.append(data)
-
-    @override
-    def handle_entityref(self, name: str) -> None:
-        if self._skip_stack:
-            return
-        self._buf.append(f"&{name};")
-
-    @override
-    def handle_charref(self, name: str) -> None:
-        if self._skip_stack:
-            return
-        self._buf.append(f"&#{name};")
-
-    def get_text(self) -> str:
-        return "".join(self._buf)
-
-
-_WS_RE = re.compile(r"\s+")
-_META_CHARSET_RE = re.compile(
-    r"""<meta[^>]+charset\s*=\s*["']?\s*([a-zA-Z0-9_\-]+)""", re.IGNORECASE
-)
-_CT_CHARSET_RE = re.compile(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
-
-
-class WebCrawler:
-    """Fetch + decode + extract blocks from a URL.
-
-    This exists to keep WebEnricher focused on chunking/scoring logic.
-    """
-
-    def __init__(
-        self,
-        *,
-        fetch_cfg: WebFetchConfig,
-        user_agent: str,
-        fetcher: Callable[[str], bytes | str] | None = None,
-    ) -> None:
+    def __init__(self, *, fetch_cfg: WebFetchConfig, user_agent: str) -> None:
         self.fetch_cfg = fetch_cfg
         self.user_agent = user_agent
-        self._fetcher = fetcher
-
-    def fetch_blocks(self, url: str) -> CrawlBlocksResult:  # noqa: PLR0911
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"}:
-            return CrawlBlocksResult(
-                blocks=[],
-                content_type=None,
-                error=f"unsupported scheme: {parsed.scheme}",
-            )
-
-        if self._fetcher is not None:
-            try:
-                payload = self._fetcher(url)
-            except Exception as exc:  # noqa: BLE001
-                return CrawlBlocksResult(blocks=[], content_type=None, error=str(exc))
-
-            if payload is None:
-                return CrawlBlocksResult(
-                    blocks=[], content_type=None, error="empty response"
-                )
-
-            if isinstance(payload, bytes):
-                text, kind = self._decode_best_effort(payload, content_type=None)
-                blocks = self._extract_blocks(text, kind=kind)
-                return CrawlBlocksResult(
-                    blocks=blocks,
-                    content_type=None,
-                    error=None if blocks else "no blocks extracted",
-                )
-
-            # Assume string is HTML.
-            text = str(payload)
-            blocks = self._extract_blocks(text, kind="html")
-            return CrawlBlocksResult(
-                blocks=blocks,
-                content_type=None,
-                error=None if blocks else "no blocks extracted",
-            )
-
-        headers = {"User-Agent": self.user_agent}
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                timeout=self.fetch_cfg.timeout,
-                stream=True,
-            )  # noqa: S113
-        except requests.RequestException as exc:
-            return CrawlBlocksResult(blocks=[], content_type=None, error=str(exc))
-
-        try:
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            return CrawlBlocksResult(
-                blocks=[],
-                content_type=resp.headers.get("content-type"),
-                error=str(exc),
-            )
-
-        content_type = resp.headers.get("content-type") or ""
-        if content_type:
-            ct_lower = content_type.lower()
-            allowed = tuple(self.fetch_cfg.allow_content_types or ())
-            if allowed and not any(a in ct_lower for a in allowed):
-                # If header looks wrong but content looks like HTML, still try.
-                pass
-
-        chunks: list[bytes] = []
-        total = 0
-        try:
-            for part in resp.iter_content(chunk_size=64 * 1024):
-                if not part:
-                    continue
-                total += len(part)
-                if total > int(self.fetch_cfg.max_bytes):
-                    return CrawlBlocksResult(
-                        blocks=[],
-                        content_type=content_type,
-                        error=f"exceeded max_bytes={self.fetch_cfg.max_bytes}",
-                    )
-                chunks.append(part)
-        finally:
-            resp.close()
-
-        data = b"".join(chunks)
-        apparent = self._guess_apparent_encoding(data)
-        text, kind = self._decode_best_effort(
-            data,
-            content_type=content_type or None,
-            resp_encoding=resp.encoding,
-            apparent_encoding=apparent,
-        )
-        blocks = self._extract_blocks(text, kind=kind)
-        return CrawlBlocksResult(
-            blocks=blocks,
-            content_type=content_type or None,
-            error=None if blocks else "no blocks extracted",
-        )
 
     def _guess_apparent_encoding(self, data: bytes) -> str | None:
         """Best-effort charset guess from bytes without consuming streamed responses."""
@@ -326,8 +163,6 @@ class WebCrawler:
             ordered.append(c)
 
         # If the page declares a charset (header/meta/BOM), prefer it strongly.
-        # Wrong-but-decodable encodings can "look good" under heuristics; the
-        # declaration is usually the best signal when it's present.
         for enc in declared:
             enc = (enc or "").strip()
             if not enc:
@@ -341,7 +176,6 @@ class WebCrawler:
             total = max(1, len(text))
             repl = text.count("\ufffd") / total
             ctrl = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t") / total
-            # If the declared encoding yields a clean decode, accept it.
             if repl <= 0.001 and ctrl <= 0.001:
                 best_text = text
                 best_text = best_text.replace("\r\n", "\n").replace("\r", "\n")
@@ -359,15 +193,10 @@ class WebCrawler:
                 continue
 
             text = text.replace("\x00", "")
-            # Quality signals:
-            # - fewer replacement/control chars is better
-            # - prefer decodes that produce real CJK when the page contains it
             total = max(1, len(text))
             repl = text.count("\ufffd") / total
             ctrl = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t") / total
             cjk = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]", text)) / total
-            # Penalize extremely short decodes (often wrong encoding), but do not
-            # use length as a positive signal (latin-1 would win).
             short_penalty = 1.0 if len(text) < 200 else 0.0
 
             key = (repl, ctrl, -cjk, short_penalty)
@@ -378,14 +207,12 @@ class WebCrawler:
         if not best_text:
             best_text = data.decode("utf-8", errors="replace").replace("\x00", "")
 
-        # Light whitespace cleanup; keep newlines for block segmentation.
         best_text = best_text.replace("\r\n", "\n").replace("\r", "\n")
         best_text = _WS_RE.sub(" ", best_text) if kind == "text" else best_text
         return best_text, kind
 
     @staticmethod
     def _extract_meta_charset(data: bytes) -> str | None:
-        # Scan only the head; meta charset is usually in the first few KB.
         head = data[:16384].decode("ascii", errors="ignore")
         m = _META_CHARSET_RE.search(head)
         if not m:
@@ -394,4 +221,301 @@ class WebCrawler:
         return cs or None
 
 
-__all__ = ["CrawlBlocksResult", "WebCrawler"]
+@dataclass(frozen=True)
+class CrawlBlocksResult:
+    blocks: list[str]
+    content_type: str | None = None
+    error: str | None = None
+
+
+class VisibleTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._buf: list[str] = []
+        self._skip_stack: list[str] = []
+
+    @override
+    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        lowered = (tag or "").lower()
+        if lowered in {"script", "style", "noscript"}:
+            self._skip_stack.append(lowered)
+
+    @override
+    def handle_endtag(self, tag: str) -> None:
+        lowered = (tag or "").lower()
+        if self._skip_stack and self._skip_stack[-1] == lowered:
+            self._skip_stack.pop()
+        if lowered in {"p", "br", "div", "li", "section", "article", "h1", "h2", "h3"}:
+            self._buf.append("\n")
+
+    @override
+    def handle_data(self, data: str) -> None:
+        if self._skip_stack:
+            return
+        if data:
+            self._buf.append(data)
+
+    @override
+    def handle_entityref(self, name: str) -> None:
+        if self._skip_stack:
+            return
+        self._buf.append(f"&{name};")
+
+    @override
+    def handle_charref(self, name: str) -> None:
+        if self._skip_stack:
+            return
+        self._buf.append(f"&#{name};")
+
+    def get_text(self) -> str:
+        return "".join(self._buf)
+
+
+_WS_RE = re.compile(r"\s+")
+_META_CHARSET_RE = re.compile(
+    r"""<meta[^>]+charset\s*=\s*["']?\s*([a-zA-Z0-9_\-]+)""", re.IGNORECASE
+)
+_CT_CHARSET_RE = re.compile(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
+
+
+class WebCrawler(_WebCrawlerBase):
+    """Fetch + decode + extract blocks from a URL.
+
+    This exists to keep WebEnricher focused on chunking/scoring logic.
+    """
+
+    def __init__(
+        self,
+        *,
+        fetch_cfg: WebFetchConfig,
+        user_agent: str,
+        fetcher: Callable[[str], bytes | str] | None = None,
+    ) -> None:
+        super().__init__(fetch_cfg=fetch_cfg, user_agent=user_agent)
+        self._fetcher = fetcher
+
+    def fetch_blocks(self, url: str) -> CrawlBlocksResult:  # noqa: PLR0911
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return CrawlBlocksResult(
+                blocks=[],
+                content_type=None,
+                error=f"unsupported scheme: {parsed.scheme}",
+            )
+
+        if self._fetcher is not None:
+            try:
+                payload = self._fetcher(url)
+            except Exception as exc:  # noqa: BLE001
+                return CrawlBlocksResult(blocks=[], content_type=None, error=str(exc))
+
+            if payload is None:
+                return CrawlBlocksResult(
+                    blocks=[], content_type=None, error="empty response"
+                )
+
+            if isinstance(payload, bytes):
+                text, kind = self._decode_best_effort(payload, content_type=None)
+                blocks = self._extract_blocks(text, kind=kind)
+                return CrawlBlocksResult(
+                    blocks=blocks,
+                    content_type=None,
+                    error=None if blocks else "no blocks extracted",
+                )
+
+            # Assume string is HTML.
+            text = str(payload)
+            blocks = self._extract_blocks(text, kind="html")
+            return CrawlBlocksResult(
+                blocks=blocks,
+                content_type=None,
+                error=None if blocks else "no blocks extracted",
+            )
+
+        headers = {"User-Agent": self.user_agent}
+        try:
+            resp = requests.get(
+                url,
+                headers=headers,
+                timeout=self.fetch_cfg.timeout,
+                stream=True,
+            )  # noqa: S113
+        except requests.RequestException as exc:
+            return CrawlBlocksResult(blocks=[], content_type=None, error=str(exc))
+
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            return CrawlBlocksResult(
+                blocks=[],
+                content_type=resp.headers.get("content-type"),
+                error=str(exc),
+            )
+
+        content_type = resp.headers.get("content-type") or ""
+        if content_type:
+            ct_lower = content_type.lower()
+            allowed = tuple(self.fetch_cfg.allow_content_types or ())
+            if allowed and not any(a in ct_lower for a in allowed):
+                # If header looks wrong but content looks like HTML, still try.
+                pass
+
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            for part in resp.iter_content(chunk_size=64 * 1024):
+                if not part:
+                    continue
+                total += len(part)
+                if total > int(self.fetch_cfg.max_bytes):
+                    return CrawlBlocksResult(
+                        blocks=[],
+                        content_type=content_type,
+                        error=f"exceeded max_bytes={self.fetch_cfg.max_bytes}",
+                    )
+                chunks.append(part)
+        finally:
+            resp.close()
+
+        data = b"".join(chunks)
+        apparent = self._guess_apparent_encoding(data)
+        text, kind = self._decode_best_effort(
+            data,
+            content_type=content_type or None,
+            resp_encoding=resp.encoding,
+            apparent_encoding=apparent,
+        )
+        blocks = self._extract_blocks(text, kind=kind)
+        return CrawlBlocksResult(
+            blocks=blocks,
+            content_type=content_type or None,
+            error=None if blocks else "no blocks extracted",
+        )
+
+
+class AsyncWebCrawler(_WebCrawlerBase):
+    """Async fetch + decode + extract blocks from a URL (httpx/anyio)."""
+
+    def __init__(
+        self,
+        *,
+        fetch_cfg: WebFetchConfig,
+        user_agent: str,
+        afetcher: Callable[[str], Awaitable[bytes | str]] | None = None,
+        async_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        super().__init__(fetch_cfg=fetch_cfg, user_agent=user_agent)
+        self._afetcher = afetcher
+        self._async_client: httpx.AsyncClient | None = async_client
+        self._owns_async_client = async_client is None
+
+    def _get_async_client(self) -> httpx.AsyncClient:
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient()
+        return self._async_client
+
+    async def afetch_blocks(self, url: str) -> CrawlBlocksResult:  # noqa: PLR0911
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return CrawlBlocksResult(
+                blocks=[],
+                content_type=None,
+                error=f"unsupported scheme: {parsed.scheme}",
+            )
+
+        if self._afetcher is not None:
+            try:
+                payload = await self._afetcher(url)
+            except Exception as exc:  # noqa: BLE001
+                return CrawlBlocksResult(blocks=[], content_type=None, error=str(exc))
+
+            if payload is None:
+                return CrawlBlocksResult(
+                    blocks=[], content_type=None, error="empty response"
+                )
+
+            if isinstance(payload, bytes):
+                text, kind = self._decode_best_effort(payload, content_type=None)
+                blocks = self._extract_blocks(text, kind=kind)
+                return CrawlBlocksResult(
+                    blocks=blocks,
+                    content_type=None,
+                    error=None if blocks else "no blocks extracted",
+                )
+
+            text = str(payload)
+            blocks = self._extract_blocks(text, kind="html")
+            return CrawlBlocksResult(
+                blocks=blocks,
+                content_type=None,
+                error=None if blocks else "no blocks extracted",
+            )
+
+        headers = {"User-Agent": self.user_agent}
+        content_type = None
+
+        try:
+            async with self._get_async_client().stream(
+                "GET",
+                url,
+                headers=headers,
+                timeout=self.fetch_cfg.timeout,
+                follow_redirects=True,
+            ) as resp:
+                content_type = resp.headers.get("content-type")
+                if content_type:
+                    ct_lower = content_type.lower()
+                    allowed = tuple(self.fetch_cfg.allow_content_types or ())
+                    if allowed and not any(a in ct_lower for a in allowed):
+                        pass
+
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPError as exc:
+                    return CrawlBlocksResult(
+                        blocks=[],
+                        content_type=content_type,
+                        error=str(exc),
+                    )
+
+                chunks: list[bytes] = []
+                total = 0
+                async for part in resp.aiter_bytes():
+                    if not part:
+                        continue
+                    total += len(part)
+                    if total > int(self.fetch_cfg.max_bytes):
+                        return CrawlBlocksResult(
+                            blocks=[],
+                            content_type=content_type,
+                            error=f"exceeded max_bytes={self.fetch_cfg.max_bytes}",
+                        )
+                    chunks.append(part)
+        except httpx.HTTPError as exc:
+            return CrawlBlocksResult(blocks=[], content_type=None, error=str(exc))
+
+        data = b"".join(chunks)
+        apparent = self._guess_apparent_encoding(data)
+        text, kind = self._decode_best_effort(
+            data,
+            content_type=content_type or None,
+            resp_encoding=None,
+            apparent_encoding=apparent,
+        )
+        blocks = self._extract_blocks(text, kind=kind)
+        return CrawlBlocksResult(
+            blocks=blocks,
+            content_type=content_type or None,
+            error=None if blocks else "no blocks extracted",
+        )
+
+    async def aclose(self) -> None:
+        if self._async_client is None:
+            return
+        if not self._owns_async_client:
+            return
+        await self._async_client.aclose()
+        self._async_client = None
+
+
+__all__ = ["CrawlBlocksResult", "WebCrawler", "AsyncWebCrawler"]

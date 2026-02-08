@@ -42,6 +42,28 @@ markdown = engine.search_markdown(
 )
 ```
 
+## Async Python usage
+
+```python
+import anyio
+
+from search_core import AsyncSearchPipeline, SearchConfig
+
+
+async def run() -> None:
+    cfg = SearchConfig.load()
+    async with AsyncSearchPipeline(cfg) as engine:
+        md = await engine.asearch_markdown(
+            "example query",
+            "high",  # depth: simple|low|medium|high
+            max_results=8,
+        )
+        print(md)
+
+
+anyio.run(run)
+```
+
 ## Search Depth (Web Crawl Enrichment)
 
 `depth` is a runtime parameter (not stored in config):

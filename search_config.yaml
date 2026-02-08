@@ -15,7 +15,7 @@ scoring:
 
 # Global min-score filter (applies to results and web chunks).
 score_filter:
-  min_score: 0.1
+  min_score: 0.5
 
 profiles:
   general: {}

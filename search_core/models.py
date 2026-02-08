@@ -48,4 +48,3 @@ class SearchContext(BaseModel):
 
 
 __all__ = ["PageChunk", "PageEnrichment", "SearchResult", "SearchContext"]
-
