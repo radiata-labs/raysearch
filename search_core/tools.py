@@ -5,10 +5,12 @@ import re
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
-from .utils import PUNCTUATION_RE, TextUtils
+from search_core.text import PUNCTUATION_RE, TextUtils
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from search_core.config import SearchContextConfig
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,16 @@ def is_duplicate_text(
     return False
 
 
+def extract_intent_tokens(query: str, config: SearchContextConfig) -> list[str]:
+    lowered = query.lower()
+    return [term for term in config.intent_terms if term.lower() in lowered]
+
+
+def has_noise_word(text: str, context_config: SearchContextConfig) -> bool:
+    lowered = TextUtils.normalize_text(text)
+    return any(word and word.lower() in lowered for word in context_config.noise_words)
+
+
 __all__ = [
     "compile_patterns",
     "domain_bonus",
@@ -112,5 +124,6 @@ __all__ = [
     "fuzzy_normalize",
     "hybrid_similarity",
     "is_duplicate_text",
+    "extract_intent_tokens",
+    "has_noise_word",
 ]
-

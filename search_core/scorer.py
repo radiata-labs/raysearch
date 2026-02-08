@@ -12,10 +12,10 @@ except ImportError:  # pragma: no cover - optional dependency
     BM25Okapi = None
     BM25_AVAILABLE = False
 
-from .utils import TextUtils
+from search_core.text import TextUtils
 
 if TYPE_CHECKING:
-    from .config import ScoringConfig
+    from search_core.config import ScoringConfig
 
 
 def _safe_float(x: float) -> float:

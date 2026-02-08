@@ -18,6 +18,10 @@ Environment variables:
 
 Note: when using the default `base_url`, `SEARCH_API_KEY` is required. This is enforced at request time.
 
+Score filtering:
+- `score_filter.min_score` (default `0.5`) applies to both ranked results and web chunks.
+- Items with `score == 0.0` are always dropped.
+
 ## Python usage
 
 ```python
@@ -48,6 +52,8 @@ Depth presets and crawler/chunk/scoring defaults are configurable under top-leve
 
 Scoring strategy/weights are configured globally under `scoring.providers` in `search_config.yaml`.
 `web_enrichment.select` only contains chunk-specific thresholds/penalties.
+
+Web fetching/decoding is handled by `WebCrawler` (charset-aware best-effort decoding).
 
 Chunk parameters (runtime, overrides config when provided):
 - `chunk_target_chars`: approximate chunk size in characters (sentence boundaries preserved)

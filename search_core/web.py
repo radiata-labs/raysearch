@@ -1,91 +1,31 @@
 ﻿from __future__ import annotations
 
-import html as html_mod
 import logging
 import math
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Literal
-from typing_extensions import override
-from urllib.parse import urlparse
 
-import requests
-
-from .config import ScoringConfig
-from .models import PageChunk, PageEnrichment
-from .scorer import ScoringEngine
-from .tools import compile_patterns, is_duplicate_text
-from .utils import TextUtils
+from search_core.config import ScoringConfig
+from search_core.crawler import WebCrawler
+from search_core.models import PageChunk, PageEnrichment
+from search_core.scorer import ScoringEngine
+from search_core.text import TextUtils
+from search_core.tools import compile_patterns, has_noise_word, is_duplicate_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .config import (
+    from search_core.config import (
         SearchContextConfig,
         WebChunkingConfig,
         WebDepthPreset,
         WebEnrichmentConfig,
     )
-    from .models import SearchResult
+    from search_core.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
-ContentKind = Literal["html", "text"]
-
-
-@dataclass(frozen=True)
-class FetchResult:
-    text: str
-    error: str | None = None
-    content_type: str | None = None
-
-
-class VisibleTextParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=False)
-        self._buf: list[str] = []
-        self._skip_stack: list[str] = []
-
-    @override
-    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
-        lowered = (tag or "").lower()
-        if lowered in {"script", "style", "noscript"}:
-            self._skip_stack.append(lowered)
-
-    @override
-    def handle_endtag(self, tag: str) -> None:
-        lowered = (tag or "").lower()
-        if self._skip_stack and self._skip_stack[-1] == lowered:
-            self._skip_stack.pop()
-        if lowered in {"p", "br", "div", "li", "section", "article", "h1", "h2", "h3"}:
-            self._buf.append("\n")
-
-    @override
-    def handle_data(self, data: str) -> None:
-        if self._skip_stack:
-            return
-        if data:
-            self._buf.append(data)
-
-    @override
-    def handle_entityref(self, name: str) -> None:
-        if self._skip_stack:
-            return
-        self._buf.append(f"&{name};")
-
-    @override
-    def handle_charref(self, name: str) -> None:
-        if self._skip_stack:
-            return
-        self._buf.append(f"&#{name};")
-
-    def get_text(self) -> str:
-        return "".join(self._buf)
-
-
-_WS_RE = re.compile(r"\s+")
 _SENTENCE_BOUNDARY_RE = re.compile(r"([\u3002\uFF01\uFF1F!?;\uFF1B.\n])")
 _LONG_SENT_SPLIT_RE = re.compile(r"([,\uFF0C\u3001\t ])")
 
@@ -96,123 +36,18 @@ class WebEnricher:
         config: WebEnrichmentConfig,
         *,
         user_agent: str,
-        fetcher: Callable[[str], str] | None = None,
+        fetcher: Callable[[str], bytes | str] | None = None,
         scorer: ScoringEngine | None = None,
+        min_score: float = 0.5,
     ) -> None:
         self.config = config
-        self.user_agent = user_agent
-        self._fetcher = fetcher
+        self._min_score = float(min_score)
         self.scorer = scorer or ScoringEngine(ScoringConfig())
-
-    def fetch(self, url: str) -> FetchResult:
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"}:
-            return FetchResult(text="", error=f"unsupported scheme: {parsed.scheme}")
-
-        headers = {"User-Agent": self.user_agent}
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                timeout=self.config.fetch.timeout,
-                stream=True,
-            )  # noqa: S113
-        except requests.RequestException as exc:
-            return FetchResult(text="", error=str(exc))
-
-        try:
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            return FetchResult(
-                text="",
-                error=str(exc),
-                content_type=resp.headers.get("content-type"),
-            )
-
-        content_type = resp.headers.get("content-type") or ""
-        if content_type:
-            ct = content_type.lower()
-            if self.config.fetch.allow_content_types and not any(
-                allowed in ct for allowed in self.config.fetch.allow_content_types
-            ):
-                return FetchResult(
-                    text="",
-                    error=f"unsupported content-type: {content_type}",
-                    content_type=content_type,
-                )
-
-        chunks: list[bytes] = []
-        total = 0
-        try:
-            for part in resp.iter_content(chunk_size=64 * 1024):
-                if not part:
-                    continue
-                total += len(part)
-                if total > self.config.fetch.max_bytes:
-                    return FetchResult(
-                        text="",
-                        error=f"exceeded max_bytes={self.config.fetch.max_bytes}",
-                        content_type=content_type,
-                    )
-                chunks.append(part)
-        finally:
-            resp.close()
-
-        data = b"".join(chunks)
-        encoding = resp.encoding or "utf-8"
-        try:
-            text = data.decode(encoding, errors="replace")
-        except LookupError:
-            text = data.decode("utf-8", errors="replace")
-        return FetchResult(text=text, error=None, content_type=content_type)
-
-    def extract_text(self, raw: str, *, kind: ContentKind) -> str:
-        if not raw:
-            return ""
-        if kind == "text":
-            text = TextUtils.clean_whitespace(raw)
-        else:
-            parser = VisibleTextParser()
-            try:
-                parser.feed(raw)
-                parser.close()
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to parse HTML")
-            text = html_mod.unescape(parser.get_text())
-            text = _WS_RE.sub(" ", text).strip()
-
-        if (
-            self.config.fetch.max_extracted_chars
-            and len(text) > self.config.fetch.max_extracted_chars
-        ):
-            text = text[: self.config.fetch.max_extracted_chars]
-        return text
-
-    def extract_blocks(self, raw: str, *, kind: ContentKind) -> list[str]:
-        """Extract paragraph-ish blocks.
-
-        This is intentionally low-tech: the goal is to keep boilerplate/nav as small
-        blocks so it can be filtered before sentence chunking.
-        """
-
-        if not raw:
-            return []
-
-        if kind == "text":
-            text = raw
-        else:
-            parser = VisibleTextParser()
-            try:
-                parser.feed(raw)
-                parser.close()
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to parse HTML")
-            text = html_mod.unescape(parser.get_text())
-
-        # Preserve newlines for block segmentation; only normalize spaces/tabs.
-        text = text.replace("\r\n", "\n").replace("\r", "\n")
-        lines = [TextUtils.clean_whitespace(line) for line in text.split("\n")]
-        return [line for line in lines if line]
+        self.crawler = WebCrawler(
+            fetch_cfg=self.config.fetch,
+            user_agent=user_agent,
+            fetcher=fetcher,
+        )
 
     def filter_blocks(
         self,
@@ -228,7 +63,7 @@ class WebEnricher:
 
         kept: list[str] = []
         for block in blocks:
-            if self._has_noise_word(block, context_config):
+            if has_noise_word(block, context_config):
                 continue
             t = self.template_score(
                 block,
@@ -344,7 +179,6 @@ class WebEnricher:
 
         title_patterns = compile_patterns(context_config.title_tail_patterns)
         query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
-        min_query_hits = max(0, int(self.config.select.min_query_hits))
 
         filtered: list[tuple[int, str]] = []
         for idx, chunk in enumerate(chunks):
@@ -353,12 +187,6 @@ class WebEnricher:
                 context_config=context_config,
                 query_has_cjk=query_has_cjk,
                 title_patterns=title_patterns,
-            ):
-                continue
-            if (
-                min_query_hits > 0
-                and self._query_hit_count(chunk, query_tokens=query_tokens)
-                < min_query_hits
             ):
                 continue
             filtered.append((idx, chunk))
@@ -373,51 +201,49 @@ class WebEnricher:
             intent_tokens=intent_tokens,
         )
         base_scores = [float(s) for s, _ in base]
-
-        min_score = max(
-            float(self.config.select.min_chunk_score),
-            float(self.config.select.min_final_score),
+        return self._post_process_chunk_scores(
+            filtered,
+            base_scores=base_scores,
+            early_bonus=float(self.config.select.early_bonus),
+            dedupe_threshold=float(context_config.fuzzy_threshold),
         )
-        intent_missing_penalty = float(self.config.select.intent_missing_penalty)
-        tpl_w = float(self.config.select.template_penalty_weight)
-        tpl_b = float(self.config.select.template_penalty_bias)
-        tpl_hard = float(self.config.select.template_hard_drop_threshold)
-        early_bonus = float(self.config.select.early_bonus)
 
+    def _post_process_chunk_scores(
+        self,
+        filtered_chunks: list[tuple[int, str]],
+        *,
+        base_scores: list[float],
+        early_bonus: float,
+        dedupe_threshold: float,
+    ) -> list[tuple[float, str]]:
+        """Post-process chunk scores after ScoringEngine.
+
+        By design this only applies:
+        - position-based early bonus/decay
+        - dedupe (reusing pipeline's fuzzy threshold)
+        """
         scored: list[tuple[float, str]] = []
-        for (pos, chunk), base_score in zip(filtered, base_scores, strict=False):
-            tpl = self.template_score(
-                chunk,
-                query_has_cjk=query_has_cjk,
-                title_patterns=title_patterns,
-                mode="chunk",
-            )
-            if tpl >= tpl_hard:
-                continue
-
+        for (pos, chunk), base_score in zip(filtered_chunks, base_scores, strict=False):
             final = float(base_score)
             if early_bonus > 1.0:
                 final *= early_bonus ** (-pos)
-            final = final * (1.0 - tpl * tpl_w) - tpl * tpl_b
-
-            if intent_tokens and not self._has_any_token(chunk, intent_tokens):
-                final -= intent_missing_penalty
-
             final = max(0.0, min(1.0, float(final)))
-            if final < min_score:
-                continue
-
             scored.append((final, chunk))
 
-        return scored
+        scored.sort(key=lambda t: t[0], reverse=True)
 
-    @staticmethod
-    def _has_noise_word(text: str, context_config: SearchContextConfig) -> bool:
-        lowered = TextUtils.normalize_text(text)
-        for word in context_config.noise_words:
-            if word and word.lower() in lowered:
-                return True
-        return False
+        kept: list[tuple[float, str]] = []
+        th = float(dedupe_threshold)
+        for score, chunk in scored:
+            if float(score) <= 0.0:
+                continue
+            if float(score) < float(self._min_score):
+                continue
+            if is_duplicate_text(chunk, [c for _, c in kept], threshold=th):
+                continue
+            kept.append((score, chunk))
+
+        return kept
 
     def template_score(
         self,
@@ -483,9 +309,7 @@ class WebEnricher:
             + 0.15 * len(re.findall(r"\b(?:19|20)\d{2}\b", text)),
         )
 
-        token_count, unique_ratio, digits, digits_ratio, cjk_ratio = self._chunk_stats(
-            text
-        )
+        token_count, unique_ratio, _, digits_ratio, cjk_ratio = self._chunk_stats(text)
         uniq_component = 0.0
         if token_count >= 8 and unique_ratio < 0.45:
             uniq_component = min(1.0, (0.45 - unique_ratio) / 0.45)
@@ -537,27 +361,6 @@ class WebEnricher:
 
         return float(max(0.0, min(1.0, tpl)))
 
-    @staticmethod
-    def _has_any_token(text: str, tokens: list[str]) -> bool:
-        lowered = (text or "").lower()
-        return any(t and t.lower() in lowered for t in tokens)
-
-    @staticmethod
-    def _query_hit_count(chunk: str, *, query_tokens: list[str]) -> int:
-        lowered = (chunk or "").lower()
-        return sum(1 for t in set(query_tokens) if t and t.lower() in lowered)
-
-    @staticmethod
-    def _chunk_stats(chunk: str) -> tuple[int, float, int, float, float]:
-        tokens = TextUtils.tokenize(chunk)
-        token_count = len(tokens)
-        unique_ratio = len(set(tokens)) / token_count if tokens else 0.0
-        digits = sum(ch.isdigit() for ch in chunk)
-        digits_ratio = digits / max(1, len(chunk))
-        cjk_count = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]", chunk))
-        cjk_ratio = cjk_count / max(1, len(chunk))
-        return token_count, unique_ratio, digits, digits_ratio, cjk_ratio
-
     def _hard_drop_chunk(
         self,
         chunk: str,
@@ -573,12 +376,10 @@ class WebEnricher:
         if not normalized:
             return True
 
-        if self._has_noise_word(chunk, context_config):
+        if has_noise_word(chunk, context_config):
             return True
 
-        _token_count, _unique_ratio, digits, digits_ratio, cjk_ratio = (
-            self._chunk_stats(chunk)
-        )
+        _, _, digits, digits_ratio, cjk_ratio = self._chunk_stats(chunk)
         if digits >= 18 and digits_ratio > 0.2:
             return True
         if query_has_cjk and cjk_ratio > 0 and cjk_ratio < 0.06:
@@ -591,6 +392,16 @@ class WebEnricher:
             mode="chunk",
         )
         return tpl >= float(self.config.select.template_hard_drop_threshold)
+
+    def _chunk_stats(self, chunk: str) -> tuple[int, float, int, float, float]:
+        tokens = TextUtils.tokenize(chunk)
+        token_count = len(tokens)
+        unique_ratio = len(set(tokens)) / token_count if tokens else 0.0
+        digits = sum(ch.isdigit() for ch in chunk)
+        digits_ratio = digits / max(1, len(chunk))
+        cjk_count = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]", chunk))
+        cjk_ratio = cjk_count / max(1, len(chunk))
+        return token_count, unique_ratio, digits, digits_ratio, cjk_ratio
 
     def enrich_results(
         self,
@@ -640,20 +451,10 @@ class WebEnricher:
                 return (item, [], [], "empty url")
 
             try:
-                if self._fetcher is not None:
-                    raw = self._fetcher(url)
-                    if not raw:
-                        return (item, [], [], "empty response")
-                    blocks = self.extract_blocks(raw, kind="html")
-                else:
-                    fetched = self.fetch(url)
-                    if fetched.error:
-                        return (item, [], [], fetched.error)
-                    kind: ContentKind = "html"
-                    ct = (fetched.content_type or "").lower()
-                    if "text/plain" in ct and "text/html" not in ct:
-                        kind = "text"
-                    blocks = self.extract_blocks(fetched.text, kind=kind)
+                crawl = self.crawler.fetch_blocks(url)
+                if crawl.error:
+                    return (item, [], [], crawl.error)
+                blocks = crawl.blocks
 
                 if not blocks:
                     return (item, [], [], "no blocks extracted")
@@ -689,14 +490,8 @@ class WebEnricher:
                 if not scored:
                     return (item, [], [], "no matching chunks")
 
-                scored.sort(key=lambda t: t[0], reverse=True)
                 top: list[tuple[float, str]] = []
-                dedupe_th = float(self.config.select.dedupe_threshold)
                 for score, chunk in scored:
-                    if is_duplicate_text(
-                        chunk, [c for _, c in top], threshold=dedupe_th
-                    ):
-                        continue
                     top.append((score, chunk))
                     if len(top) >= top_k:
                         break
@@ -719,4 +514,4 @@ class WebEnricher:
                 )
 
 
-__all__ = ["FetchResult", "WebEnricher"]
+__all__ = ["WebEnricher"]

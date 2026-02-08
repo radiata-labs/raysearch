@@ -13,6 +13,10 @@ scoring:
     # Per-candidate-set, not cross-query comparable.
     min_items_for_sigmoid: 1
 
+# Global min-score filter (applies to results and web chunks).
+score_filter:
+  min_score: 0.5
+
 profiles:
   general: {}
 

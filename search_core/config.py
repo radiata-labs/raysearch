@@ -120,7 +120,11 @@ class WebFetchConfig(ConfigBaseModel):
     max_bytes: int = 2_000_000
     max_extracted_chars: int = 50_000
     max_workers: int = 6
-    allow_content_types: tuple[str, ...] = ("text/html", "text/plain")
+    allow_content_types: tuple[str, ...] = (
+        "text/html",
+        "application/xhtml+xml",
+        "text/plain",
+    )
 
 
 class WebChunkingConfig(ConfigBaseModel):
@@ -136,20 +140,9 @@ class WebChunkingConfig(ConfigBaseModel):
 class WebChunkSelectConfig(ConfigBaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    min_chunk_score: float = 0.0
     early_bonus: float = 1.15
-    intent_missing_penalty: float = 2.0
-
-    # Template scoring: prefer soft penalties (1B), only hard-drop extreme boilerplate.
-    template_penalty_weight: float = 0.75
-    template_penalty_bias: float = 2.0
     template_hard_drop_threshold: float = 0.95
     block_hard_drop_threshold: float = 0.90
-
-    # Chunk gating and output stability.
-    min_query_hits: int = 1
-    min_final_score: float = 0.0
-    dedupe_threshold: float = 0.92
 
 
 class WebEnrichmentConfig(ConfigBaseModel):
@@ -197,6 +190,14 @@ class ScoringConfig(ConfigBaseModel):
     )  # type: ignore[name-defined]
 
 
+class ScoreFilterConfig(ConfigBaseModel):
+    """Global score floor for both results and web chunks."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    min_score: float = 0.5
+
+
 class SearchConfig(ConfigBaseModel):
     """Config file model (single source of truth)."""
 
@@ -205,6 +206,7 @@ class SearchConfig(ConfigBaseModel):
     profiles: dict[str, SearchContextConfig] = Field(default_factory=dict)
     web_enrichment: WebEnrichmentConfig = Field(default_factory=WebEnrichmentConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    score_filter: ScoreFilterConfig = Field(default_factory=ScoreFilterConfig)
 
     def get_profile(self, name: str) -> SearchContextConfig | None:
         return self.profiles.get(name)
@@ -270,6 +272,7 @@ __all__ = [
     "SearxngConfig",
     "HeuristicScoringConfig",
     "ScoringConfig",
+    "ScoreFilterConfig",
     "AutoMatchConfig",
     "SearchContextConfig",
     "WebDepthPreset",

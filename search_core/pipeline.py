@@ -6,19 +6,21 @@ import re
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
-from .client import SearxngClient
-from .config import SearchConfig, SearchContextConfig
-from .models import SearchContext, SearchResult
-from .scorer import ScoringEngine
-from .tools import (
+from search_core.client import SearxngClient
+from search_core.config import SearchConfig, SearchContextConfig
+from search_core.models import SearchContext, SearchResult
+from search_core.scorer import ScoringEngine
+from search_core.text import TextUtils
+from search_core.tools import (
     canonical_site,
     compile_patterns,
+    extract_intent_tokens,
     fuzzy_normalize,
+    has_noise_word,
     hybrid_similarity,
     strip_title_tails,
 )
-from .utils import TextUtils
-from .web import WebEnricher
+from search_core.web import WebEnricher
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
@@ -39,7 +41,7 @@ class SearchPipeline:
         config: SearchConfig,
         *,
         client: SearxngClient | None = None,
-        page_fetcher: Callable[[str], str] | None = None,
+        page_fetcher: Callable[[str], bytes | str] | None = None,
         scorer: ScoringEngine | None = None,
         web_enricher: WebEnricher | None = None,
     ) -> None:
@@ -51,6 +53,7 @@ class SearchPipeline:
             user_agent=self.config.searxng.user_agent,
             fetcher=page_fetcher,
             scorer=self.scorer,
+            min_score=float(self.config.score_filter.min_score),
         )
 
     def search_raw(
@@ -276,7 +279,7 @@ class SearchPipeline:
                 return processed
 
             query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
-            intent_tokens = self._extract_intent_tokens(query, config)
+            intent_tokens = extract_intent_tokens(query, config)
             self.web_enricher.enrich_results(
                 processed,
                 query=query,
@@ -362,8 +365,7 @@ class SearchPipeline:
                 logger.warning("Invalid auto profile regex: %s", pattern)
         return hits
 
-    @staticmethod
-    def _validate_depth(depth: SearchDepth) -> None:
+    def _validate_depth(self, depth: SearchDepth) -> None:
         if depth not in {"simple", "low", "medium", "high"}:
             raise ValueError(f"Invalid depth: {depth}")
 
@@ -380,7 +382,7 @@ class SearchPipeline:
         domain_groups = config.domain_groups or {}
 
         query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
-        intent_tokens = self._extract_intent_tokens(query, config)
+        intent_tokens = extract_intent_tokens(query, config)
 
         normalized = [
             result
@@ -404,12 +406,17 @@ class SearchPipeline:
             domain_groups=domain_groups,
         )
 
-        return self._rank_results(
+        ranked = self._rank_results(
             normalized,
             query=query,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
         )
+        min_score = float(self.config.score_filter.min_score)
+        # Always drop zero-score items; also enforce a configurable global floor.
+        return [
+            r for r in ranked if float(r.score) > 0.0 and float(r.score) >= min_score
+        ]
 
     def _rank_results(
         self,
@@ -518,8 +525,7 @@ class SearchPipeline:
 
         return "\n".join(lines)
 
-    @staticmethod
-    def _render_empty(reason: str) -> str:
+    def _render_empty(self, reason: str) -> str:
         return "\n".join(
             [
                 "# 网络搜索结果 (SearXNG)",
@@ -559,16 +565,6 @@ class SearchPipeline:
             raw=dict(raw),
         )
 
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        if not url:
-            return ""
-        parsed = urlparse(url)
-        host = parsed.netloc
-        if not host and parsed.path:
-            host = parsed.path.split("/")[0]
-        return host.lower()
-
     def _is_not_noise(
         self,
         result: SearchResult,
@@ -584,12 +580,13 @@ class SearchPipeline:
         if not title and not snippet:
             return False
 
-        if self._is_noise_extension(url, noise_extensions):
+        if any(
+            urlparse(url).path.lower().endswith(f".{ext}") for ext in noise_extensions
+        ):
             return False
 
-        for word in config.noise_words:
-            if word.lower() in blob:
-                return False
+        if has_noise_word(blob, config):
+            return False
 
         return not (len(title) < 2 and len(snippet) < 40)
 
@@ -606,20 +603,6 @@ class SearchPipeline:
                 core_hits += 1
 
         return core_hits != 0
-
-    @staticmethod
-    def _dedupe_exact(results: list[SearchResult]) -> list[SearchResult]:
-        seen: set[tuple[str, str]] = set()
-        output: list[SearchResult] = []
-        for result in results:
-            title = TextUtils.clean_whitespace(result.title).lower()
-            snippet = TextUtils.clean_whitespace(result.snippet).lower()
-            fingerprint = (title[:140], snippet[:260])
-            if fingerprint in seen:
-                continue
-            seen.add(fingerprint)
-            output.append(result)
-        return output
 
     def _dedupe_fuzzy(
         self,
@@ -685,17 +668,27 @@ class SearchPipeline:
     ) -> int:
         return min(len(result.snippet), 1200) + min(len(result.title), 220)
 
-    @staticmethod
-    def _extract_intent_tokens(query: str, config: SearchContextConfig) -> list[str]:
-        lowered = query.lower()
-        return [term for term in config.intent_terms if term.lower() in lowered]
+    def _dedupe_exact(self, results: list[SearchResult]) -> list[SearchResult]:
+        seen: set[tuple[str, str]] = set()
+        output: list[SearchResult] = []
+        for result in results:
+            title = TextUtils.clean_whitespace(result.title).lower()
+            snippet = TextUtils.clean_whitespace(result.snippet).lower()
+            fingerprint = (title[:140], snippet[:260])
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            output.append(result)
+        return output
 
-    @staticmethod
-    def _is_noise_extension(url: str, noise_extensions: set[str]) -> bool:
-        if not noise_extensions or not url:
-            return False
-        path = urlparse(url).path.lower()
-        return any(path.endswith(f".{ext}") for ext in noise_extensions)
+    def _extract_domain(self, url: str) -> str:
+        if not url:
+            return ""
+        parsed = urlparse(url)
+        host = parsed.netloc
+        if not host and parsed.path:
+            host = parsed.path.split("/")[0]
+        return host.lower()
 
 
 __all__ = ["SearchPipeline"]

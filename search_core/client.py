@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import requests
 
-from .config import DEFAULT_BASE_URL, SearchConfig
+from search_core.config import DEFAULT_BASE_URL, SearchConfig
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
