@@ -1,35 +1,42 @@
 from __future__ import annotations
 
-from serpsage.app.container import Container
-from serpsage.pipeline.steps import StepContext
+from typing import TYPE_CHECKING
+
+from serpsage.contracts.base import WorkUnit
 from serpsage.text.tokenize import tokenize
 from serpsage.text.utils import extract_intent_tokens
-from serpsage.contracts.protocols import uniq_preserve_order
+from serpsage.util.collections import uniq_preserve_order
+
+if TYPE_CHECKING:
+    from serpsage.contracts.protocols import Ranker
+    from serpsage.pipeline.steps import StepContext
 
 
-class RankStep:
-    def __init__(self, container: Container) -> None:
-        self._c = container
+class RankStep(WorkUnit):
+    def __init__(self, *, rt, ranker: Ranker) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
+        self._ranker = ranker
 
     async def run(self, ctx: StepContext) -> StepContext:
-        span = self._c.telemetry.start_span("step.rank")
-        try:
+        with self.span("step.rank"):
             if not ctx.results:
                 return ctx
 
             query = ctx.request.query
             query_tokens = list(ctx.scratch.get("query_tokens") or tokenize(query))
-            profile = ctx.profile or ctx.settings.get_profile(ctx.settings.pipeline.default_profile)
+            profile = ctx.profile or self.settings.get_profile(
+                self.settings.pipeline.default_profile
+            )
             intent_tokens = extract_intent_tokens(query, profile.intent_terms)
 
             docs = [f"{r.title} {r.snippet}".strip() for r in ctx.results]
-            raw_scores = self._c.ranker.score_texts(
+            raw_scores = self._ranker.score_texts(
                 texts=docs,
                 query=query,
                 query_tokens=query_tokens,
                 intent_tokens=intent_tokens,
             )
-            norm = self._c.ranker.normalize(scores=raw_scores)
+            norm = self._ranker.normalize(scores=raw_scores)
             if norm and max(norm) <= 0.0 and max(raw_scores) > 0.0:
                 norm = [0.5 for _ in norm]
 
@@ -42,9 +49,6 @@ class RankStep:
 
             ctx.results.sort(key=lambda r: float(r.score), reverse=True)
             return ctx
-        finally:
-            span.end()
 
 
 __all__ = ["RankStep"]
-

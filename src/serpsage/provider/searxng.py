@@ -1,28 +1,30 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any
+from typing_extensions import override
 
 import httpx
 
-from serpsage.contracts.base import Component
-from serpsage.contracts.protocols import Cache, Clock, SearchProvider, Telemetry, stable_json
-from serpsage.settings.models import AppSettings
+from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.protocols import Cache, SearchProvider
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
-class SearxngProvider(Component[None], SearchProvider):
+class SearxngProvider(WorkUnit, SearchProvider):
     def __init__(
         self,
         *,
-        settings: AppSettings,
-        telemetry: Telemetry,
-        clock: Clock,
+        rt,  # noqa: ANN001
         http: httpx.AsyncClient,
         cache: Cache,
     ) -> None:
-        super().__init__(settings=settings, telemetry=telemetry, clock=clock)
+        super().__init__(rt=rt)
         self._http = http
         self._cache = cache
 
+    @override
     async def asearch(
         self, *, query: str, params: Mapping[str, object] | None = None
     ) -> list[dict[str, Any]]:
@@ -54,4 +56,3 @@ class SearxngProvider(Component[None], SearchProvider):
 
 
 __all__ = ["SearxngProvider"]
-

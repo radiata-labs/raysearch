@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
@@ -25,4 +24,3 @@ def strip_html(text: str) -> str:
 
 
 __all__ = ["clean_whitespace", "normalize_text", "strip_html"]
-

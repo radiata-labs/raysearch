@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from serpsage.contracts.errors import AppError
+if TYPE_CHECKING:
+    from serpsage.contracts.errors import AppError
 
 
 class PageChunk(BaseModel):
@@ -76,4 +77,3 @@ __all__ = [
     "ResultItem",
     "SearchResponse",
 ]
-

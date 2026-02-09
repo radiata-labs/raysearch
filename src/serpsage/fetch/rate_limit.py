@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
-
 import anyio
 
-from serpsage.contracts.base import Component
-from serpsage.contracts.protocols import Clock, Telemetry
-from serpsage.settings.models import AppSettings
+from serpsage.contracts.base import WorkUnit
 
 
-class RateLimiter(Component[None]):
-    def __init__(self, *, settings: AppSettings, telemetry: Telemetry, clock: Clock) -> None:
-        super().__init__(settings=settings, telemetry=telemetry, clock=clock)
-        fetch = settings.enrich.fetch
+class RateLimiter(WorkUnit):
+    def __init__(self, *, rt) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
+        fetch = self.settings.enrich.fetch
         self._global = anyio.Semaphore(max(1, int(fetch.global_concurrency)))
         self._per_host_limit = max(1, int(fetch.per_host_concurrency))
         self._politeness_delay_ms = max(0, int(fetch.politeness_delay_ms))
@@ -52,4 +47,3 @@ class RateLimiter(Component[None]):
 
 
 __all__ = ["RateLimiter"]
-

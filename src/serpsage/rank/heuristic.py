@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from serpsage.settings.models import HeuristicRankSettings
+from typing import TYPE_CHECKING
+
 from serpsage.text.normalize import normalize_text
 from serpsage.text.tokenize import tokenize
+
+if TYPE_CHECKING:
+    from serpsage.settings.models import HeuristicRankSettings
 
 
 def heuristic_scores(
@@ -55,4 +59,3 @@ def heuristic_scores(
 
 
 __all__ = ["heuristic_scores"]
-

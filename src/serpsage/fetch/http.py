@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from typing_extensions import override
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 
-from serpsage.contracts.base import Component
-from serpsage.contracts.protocols import Cache, Clock, FetchResult, Fetcher, Telemetry, stable_json
-from serpsage.fetch.rate_limit import RateLimiter
-from serpsage.settings.models import AppSettings
+from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.protocols import Cache, Fetcher, FetchResult
+from serpsage.util.json import stable_json
+
+if TYPE_CHECKING:
+    from serpsage.fetch.rate_limit import RateLimiter
 
 
 @dataclass(frozen=True)
@@ -21,34 +27,30 @@ class SimpleFetchResult:
     content: bytes
 
 
-class HttpFetcher(Component[None], Fetcher):
+class HttpFetcher(WorkUnit, Fetcher):
     def __init__(
         self,
         *,
-        settings: AppSettings,
-        telemetry: Telemetry,
-        clock: Clock,
+        rt,  # noqa: ANN001
         http: httpx.AsyncClient,
         cache: Cache,
         rate_limiter: RateLimiter,
     ) -> None:
-        super().__init__(settings=settings, telemetry=telemetry, clock=clock)
+        super().__init__(rt=rt)
         self._http = http
         self._cache = cache
         self._rl = rate_limiter
 
+    @override
     async def afetch(self, *, url: str) -> FetchResult:
         fetch_cfg = self.settings.enrich.fetch
-        span = self.telemetry.start_span("fetch.http", url=url)
         host = urlparse(url).netloc.lower()
-        try:
+        with self.span("fetch.http", url=url) as sp:
             cache_key = _hash_key({"url": url, "kind": "http"})
             cached = await self._cache.aget(namespace="fetch", key=cache_key)
             if cached:
-                import json
-
                 payload = json.loads(cached.decode("utf-8"))
-                span.set_attr("cache_hit", True)
+                sp.set_attr("cache_hit", True)
                 return SimpleFetchResult(
                     url=url,
                     status_code=int(payload["status_code"]),
@@ -61,7 +63,7 @@ class HttpFetcher(Component[None], Fetcher):
                 data = await _fetch_with_retry(
                     http=self._http,
                     url=url,
-                    settings=self.settings,
+                    fetch_cfg=fetch_cfg,
                 )
             finally:
                 await self._rl.release(host=host)
@@ -72,19 +74,18 @@ class HttpFetcher(Component[None], Fetcher):
                 value=data["cache_bytes"],
                 ttl_s=int(self.settings.cache.fetch_ttl_s),
             )
-            span.set_attr("cache_hit", False)
+            sp.set_attr("cache_hit", False)
             return SimpleFetchResult(
                 url=data["url"],
                 status_code=int(data["status_code"]),
                 content_type=data.get("content_type"),
                 content=data["content"],
             )
-        finally:
-            span.end()
 
 
-async def _fetch_with_retry(*, http: httpx.AsyncClient, url: str, settings: AppSettings) -> dict[str, Any]:
-    fetch_cfg = settings.enrich.fetch
+async def _fetch_with_retry(
+    *, http: httpx.AsyncClient, url: str, fetch_cfg
+) -> dict[str, Any]:  # noqa: ANN001
     retry = fetch_cfg.retry
     headers = {"User-Agent": fetch_cfg.user_agent}
     timeout = httpx.Timeout(fetch_cfg.timeout_s)
@@ -101,7 +102,9 @@ async def _fetch_with_retry(*, http: httpx.AsyncClient, url: str, settings: AppS
             ) as resp:
                 resp.raise_for_status()
                 content_type = resp.headers.get("content-type")
-                data = await _read_with_limit(resp.aiter_bytes(), max_bytes=int(fetch_cfg.max_bytes))
+                data = await _read_with_limit(
+                    resp.aiter_bytes(), max_bytes=int(fetch_cfg.max_bytes)
+                )
                 cache_bytes = _encode_fetch_cache(
                     status_code=int(resp.status_code),
                     content_type=content_type,
@@ -114,11 +117,17 @@ async def _fetch_with_retry(*, http: httpx.AsyncClient, url: str, settings: AppS
                     "content": data,
                     "cache_bytes": cache_bytes,
                 }
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.HTTPStatusError,
+        ) as exc:
             last_exc = exc
             # Retry on 429/5xx or transient network issues.
             status = getattr(getattr(exc, "response", None), "status_code", None)
-            retryable = status is None or int(status) == 429 or (500 <= int(status) < 600)
+            retryable = (
+                status is None or int(status) == 429 or (500 <= int(status) < 600)
+            )
             if not retryable or attempt >= int(retry.max_attempts):
                 raise
             delay = _backoff_ms(attempt, retry.base_delay_ms, retry.max_delay_ms)
@@ -144,20 +153,20 @@ async def _read_with_limit(aiter, *, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _encode_fetch_cache(*, status_code: int, content_type: str | None, content: bytes) -> bytes:
-    import json
-
+def _encode_fetch_cache(
+    *, status_code: int, content_type: str | None, content: bytes
+) -> bytes:
     payload = {
         "status_code": int(status_code),
         "content_type": content_type,
         "content_hex": content.hex(),
     }
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
 
 
 def _hash_key(obj: Any) -> str:
-    import hashlib
-
     return hashlib.sha256(stable_json(obj).encode("utf-8")).hexdigest()
 
 
@@ -170,7 +179,6 @@ def _backoff_ms(attempt: int, base_ms: int, max_ms: int) -> int:
 
 
 async def anyio_sleep_ms(ms: int) -> None:
-    import anyio
 
     await anyio.sleep(max(0.0, float(ms) / 1000.0))
 

@@ -5,7 +5,6 @@ import re
 from contextlib import suppress
 from typing import Literal
 
-
 ContentKind = Literal["html", "text"]
 
 _WS_RE = re.compile(r"\s+")
@@ -18,7 +17,8 @@ _CT_CHARSET_RE = re.compile(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
 def looks_like_html(sample: bytes) -> bool:
     head = sample[:8192].lower()
     return any(
-        tok in head for tok in (b"<!doctype", b"<html", b"<meta", b"<body", b"</p", b"</div")
+        tok in head
+        for tok in (b"<!doctype", b"<html", b"<meta", b"<body", b"</p", b"</div")
     )
 
 
@@ -34,7 +34,7 @@ def extract_meta_charset(data: bytes) -> str | None:
 def guess_apparent_encoding(data: bytes) -> str | None:
     sample = data[:65536]
     with suppress(Exception):
-        from charset_normalizer import from_bytes  # type: ignore[import-not-found]
+        from charset_normalizer import from_bytes  # noqa: PLC0415
 
         best = from_bytes(sample).best()
         enc = getattr(best, "encoding", None) if best is not None else None
@@ -42,7 +42,7 @@ def guess_apparent_encoding(data: bytes) -> str | None:
             return str(enc)
 
     with suppress(Exception):
-        import chardet  # type: ignore[import-not-found]
+        import chardet  # noqa: PLC0415
 
         det = chardet.detect(sample)
         enc = det.get("encoding") if isinstance(det, dict) else None
@@ -120,7 +120,7 @@ def decode_best_effort(
     for enc in declared:
         try:
             text = data.decode(enc, errors="replace")
-        except Exception:
+        except Exception:  # noqa: S112
             continue
         text = text.replace("\x00", "")
         total = max(1, len(text))
@@ -138,7 +138,7 @@ def decode_best_effort(
     for enc in ordered:
         try:
             text = data.decode(enc, errors="replace")
-        except Exception:
+        except Exception:  # noqa: S112
             continue
         text = text.replace("\x00", "")
         total = max(1, len(text))
@@ -165,4 +165,3 @@ __all__ = [
     "decode_best_effort",
     "guess_apparent_encoding",
 ]
-

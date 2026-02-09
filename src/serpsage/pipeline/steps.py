@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from serpsage.app.request import SearchRequest
-from serpsage.app.response import OverviewResult, ResultItem
-from serpsage.contracts.errors import AppError
-from serpsage.settings.models import AppSettings, ProfileSettings
+if TYPE_CHECKING:
+    from serpsage.app.request import SearchRequest
+    from serpsage.app.response import OverviewResult, ResultItem
+    from serpsage.contracts.errors import AppError
+    from serpsage.settings.models import AppSettings, ProfileSettings
 
 
 @dataclass
@@ -27,4 +28,3 @@ class Step(Protocol):
 
 
 __all__ = ["Step", "StepContext"]
-

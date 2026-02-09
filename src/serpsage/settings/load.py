@@ -8,7 +8,9 @@ from typing import Any
 from serpsage.settings.models import AppSettings
 
 
-def load_settings(path: str | None = None, *, env: dict[str, str] | None = None) -> AppSettings:
+def load_settings(
+    path: str | None = None, *, env: dict[str, str] | None = None
+) -> AppSettings:
     """Load settings from YAML/JSON and apply env overrides.
 
     Precedence:
@@ -25,7 +27,7 @@ def load_settings(path: str | None = None, *, env: dict[str, str] | None = None)
         raw = p.read_text(encoding="utf-8")
         if p.suffix.lower() in {".yml", ".yaml"}:
             try:
-                import yaml  # type: ignore[import-not-found]
+                import yaml  # noqa: PLC0415
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError("PyYAML is required to load YAML settings.") from exc
             data = yaml.safe_load(raw) or {}
@@ -57,4 +59,3 @@ def load_settings(path: str | None = None, *, env: dict[str, str] | None = None)
 
 
 __all__ = ["load_settings"]
-

@@ -16,4 +16,3 @@ class AppError(BaseModel):
 
 
 __all__ = ["AppError"]
-

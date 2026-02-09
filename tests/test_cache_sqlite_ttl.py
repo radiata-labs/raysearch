@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from serpsage.cache.sqlite import SqliteCache
+from serpsage.app.runtime import CoreRuntime
 from serpsage.telemetry.trace import NoopTelemetry
 from serpsage.settings.models import AppSettings
 
@@ -24,11 +25,11 @@ async def test_sqlite_cache_ttl(tmp_path):
     settings = AppSettings.model_validate(
         {"cache": {"enabled": True, "db_path": str(tmp_path / "c.sqlite3")}}
     )
-    cache = SqliteCache(settings=settings, telemetry=NoopTelemetry(), clock=clock)
+    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=clock)
+    cache = SqliteCache(rt=rt)
 
     await cache.aset(namespace="x", key="k", value=b"v", ttl_s=1)
     assert await cache.aget(namespace="x", key="k") == b"v"
 
     clock.advance(1500)
     assert await cache.aget(namespace="x", key="k") is None
-

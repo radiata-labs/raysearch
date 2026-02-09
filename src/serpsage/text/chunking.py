@@ -4,7 +4,6 @@ import re
 
 from serpsage.text.normalize import clean_whitespace
 
-
 _SENTENCE_BOUNDARY_RE = re.compile(r"([\u3002\uFF01\uFF1F!?;\uFF1B.\n])")
 _LONG_SENT_SPLIT_RE = re.compile(r"([,\uFF0C\u3001\t ])")
 
@@ -92,4 +91,3 @@ def chunk_sentences(
 
 
 __all__ = ["chunk_sentences", "split_sentences"]
-

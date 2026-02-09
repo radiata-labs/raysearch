@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+import re
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -187,21 +188,21 @@ class AppSettings(Model):
         # fallback to a default instance
         return ProfileSettings()
 
-    def select_profile(self, *, query: str, explicit: str | None) -> tuple[str, ProfileSettings]:
+    def select_profile(
+        self, *, query: str, explicit: str | None
+    ) -> tuple[str, ProfileSettings]:
         if explicit:
             return explicit, self.get_profile(explicit)
 
         q = (query or "").lower()
         best_name: str | None = None
-        best_score = -10**9
+        best_score = -(10**9)
         for name, prof in self.pipeline.profiles.items():
             am = prof.auto_match
             if not am.enabled:
                 continue
             hits = sum(1 for kw in am.keywords if kw and kw.lower() in q)
             if am.regex:
-                import re
-
                 for pat in am.regex:
                     if not pat:
                         continue
@@ -239,4 +240,3 @@ __all__ = [
     "SearxngSettings",
     "TelemetrySettings",
 ]
-

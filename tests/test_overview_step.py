@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.container import Overrides
+from serpsage.app.bootstrap import Overrides
 from serpsage.settings.models import AppSettings
 
 
@@ -40,9 +40,8 @@ async def test_overview_runs_when_enabled_and_key_present():
         provider=FakeProvider([{"url": "https://e.com", "title": "python", "snippet": "x"}]),
         llm=FakeLLM(),
     )
-    async with Engine(settings, overrides=overrides) as engine:
+    async with Engine.from_settings(settings, overrides=overrides) as engine:
         resp = await engine.run(SearchRequest(query="python", depth="simple", max_results=5))
 
     assert resp.overview is not None
     assert resp.overview.summary == "ok"
-

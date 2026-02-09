@@ -31,7 +31,7 @@ settings = load_settings()
 
 req = SearchRequest(query="example query", depth="simple", max_results=16)
 
-async with Engine(settings) as engine:
+async with Engine.from_settings(settings) as engine:
     resp = await engine.run(req)
 ```
 

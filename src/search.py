@@ -17,7 +17,7 @@ async def main(
     settings = load_settings("src/search_config_example.yaml")
     req = SearchRequest(query=query, depth=depth, max_results=max_results)
 
-    async with Engine(settings) as engine:
+    async with Engine.from_settings(settings) as engine:
         resp = await engine.run(req)
 
     if type == "json":
@@ -59,4 +59,3 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(main, "2026 llm 最新 研究", "low", 5, "markdown")
     print(out["search_result"])
-

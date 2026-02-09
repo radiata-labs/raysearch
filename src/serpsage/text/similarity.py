@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 from difflib import SequenceMatcher
 
 from serpsage.text.normalize import normalize_text
@@ -45,7 +44,9 @@ def simhash64(text: str) -> int:
 
     vec = [0] * 64
     for f in feats:
-        h = int.from_bytes(hashlib.blake2b(f.encode("utf-8"), digest_size=8).digest(), "big")
+        h = int.from_bytes(
+            hashlib.blake2b(f.encode("utf-8"), digest_size=8).digest(), "big"
+        )
         for i in range(64):
             bit = 1 if (h >> i) & 1 else -1
             vec[i] += bit
@@ -79,4 +80,3 @@ __all__ = [
     "jaccard",
     "simhash64",
 ]
-

@@ -8,4 +8,3 @@ def overview_json_schema() -> dict:
 
 
 __all__ = ["overview_json_schema"]
-

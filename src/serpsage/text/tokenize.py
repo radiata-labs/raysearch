@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
 
 from serpsage.text.normalize import normalize_text
+from serpsage.util.collections import uniq_preserve_order
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+")
 CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff]+")
@@ -15,17 +15,6 @@ try:
 except Exception:  # noqa: BLE001
     jieba = None
     JIEBA_AVAILABLE = False
-
-
-def uniq_preserve_order(items: Iterable[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for x in items:
-        if x in seen:
-            continue
-        seen.add(x)
-        out.append(x)
-    return out
 
 
 def ngrams(text: str, n: int) -> list[str]:
@@ -58,7 +47,7 @@ def tokenize(text: str) -> list[str]:
         # Fallback: take CJK runs directly.
         for run in CJK_RUN_RE.findall(t):
             if len(run) >= 2:
-                tokens.append(run)
+                tokens.append(run)  # noqa: PERF401
 
     # Add CJK n-grams as recall boost.
     for run in CJK_RUN_RE.findall(t):
@@ -72,4 +61,3 @@ def tokenize(text: str) -> list[str]:
 
 
 __all__ = ["tokenize"]
-

@@ -5,11 +5,11 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
+from typing_extensions import override
 
-from serpsage.contracts.base import Component
-from serpsage.contracts.protocols import Clock, ExtractedText, Extractor, Telemetry
+from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.protocols import ExtractedText, Extractor
 from serpsage.extract.encoding import decode_best_effort, guess_apparent_encoding
-from serpsage.settings.models import AppSettings
 from serpsage.text.normalize import clean_whitespace
 
 
@@ -19,7 +19,7 @@ class SimpleExtractedText:
     blocks: list[str]
 
 
-class BasicHtmlExtractor(Component[None], Extractor):
+class BasicHtmlExtractor(WorkUnit, Extractor):
     """Lightweight visible-text extraction.
 
     - best-effort decoding (charset header/meta/BOM + heuristics)
@@ -27,10 +27,13 @@ class BasicHtmlExtractor(Component[None], Extractor):
     - block segmentation by newlines
     """
 
-    def __init__(self, *, settings: AppSettings, telemetry: Telemetry, clock: Clock) -> None:
-        super().__init__(settings=settings, telemetry=telemetry, clock=clock)
+    def __init__(self, *, rt) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
 
-    def extract(self, *, url: str, content: bytes, content_type: str | None) -> ExtractedText:
+    @override
+    def extract(
+        self, *, url: str, content: bytes, content_type: str | None
+    ) -> ExtractedText:
         _ = url
         apparent = guess_apparent_encoding(content)
         text, kind = decode_best_effort(
@@ -79,6 +82,7 @@ class VisibleTextParser(HTMLParser):
         self._skip_stack: list[str] = []
         self._noise_depth = 0
 
+    @override
     def handle_starttag(self, tag: str, attrs: Any) -> None:  # noqa: ANN401
         lowered = (tag or "").lower()
         if lowered in _SKIP_TAGS:
@@ -91,10 +95,15 @@ class VisibleTextParser(HTMLParser):
 
         if attrs:
             for k, v in attrs:
-                if k in {"id", "class"} and isinstance(v, str) and _NOISE_ID_CLASS_RE.search(v):
+                if (
+                    k in {"id", "class"}
+                    and isinstance(v, str)
+                    and _NOISE_ID_CLASS_RE.search(v)
+                ):
                     self._noise_depth += 1
                     break
 
+    @override
     def handle_endtag(self, tag: str) -> None:
         lowered = (tag or "").lower()
         if self._skip_stack and self._skip_stack[-1] == lowered:
@@ -108,17 +117,20 @@ class VisibleTextParser(HTMLParser):
         if lowered in _BLOCK_TAGS:
             self._buf.append("\n")
 
+    @override
     def handle_data(self, data: str) -> None:
         if self._skip_stack or self._noise_depth > 0:
             return
         if data:
             self._buf.append(data)
 
+    @override
     def handle_entityref(self, name: str) -> None:
         if self._skip_stack or self._noise_depth > 0:
             return
         self._buf.append(f"&{name};")
 
+    @override
     def handle_charref(self, name: str) -> None:
         if self._skip_stack or self._noise_depth > 0:
             return
@@ -129,4 +141,3 @@ class VisibleTextParser(HTMLParser):
 
 
 __all__ = ["BasicHtmlExtractor", "SimpleExtractedText"]
-

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.container import Overrides
+from serpsage.app.bootstrap import Overrides
 from serpsage.settings.models import AppSettings
 
 
@@ -38,9 +38,8 @@ async def test_dedupe_lsh_removes_near_duplicates_and_limits_comparisons():
         }
     )
     overrides = Overrides(provider=FakeProvider(items))
-    async with Engine(settings, overrides=overrides) as engine:
+    async with Engine.from_settings(settings, overrides=overrides) as engine:
         resp = await engine.run(SearchRequest(query="python tutorial", depth="simple", max_results=200))
 
     # should dedupe down to a smaller set
     assert len(resp.results) < 60
-

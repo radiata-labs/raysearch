@@ -1,27 +1,32 @@
 from __future__ import annotations
 
-from serpsage.app.container import Container
-from serpsage.app.response import Citation, OverviewResult
+from typing import TYPE_CHECKING
+
+from serpsage.contracts.base import WorkUnit
 from serpsage.contracts.errors import AppError
-from serpsage.overview.schema import overview_json_schema
-from serpsage.pipeline.steps import StepContext
+
+if TYPE_CHECKING:
+    from serpsage.contracts.protocols import LLMClient
+    from serpsage.domain.overview import OverviewBuilder
+    from serpsage.pipeline.steps import StepContext
 
 
-class OverviewStep:
-    def __init__(self, container: Container) -> None:
-        self._c = container
+class OverviewStep(WorkUnit):
+    def __init__(self, *, rt, llm: LLMClient, builder: OverviewBuilder) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
+        self._llm = llm
+        self._builder = builder
 
     async def run(self, ctx: StepContext) -> StepContext:
-        span = self._c.telemetry.start_span("step.overview")
-        try:
-            enabled = ctx.settings.overview.enabled
+        with self.span("step.overview"):
+            enabled = self.settings.overview.enabled
             if ctx.request.overview is not None:
                 enabled = bool(ctx.request.overview)
             if not enabled:
                 return ctx
             if not ctx.results:
                 return ctx
-            if not ctx.settings.overview.llm.api_key:
+            if not self.settings.overview.llm.api_key:
                 ctx.errors.append(
                     AppError(
                         code="overview_skipped",
@@ -31,63 +36,24 @@ class OverviewStep:
                 )
                 return ctx
 
-            messages = _build_messages(ctx)
-            schema = overview_json_schema()
-            llm = ctx.settings.overview.llm
+            llm_cfg = self.settings.overview.llm
+            messages = self._builder.build_messages(
+                query=ctx.request.query, results=ctx.results
+            )
+            schema = self._builder.schema()
             try:
-                data = await self._c.llm.chat_json(
-                    model=llm.model,
+                data = await self._llm.chat_json(
+                    model=llm_cfg.model,
                     messages=messages,
                     schema=schema,
-                    timeout_s=float(llm.timeout_s),
+                    timeout_s=float(llm_cfg.timeout_s),
                 )
-                ctx.overview = OverviewResult.model_validate(data)
+                ctx.overview = self._builder.parse(data)
             except Exception as exc:  # noqa: BLE001
                 ctx.errors.append(
                     AppError(code="overview_failed", message=str(exc), details={})
                 )
             return ctx
-        finally:
-            span.end()
-
-
-def _build_messages(ctx: StepContext) -> list[dict[str, str]]:
-    max_sources = int(ctx.settings.overview.max_sources)
-    max_chunks = int(ctx.settings.overview.max_chunks_per_source)
-    max_chunk_chars = int(ctx.settings.overview.max_chunk_chars)
-
-    sources = []
-    for r in ctx.results[:max_sources]:
-        sid = r.source_id or "S?"
-        parts = []
-        if r.title:
-            parts.append(f"TITLE: {r.title}")
-        if r.url:
-            parts.append(f"URL: {r.url}")
-        if r.snippet:
-            parts.append(f"SNIPPET: {r.snippet}")
-        if r.page and r.page.chunks:
-            for i, ch in enumerate(r.page.chunks[:max_chunks], 1):
-                t = ch.text
-                if max_chunk_chars and len(t) > max_chunk_chars:
-                    t = t[:max_chunk_chars].rstrip() + "..."
-                cid = ch.chunk_id or f"{sid}:C{i}"
-                parts.append(f"CHUNK {cid}: {t}")
-        sources.append(f"[{sid}]\n" + "\n".join(parts))
-
-    user = "\n\n".join(
-        [
-            f"USER_QUERY:\n{ctx.request.query}",
-            "SOURCES:\n" + "\n\n".join(sources),
-            "TASK:\nWrite a concise overview. Provide key_points as short bullets. Add citations for key claims.",
-            "CITATION_FORMAT:\nCitations must reference source_id (e.g. S1) and optionally chunk_id (e.g. S1:C1).",
-        ]
-    )
-    return [
-        {"role": "system", "content": "You are a research assistant. Output JSON only."},
-        {"role": "user", "content": user},
-    ]
 
 
 __all__ = ["OverviewStep"]
-

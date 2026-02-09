@@ -2,24 +2,31 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from typing_extensions import override
 
 from serpsage.contracts.protocols import Span, Telemetry
-from serpsage.settings.models import TelemetrySettings
+
+if TYPE_CHECKING:
+    from serpsage.settings.models import TelemetrySettings
 
 
-class NoopSpan:
+class NoopSpan(Span):
+    @override
     def add_event(self, name: str, **fields: Any) -> None:
         return
 
+    @override
     def set_attr(self, name: str, value: Any) -> None:
         return
 
+    @override
     def end(self) -> None:
         return
 
 
-class NoopTelemetry:
+class NoopTelemetry(Telemetry):
+    @override
     def start_span(self, name: str, **attrs: Any) -> Span:
         return NoopSpan()
 
@@ -33,27 +40,31 @@ class SpanRecord:
     events: list[dict[str, Any]] = field(default_factory=list)
 
 
-class TraceSpan:
-    def __init__(self, telemetry: "TraceTelemetry", record: SpanRecord) -> None:
+class TraceSpan(Span):
+    def __init__(self, telemetry: TraceTelemetry, record: SpanRecord) -> None:
         self._telemetry = telemetry
         self._record = record
 
+    @override
     def add_event(self, name: str, **fields: Any) -> None:
         self._record.events.append({"name": name, "t_ms": _now_ms(), "fields": fields})
 
+    @override
     def set_attr(self, name: str, value: Any) -> None:
         self._record.attrs[name] = value
 
+    @override
     def end(self) -> None:
         if self._record.end_ms is None:
             self._record.end_ms = _now_ms()
 
 
-class TraceTelemetry:
+class TraceTelemetry(Telemetry):
     def __init__(self, settings: TelemetrySettings) -> None:
         self._settings = settings
         self._spans: list[SpanRecord] = []
 
+    @override
     def start_span(self, name: str, **attrs: Any) -> Span:
         rec = SpanRecord(name=name, start_ms=_now_ms(), attrs=dict(attrs))
         self._spans.append(rec)
@@ -79,4 +90,3 @@ def _now_ms() -> int:
 
 
 __all__ = ["NoopTelemetry", "TraceTelemetry"]
-

@@ -14,4 +14,3 @@ def extract_intent_tokens(query: str, intent_terms: list[str]) -> list[str]:
 
 
 __all__ = ["extract_intent_tokens"]
-

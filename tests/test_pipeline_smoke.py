@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.container import Overrides
+from serpsage.app.bootstrap import Overrides
 from serpsage.settings.models import AppSettings
 
 
@@ -34,7 +34,7 @@ async def test_pipeline_smoke_basic_ranking_and_ids():
     )
     overrides = Overrides(provider=provider)
 
-    async with Engine(settings, overrides=overrides) as engine:
+    async with Engine.from_settings(settings, overrides=overrides) as engine:
         resp = await engine.run(SearchRequest(query="python", depth="simple", max_results=10))
 
     assert resp.errors == []
@@ -42,4 +42,3 @@ async def test_pipeline_smoke_basic_ranking_and_ids():
     assert resp.results[0].source_id == "S1"
     assert resp.results[1].source_id == "S2"
     assert resp.results[0].score >= resp.results[1].score
-

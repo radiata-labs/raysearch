@@ -1,19 +1,24 @@
 from __future__ import annotations
 
-from serpsage.contracts.base import Component
-from serpsage.contracts.protocols import Clock, Ranker, Telemetry
+from typing_extensions import override
+
+from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.protocols import Ranker
 from serpsage.rank.bm25 import BM25_AVAILABLE, bm25_scores
 from serpsage.rank.heuristic import heuristic_scores
 from serpsage.rank.normalize import normalize_scores, rank_scales
-from serpsage.settings.models import AppSettings
 
 
-class BlendRanker(Component[None], Ranker):
-    def __init__(self, *, settings: AppSettings, telemetry: Telemetry, clock: Clock) -> None:
-        super().__init__(settings=settings, telemetry=telemetry, clock=clock)
+class BlendRanker(WorkUnit, Ranker):
+    def __init__(self, *, rt) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
 
     def _provider_weights(self) -> dict[str, float]:
-        raw = {k: float(v) for k, v in (self.settings.rank.providers or {}).items() if float(v) > 0}
+        raw = {
+            k: float(v)
+            for k, v in (self.settings.rank.providers or {}).items()
+            if float(v) > 0
+        }
         if raw.get("bm25") and not BM25_AVAILABLE:
             raw.pop("bm25", None)
         if not raw:
@@ -23,6 +28,7 @@ class BlendRanker(Component[None], Ranker):
             return {"heuristic": 1.0}
         return {k: float(v) / total for k, v in raw.items()}
 
+    @override
     def score_texts(
         self,
         *,
@@ -57,9 +63,9 @@ class BlendRanker(Component[None], Ranker):
 
         return blended
 
+    @override
     def normalize(self, *, scores: list[float]) -> list[float]:
         return normalize_scores(scores, self.settings.rank.normalization)
 
 
 __all__ = ["BlendRanker"]
-

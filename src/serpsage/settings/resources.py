@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class ResourceError(RuntimeError):
@@ -23,4 +26,3 @@ def load_lines(path: Path) -> list[str]:
 
 
 __all__ = ["ResourceError", "load_lines"]
-

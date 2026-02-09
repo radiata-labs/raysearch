@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from serpsage.app.runtime import CoreRuntime
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
@@ -18,7 +19,8 @@ def test_basic_html_extractor_drops_nav_footer():
       <footer>FOOTER SHOULD DROP</footer>
     </body></html>"""
     settings = AppSettings()
-    ex = BasicHtmlExtractor(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    ex = BasicHtmlExtractor(rt=rt)
     out = ex.extract(url="https://x", content=html, content_type="text/html")
     text = out.text.lower()
     assert "main content" in text

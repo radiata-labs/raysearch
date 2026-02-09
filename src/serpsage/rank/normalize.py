@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import math
 import statistics
+from typing import TYPE_CHECKING
 
-from serpsage.settings.models import NormalizationSettings
+if TYPE_CHECKING:
+    from serpsage.settings.models import NormalizationSettings
 
 
 def safe_float(x: float) -> float:
@@ -81,4 +83,3 @@ def normalize_scores(scores: list[float], cfg: NormalizationSettings) -> list[fl
 
 
 __all__ = ["normalize_scores", "rank_scales", "safe_float"]
-

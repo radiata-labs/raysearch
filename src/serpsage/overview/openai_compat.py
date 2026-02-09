@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from typing_extensions import override
 
 import httpx
 
-from serpsage.contracts.base import Component
-from serpsage.contracts.protocols import Clock, LLMClient, Telemetry
-from serpsage.settings.models import AppSettings
+from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.protocols import LLMClient
 
 
-class NullLLMClient(Component[None], LLMClient):
+class NullLLMClient(WorkUnit, LLMClient):
+    def __init__(self, *, rt) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
+
+    @override
     async def chat_json(
         self,
         *,
@@ -22,18 +26,17 @@ class NullLLMClient(Component[None], LLMClient):
         raise RuntimeError("LLM is not configured (missing api_key or disabled).")
 
 
-class OpenAICompatLLMClient(Component[None], LLMClient):
+class OpenAICompatLLMClient(WorkUnit, LLMClient):
     def __init__(
         self,
         *,
-        settings: AppSettings,
-        telemetry: Telemetry,
-        clock: Clock,
+        rt,  # noqa: ANN001
         http: httpx.AsyncClient,
     ) -> None:
-        super().__init__(settings=settings, telemetry=telemetry, clock=clock)
+        super().__init__(rt=rt)
         self._http = http
 
+    @override
     async def chat_json(
         self,
         *,
@@ -79,13 +82,13 @@ class OpenAICompatLLMClient(Component[None], LLMClient):
         resp.raise_for_status()
         data = resp.json()
 
-        content = (
-            (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
-        )
+        content = (((data.get("choices") or [{}])[0]).get("message") or {}).get(
+            "content"
+        ) or ""
         if isinstance(content, dict):
             return content
         if not isinstance(content, str):
-            raise RuntimeError("LLM response content is not a string/dict")
+            raise TypeError("LLM response content is not a string/dict")
 
         # Some providers already return JSON in `content`. Parse it.
         try:
@@ -100,4 +103,3 @@ class OpenAICompatLLMClient(Component[None], LLMClient):
 
 
 __all__ = ["NullLLMClient", "OpenAICompatLLMClient"]
-

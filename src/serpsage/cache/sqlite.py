@@ -3,27 +3,31 @@ from __future__ import annotations
 import sqlite3
 import zlib
 from pathlib import Path
-from typing import Any
+from typing_extensions import override
 
-import anyio
+from anyio import to_thread
 
-from serpsage.contracts.base import Component
-from serpsage.contracts.protocols import Cache, Clock, Telemetry
-from serpsage.settings.models import AppSettings
+from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.protocols import Cache
 
 
-class NullCache(Component[None], Cache):
+class NullCache(WorkUnit, Cache):
+    def __init__(self, *, rt) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
+
+    @override
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         return None
 
+    @override
     async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
         return
 
 
-class SqliteCache(Component[None], Cache):
-    def __init__(self, *, settings: AppSettings, telemetry: Telemetry, clock: Clock) -> None:
-        super().__init__(settings=settings, telemetry=telemetry, clock=clock)
-        self._path = Path(settings.cache.db_path)
+class SqliteCache(WorkUnit, Cache):
+    def __init__(self, *, rt) -> None:  # noqa: ANN001
+        super().__init__(rt=rt)
+        self._path = Path(self.settings.cache.db_path)
         self._inited = False
 
     async def _init(self) -> None:
@@ -46,14 +50,17 @@ class SqliteCache(Component[None], Cache):
                     );
                     """
                 )
-                con.execute("CREATE INDEX IF NOT EXISTS idx_cache_exp ON cache(expires_at_ms);")
+                con.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_cache_exp ON cache(expires_at_ms);"
+                )
                 con.commit()
             finally:
                 con.close()
 
-        await anyio.to_thread.run_sync(_do_init)
+        await to_thread.run_sync(_do_init)
         self._inited = True
 
+    @override
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         await self._init()
         now = int(self.clock.now_ms())
@@ -82,8 +89,9 @@ class SqliteCache(Component[None], Cache):
             finally:
                 con.close()
 
-        return await anyio.to_thread.run_sync(_do_get)
+        return await to_thread.run_sync(_do_get)
 
+    @override
     async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
         if ttl_s <= 0:
             return
@@ -99,13 +107,15 @@ class SqliteCache(Component[None], Cache):
                     (namespace, key, exp_ms, compressed),
                 )
                 # Opportunistic cleanup.
-                con.execute("DELETE FROM cache WHERE expires_at_ms <= ?", (int(self.clock.now_ms()),))
+                con.execute(
+                    "DELETE FROM cache WHERE expires_at_ms <= ?",
+                    (int(self.clock.now_ms()),),
+                )
                 con.commit()
             finally:
                 con.close()
 
-        await anyio.to_thread.run_sync(_do_set)
+        await to_thread.run_sync(_do_set)
 
 
 __all__ = ["NullCache", "SqliteCache"]
-

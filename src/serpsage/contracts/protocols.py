@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class Span(Protocol):
@@ -100,24 +102,6 @@ class LLMClient(Protocol):
     ) -> dict[str, Any]: ...
 
 
-def stable_json(obj: Any) -> str:
-    """Deterministic JSON representation used for cache keys."""
-    import json
-
-    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def uniq_preserve_order(items: Iterable[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for x in items:
-        if x in seen:
-            continue
-        seen.add(x)
-        out.append(x)
-    return out
-
-
 __all__ = [
     "Cache",
     "ChunkDraft",
@@ -132,7 +116,4 @@ __all__ = [
     "SearchProvider",
     "Span",
     "Telemetry",
-    "stable_json",
-    "uniq_preserve_order",
 ]
-
