@@ -10,6 +10,10 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
 
+DepthKey = Literal["low", "medium", "high"]
+RankProviderKey = Literal["heuristic", "bm25"]
+
+
 class RetrySettings(Model):
     max_attempts: int = 3
     base_delay_ms: int = 200
@@ -66,6 +70,25 @@ class EnrichDepthPreset(Model):
     top_chunks_per_page: int = 2
 
 
+def _default_depth_presets() -> dict[DepthKey, EnrichDepthPreset]:
+    # Helper keeps mypy happy about Literal dict keys.
+    return {
+        "low": EnrichDepthPreset(
+            pages_ratio=0.25, min_pages=1, max_pages=3, top_chunks_per_page=2
+        ),
+        "medium": EnrichDepthPreset(
+            pages_ratio=0.50, min_pages=2, max_pages=6, top_chunks_per_page=3
+        ),
+        "high": EnrichDepthPreset(
+            pages_ratio=0.75, min_pages=3, max_pages=10, top_chunks_per_page=5
+        ),
+    }
+
+
+def _default_rank_providers() -> dict[RankProviderKey, float]:
+    return {"heuristic": 1.0}
+
+
 class FetchSettings(Model):
     user_agent: str = "serpsage-bot/3.0"
     timeout_s: float = 10.0
@@ -103,17 +126,7 @@ class EnrichSettings(Model):
     chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     select: SelectSettings = Field(default_factory=SelectSettings)
     depth_presets: dict[Literal["low", "medium", "high"], EnrichDepthPreset] = Field(
-        default_factory=lambda: {
-            "low": EnrichDepthPreset(
-                pages_ratio=0.25, min_pages=1, max_pages=3, top_chunks_per_page=2
-            ),
-            "medium": EnrichDepthPreset(
-                pages_ratio=0.50, min_pages=2, max_pages=6, top_chunks_per_page=3
-            ),
-            "high": EnrichDepthPreset(
-                pages_ratio=0.75, min_pages=3, max_pages=10, top_chunks_per_page=5
-            ),
-        }
+        default_factory=_default_depth_presets
     )
 
 
@@ -136,7 +149,7 @@ class NormalizationSettings(Model):
 
 class RankSettings(Model):
     providers: dict[Literal["heuristic", "bm25"], float] = Field(
-        default_factory=lambda: {"heuristic": 1.0}
+        default_factory=_default_rank_providers
     )
     heuristic: HeuristicRankSettings = Field(default_factory=HeuristicRankSettings)
     normalization: NormalizationSettings = Field(default_factory=NormalizationSettings)

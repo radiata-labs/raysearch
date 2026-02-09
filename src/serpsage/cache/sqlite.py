@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import zlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from anyio import to_thread
@@ -10,9 +11,12 @@ from anyio import to_thread
 from serpsage.contracts.base import WorkUnit
 from serpsage.contracts.protocols import Cache
 
+if TYPE_CHECKING:
+    from serpsage.app.runtime import CoreRuntime
+
 
 class NullCache(WorkUnit, Cache):
-    def __init__(self, *, rt) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
 
     @override
@@ -25,7 +29,7 @@ class NullCache(WorkUnit, Cache):
 
 
 class SqliteCache(WorkUnit, Cache):
-    def __init__(self, *, rt) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
         self._path = Path(self.settings.cache.db_path)
         self._inited = False

@@ -6,23 +6,23 @@ from typing_extensions import override
 import httpx
 
 from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import Cache, SearchProvider
+from serpsage.contracts.protocols import SearchProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from serpsage.app.runtime import CoreRuntime
 
 
 class SearxngProvider(WorkUnit, SearchProvider):
     def __init__(
         self,
         *,
-        rt,  # noqa: ANN001
+        rt: CoreRuntime,
         http: httpx.AsyncClient,
-        cache: Cache,
     ) -> None:
         super().__init__(rt=rt)
         self._http = http
-        self._cache = cache
 
     @override
     async def asearch(

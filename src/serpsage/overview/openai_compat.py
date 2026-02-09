@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 import httpx
@@ -9,9 +9,12 @@ import httpx
 from serpsage.contracts.base import WorkUnit
 from serpsage.contracts.protocols import LLMClient
 
+if TYPE_CHECKING:
+    from serpsage.app.runtime import CoreRuntime
+
 
 class NullLLMClient(WorkUnit, LLMClient):
-    def __init__(self, *, rt) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
 
     @override
@@ -30,7 +33,7 @@ class OpenAICompatLLMClient(WorkUnit, LLMClient):
     def __init__(
         self,
         *,
-        rt,  # noqa: ANN001
+        rt: CoreRuntime,
         http: httpx.AsyncClient,
     ) -> None:
         super().__init__(rt=rt)

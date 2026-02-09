@@ -9,6 +9,10 @@ from serpsage.pipeline.steps import Step, StepContext
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from types import TracebackType
+
+    from serpsage.app.bootstrap import Overrides
     from serpsage.app.request import SearchRequest
     from serpsage.app.runtime import CoreRuntime
     from serpsage.settings.models import AppSettings
@@ -23,7 +27,7 @@ class Engine(WorkUnit):
         rt: CoreRuntime,
         steps: list[Step],
         overview_step: Step,
-        aclose_hook,  # noqa: ANN001
+        aclose_hook: Callable[[], Awaitable[None]],
     ) -> None:
         super().__init__(rt=rt)
         self._closed = False
@@ -34,11 +38,18 @@ class Engine(WorkUnit):
     async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         await self.aclose()
 
     @classmethod
-    def from_settings(cls, settings: AppSettings, *, overrides=None) -> Engine:  # noqa: ANN001
+    def from_settings(
+        cls, settings: AppSettings, *, overrides: Overrides | None = None
+    ) -> Engine:
         # Lazy import to avoid a bootstrap <-> engine import cycle.
         from serpsage.app.bootstrap import build_engine  # noqa: PLC0415
 

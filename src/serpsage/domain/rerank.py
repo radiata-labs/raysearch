@@ -7,11 +7,12 @@ from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
+    from serpsage.app.runtime import CoreRuntime
     from serpsage.contracts.protocols import Ranker
 
 
 class Reranker(WorkUnit):
-    def __init__(self, *, rt, ranker: Ranker) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: CoreRuntime, ranker: Ranker) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
 

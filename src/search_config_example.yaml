@@ -2,7 +2,7 @@ provider:
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
     # Prefer env override: SEARCH_API_KEY
-    api_key: null
+    api_key: "sk-63133540a039c3443e874d71928b0d0d777a39f0"
     timeout_s: 20.0
     allow_redirects: false
     headers: {}

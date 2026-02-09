@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import pathlib
 import pkgutil
 from dataclasses import is_dataclass
-from types import ModuleType
 
 import pytest
 
+import serpsage
 from serpsage.contracts.base import WorkUnit
-
 
 INCLUDED_PREFIXES = (
     "serpsage.app.engine",
@@ -47,13 +47,11 @@ NAME_PATTERN = (
 
 
 def _iter_serpsage_modules() -> list[str]:
-    import serpsage
-
-    names: list[str] = []
-    for m in pkgutil.walk_packages(serpsage.__path__, prefix="serpsage."):
-        if not m.ispkg:
-            names.append(m.name)
-    return names
+    return [
+        m.name
+        for m in pkgutil.walk_packages(serpsage.__path__, prefix="serpsage.")
+        if not m.ispkg
+    ]
 
 
 def _included(module_name: str) -> bool:
@@ -91,8 +89,6 @@ def test_work_classes_inherit_workunit_and_require_rt(module_name: str) -> None:
 
 def test_no_env_access_outside_settings_loader() -> None:
     # Lightweight text scan that enforces the convention.
-    import pathlib
-
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "serpsage"
     offenders: list[str] = []
     for path in root.rglob("*.py"):
@@ -103,4 +99,3 @@ def test_no_env_access_outside_settings_loader() -> None:
         if "os.environ" in txt or "os.getenv" in txt:
             offenders.append(rel)
     assert offenders == [], f"env access found outside settings loader: {offenders}"
-

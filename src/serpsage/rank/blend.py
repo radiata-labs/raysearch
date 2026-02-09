@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.contracts.base import WorkUnit
@@ -8,9 +9,12 @@ from serpsage.rank.bm25 import BM25_AVAILABLE, bm25_scores
 from serpsage.rank.heuristic import heuristic_scores
 from serpsage.rank.normalize import normalize_scores, rank_scales
 
+if TYPE_CHECKING:
+    from serpsage.app.runtime import CoreRuntime
+
 
 class BlendRanker(WorkUnit, Ranker):
-    def __init__(self, *, rt) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
 
     def _provider_weights(self) -> dict[str, float]:

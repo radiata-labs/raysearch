@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from serpsage.cache.sqlite import SqliteCache
 from serpsage.app.runtime import CoreRuntime
-from serpsage.telemetry.trace import NoopTelemetry
+from serpsage.cache.sqlite import SqliteCache
 from serpsage.settings.models import AppSettings
+from serpsage.telemetry.trace import NoopTelemetry
 
 
 class FakeClock:

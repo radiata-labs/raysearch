@@ -9,7 +9,7 @@ WORD_RE = re.compile(r"[A-Za-z0-9]+")
 CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff]+")
 
 try:
-    import jieba  # type: ignore[import-not-found]
+    import jieba  # type: ignore[import-untyped]
 
     JIEBA_AVAILABLE = True
 except Exception:  # noqa: BLE001

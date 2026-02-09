@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -19,14 +20,16 @@ from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.fetch.http import HttpFetcher
 from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.overview.openai_compat import NullLLMClient, OpenAICompatLLMClient
-from serpsage.pipeline.dedupe import DedupeStep
-from serpsage.pipeline.enrich import EnrichStep
-from serpsage.pipeline.filter import FilterStep
-from serpsage.pipeline.normalize import NormalizeStep
-from serpsage.pipeline.overview import OverviewStep
-from serpsage.pipeline.rank import RankStep
-from serpsage.pipeline.rerank import RerankStep
-from serpsage.pipeline.search import SearchStep
+from serpsage.pipeline.builtins import (
+    DedupeStep,
+    EnrichStep,
+    FilterStep,
+    NormalizeStep,
+    OverviewStep,
+    RankStep,
+    RerankStep,
+    SearchStep,
+)
 from serpsage.provider.searxng import SearxngProvider
 from serpsage.rank.blend import BlendRanker
 from serpsage.telemetry.trace import NoopTelemetry, TraceTelemetry
@@ -42,6 +45,7 @@ if TYPE_CHECKING:
         SearchProvider,
         Telemetry,
     )
+    from serpsage.pipeline.steps import Step
     from serpsage.settings.models import AppSettings
 
 
@@ -87,16 +91,23 @@ def build_engine(
     ov = overrides or Overrides()
     rt = build_runtime(settings=settings, overrides=ov)
 
+    stack = AsyncExitStack()
+
     http = ov.http or httpx.AsyncClient()
     owns_http = ov.http is None
+    if owns_http:
+        # Close last (LIFO) after dependent resources.
+        stack.push_async_callback(http.aclose)
 
     cache: Cache = ov.cache or (
         SqliteCache(rt=rt) if settings.cache.enabled else NullCache(rt=rt)
     )
+    owns_cache = ov.cache is None
+    if owns_cache:
+        stack.push_async_callback(cache.aclose)
+
     rate_limiter = ov.rate_limiter or RateLimiter(rt=rt)
-    provider: SearchProvider = ov.provider or SearxngProvider(
-        rt=rt, http=http, cache=cache
-    )
+    provider: SearchProvider = ov.provider or SearxngProvider(rt=rt, http=http)
     fetcher: Fetcher = ov.fetcher or HttpFetcher(
         rt=rt, http=http, cache=cache, rate_limiter=rate_limiter
     )
@@ -117,7 +128,7 @@ def build_engine(
     reranker = Reranker(rt=rt, ranker=ranker)
     overview_builder = OverviewBuilder(rt=rt)
 
-    steps = [
+    steps: list[Step] = [
         SearchStep(rt=rt, provider=provider, cache=cache),
         NormalizeStep(rt=rt, normalizer=normalizer),
         FilterStep(rt=rt, filterer=filterer),
@@ -126,14 +137,10 @@ def build_engine(
         EnrichStep(rt=rt, enricher=enricher),
         RerankStep(rt=rt, reranker=reranker),
     ]
-    overview_step = OverviewStep(rt=rt, llm=llm, builder=overview_builder)
+    overview_step: Step = OverviewStep(rt=rt, llm=llm, builder=overview_builder)
 
     async def _close() -> None:
-        # Best-effort close in dependency order.
-        if hasattr(cache, "aclose"):
-            await cache.aclose()  # pyright: ignore[reportAttributeAccessIssue]
-        if owns_http:
-            await http.aclose()
+        await stack.aclose()
 
     return Engine(rt=rt, steps=steps, overview_step=overview_step, aclose_hook=_close)
 

@@ -4,13 +4,16 @@ import html as html_mod
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.contracts.base import WorkUnit
 from serpsage.contracts.protocols import ExtractedText, Extractor
 from serpsage.extract.encoding import decode_best_effort, guess_apparent_encoding
 from serpsage.text.normalize import clean_whitespace
+
+if TYPE_CHECKING:
+    from serpsage.app.runtime import CoreRuntime
 
 
 @dataclass(frozen=True)
@@ -27,7 +30,7 @@ class BasicHtmlExtractor(WorkUnit, Extractor):
     - block segmentation by newlines
     """
 
-    def __init__(self, *, rt) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
 
     @override

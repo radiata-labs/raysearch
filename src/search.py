@@ -39,7 +39,7 @@ async def main(
         if r.page and r.page.chunks:
             lines.append("- 页面片段:")
             for ch in r.page.chunks:
-                lines.append(f"  - {ch.text}")
+                lines.append(f"  - {ch.text}")  # noqa: PERF401
         lines.append("")
 
     if resp.overview:
@@ -50,12 +50,12 @@ async def main(
             lines.append("")
             lines.append("### 要点")
             for p in resp.overview.key_points:
-                lines.append(f"- {p}")
+                lines.append(f"- {p}")  # noqa: PERF401
         lines.append("")
 
     return {"search_result": "\n".join(lines)}
 
 
 if __name__ == "__main__":
-    out = anyio.run(main, "2026 llm 最新 研究", "low", 5, "markdown")
+    out = anyio.run(main, "2026 llm 最新 研究", "high", 5, "json")
     print(out["search_result"])

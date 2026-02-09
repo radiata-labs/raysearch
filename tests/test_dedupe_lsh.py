@@ -19,15 +19,14 @@ class FakeProvider:
 @pytest.mark.anyio
 async def test_dedupe_lsh_removes_near_duplicates_and_limits_comparisons():
     # Build many similar titles.
-    items = []
-    for i in range(60):
-        items.append(
-            {
-                "url": f"https://example.com/{i}",
-                "title": f"Python tutorial part {i%3}",
-                "snippet": "learn python " + ("basics " * (i % 5)),
-            }
-        )
+    items = [
+        {
+            "url": f"https://example.com/{i}",
+            "title": f"Python tutorial part {i%3}",
+            "snippet": "learn python " + ("basics " * (i % 5)),
+        }
+        for i in range(60)
+    ]
 
     settings = AppSettings.model_validate(
         {

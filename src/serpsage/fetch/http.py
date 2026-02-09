@@ -16,6 +16,7 @@ from serpsage.contracts.protocols import Cache, Fetcher, FetchResult
 from serpsage.util.json import stable_json
 
 if TYPE_CHECKING:
+    from serpsage.app.runtime import CoreRuntime
     from serpsage.fetch.rate_limit import RateLimiter
 
 
@@ -31,7 +32,7 @@ class HttpFetcher(WorkUnit, Fetcher):
     def __init__(
         self,
         *,
-        rt,  # noqa: ANN001
+        rt: CoreRuntime,
         http: httpx.AsyncClient,
         cache: Cache,
         rate_limiter: RateLimiter,
@@ -84,8 +85,8 @@ class HttpFetcher(WorkUnit, Fetcher):
 
 
 async def _fetch_with_retry(
-    *, http: httpx.AsyncClient, url: str, fetch_cfg
-) -> dict[str, Any]:  # noqa: ANN001
+    *, http: httpx.AsyncClient, url: str, fetch_cfg: Any
+) -> dict[str, Any]:
     retry = fetch_cfg.retry
     headers = {"User-Agent": fetch_cfg.user_agent}
     timeout = httpx.Timeout(fetch_cfg.timeout_s)

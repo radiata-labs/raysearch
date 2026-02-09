@@ -6,6 +6,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
+class AsyncCloseable(Protocol):
+    async def aclose(self) -> None: ...
+
+
 class Span(Protocol):
     def add_event(self, name: str, **fields: Any) -> None: ...
     def set_attr(self, name: str, value: Any) -> None: ...
@@ -21,7 +25,7 @@ class Clock(Protocol):
 
 
 @runtime_checkable
-class Cache(Protocol):
+class Cache(AsyncCloseable, Protocol):
     async def aget(self, *, namespace: str, key: str) -> bytes | None: ...
     async def aset(
         self, *, namespace: str, key: str, value: bytes, ttl_s: int
@@ -103,6 +107,7 @@ class LLMClient(Protocol):
 
 
 __all__ = [
+    "AsyncCloseable",
     "Cache",
     "ChunkDraft",
     "Chunker",

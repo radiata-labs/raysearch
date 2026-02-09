@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-if TYPE_CHECKING:
-    from serpsage.contracts.errors import AppError
+from serpsage.contracts.errors import AppError  # noqa: TC001
 
 
 class PageChunk(BaseModel):
@@ -77,3 +76,6 @@ __all__ = [
     "ResultItem",
     "SearchResponse",
 ]
+
+# Ensure forward references are resolved (Pydantic v2 + postponed annotations).
+SearchResponse.model_rebuild()

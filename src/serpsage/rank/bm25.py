@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from rank_bm25 import BM25Okapi
+    from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
     BM25_AVAILABLE = True
 except Exception:  # noqa: BLE001
@@ -30,4 +30,3 @@ def bm25_scores(docs: list[str], *, query: str, **_: Any) -> list[float]:
 
 
 __all__ = ["BM25_AVAILABLE", "bm25_scores"]
-

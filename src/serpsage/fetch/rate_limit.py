@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import anyio
 
 from serpsage.contracts.base import WorkUnit
 
+if TYPE_CHECKING:
+    from serpsage.app.runtime import CoreRuntime
+
 
 class RateLimiter(WorkUnit):
-    def __init__(self, *, rt) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
         fetch = self.settings.enrich.fetch
         self._global = anyio.Semaphore(max(1, int(fetch.global_concurrency)))

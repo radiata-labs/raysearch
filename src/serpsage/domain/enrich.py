@@ -14,14 +14,15 @@ from serpsage.text.tokenize import tokenize
 from serpsage.text.utils import extract_intent_tokens
 
 if TYPE_CHECKING:
+    from serpsage.app.runtime import CoreRuntime
     from serpsage.contracts.protocols import Extractor, Fetcher, Ranker
     from serpsage.settings.models import ProfileSettings
 
 
 class Enricher(WorkUnit):
     def __init__(
-        self, *, rt, fetcher: Fetcher, extractor: Extractor, ranker: Ranker
-    ) -> None:  # noqa: ANN001
+        self, *, rt: CoreRuntime, fetcher: Fetcher, extractor: Extractor, ranker: Ranker
+    ) -> None:
         super().__init__(rt=rt)
         self._fetcher = fetcher
         self._extractor = extractor
