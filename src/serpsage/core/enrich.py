@@ -14,22 +14,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Literal
 
 import anyio
-from core.crawler import AsyncWebCrawler, WebCrawler
-from core.models import PageChunk, PageEnrichment
-from core.scorer import AsyncScoringEngine, ScoringEngine
-from core.text import TextUtils
-from core.tools import compile_patterns, has_noise_word, is_duplicate_text
+
+from serpsage.core.crawler import AsyncWebCrawler, WebCrawler
+from serpsage.core.models import PageChunk, PageEnrichment
+from serpsage.core.scorer import AsyncScoringEngine, ScoringEngine
+from serpsage.core.text import TextUtils
+from serpsage.core.tools import compile_patterns, has_noise_word, is_duplicate_text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from core.config import (
+    from serpsage.core.config import (
         SearchConfig,
         SearchContextConfig,
         WebChunkingConfig,
         WebDepthPreset,
     )
-    from core.models import SearchResult
+    from serpsage.core.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -405,6 +406,9 @@ class _WebEnricherBase:
 class WebEnricher(_WebEnricherBase):
     """Sync page crawler/enricher for SERP results."""
 
+    scorer: ScoringEngine
+    crawler: WebCrawler
+
     def __init__(
         self,
         config: SearchConfig,
@@ -610,6 +614,7 @@ class AsyncWebEnricher(_WebEnricherBase):
     """Async page crawler/enricher for SERP results."""
 
     scorer: AsyncScoringEngine
+    crawler: AsyncWebCrawler
 
     def __init__(
         self,

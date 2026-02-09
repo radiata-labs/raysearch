@@ -21,10 +21,10 @@ except ImportError:  # pragma: no cover - optional dependency
     BM25Okapi = None
     BM25_AVAILABLE = False
 
-from core.text import TextUtils
+from serpsage.core.text import TextUtils
 
 if TYPE_CHECKING:
-    from core.config import SearchConfig
+    from serpsage.core.config import SearchConfig
 
 
 def _safe_float(x: float) -> float:

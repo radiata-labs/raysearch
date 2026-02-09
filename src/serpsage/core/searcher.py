@@ -16,13 +16,13 @@ import re
 from typing import TYPE_CHECKING, Literal, Self
 from urllib.parse import urlparse
 
-from core.client import AsyncSearxngClient, SearxngClient
-from core.config import SearchConfig, SearchContextConfig
-from core.enrich import AsyncWebEnricher, WebEnricher
-from core.models import SearchContext, SearchResult
-from core.scorer import AsyncScoringEngine, ScoringEngine
-from core.text import TextUtils
-from core.tools import (
+from serpsage.core.client import AsyncSearxngClient, SearxngClient
+from serpsage.core.config import SearchConfig, SearchContextConfig
+from serpsage.core.enrich import AsyncWebEnricher, WebEnricher
+from serpsage.core.models import SearchContext, SearchResult
+from serpsage.core.scorer import AsyncScoringEngine, ScoringEngine
+from serpsage.core.text import TextUtils
+from serpsage.core.tools import (
     canonical_site,
     compile_patterns,
     extract_intent_tokens,
@@ -52,6 +52,18 @@ class _SearcherBase:
 
     def __init__(self, config: SearchConfig) -> None:
         self.config = config
+
+    def select_profile(
+        self, query: str, *, profile: str | None = None
+    ) -> SearchContextConfig:
+        """Select a profile based on explicit input or keyword rules.
+
+        Explicit profile must exist, otherwise raise.
+        """
+        env_profile = os.getenv("SEARCH_PROFILE")
+        explicit_profile = profile or env_profile
+        profile_name = self._select_profile_name(query, explicit_profile)
+        return self._get_profile_config(profile_name)
 
     def _select_profile_name(self, query: str, explicit_profile: str | None) -> str:
         """Select a profile based on explicit input or keyword rules.
@@ -125,14 +137,15 @@ class _SearcherBase:
                 logger.warning("Invalid auto profile regex: %s", pattern)
         return hits
 
-    def _validate_depth(self, depth: SearchDepth) -> None:
-        if depth not in {"simple", "low", "medium", "high"}:
-            raise ValueError(f"Invalid depth: {depth}")
-
-    def _render_markdown(
+    def render_json(
         self,
-        query: str,
-        results: list[SearchResult],
+        context: SearchContext,
+    ) -> dict[str, object]:
+        return context.model_dump()
+
+    def render_markdown(
+        self,
+        context: SearchContext,
         *,
         max_snippet_chars: int = 1000,
         max_chunk_chars: int = 800,
@@ -140,8 +153,10 @@ class _SearcherBase:
         show_source_url: bool = False,
         show_source_engine: bool = False,
     ) -> str:
+        query = context.query
+        results = context.results
         if not results:
-            return self._render_empty("无有用搜索结果(已过滤无关与噪音)。")
+            return self._render_empty("无有用搜索结果。")
 
         lines: list[str] = [
             "# 网络搜索结果 (SearXNG)",
@@ -179,8 +194,7 @@ class _SearcherBase:
                     rendered = chunk.text
                     if max_chunk_chars and len(rendered) > max_chunk_chars:
                         rendered = rendered[:max_chunk_chars].rstrip() + "..."
-                    score_str = f"(score={chunk.score:.2f}) "
-                    lines.append(f"  - {score_str}{rendered}")
+                    lines.append(f"  - {rendered}")
 
             if result.hit_keywords:
                 lines.append(f"- 命中: {', '.join(result.hit_keywords[:12])}")
@@ -400,34 +414,35 @@ class Searcher(_SearcherBase):
         params: Mapping[str, object] | None = None,
         profile: str | None = None,
         max_results: int = 16,
-        max_snippet_chars: int = 1000,
-        show_source_domain: bool = True,
-        show_source_url: bool = False,
-        show_source_engine: bool = False,
         fuzzy_threshold: float | None = None,
         chunk_target_chars: int | None = None,
         chunk_overlap_sentences: int | None = None,
         min_chunk_chars: int | None = None,
-        max_chunk_chars: int = 800,
     ) -> SearchContext:
-        """Search and build LLM-friendly context."""
+        """Search and return results."""
+        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
+        raw = self.search_raw(" ".join(query_tokens), params=params)
+        query = TextUtils.clean_whitespace(query)
+        if not query:
+            return SearchContext(query=query, depth=depth)
 
-        raw = self.search_raw(query, params=params)
-        return self.build_context(
+        processed = self.process_response(
             raw,
             query,
+            query_tokens,
             depth,
             profile=profile,
             max_results=max_results,
-            max_snippet_chars=max_snippet_chars,
-            show_source_domain=show_source_domain,
-            show_source_url=show_source_url,
-            show_source_engine=show_source_engine,
             fuzzy_threshold=fuzzy_threshold,
             chunk_target_chars=chunk_target_chars,
             chunk_overlap_sentences=chunk_overlap_sentences,
             min_chunk_chars=min_chunk_chars,
-            max_chunk_chars=max_chunk_chars,
+        )
+        return SearchContext(
+            query=query,
+            depth=depth,
+            number_of_results=len(processed),
+            results=processed,
         )
 
     def search_json(
@@ -444,15 +459,10 @@ class Searcher(_SearcherBase):
         min_chunk_chars: int | None = None,
     ) -> dict[str, object]:
         """Search and return JSON data only."""
-        raw = self.search_raw(query, params=params)
-        query = TextUtils.clean_whitespace(query)
-        if not query:
-            return {}
-
-        processed = self.process_response(
-            raw,
+        context = self.search_context(
             query,
             depth,
+            params=params,
             profile=profile,
             max_results=max_results,
             fuzzy_threshold=fuzzy_threshold,
@@ -460,12 +470,7 @@ class Searcher(_SearcherBase):
             chunk_overlap_sentences=chunk_overlap_sentences,
             min_chunk_chars=min_chunk_chars,
         )
-        return {
-            "query": query,
-            "depth": depth,
-            "number_of_results": len(processed),
-            "results": [item.model_dump() for item in processed],
-        }
+        return self.render_json(context)
 
     def search_markdown(
         self,
@@ -487,57 +492,10 @@ class Searcher(_SearcherBase):
     ) -> str:
         """Search and return markdown only."""
 
-        raw = self.search_raw(query, params=params)
-        return self.build_context(
-            raw,
+        context = self.search_context(
             query,
             depth,
-            profile=profile,
-            max_results=max_results,
-            max_snippet_chars=max_snippet_chars,
-            show_source_domain=show_source_domain,
-            show_source_url=show_source_url,
-            show_source_engine=show_source_engine,
-            fuzzy_threshold=fuzzy_threshold,
-            chunk_target_chars=chunk_target_chars,
-            chunk_overlap_sentences=chunk_overlap_sentences,
-            min_chunk_chars=min_chunk_chars,
-            max_chunk_chars=max_chunk_chars,
-        ).markdown
-
-    def build_context(
-        self,
-        searxng_response: Mapping[str, object],
-        user_query: str,
-        depth: SearchDepth = "simple",
-        *,
-        profile: str | None = None,
-        max_results: int = 16,
-        max_snippet_chars: int = 1000,
-        show_source_domain: bool = True,
-        show_source_url: bool = False,
-        show_source_engine: bool = False,
-        fuzzy_threshold: float | None = None,
-        chunk_target_chars: int | None = None,
-        chunk_overlap_sentences: int | None = None,
-        min_chunk_chars: int | None = None,
-        max_chunk_chars: int = 800,
-    ) -> SearchContext:
-        """Build context from a raw SearxNG response (no HTTP)."""
-
-        query = TextUtils.clean_whitespace(user_query)
-        if not query:
-            return SearchContext(
-                query="",
-                results=[],
-                json_data={},
-                markdown=self._render_empty("用户问题为空。"),
-            )
-
-        processed = self.process_response(
-            searxng_response,
-            query,
-            depth,
+            params=params,
             profile=profile,
             max_results=max_results,
             fuzzy_threshold=fuzzy_threshold,
@@ -546,30 +504,20 @@ class Searcher(_SearcherBase):
             min_chunk_chars=min_chunk_chars,
         )
 
-        json_data = {
-            "query": query,
-            "depth": depth,
-            "number_of_results": len(processed),
-            "results": [item.model_dump() for item in processed],
-        }
-        markdown = self._render_markdown(
-            query,
-            processed,
+        return self.render_markdown(
+            context,
             max_snippet_chars=max_snippet_chars,
             max_chunk_chars=max_chunk_chars,
             show_source_domain=show_source_domain,
             show_source_url=show_source_url,
             show_source_engine=show_source_engine,
-        )
-
-        return SearchContext(
-            query=query, results=processed, json_data=json_data, markdown=markdown
         )
 
     def process_response(
         self,
         response: Mapping[str, object],
         query: str,
+        query_tokens: list[str],
         depth: SearchDepth = "simple",
         *,
         profile: str | None = None,
@@ -581,16 +529,10 @@ class Searcher(_SearcherBase):
     ) -> list[SearchResult]:
         """Process a raw SearXNG response into ranked results (no HTTP)."""
 
-        self._validate_depth(depth)
-        if chunk_target_chars is not None and chunk_target_chars <= 0:
-            raise ValueError("chunk_target_chars must be > 0")
-        if chunk_overlap_sentences is not None and chunk_overlap_sentences < 0:
-            raise ValueError("chunk_overlap_sentences must be >= 0")
+        if depth not in {"simple", "low", "medium", "high"}:
+            raise ValueError(f"Invalid depth: {depth}")
 
-        env_profile = os.getenv("SEARCH_PROFILE")
-        explicit_profile = profile or env_profile
-        profile_name = self._select_profile_name(query, explicit_profile)
-        config = self._get_profile_config(profile_name)
+        config = self.select_profile(query, profile=profile)
         if fuzzy_threshold is not None:
             config = config.with_overrides(fuzzy_threshold=fuzzy_threshold)
 
@@ -601,10 +543,14 @@ class Searcher(_SearcherBase):
         if not processed:
             return []
 
-        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
         intent_tokens = extract_intent_tokens(query, config)
 
         if depth != "simple" and self.config.web_enrichment.enabled and query_tokens:
+            if chunk_target_chars is not None and chunk_target_chars <= 0:
+                raise ValueError("chunk_target_chars must be > 0")
+            if chunk_overlap_sentences is not None and chunk_overlap_sentences < 0:
+                raise ValueError("chunk_overlap_sentences must be >= 0")
+
             preset = self.config.web_enrichment.depth_presets.get(depth)
             if preset is None:
                 logger.warning(
@@ -832,6 +778,45 @@ class AsyncSearcher(_SearcherBase):
         """Async fetch raw results from SearxNG (no processing)."""
         return await self.client.asearch(query, params=params)
 
+    async def asearch_context(
+        self,
+        query: str,
+        depth: SearchDepth = "simple",
+        *,
+        params: Mapping[str, object] | None = None,
+        profile: str | None = None,
+        max_results: int = 16,
+        fuzzy_threshold: float | None = None,
+        chunk_target_chars: int | None = None,
+        chunk_overlap_sentences: int | None = None,
+        min_chunk_chars: int | None = None,
+    ) -> SearchContext:
+        """Search and return results."""
+        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
+        raw = await self.asearch_raw(" ".join(query_tokens), params=params)
+        query = TextUtils.clean_whitespace(query)
+        if not query:
+            return SearchContext(query=query, depth=depth)
+
+        processed = await self.aprocess_response(
+            raw,
+            query,
+            query_tokens,
+            depth,
+            profile=profile,
+            max_results=max_results,
+            fuzzy_threshold=fuzzy_threshold,
+            chunk_target_chars=chunk_target_chars,
+            chunk_overlap_sentences=chunk_overlap_sentences,
+            min_chunk_chars=min_chunk_chars,
+        )
+        return SearchContext(
+            query=query,
+            depth=depth,
+            number_of_results=len(processed),
+            results=processed,
+        )
+
     async def asearch_json(
         self,
         query: str,
@@ -846,15 +831,10 @@ class AsyncSearcher(_SearcherBase):
         min_chunk_chars: int | None = None,
     ) -> dict[str, object]:
         """Async search and return JSON data only."""
-        raw = await self.asearch_raw(query, params=params)
-        query = TextUtils.clean_whitespace(query)
-        if not query:
-            return {}
-
-        processed = await self.aprocess_response(
-            raw,
+        context = await self.asearch_context(
             query,
             depth,
+            params=params,
             profile=profile,
             max_results=max_results,
             fuzzy_threshold=fuzzy_threshold,
@@ -862,12 +842,7 @@ class AsyncSearcher(_SearcherBase):
             chunk_overlap_sentences=chunk_overlap_sentences,
             min_chunk_chars=min_chunk_chars,
         )
-        return {
-            "query": query,
-            "depth": depth,
-            "number_of_results": len(processed),
-            "results": [item.model_dump() for item in processed],
-        }
+        return self.render_json(context)
 
     async def asearch_markdown(
         self,
@@ -888,94 +863,10 @@ class AsyncSearcher(_SearcherBase):
         max_chunk_chars: int = 800,
     ) -> str:
         """Async search and return markdown only."""
-        raw = await self.asearch_raw(query, params=params)
-        ctx = await self.abuild_context(
-            raw,
+        context = await self.asearch_context(
             query,
             depth,
-            profile=profile,
-            max_results=max_results,
-            max_snippet_chars=max_snippet_chars,
-            show_source_domain=show_source_domain,
-            show_source_url=show_source_url,
-            show_source_engine=show_source_engine,
-            fuzzy_threshold=fuzzy_threshold,
-            chunk_target_chars=chunk_target_chars,
-            chunk_overlap_sentences=chunk_overlap_sentences,
-            min_chunk_chars=min_chunk_chars,
-            max_chunk_chars=max_chunk_chars,
-        )
-        return ctx.markdown
-
-    async def asearch_context(
-        self,
-        query: str,
-        depth: SearchDepth = "simple",
-        *,
-        params: Mapping[str, object] | None = None,
-        profile: str | None = None,
-        max_results: int = 16,
-        max_snippet_chars: int = 1000,
-        show_source_domain: bool = True,
-        show_source_url: bool = False,
-        show_source_engine: bool = False,
-        fuzzy_threshold: float | None = None,
-        chunk_target_chars: int | None = None,
-        chunk_overlap_sentences: int | None = None,
-        min_chunk_chars: int | None = None,
-        max_chunk_chars: int = 800,
-    ) -> SearchContext:
-        """Async search and build LLM-friendly context."""
-        raw = await self.asearch_raw(query, params=params)
-        return await self.abuild_context(
-            raw,
-            query,
-            depth,
-            profile=profile,
-            max_results=max_results,
-            max_snippet_chars=max_snippet_chars,
-            show_source_domain=show_source_domain,
-            show_source_url=show_source_url,
-            show_source_engine=show_source_engine,
-            fuzzy_threshold=fuzzy_threshold,
-            chunk_target_chars=chunk_target_chars,
-            chunk_overlap_sentences=chunk_overlap_sentences,
-            min_chunk_chars=min_chunk_chars,
-            max_chunk_chars=max_chunk_chars,
-        )
-
-    async def abuild_context(
-        self,
-        searxng_response: Mapping[str, object],
-        user_query: str,
-        depth: SearchDepth = "simple",
-        *,
-        profile: str | None = None,
-        max_results: int = 16,
-        max_snippet_chars: int = 1000,
-        show_source_domain: bool = True,
-        show_source_url: bool = False,
-        show_source_engine: bool = False,
-        fuzzy_threshold: float | None = None,
-        chunk_target_chars: int | None = None,
-        chunk_overlap_sentences: int | None = None,
-        min_chunk_chars: int | None = None,
-        max_chunk_chars: int = 800,
-    ) -> SearchContext:
-        """Async build context from a raw SearxNG response (no SearxNG HTTP in here)."""
-        query = TextUtils.clean_whitespace(user_query)
-        if not query:
-            return SearchContext(
-                query="",
-                results=[],
-                json_data={},
-                markdown=self._render_empty("用户问题为空。"),
-            )
-
-        processed = await self.aprocess_response(
-            searxng_response,
-            query,
-            depth,
+            params=params,
             profile=profile,
             max_results=max_results,
             fuzzy_threshold=fuzzy_threshold,
@@ -983,31 +874,20 @@ class AsyncSearcher(_SearcherBase):
             chunk_overlap_sentences=chunk_overlap_sentences,
             min_chunk_chars=min_chunk_chars,
         )
-
-        json_data = {
-            "query": query,
-            "depth": depth,
-            "number_of_results": len(processed),
-            "results": [item.model_dump() for item in processed],
-        }
-        markdown = self._render_markdown(
-            query,
-            processed,
+        return self.render_markdown(
+            context,
             max_snippet_chars=max_snippet_chars,
-            max_chunk_chars=max_chunk_chars,
             show_source_domain=show_source_domain,
             show_source_url=show_source_url,
             show_source_engine=show_source_engine,
-        )
-
-        return SearchContext(
-            query=query, results=processed, json_data=json_data, markdown=markdown
+            max_chunk_chars=max_chunk_chars,
         )
 
     async def aprocess_response(
         self,
         response: Mapping[str, object],
         query: str,
+        query_tokens: list[str],
         depth: SearchDepth = "simple",
         *,
         profile: str | None = None,
@@ -1018,16 +898,10 @@ class AsyncSearcher(_SearcherBase):
         min_chunk_chars: int | None = None,
     ) -> list[SearchResult]:
         """Async process a raw SearxNG response into ranked results."""
-        self._validate_depth(depth)
-        if chunk_target_chars is not None and chunk_target_chars <= 0:
-            raise ValueError("chunk_target_chars must be > 0")
-        if chunk_overlap_sentences is not None and chunk_overlap_sentences < 0:
-            raise ValueError("chunk_overlap_sentences must be >= 0")
+        if depth not in {"simple", "low", "medium", "high"}:
+            raise ValueError(f"Invalid depth: {depth}")
 
-        env_profile = os.getenv("SEARCH_PROFILE")
-        explicit_profile = profile or env_profile
-        profile_name = self._select_profile_name(query, explicit_profile)
-        config = self._get_profile_config(profile_name)
+        config = self.select_profile(query, profile=profile)
         if fuzzy_threshold is not None:
             config = config.with_overrides(fuzzy_threshold=fuzzy_threshold)
 
@@ -1038,10 +912,14 @@ class AsyncSearcher(_SearcherBase):
         if not processed:
             return []
 
-        query_tokens = [t for t in TextUtils.tokenize(query) if len(t) >= 2]
         intent_tokens = extract_intent_tokens(query, config)
 
         if depth != "simple" and self.config.web_enrichment.enabled and query_tokens:
+            if chunk_target_chars is not None and chunk_target_chars <= 0:
+                raise ValueError("chunk_target_chars must be > 0")
+            if chunk_overlap_sentences is not None and chunk_overlap_sentences < 0:
+                raise ValueError("chunk_overlap_sentences must be >= 0")
+
             preset = self.config.web_enrichment.depth_presets.get(depth)
             if preset is None:
                 logger.warning(
@@ -1061,6 +939,8 @@ class AsyncSearcher(_SearcherBase):
                     min_chunk_chars=min_chunk_chars,
                 )
 
+                # If pages were fetched successfully for some results, let page quality
+                # influence the final ordering (page is weighted higher than snippet).
                 processed = await self._arerank_with_page_scores(
                     processed,
                     query=query,
@@ -1068,6 +948,8 @@ class AsyncSearcher(_SearcherBase):
                     intent_tokens=intent_tokens,
                 )
 
+        # Apply the global score floor only once at the end so page scores can
+        # "rescue" weaker snippet results.
         min_score = float(self.config.score_filter.min_score)
         processed = [
             r for r in processed if float(r.score) > 0.0 and float(r.score) >= min_score

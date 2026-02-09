@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 import anyio
 
-from src.serpsage.core import AsyncSearcher, SearchConfig, Searcher
+from serpsage.core import AsyncSearcher, SearchConfig, Searcher
 
 
 def main(
@@ -67,7 +67,7 @@ async def async_main(
 
 if __name__ == "__main__":
     print(
-        anyio.run(async_main, "初音ミク 新曲 2025", "low", 5, "markdown")[
+        anyio.run(async_main, "2026 llm 最新 研究", "low", 5, "markdown")[
             "search_result"
         ]
     )

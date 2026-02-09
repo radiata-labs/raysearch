@@ -21,12 +21,13 @@ from urllib.parse import urlparse
 
 import httpx
 import requests
-from core.text import TextUtils
+
+from serpsage.core.text import TextUtils
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from core.config import SearchConfig
+    from serpsage.core.config import SearchConfig
 
 logger = logging.getLogger(__name__)
 

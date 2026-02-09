@@ -25,6 +25,17 @@ class PageEnrichment(BaseModel):
     error: str | None = None
 
 
+class SearchContext(BaseModel):
+    """Search context."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    query: str
+    depth: str
+    number_of_results: int = 0
+    results: list[SearchResult] = Field(default_factory=list)
+
+
 class SearchResult(BaseModel):
     """Normalized search result."""
 
@@ -40,17 +51,6 @@ class SearchResult(BaseModel):
     score: float = 0.0
     hit_keywords: list[str] = Field(default_factory=list)
     page: PageEnrichment = Field(default_factory=PageEnrichment)
-
-
-class SearchContext(BaseModel):
-    """Search context output."""
-
-    model_config = ConfigDict(validate_assignment=True)
-
-    query: str
-    results: list[SearchResult]
-    json_data: dict[str, Any]
-    markdown: str
 
 
 __all__ = ["PageChunk", "PageEnrichment", "SearchResult", "SearchContext"]

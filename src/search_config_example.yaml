@@ -45,8 +45,6 @@ profiles:
       - new song
       - single
       - album
-      - "2024"
-      - "2025"
 
     noise_words:
       - base_dic_full.txt
