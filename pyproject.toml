@@ -23,16 +23,29 @@ dependencies = [
     "anyio==4.9.0",
     "httpx>=0.27,<1",
     "pydantic>=2.7,<3",
-    "pillow",
-    "imagehash",
-    "rawpy",
-    "numpy",
-    "PySide6",
     "rank-bm25",
     "jieba",
     "pyyaml",
     "requests>=2.31,<3",
+    "typing_extensions>=4.10,<5",
 ]
+
+[project.optional-dependencies]
+# Not required by the core SERP pipeline; kept as extras to avoid heavy/compiled
+# dependencies for headless Docker/API deployments.
+image = ["pillow", "imagehash", "rawpy", "numpy"]
+gui = ["PySide6"]
+api = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1"]
+
+[build-system]
+requires = ["setuptools>=74"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.uv]
 dev-dependencies = [

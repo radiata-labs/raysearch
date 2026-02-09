@@ -27,7 +27,7 @@ Score filtering:
 ## Python usage
 
 ```python
-from search_core import SearchConfig, Searcher
+from serpsage.core import SearchConfig, Searcher
 
 cfg = SearchConfig.load()
 engine = Searcher(cfg)
@@ -49,7 +49,7 @@ markdown = engine.search_markdown(
 ```python
 import anyio
 
-from search_core import AsyncSearcher, SearchConfig
+from serpsage.core import AsyncSearcher, SearchConfig
 
 
 async def run() -> None:
