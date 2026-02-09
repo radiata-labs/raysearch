@@ -1,87 +1,82 @@
-searxng:
-  base_url: https://searxng.lycoreco.dpdns.org/search
-  search_api_key: "sk-63133540a039c3443e874d71928b0d0d777a39f0"
+provider:
+  searxng:
+    base_url: https://searxng.lycoreco.dpdns.org/search
+    # Prefer env override: SEARCH_API_KEY
+    api_key: null
+    timeout_s: 20.0
+    allow_redirects: false
+    headers: {}
 
-default_profile: general
+pipeline:
+  default_profile: general
+  max_results: 16
+  min_score: 0.5
+  include_raw: false
+  profiles:
+    general: {}
 
-# Global scoring (single source of truth).
-scoring:
+    music:
+      fuzzy_threshold: 0.88
+      auto_match:
+        enabled: true
+        keywords: ["新曲", "新歌", "MV", "single", "album"]
+        regex: []
+        priority: 10
+      intent_terms: ["新曲", "新歌", "发布", "上线", "单曲", "专辑", "release", "new song", "single", "album"]
+      noise_words: ["dict.txt", "privacy", "terms", "cookie"]
+      domain_bonus:
+        wikipedia.org: 3
+        youtube.com: 2
+      domain_groups:
+        wikipedia: ["wikipedia"]
+        youtube: ["youtube"]
+      title_tail_patterns:
+        - "(?:-?\\s*)?(wikipedia.*)$"
+
+rank:
   providers:
     bm25: 0.7
     heuristic: 0.3
   normalization:
-    # Per-candidate-set, not cross-query comparable.
     min_items_for_sigmoid: 1
 
-# Global min-score filter (applies to results and web chunks).
-score_filter:
-  min_score: 0.5
+enrich:
+  enabled: true
+  fetch:
+    user_agent: serpsage-bot/3.0
+    timeout_s: 10.0
+    max_bytes: 2000000
+    max_extracted_chars: 50000
+    follow_redirects: true
+    global_concurrency: 16
+    per_host_concurrency: 2
+    politeness_delay_ms: 0
+  depth_presets:
+    low: {pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2}
+    medium: {pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3}
+    high: {pages_ratio: 0.75, min_pages: 3, max_pages: 10, top_chunks_per_page: 5}
 
-profiles:
-  general: {}
+cache:
+  enabled: false
+  db_path: .serpsage_cache.sqlite3
+  search_ttl_s: 600
+  fetch_ttl_s: 86400
 
-  music:
-    auto_match:
-      enabled: true
-      keywords: [新曲, 新歌, アルバム, MV, single, album]
-      priority: 10
+overview:
+  enabled: true
+  llm:
+    # OpenAI-compatible endpoint
+    base_url: https://api.openai.com/v1
+    api_key: null
+    model: gpt-4o-mini
+    timeout_s: 60.0
+    headers: {}
+  max_sources: 8
+  max_chunks_per_source: 2
+  max_chunk_chars: 900
+  schema_strict: true
 
-    intent_terms:
-      - 新曲
-      - 新歌
-      - 发布
-      - 公布
-      - 上线
-      - 上架
-      - 单曲
-      - 首发
-      - 专辑
-      - アルバム
-      - シングル
-      - 配信
-      - MV
-      - ミュージックビデオ
-      - release
-      - new song
-      - single
-      - album
+telemetry:
+  enabled: false
+  include_events: false
 
-    noise_words:
-      - base_dic_full.txt
-      - main.dic.txt
-      - dict.txt
-      - 技术参数表
-      - 招标
-      - 采购
-      - 公告
-      - downfile.aspx
-      - tibettravel
-      - aliyun-doc
-      - paddlenlp
-      - oss-cn-
-
-    domain_bonus:
-      kaf.kamitsubaki.jp: 10
-      kamitsubaki.jp: 8
-      prtimes.jp: 7
-      natalie.mu: 6
-      ototoy.jp: 6
-      zh.wikipedia.org: 4
-      ja.wikipedia.org: 4
-      wikipedia.org: 3
-      youtube.com: 2
-      open.spotify.com: 1
-      music.apple.com: 1
-      x.com: 1
-
-    domain_groups:
-      moegirl: [moegirl]
-      wikipedia: [wikipedia]
-      kamitsubaki: [kamitsubaki]
-      bilibili: [bilibili]
-      nicovideo: [nicovideo]
-      youtube: [youtube]
-      streaming: [spotify, music.apple.com]
-
-    title_tail_patterns:
-      - "(?:-?\\s*)?(萌娘百科.*|万物皆可萌.*)$"

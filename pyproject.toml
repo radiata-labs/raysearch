@@ -26,7 +26,6 @@ dependencies = [
     "rank-bm25",
     "jieba",
     "pyyaml",
-    "requests>=2.31,<3",
     "typing_extensions>=4.10,<5",
 ]
 
