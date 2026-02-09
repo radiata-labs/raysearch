@@ -70,7 +70,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "2026 llm 最新 研究", "high", 5, "json")
+    out = anyio.run(main, "可不 星界 合唱 歌曲", "high", 5, "json")
     t2 = time.time()
 
     print(out["search_result"])
