@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import TYPE_CHECKING
 
@@ -41,69 +42,99 @@ class Enricher(WorkUnit):
         if not url:
             return PageEnrichment(chunks=[], error="empty url")
 
-        try:
-            fetch = await self._fetcher.afetch(url=url)
-            extracted = await to_thread.run_sync(
-                lambda: self._extractor.extract(
-                    url=url, content=fetch.content, content_type=fetch.content_type
+        with self.span("enrich.one", url=url, domain=result.domain) as sp:
+            stats: dict[str, int | float] = {}
+            try:
+                fetch = await self._fetcher.afetch(url=url)
+                extracted = await to_thread.run_sync(
+                    lambda: self._extractor.extract(
+                        url=url, content=fetch.content, content_type=fetch.content_type
+                    )
                 )
-            )
-            blocks = list(extracted.blocks or [])
-            if not blocks:
-                return PageEnrichment(chunks=[], error="no blocks extracted")
+                blocks = list(extracted.blocks or [])
+                stats["blocks_total"] = int(len(blocks))
+                if not blocks:
+                    sp.set_attr("blocks_total", 0)
+                    return PageEnrichment(chunks=[], error="no blocks extracted")
 
-            kept = self._filter_blocks(blocks, profile=profile, query=query)
-            if not kept:
-                return PageEnrichment(chunks=[], error="no blocks after filtering")
+                kept, block_stats = self._filter_blocks(
+                    blocks, profile=profile, query=query
+                )
+                stats.update(block_stats)
+                if not kept:
+                    for k, v in stats.items():
+                        sp.set_attr(k, v)
+                    return PageEnrichment(chunks=[], error="no blocks after filtering")
 
-            text_for_chunking = "\n\n".join(kept)
-            sents = split_sentences(
-                text_for_chunking,
-                max_sentence_chars=int(
-                    self.settings.enrich.chunking.max_sentence_chars
-                ),
-            )
-            if len(sents) > int(self.settings.enrich.chunking.max_sentences):
-                sents = sents[: int(self.settings.enrich.chunking.max_sentences)]
+                text_for_chunking = "\n\n".join(kept)
+                sents = split_sentences(
+                    text_for_chunking,
+                    max_sentence_chars=int(
+                        self.settings.enrich.chunking.max_sentence_chars
+                    ),
+                )
+                stats["sentences"] = int(len(sents))
+                if len(sents) > int(self.settings.enrich.chunking.max_sentences):
+                    sents = sents[: int(self.settings.enrich.chunking.max_sentences)]
 
-            chunks = chunk_sentences(
-                sents,
-                target_chars=int(self.settings.enrich.chunking.target_chars),
-                overlap_sentences=int(self.settings.enrich.chunking.overlap_sentences),
-                min_chunk_chars=int(self.settings.enrich.chunking.min_chunk_chars),
-            )
-            if not chunks:
-                return PageEnrichment(chunks=[], error="no chunks")
-            if len(chunks) > int(self.settings.enrich.chunking.max_chunks):
-                chunks = chunks[: int(self.settings.enrich.chunking.max_chunks)]
+                chunks = chunk_sentences(
+                    sents,
+                    target_chars=int(self.settings.enrich.chunking.target_chars),
+                    overlap_sentences=int(
+                        self.settings.enrich.chunking.overlap_sentences
+                    ),
+                    min_chunk_chars=int(self.settings.enrich.chunking.min_chunk_chars),
+                )
+                stats["chunks_total"] = int(len(chunks))
+                if not chunks:
+                    for k, v in stats.items():
+                        sp.set_attr(k, v)
+                    return PageEnrichment(chunks=[], error="no chunks")
+                if len(chunks) > int(self.settings.enrich.chunking.max_chunks):
+                    chunks = chunks[: int(self.settings.enrich.chunking.max_chunks)]
 
-            scored = self._score_chunks(
-                chunks=chunks,
-                query=query,
-                query_tokens=query_tokens,
-                profile=profile,
-            )
-            if not scored:
-                return PageEnrichment(chunks=[], error="no matching chunks")
+                scored, score_stats = self._score_chunks(
+                    chunks=chunks,
+                    query=query,
+                    query_tokens=query_tokens,
+                    profile=profile,
+                )
+                stats.update(score_stats)
+                if not scored:
+                    for k, v in stats.items():
+                        sp.set_attr(k, v)
+                    return PageEnrichment(chunks=[], error="no matching chunks")
 
-            top = scored[: int(top_k)]
-            return PageEnrichment(
-                chunks=[PageChunk(text=c, score=float(s)) for s, c in top],
-                error=None,
-            )
-        except Exception as exc:  # noqa: BLE001
-            return PageEnrichment(chunks=[], error=str(exc))
+                top = scored[: int(top_k)]
+                stats["chunks_kept"] = int(len(top))
+                for k, v in stats.items():
+                    sp.set_attr(k, v)
+                return PageEnrichment(
+                    chunks=[PageChunk(text=c, score=float(s)) for s, c in top],
+                    error=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                sp.set_attr("error_type", type(exc).__name__)
+                return PageEnrichment(chunks=[], error=str(exc))
 
     def _filter_blocks(
         self, blocks: list[str], *, profile: ProfileSettings, query: str
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, int]]:
         noise_words = list(profile.noise_words or [])
         title_patterns = self._compile_patterns(list(profile.title_tail_patterns or []))
         query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
 
+        stats: dict[str, int] = {
+            "drop_noise_word": 0,
+            "drop_template_hard": 0,
+            "blocks_pruned_leading": 0,
+            "blocks_deduped": 0,
+        }
+
         kept: list[str] = []
         for block in blocks:
             if self._has_noise_word(block, noise_words):
+                stats["drop_noise_word"] += 1
                 continue
             tpl = self._template_score(
                 block,
@@ -112,11 +143,45 @@ class Enricher(WorkUnit):
                 mode="block",
             )
             if tpl >= float(self.settings.enrich.select.block_hard_drop_threshold):
+                stats["drop_template_hard"] += 1
                 continue
             kept.append(block)
             if len(kept) >= int(self.settings.enrich.chunking.max_blocks):
                 break
-        return kept
+
+        # Light de-dupe at the block level to avoid repeated nav/boilerplate lines.
+        deduped: list[str] = []
+        th = max(0.92, float(profile.fuzzy_threshold))
+        for b in kept:
+            if is_duplicate_text(b, deduped, threshold=th):
+                stats["blocks_deduped"] += 1
+                continue
+            deduped.append(b)
+        kept = deduped
+
+        # Leading boilerplate pruning: drop early template-like blocks until the first
+        # block that looks content-ish.
+        scan_n = min(20, len(kept))
+        start = 0
+        for i in range(scan_n):
+            b = kept[i]
+            if len(b) < 120:
+                continue
+            tpl = self._template_score(
+                b,
+                query_has_cjk=query_has_cjk,
+                title_patterns=title_patterns,
+                mode="block",
+            )
+            if tpl <= 0.55:
+                start = i
+                break
+        if start > 0 and len(kept) > 1:
+            stats["blocks_pruned_leading"] = int(start)
+            kept = kept[start:]
+
+        stats["blocks_kept"] = int(len(kept))
+        return kept, stats
 
     def _score_chunks(
         self,
@@ -125,23 +190,35 @@ class Enricher(WorkUnit):
         query: str,
         query_tokens: list[str],
         profile: ProfileSettings,
-    ) -> list[tuple[float, str]]:
+    ) -> tuple[list[tuple[float, str]], dict[str, int | float]]:
         title_patterns = self._compile_patterns(list(profile.title_tail_patterns or []))
         query_has_cjk = bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", query))
         intent_tokens = extract_intent_tokens(query, list(profile.intent_terms or []))
 
+        stats: dict[str, int | float] = {
+            "drop_template_hard": 0,
+            "drop_noise_word": 0,
+            "drop_digits": 0,
+            "drop_lang_mismatch": 0,
+        }
+
         filtered: list[tuple[int, str]] = []
         for idx, chunk in enumerate(chunks):
-            if self._hard_drop_chunk(
+            dropped, reason = self._hard_drop_chunk(
                 chunk,
                 profile=profile,
                 query_has_cjk=query_has_cjk,
                 title_patterns=title_patterns,
-            ):
+            )
+            if dropped:
+                if reason:
+                    stats[reason] = int(stats.get(reason, 0)) + 1
                 continue
             filtered.append((idx, chunk))
         if not filtered:
-            return []
+            stats["chunks_filtered"] = int(len(chunks))
+            stats["chunks_candidates"] = 0
+            return [], stats
 
         raw_scores = self._ranker.score_texts(
             texts=[c for _, c in filtered],
@@ -153,13 +230,30 @@ class Enricher(WorkUnit):
         if norm and max(norm) <= 0.0 and max(raw_scores) > 0.0:
             norm = [0.5 for _ in norm]
 
-        return self._post_process_chunk_scores(
+        if raw_scores:
+            stats["raw_min"] = float(min(raw_scores))
+            stats["raw_max"] = float(max(raw_scores))
+        if norm:
+            stats["norm_min"] = float(min(norm))
+            stats["norm_max"] = float(max(norm))
+
+        scored, post_stats = self._post_process_chunk_scores(
             filtered,
             base_scores=norm,
             early_bonus=float(self.settings.enrich.select.early_bonus),
             dedupe_threshold=float(profile.fuzzy_threshold),
-            min_score=float(self.settings.pipeline.min_score),
+            min_score=float(self.settings.enrich.select.min_chunk_score),
+            score_soft_gate_tau=float(self.settings.enrich.select.score_soft_gate_tau),
+            template_penalty_weight=float(
+                self.settings.enrich.select.template_penalty_weight
+            ),
+            query_has_cjk=query_has_cjk,
+            title_patterns=title_patterns,
         )
+        stats.update(post_stats)
+        stats["chunks_candidates"] = int(len(filtered))
+        stats["chunks_filtered"] = int(len(chunks) - len(filtered))
+        return scored, stats
 
     def _compile_patterns(self, patterns: list[str]) -> list[re.Pattern[str]]:
         out: list[re.Pattern[str]] = []
@@ -226,6 +320,28 @@ class Enricher(WorkUnit):
             "tags",
         }
 
+        # CJK / wiki boilerplate. Keep intentionally small and generic.
+        kw_cjk_strong = {
+            "欢迎",
+            "参与完善",
+            "编辑前请阅读",
+            "条目",
+            "模板",
+            "著作权",
+            "版权",
+            "登录",
+            "注册",
+            "目录",
+        }
+        kw_cjk_weak = {
+            "编辑",
+            "规范",
+            "帮助",
+            "本站",
+            "维基",
+            "wiki",
+        }
+
         kw_hits = 0.0
         for kw in kw_strong:
             if kw in lowered:
@@ -233,6 +349,12 @@ class Enricher(WorkUnit):
         for kw in kw_weak:
             if kw in lowered:
                 kw_hits += 0.15
+        for kw in kw_cjk_strong:
+            if kw and kw in text:
+                kw_hits += 0.30
+        for kw in kw_cjk_weak:
+            if kw and kw in text:
+                kw_hits += 0.12
         kw_component = min(1.0, kw_hits)
 
         date_component = min(1.0, 0.15 * len(re.findall(r"\b(?:19|20)\d{2}\b", text)))
@@ -253,6 +375,14 @@ class Enricher(WorkUnit):
         elif mode != "block" and sep_ratio > 0.05:
             sep_component = min(1.0, (sep_ratio - 0.05) / 0.10)
 
+        # Link-ish density: lots of URLs/handles typically indicates navigation or refs.
+        link_hits = len(
+            re.findall(r"(https?://|www\\.|\\b\\w+\\.(?:com|org|net|cn)\\b|@)", text)
+        )
+        link_component = 0.0
+        if link_hits >= 2:
+            link_component = min(1.0, 0.2 * float(link_hits))
+
         lang_component = 0.0
         if query_has_cjk and cjk_ratio > 0 and cjk_ratio < 0.10:
             lang_component = 0.35
@@ -269,6 +399,7 @@ class Enricher(WorkUnit):
             date_component,
             digit_component,
             sep_component,
+            link_component,
             uniq_component,
             lang_component,
             title_component,
@@ -281,27 +412,27 @@ class Enricher(WorkUnit):
 
         return float(max(0.0, min(1.0, tpl)))
 
-    def _hard_drop_chunk(
+    def _hard_drop_chunk(  # noqa: PLR0911
         self,
         chunk: str,
         *,
         profile: ProfileSettings,
         query_has_cjk: bool,
         title_patterns: list[re.Pattern[str]],
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         if not chunk:
-            return True
+            return True, "drop_empty"
         normalized = normalize_text(chunk)
         if not normalized:
-            return True
+            return True, "drop_empty"
         if self._has_noise_word(chunk, list(profile.noise_words or [])):
-            return True
+            return True, "drop_noise_word"
 
         _, _, digits, digits_ratio, cjk_ratio = self._chunk_stats(chunk)
         if digits >= 18 and digits_ratio > 0.2:
-            return True
+            return True, "drop_digits"
         if query_has_cjk and cjk_ratio > 0 and cjk_ratio < 0.06:
-            return True
+            return True, "drop_lang_mismatch"
 
         tpl = self._template_score(
             chunk,
@@ -309,7 +440,15 @@ class Enricher(WorkUnit):
             title_patterns=title_patterns,
             mode="chunk",
         )
-        return tpl >= float(self.settings.enrich.select.template_hard_drop_threshold)
+        hard_th = float(self.settings.enrich.select.template_hard_drop_threshold)
+        if tpl < hard_th:
+            return False, None
+
+        # Only hard-drop extreme template-like chunks; otherwise apply a soft penalty later.
+        sep_ratio = len(re.findall(r"[\|/>\u00bb]", chunk)) / max(1, len(chunk))
+        if tpl >= 0.98 and (len(normalized) < 420 or sep_ratio > 0.08):
+            return True, "drop_template_hard"
+        return False, None
 
     def _post_process_chunk_scores(
         self,
@@ -319,14 +458,51 @@ class Enricher(WorkUnit):
         early_bonus: float,
         dedupe_threshold: float,
         min_score: float,
-    ) -> list[tuple[float, str]]:
+        score_soft_gate_tau: float,
+        template_penalty_weight: float,
+        query_has_cjk: bool,
+        title_patterns: list[re.Pattern[str]],
+    ) -> tuple[list[tuple[float, str]], dict[str, int]]:
+        stats: dict[str, int] = {"drop_min_score": 0, "drop_duplicate": 0}
+
+        eps = 1e-6
+
+        def sigmoid(x: float) -> float:
+            # Stable-ish sigmoid for our moderate logit range.
+            if x >= 0:
+                z = math.exp(-x)
+                return 1.0 / (1.0 + z)
+            z = math.exp(x)
+            return z / (1.0 + z)
+
+        def logit(p: float) -> float:
+            p = max(eps, min(1.0 - eps, float(p)))
+            return math.log(p / (1.0 - p))
+
         scored: list[tuple[float, str]] = []
         for (pos, chunk), base_score in zip(filtered_chunks, base_scores, strict=False):
-            final = float(base_score)
+            # Base score is expected to be in [0,1], but be defensive for overridden rankers.
+            p0 = max(0.0, min(1.0, float(base_score)))
+            lg = logit(p0)
+
             if early_bonus > 1.0:
-                final *= early_bonus ** (-pos)
-            final = max(0.0, min(1.0, float(final)))
-            scored.append((final, chunk))
+                lg -= float(pos) * math.log(float(early_bonus))
+
+            tpl = self._template_score(
+                chunk,
+                query_has_cjk=query_has_cjk,
+                title_patterns=title_patterns,
+                mode="chunk",
+            )
+            lg -= float(template_penalty_weight) * float(tpl)
+
+            final = float(sigmoid(lg))
+
+            tau = float(score_soft_gate_tau)
+            if tau > 0:
+                final *= float(sigmoid((final - float(min_score)) / tau))
+
+            scored.append((float(final), chunk))
 
         scored.sort(key=lambda t: t[0], reverse=True)
 
@@ -335,12 +511,14 @@ class Enricher(WorkUnit):
         for score, chunk in scored:
             if float(score) <= 0.0:
                 continue
-            if float(score) < float(min_score):
+            if float(score) < float(min_score) and float(score_soft_gate_tau) <= 0:
+                stats["drop_min_score"] += 1
                 continue
             if is_duplicate_text(chunk, [c for _, c in kept], threshold=th):
+                stats["drop_duplicate"] += 1
                 continue
             kept.append((score, chunk))
-        return kept
+        return kept, stats
 
 
 __all__ = ["Enricher"]

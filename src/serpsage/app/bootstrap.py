@@ -18,6 +18,7 @@ from serpsage.domain.normalize import ResultNormalizer
 from serpsage.domain.overview import OverviewBuilder
 from serpsage.domain.rerank import Reranker
 from serpsage.extract.html_basic import BasicHtmlExtractor
+from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.fetch.http import HttpFetcher
 from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.overview.null import NullLLMClient
@@ -113,7 +114,11 @@ def build_engine(
     fetcher: Fetcher = ov.fetcher or HttpFetcher(
         rt=rt, http=http, cache=cache, rate_limiter=rate_limiter
     )
-    extractor: Extractor = ov.extractor or BasicHtmlExtractor(rt=rt)
+    extractor: Extractor = ov.extractor or (
+        MainContentHtmlExtractor(rt=rt)
+        if (settings.enrich.extractor.kind or "main_content") == "main_content"
+        else BasicHtmlExtractor(rt=rt)
+    )
     ranker: Ranker = ov.ranker or BlendRanker(rt=rt)
 
     llm: LLMClient = ov.llm or (

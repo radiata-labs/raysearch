@@ -118,10 +118,21 @@ class SelectSettings(Model):
     early_bonus: float = 1.15
     template_hard_drop_threshold: float = 0.95
     block_hard_drop_threshold: float = 0.90
+    # Enrich-specific chunk threshold (do NOT couple to pipeline.min_score).
+    min_chunk_score: float = 0.20
+    # Smooth gating around min_chunk_score. Set to 0 to disable and use hard thresholding.
+    score_soft_gate_tau: float = 0.07
+    # How strongly template-like chunks are penalized in logit space.
+    template_penalty_weight: float = 2.0
+
+
+class EnrichExtractorSettings(Model):
+    kind: Literal["basic", "main_content"] = "main_content"
 
 
 class EnrichSettings(Model):
     enabled: bool = True
+    extractor: EnrichExtractorSettings = Field(default_factory=EnrichExtractorSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
     chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     select: SelectSettings = Field(default_factory=SelectSettings)
@@ -145,6 +156,8 @@ class NormalizationSettings(Model):
     min_items_for_sigmoid: int = 5
     flat_spread_eps: float = 1e-9
     z_clip: float = 8.0
+    single_item_method: Literal["sigmoid_log1p", "exp", "fixed_0.5"] = "sigmoid_log1p"
+    single_item_scale: float = 1.0
 
 
 class RankSettings(Model):

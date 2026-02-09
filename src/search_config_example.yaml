@@ -39,9 +39,13 @@ rank:
     heuristic: 0.3
   normalization:
     min_items_for_sigmoid: 1
+    single_item_method: sigmoid_log1p
+    single_item_scale: 1.0
 
 enrich:
   enabled: true
+  extractor:
+    kind: main_content
   fetch:
     user_agent: serpsage-bot/3.0
     timeout_s: 10.0
@@ -51,6 +55,10 @@ enrich:
     global_concurrency: 16
     per_host_concurrency: 2
     politeness_delay_ms: 0
+  select:
+    min_chunk_score: 0.20
+    score_soft_gate_tau: 0.07
+    template_penalty_weight: 2.0
   depth_presets:
     low: {pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2}
     medium: {pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3}

@@ -21,6 +21,7 @@ classifiers = [
 requires-python = ">=3.11,<4"
 dependencies = [
     "anyio==4.9.0",
+    "beautifulsoup4",
     "httpx>=0.27,<1",
     "openai>=2.17.0",
     "pydantic>=2.7,<3",

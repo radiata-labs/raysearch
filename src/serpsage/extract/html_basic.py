@@ -9,7 +9,7 @@ from typing_extensions import override
 
 from serpsage.contracts.base import WorkUnit
 from serpsage.contracts.protocols import ExtractedText, Extractor
-from serpsage.extract.encoding import decode_best_effort, guess_apparent_encoding
+from serpsage.extract.utils import decode_best_effort, guess_apparent_encoding
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
@@ -83,7 +83,9 @@ class VisibleTextParser(HTMLParser):
         super().__init__(convert_charrefs=False)
         self._buf: list[str] = []
         self._skip_stack: list[str] = []
-        self._noise_depth = 0
+        # Track "noise" elements (nav/footer/etc, plus common id/class patterns).
+        # Use a stack so we can reliably exit the noise region on the matching end tag.
+        self._noise_stack: list[str] = []
 
     @override
     def handle_starttag(self, tag: str, attrs: Any) -> None:  # noqa: ANN401
@@ -93,7 +95,7 @@ class VisibleTextParser(HTMLParser):
             return
 
         if lowered in {"nav", "footer", "header", "aside"}:
-            self._noise_depth += 1
+            self._noise_stack.append(lowered)
             return
 
         if attrs:
@@ -103,7 +105,7 @@ class VisibleTextParser(HTMLParser):
                     and isinstance(v, str)
                     and _NOISE_ID_CLASS_RE.search(v)
                 ):
-                    self._noise_depth += 1
+                    self._noise_stack.append(lowered)
                     break
 
     @override
@@ -113,8 +115,8 @@ class VisibleTextParser(HTMLParser):
             self._skip_stack.pop()
             return
 
-        if lowered in {"nav", "footer", "header", "aside"} and self._noise_depth > 0:
-            self._noise_depth -= 1
+        if self._noise_stack and self._noise_stack[-1] == lowered:
+            self._noise_stack.pop()
             return
 
         if lowered in _BLOCK_TAGS:
@@ -122,20 +124,20 @@ class VisibleTextParser(HTMLParser):
 
     @override
     def handle_data(self, data: str) -> None:
-        if self._skip_stack or self._noise_depth > 0:
+        if self._skip_stack or self._noise_stack:
             return
         if data:
             self._buf.append(data)
 
     @override
     def handle_entityref(self, name: str) -> None:
-        if self._skip_stack or self._noise_depth > 0:
+        if self._skip_stack or self._noise_stack:
             return
         self._buf.append(f"&{name};")
 
     @override
     def handle_charref(self, name: str) -> None:
-        if self._skip_stack or self._noise_depth > 0:
+        if self._skip_stack or self._noise_stack:
             return
         self._buf.append(f"&#{name};")
 
