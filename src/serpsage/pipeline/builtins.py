@@ -3,11 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 import anyio
+import httpx
+import openai
 
+from serpsage.app.response import OverviewResult  # noqa: TC001
 from serpsage.contracts.errors import AppError
 from serpsage.contracts.protocols import (  # noqa: TC001
     Cache,
@@ -24,6 +27,7 @@ from serpsage.util.json import stable_json
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
     from serpsage.app.runtime import CoreRuntime
+    from serpsage.contracts.protocols import Span
     from serpsage.domain.dedupe import ResultDeduper
     from serpsage.domain.enrich import Enricher
     from serpsage.domain.filter import ResultFilterer
@@ -43,7 +47,8 @@ class SearchStep(StepBase):
         self._cache = cache
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
+        _ = span
         try:
             req = ctx.request
             params = dict(req.params or {})
@@ -87,7 +92,8 @@ class NormalizeStep(StepBase):
         self._normalizer = normalizer
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
+        _ = span
         ctx.results = self._normalizer.normalize_many(ctx.raw_results)
         return ctx
 
@@ -100,7 +106,8 @@ class FilterStep(StepBase):
         self._filterer = filterer
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
+        _ = span
         outcome = self._filterer.filter(
             query=ctx.request.query,
             explicit_profile=ctx.request.profile,
@@ -121,7 +128,8 @@ class DedupeStep(StepBase):
         self._deduper = deduper
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
+        _ = span
         profile = ctx.profile or self.settings.get_profile(
             self.settings.pipeline.default_profile
         )
@@ -139,7 +147,8 @@ class RankStep(StepBase):
         self._ranker = ranker
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
+        _ = span
         if not ctx.results:
             return ctx
 
@@ -183,7 +192,8 @@ class EnrichStep(StepBase):
         self._enricher = enricher
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
+        _ = span
         depth = ctx.request.depth
         if depth == "simple":
             return ctx
@@ -235,7 +245,8 @@ class RerankStep(StepBase):
         self._reranker = reranker
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
+        _ = span
         if not ctx.results:
             return ctx
 
@@ -264,14 +275,15 @@ class OverviewStep(StepBase):
     span_name = "step.overview"
 
     def __init__(
-        self, *, rt: CoreRuntime, llm: LLMClient, builder: OverviewBuilder
+        self, *, rt: CoreRuntime, llm: LLMClient, builder: OverviewBuilder, cache: Cache
     ) -> None:
         super().__init__(rt=rt)
         self._llm = llm
         self._builder = builder
+        self._cache = cache
 
     @override
-    async def run_inner(self, ctx: StepContext) -> StepContext:
+    async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
         enabled = self.settings.overview.enabled
         if ctx.request.overview is not None:
             enabled = bool(ctx.request.overview)
@@ -290,23 +302,194 @@ class OverviewStep(StepBase):
             return ctx
 
         llm_cfg = self.settings.overview.llm
+        model = llm_cfg.model
         messages = self._builder.build_messages(
             query=ctx.request.query, results=ctx.results
         )
         schema = self._builder.schema()
-        try:
-            data = await self._llm.chat_json(
-                model=llm_cfg.model,
+
+        prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
+        span.set_attr("model", model)
+        span.set_attr("schema_strict", bool(self.settings.overview.schema_strict))
+        span.set_attr("prompt_chars", int(prompt_chars))
+        span.set_attr(
+            "max_output_tokens", int(self.settings.overview.max_output_tokens)
+        )
+
+        cache_ttl_s = int(self.settings.overview.cache_ttl_s)
+        cache_key: str | None = None
+        if cache_ttl_s > 0:
+            cache_key = self._overview_cache_key(
+                model=model,
                 messages=messages,
                 schema=schema,
-                timeout_s=float(llm_cfg.timeout_s),
+                schema_strict=bool(self.settings.overview.schema_strict),
             )
-            ctx.overview = self._builder.parse(data)
-        except Exception as exc:  # noqa: BLE001
-            ctx.errors.append(
-                AppError(code="overview_failed", message=str(exc), details={})
-            )
+            cached = await self._cache.aget(namespace="overview", key=cache_key)
+            if cached:
+                span.set_attr("cache_hit", True)
+                try:
+                    ctx.overview = OverviewResult.model_validate_json(cached)
+                except Exception:  # noqa: BLE001
+                    # Corrupted/old cache; ignore and recompute.
+                    span.add_event("overview.cache_corrupt")
+                else:
+                    return ctx
+        span.set_attr("cache_hit", False)
+
+        retries = max(0, int(self.settings.overview.self_heal_retries))
+        last_exc: Exception | None = None
+        cur_messages = list(messages)
+        for attempt in range(retries + 1):
+            try:
+                data = await self._llm.chat_json(
+                    model=model,
+                    messages=cur_messages,
+                    schema=schema,
+                    timeout_s=float(llm_cfg.timeout_s),
+                )
+                overview = self._builder.parse(data)
+                overview = self._sanitize_overview(overview, ctx.results)
+                ctx.overview = overview
+
+                if cache_ttl_s > 0 and cache_key:
+                    await self._cache.aset(
+                        namespace="overview",
+                        key=cache_key,
+                        value=overview.model_dump_json().encode("utf-8"),
+                        ttl_s=cache_ttl_s,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc if isinstance(exc, Exception) else Exception(str(exc))
+                span.add_event(
+                    "overview.attempt_failed",
+                    attempt=int(attempt),
+                    error_type=type(exc).__name__,
+                )
+                if attempt < retries:
+                    cur_messages = cur_messages + [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous output did not validate. "
+                                "Return JSON only that strictly matches the given schema. "
+                                "Do not include markdown or extra keys."
+                            ),
+                        }
+                    ]
+                    continue
+                break
+            else:
+                return ctx
+
+        assert last_exc is not None
+        code, details = self._map_overview_error(
+            last_exc, model=model, base_url=str(llm_cfg.base_url), attempt=retries
+        )
+        ctx.errors.append(AppError(code=code, message=str(last_exc), details=details))
         return ctx
+
+    def _overview_cache_key(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any],
+        schema_strict: bool,
+    ) -> str:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "schema": schema,
+            "schema_strict": bool(schema_strict),
+        }
+        return hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
+
+    def _sanitize_overview(
+        self, overview: OverviewResult, results: list[ResultItem]
+    ) -> OverviewResult:
+        # Build source/chunk inventory from results.
+        sid_to_url: dict[str, str] = {}
+        sid_to_chunks: dict[str, set[str]] = {}
+        for r in results:
+            sid = (r.source_id or "").strip()
+            if not sid:
+                continue
+            if r.url:
+                sid_to_url[sid] = r.url
+            chunks = set()
+            if r.page and r.page.chunks:
+                for ch in r.page.chunks:
+                    if ch.chunk_id:
+                        chunks.add(ch.chunk_id)
+            sid_to_chunks[sid] = chunks
+
+        kept = []
+        seen: set[tuple[str, str, str]] = set()
+        for c in overview.citations or []:
+            sid = (c.source_id or "").strip()
+            if not sid or sid not in sid_to_chunks:
+                continue
+
+            url = sid_to_url.get(sid) or (c.url or "")
+            chunk_id = c.chunk_id
+            if chunk_id and chunk_id not in sid_to_chunks.get(sid, set()):
+                chunk_id = None
+
+            key = (sid, chunk_id or "", (c.quote or "").strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(
+                c.model_copy(
+                    update={
+                        "url": url,
+                        "chunk_id": chunk_id,
+                    }
+                )
+            )
+
+        # Renumber cite_id to guarantee uniqueness.
+        renum = [
+            c.model_copy(update={"cite_id": f"C{i}"}) for i, c in enumerate(kept, 1)
+        ]
+        return overview.model_copy(update={"citations": renum})
+
+    def _map_overview_error(
+        self, exc: Exception, *, model: str, base_url: str, attempt: int
+    ) -> tuple[str, dict[str, Any]]:
+        details: dict[str, Any] = {
+            "model": model,
+            "base_url": base_url,
+            "attempt": int(attempt),
+            "type": type(exc).__name__,
+        }
+
+        request_id = getattr(exc, "request_id", None)
+        if request_id:
+            details["request_id"] = str(request_id)
+
+        status = getattr(exc, "status_code", None)
+        if status is not None:
+            details["status_code"] = int(status)
+
+        code = "overview_failed"
+        if isinstance(exc, openai.RateLimitError):
+            code = "overview_rate_limited"
+        elif isinstance(exc, openai.APITimeoutError):
+            code = "overview_timeout"
+        elif isinstance(exc, openai.AuthenticationError):
+            code = "overview_auth_failed"
+        elif isinstance(exc, openai.BadRequestError):
+            code = "overview_bad_request"
+        elif isinstance(exc, openai.APIStatusError):
+            sc = getattr(exc, "status_code", None)
+            if sc is not None and 500 <= int(sc) < 600:
+                code = "overview_server_error"
+            else:
+                code = "overview_failed"
+        elif isinstance(exc, (openai.APIConnectionError, httpx.TimeoutException)):
+            code = "overview_timeout"
+        return code, details
 
 
 __all__ = [

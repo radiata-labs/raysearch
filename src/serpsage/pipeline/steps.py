@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from serpsage.app.request import SearchRequest
     from serpsage.app.response import OverviewResult, ResultItem
     from serpsage.app.runtime import CoreRuntime
+    from serpsage.contracts.protocols import Span
     from serpsage.settings.models import AppSettings, ProfileSettings
 
 
@@ -49,9 +50,9 @@ class StepBase(WorkUnit, ABC):
         name = (
             self.span_name or f"step.{type(self).__name__.replace('Step', '').lower()}"
         )
-        with self.span(name):
+        with self.span(name) as sp:
             try:
-                return await self.run_inner(ctx)
+                return await self.run_inner(ctx, span=sp)
             except Exception as exc:  # noqa: BLE001
                 ctx.errors.append(
                     AppError(
@@ -66,7 +67,9 @@ class StepBase(WorkUnit, ABC):
                 return ctx
 
     @abstractmethod
-    async def run_inner(self, ctx: StepContext) -> StepContext:  # pragma: no cover
+    async def run_inner(
+        self, ctx: StepContext, *, span: Span
+    ) -> StepContext:  # pragma: no cover
         raise NotImplementedError
 
 

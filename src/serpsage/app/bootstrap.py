@@ -9,7 +9,8 @@ import httpx
 
 from serpsage.app.engine import Engine
 from serpsage.app.runtime import CoreRuntime
-from serpsage.cache.sqlite import NullCache, SqliteCache
+from serpsage.cache.null import NullCache
+from serpsage.cache.sqlite import SqliteCache
 from serpsage.domain.dedupe import ResultDeduper
 from serpsage.domain.enrich import Enricher
 from serpsage.domain.filter import ResultFilterer
@@ -19,7 +20,8 @@ from serpsage.domain.rerank import Reranker
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.fetch.http import HttpFetcher
 from serpsage.fetch.rate_limit import RateLimiter
-from serpsage.overview.openai_compat import NullLLMClient, OpenAICompatLLMClient
+from serpsage.overview.null import NullLLMClient
+from serpsage.overview.openai import OpenAIOfficialLLMClient
 from serpsage.pipeline.builtins import (
     DedupeStep,
     EnrichStep,
@@ -115,7 +117,7 @@ def build_engine(
     ranker: Ranker = ov.ranker or BlendRanker(rt=rt)
 
     llm: LLMClient = ov.llm or (
-        OpenAICompatLLMClient(rt=rt, http=http)
+        OpenAIOfficialLLMClient(rt=rt, http=http)
         if settings.overview.enabled and settings.overview.llm.api_key
         else NullLLMClient(rt=rt)
     )
@@ -137,7 +139,9 @@ def build_engine(
         EnrichStep(rt=rt, enricher=enricher),
         RerankStep(rt=rt, reranker=reranker),
     ]
-    overview_step: Step = OverviewStep(rt=rt, llm=llm, builder=overview_builder)
+    overview_step: Step = OverviewStep(
+        rt=rt, llm=llm, builder=overview_builder, cache=cache
+    )
 
     async def _close() -> None:
         await stack.aclose()

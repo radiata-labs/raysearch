@@ -15,19 +15,6 @@ if TYPE_CHECKING:
     from serpsage.app.runtime import CoreRuntime
 
 
-class NullCache(WorkUnit, Cache):
-    def __init__(self, *, rt: CoreRuntime) -> None:
-        super().__init__(rt=rt)
-
-    @override
-    async def aget(self, *, namespace: str, key: str) -> bytes | None:
-        return None
-
-    @override
-    async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
-        return
-
-
 class SqliteCache(WorkUnit, Cache):
     def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
@@ -122,4 +109,4 @@ class SqliteCache(WorkUnit, Cache):
         await to_thread.run_sync(_do_set)
 
 
-__all__ = ["NullCache", "SqliteCache"]
+__all__ = ["SqliteCache"]

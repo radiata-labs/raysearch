@@ -2,7 +2,7 @@ provider:
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
     # Prefer env override: SEARCH_API_KEY
-    api_key: "sk-63133540a039c3443e874d71928b0d0d777a39f0"
+    api_key: sk-63133540a039c3443e874d71928b0d0d777a39f0
     timeout_s: 20.0
     allow_redirects: false
     headers: {}
@@ -66,17 +66,25 @@ overview:
   enabled: true
   llm:
     # OpenAI-compatible endpoint
-    base_url: https://api.openai.com/v1
-    api_key: null
+    base_url: https://api.chatanywhere.tech/
+    api_key: sk-GK5XItnMgPf1Hrz1ntL6TfNfJGslUoWvYwTCs4AcBkfnv32k
+    organization: null
+    project: null
     model: gpt-4o-mini
     timeout_s: 60.0
+    max_retries: 2
+    temperature: 0.0
     headers: {}
   max_sources: 8
   max_chunks_per_source: 2
   max_chunk_chars: 900
+  max_output_tokens: 600
+  max_prompt_chars: 32000
+  cache_ttl_s: 0
+  self_heal_retries: 1
+  force_language: auto
   schema_strict: true
 
 telemetry:
   enabled: false
   include_events: false
-

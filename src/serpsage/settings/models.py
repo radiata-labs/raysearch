@@ -165,8 +165,12 @@ class CacheSettings(Model):
 class OpenAICompatSettings(Model):
     base_url: str = "https://api.openai.com/v1"
     api_key: str | None = None
+    organization: str | None = None
+    project: str | None = None
     model: str = "gpt-4o-mini"
     timeout_s: float = 60.0
+    max_retries: int = 2
+    temperature: float = 0.0
     headers: dict[str, str] = Field(default_factory=dict)
 
 
@@ -176,6 +180,11 @@ class OverviewSettings(Model):
     max_sources: int = 8
     max_chunks_per_source: int = 2
     max_chunk_chars: int = 900
+    max_output_tokens: int = 600
+    max_prompt_chars: int = 32_000
+    cache_ttl_s: int = 0
+    self_heal_retries: int = 1
+    force_language: Literal["auto", "zh", "en"] = "auto"
     schema_strict: bool = True
 
 
