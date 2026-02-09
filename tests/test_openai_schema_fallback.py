@@ -11,18 +11,36 @@ from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
 
+class _FakeClock:
+    def now_ms(self) -> int:
+        return 0
+
+
+class _BadSchemaError(Exception):
+    def __str__(self) -> str:
+        return (
+            "Error code: 400 - {'error': {'message': \"Invalid schema for response_format "
+            "'SerpSageOverview': In context=(), 'additionalProperties' is required "
+            "to be supplied and to be false.\", 'type': 'invalid_request_error', "
+            "'param': 'response_format'}}"
+        )
+
+
 class _DummyAsyncOpenAI:
     def __init__(self, **kwargs):  # noqa: ANN003
         self._ctor_kwargs = dict(kwargs)
-        self._create_kwargs = None
+        self._calls = 0
 
         class _Chat:
             def __init__(self, outer):  # noqa: ANN001
                 self.completions = self
                 self._outer = outer
 
-            async def create(self, **kwargs):  # noqa: ANN003
-                self._outer._create_kwargs = dict(kwargs)
+            async def create(self, **kwargs):  # noqa: ANN003, ARG002
+                self._outer._calls += 1
+                # First call fails (strict schema), second succeeds (fallback).
+                if self._outer._calls == 1:
+                    raise _BadSchemaError
 
                 class _Msg:
                     content = '{"summary":"ok","key_points":["p1"],"citations":[]}'
@@ -30,31 +48,27 @@ class _DummyAsyncOpenAI:
                 class _Choice:
                     message = _Msg()
 
-                class _Usage:
-                    prompt_tokens = 1
-                    completion_tokens = 2
-                    total_tokens = 3
-
                 class _Resp:
                     choices = [_Choice()]
-                    usage = _Usage()
+                    usage = None
 
                 return _Resp()
 
         self.chat = _Chat(self)
 
 
-class _FakeClock:
-    def now_ms(self) -> int:
-        return 0
-
-
 @pytest.mark.anyio
-async def test_official_client_passes_response_format_and_limits(monkeypatch):
+async def test_schema_rejected_falls_back_to_json_object(monkeypatch):
     monkeypatch.setattr(mod, "AsyncOpenAI", _DummyAsyncOpenAI)
 
     settings = AppSettings.model_validate(
-        {"overview": {"enabled": True, "llm": {"api_key": "dummy"}}}
+        {
+            "overview": {
+                "enabled": True,
+                "schema_strict": True,
+                "llm": {"api_key": "dummy"},
+            }
+        }
     )
     rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=_FakeClock())
 
@@ -63,21 +77,9 @@ async def test_official_client_passes_response_format_and_limits(monkeypatch):
         res = await client.chat_json(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": "hi"}],
-            schema={"type": "object"},
+            schema={"type": "object", "properties": {}},
             timeout_s=1.0,
         )
 
     assert isinstance(res, ChatJSONResult)
     assert res.data["summary"] == "ok"
-    assert res.usage.prompt_tokens == 1
-    assert res.usage.completion_tokens == 2
-    assert res.usage.total_tokens == 3
-    dummy = client.client  # type: ignore[attr-defined]
-    assert dummy._create_kwargs is not None
-    assert "max_completion_tokens" not in dummy._create_kwargs
-    assert "max_tokens" not in dummy._create_kwargs
-    assert "response_format" in dummy._create_kwargs
-    assert dummy._create_kwargs["response_format"]["type"] in {
-        "json_schema",
-        "json_object",
-    }

@@ -4,6 +4,7 @@ import pytest
 
 from serpsage import Engine, SearchRequest
 from serpsage.app.bootstrap import Overrides
+from serpsage.contracts.llm import ChatJSONResult, LLMUsage
 from serpsage.settings.models import AppSettings
 
 
@@ -38,7 +39,10 @@ class FakeLLM:
     async def chat_json(self, *, model, messages, schema, timeout_s=None):  # noqa: ANN001
         _ = model, messages, schema, timeout_s
         self.calls += 1
-        return {"summary": "ok", "key_points": ["p1"], "citations": []}
+        return ChatJSONResult(
+            data={"summary": "ok", "key_points": ["p1"], "citations": []},
+            usage=LLMUsage(),
+        )
 
 
 @pytest.mark.anyio
@@ -74,4 +78,3 @@ async def test_overview_cache_hit_skips_llm_call():
     assert resp1.overview is not None
     assert resp2.overview is not None
     assert llm.calls == 1
-

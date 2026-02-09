@@ -54,6 +54,12 @@ class StepBase(WorkUnit, ABC):
             try:
                 return await self.run_inner(ctx, span=sp)
             except Exception as exc:  # noqa: BLE001
+                sp.set_attr("error", True)
+                sp.add_event(
+                    "step_failed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                )
                 ctx.errors.append(
                     AppError(
                         code="step_failed",

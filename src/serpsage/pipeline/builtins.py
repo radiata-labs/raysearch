@@ -14,7 +14,6 @@ from serpsage.app.response import OverviewResult  # noqa: TC001
 from serpsage.contracts.errors import AppError
 from serpsage.contracts.protocols import (  # noqa: TC001
     Cache,
-    LLMClient,
     Ranker,
     SearchProvider,
 )
@@ -48,10 +47,10 @@ class SearchStep(StepBase):
 
     @override
     async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
-        _ = span
         try:
             req = ctx.request
             params = dict(req.params or {})
+            span.set_attr("provider", "searxng")
             cache_key = hashlib.sha256(
                 stable_json(
                     {
@@ -66,10 +65,14 @@ class SearchStep(StepBase):
             if cached:
                 payload = json.loads(cached.decode("utf-8"))
                 ctx.raw_results = list(payload.get("results") or [])
+                span.set_attr("cache_hit", True)
+                span.set_attr("raw_results_count", int(len(ctx.raw_results)))
                 return ctx
 
             raw = await self._provider.asearch(query=req.query, params=params)
             ctx.raw_results = raw
+            span.set_attr("cache_hit", False)
+            span.set_attr("raw_results_count", int(len(ctx.raw_results)))
 
             await self._cache.aset(
                 namespace="search",
@@ -78,6 +81,7 @@ class SearchStep(StepBase):
                 ttl_s=int(self.settings.cache.search_ttl_s),
             )
         except Exception as exc:  # noqa: BLE001
+            span.set_attr("cache_hit", False)
             ctx.errors.append(
                 AppError(code="search_failed", message=str(exc), details={})
             )
@@ -93,8 +97,9 @@ class NormalizeStep(StepBase):
 
     @override
     async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
-        _ = span
+        span.set_attr("raw_results_count", int(len(ctx.raw_results or [])))
         ctx.results = self._normalizer.normalize_many(ctx.raw_results)
+        span.set_attr("results_count", int(len(ctx.results or [])))
         return ctx
 
 
@@ -107,7 +112,7 @@ class FilterStep(StepBase):
 
     @override
     async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
-        _ = span
+        span.set_attr("before_count", int(len(ctx.results or [])))
         outcome = self._filterer.filter(
             query=ctx.request.query,
             explicit_profile=ctx.request.profile,
@@ -117,6 +122,8 @@ class FilterStep(StepBase):
         ctx.profile = outcome.profile
         ctx.query_tokens = list(outcome.query_tokens)
         ctx.results = outcome.results
+        span.set_attr("profile_name", str(ctx.profile_name or ""))
+        span.set_attr("after_count", int(len(ctx.results or [])))
         return ctx
 
 
@@ -129,13 +136,15 @@ class DedupeStep(StepBase):
 
     @override
     async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
-        _ = span
+        span.set_attr("before_count", int(len(ctx.results or [])))
         profile = ctx.profile or self.settings.get_profile(
             self.settings.pipeline.default_profile
         )
         kept, comparisons = self._deduper.dedupe(results=ctx.results, profile=profile)
         ctx.results = kept
         ctx.dedupe_comparisons = int(comparisons)
+        span.set_attr("after_count", int(len(ctx.results or [])))
+        span.set_attr("comparisons", int(ctx.dedupe_comparisons))
         return ctx
 
 
@@ -148,8 +157,8 @@ class RankStep(StepBase):
 
     @override
     async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
-        _ = span
         if not ctx.results:
+            span.set_attr("items_count", 0)
             return ctx
 
         query = ctx.request.query
@@ -163,6 +172,14 @@ class RankStep(StepBase):
         ctx.intent_tokens = list(intent_tokens)
 
         docs = [f"{r.title} {r.snippet}".strip() for r in ctx.results]
+        span.set_attr("items_count", int(len(docs)))
+        weights = {
+            k: float(v)
+            for k, v in (self.settings.rank.providers or {}).items()
+            if float(v) > 0
+        }
+        span.set_attr("providers_used", sorted(weights.keys()))
+        span.set_attr("weights", weights)
         raw_scores = self._ranker.score_texts(
             texts=docs,
             query=query,
@@ -193,8 +210,8 @@ class EnrichStep(StepBase):
 
     @override
     async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
-        _ = span
         depth = ctx.request.depth
+        span.set_attr("depth", str(depth))
         if depth == "simple":
             return ctx
         if not self.settings.enrich.enabled:
@@ -214,6 +231,7 @@ class EnrichStep(StepBase):
             return ctx
 
         work = ctx.results[:m]
+        span.set_attr("items_considered", int(m))
         query = ctx.request.query
         query_tokens = ctx.query_tokens or tokenize(query)
         ctx.query_tokens = list(query_tokens)
@@ -234,6 +252,7 @@ class EnrichStep(StepBase):
         async with anyio.create_task_group() as tg:
             for r in work:
                 tg.start_soon(enrich_one, r)
+        span.set_attr("pages_enriched", int(m))
         return ctx
 
 
@@ -246,8 +265,8 @@ class RerankStep(StepBase):
 
     @override
     async def run_inner(self, ctx: StepContext, *, span: Span) -> StepContext:
-        _ = span
         if not ctx.results:
+            span.set_attr("items_count", 0)
             return ctx
 
         query = ctx.request.query
@@ -268,6 +287,7 @@ class RerankStep(StepBase):
             query_tokens=list(query_tokens),
             intent_tokens=list(intent_tokens),
         )
+        span.set_attr("items_count", int(len(ctx.results or [])))
         return ctx
 
 
@@ -275,10 +295,9 @@ class OverviewStep(StepBase):
     span_name = "step.overview"
 
     def __init__(
-        self, *, rt: CoreRuntime, llm: LLMClient, builder: OverviewBuilder, cache: Cache
+        self, *, rt: CoreRuntime, builder: OverviewBuilder, cache: Cache
     ) -> None:
         super().__init__(rt=rt)
-        self._llm = llm
         self._builder = builder
         self._cache = cache
 
@@ -313,7 +332,7 @@ class OverviewStep(StepBase):
         span.set_attr("schema_strict", bool(self.settings.overview.schema_strict))
         span.set_attr("prompt_chars", int(prompt_chars))
         span.set_attr(
-            "max_output_tokens", int(self.settings.overview.max_output_tokens)
+            "max_summary_tokens", int(self.settings.overview.max_output_tokens)
         )
 
         cache_ttl_s = int(self.settings.overview.cache_ttl_s)
@@ -336,57 +355,28 @@ class OverviewStep(StepBase):
                 else:
                     return ctx
         span.set_attr("cache_hit", False)
+        try:
+            overview = await self._builder.build_overview(
+                query=ctx.request.query, results=ctx.results
+            )
+            ctx.overview = overview
 
-        retries = max(0, int(self.settings.overview.self_heal_retries))
-        last_exc: Exception | None = None
-        cur_messages = list(messages)
-        for attempt in range(retries + 1):
-            try:
-                data = await self._llm.chat_json(
-                    model=model,
-                    messages=cur_messages,
-                    schema=schema,
-                    timeout_s=float(llm_cfg.timeout_s),
+            if cache_ttl_s > 0 and cache_key:
+                await self._cache.aset(
+                    namespace="overview",
+                    key=cache_key,
+                    value=overview.model_dump_json().encode("utf-8"),
+                    ttl_s=cache_ttl_s,
                 )
-                overview = self._builder.parse(data)
-                overview = self._sanitize_overview(overview, ctx.results)
-                ctx.overview = overview
-
-                if cache_ttl_s > 0 and cache_key:
-                    await self._cache.aset(
-                        namespace="overview",
-                        key=cache_key,
-                        value=overview.model_dump_json().encode("utf-8"),
-                        ttl_s=cache_ttl_s,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc if isinstance(exc, Exception) else Exception(str(exc))
-                span.add_event(
-                    "overview.attempt_failed",
-                    attempt=int(attempt),
-                    error_type=type(exc).__name__,
-                )
-                if attempt < retries:
-                    cur_messages = cur_messages + [
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your previous output did not validate. "
-                                "Return JSON only that strictly matches the given schema. "
-                                "Do not include markdown or extra keys."
-                            ),
-                        }
-                    ]
-                    continue
-                break
-            else:
-                return ctx
-
-        assert last_exc is not None
-        code, details = self._map_overview_error(
-            last_exc, model=model, base_url=str(llm_cfg.base_url), attempt=retries
-        )
-        ctx.errors.append(AppError(code=code, message=str(last_exc), details=details))
+        except Exception as exc:  # noqa: BLE001
+            retries = max(0, int(self.settings.overview.self_heal_retries))
+            code, details = self._map_overview_error(
+                exc if isinstance(exc, Exception) else Exception(str(exc)),
+                model=model,
+                base_url=str(llm_cfg.base_url),
+                attempt=retries,
+            )
+            ctx.errors.append(AppError(code=code, message=str(exc), details=details))
         return ctx
 
     def _overview_cache_key(
@@ -403,56 +393,6 @@ class OverviewStep(StepBase):
             "schema_strict": bool(schema_strict),
         }
         return hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
-
-    def _sanitize_overview(
-        self, overview: OverviewResult, results: list[ResultItem]
-    ) -> OverviewResult:
-        # Build source/chunk inventory from results.
-        sid_to_url: dict[str, str] = {}
-        sid_to_chunks: dict[str, set[str]] = {}
-        for r in results:
-            sid = (r.source_id or "").strip()
-            if not sid:
-                continue
-            if r.url:
-                sid_to_url[sid] = r.url
-            chunks = set()
-            if r.page and r.page.chunks:
-                for ch in r.page.chunks:
-                    if ch.chunk_id:
-                        chunks.add(ch.chunk_id)
-            sid_to_chunks[sid] = chunks
-
-        kept = []
-        seen: set[tuple[str, str, str]] = set()
-        for c in overview.citations or []:
-            sid = (c.source_id or "").strip()
-            if not sid or sid not in sid_to_chunks:
-                continue
-
-            url = sid_to_url.get(sid) or (c.url or "")
-            chunk_id = c.chunk_id
-            if chunk_id and chunk_id not in sid_to_chunks.get(sid, set()):
-                chunk_id = None
-
-            key = (sid, chunk_id or "", (c.quote or "").strip())
-            if key in seen:
-                continue
-            seen.add(key)
-            kept.append(
-                c.model_copy(
-                    update={
-                        "url": url,
-                        "chunk_id": chunk_id,
-                    }
-                )
-            )
-
-        # Renumber cite_id to guarantee uniqueness.
-        renum = [
-            c.model_copy(update={"cite_id": f"C{i}"}) for i, c in enumerate(kept, 1)
-        ]
-        return overview.model_copy(update={"citations": renum})
 
     def _map_overview_error(
         self, exc: Exception, *, model: str, base_url: str, attempt: int

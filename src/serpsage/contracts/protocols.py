@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from serpsage.contracts.llm import ChatJSONResult
+
 
 class AsyncCloseable(Protocol):
     async def aclose(self) -> None: ...
@@ -18,6 +20,7 @@ class Span(Protocol):
 
 class Telemetry(Protocol):
     def start_span(self, name: str, **attrs: Any) -> Span: ...
+    def summary(self) -> dict[str, Any]: ...
 
 
 class Clock(Protocol):
@@ -103,7 +106,7 @@ class LLMClient(Protocol):
         messages: list[dict[str, str]],
         schema: dict[str, Any],
         timeout_s: float | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> ChatJSONResult: ...
 
 
 __all__ = [

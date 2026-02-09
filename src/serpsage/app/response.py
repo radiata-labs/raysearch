@@ -7,6 +7,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from serpsage.contracts.errors import AppError  # noqa: TC001
 
 
+class LLMUsage(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
 class PageChunk(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -49,12 +57,22 @@ class Citation(BaseModel):
     quote: str | None = None
 
 
-class OverviewResult(BaseModel):
+class OverviewLLMOutput(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     summary: str = ""
     key_points: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
+
+
+class OverviewResult(OverviewLLMOutput):
+    model_config = ConfigDict(validate_assignment=True)
+
+    usage: LLMUsage = Field(default_factory=LLMUsage)
+
+
+def _default_telemetry() -> dict[str, Any]:
+    return {"enabled": False, "trace_id": "noop", "spans": []}
 
 
 class SearchResponse(BaseModel):
@@ -65,11 +83,13 @@ class SearchResponse(BaseModel):
     results: list[ResultItem] = Field(default_factory=list)
     overview: OverviewResult | None = None
     errors: list[AppError] = Field(default_factory=list)
-    telemetry: dict[str, Any] | None = None
+    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
 __all__ = [
     "Citation",
+    "LLMUsage",
+    "OverviewLLMOutput",
     "OverviewResult",
     "PageChunk",
     "PageEnrichment",

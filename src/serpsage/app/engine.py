@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Self
 from typing_extensions import override
 
 from serpsage.app.response import ResultItem, SearchResponse
@@ -93,9 +93,7 @@ class Engine(WorkUnit):
             _assign_ids(ctx.results)
             ctx = await self._overview_step.run(ctx)
 
-            telemetry_summary: dict[str, Any] | None = None
-            if hasattr(self.telemetry, "summary"):
-                telemetry_summary = self.telemetry.summary()  # pyright: ignore[reportAttributeAccessIssue]
+            telemetry_summary = self.telemetry.summary()
 
             return SearchResponse(
                 query=query,

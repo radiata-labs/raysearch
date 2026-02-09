@@ -70,7 +70,7 @@ overview:
     api_key: sk-GK5XItnMgPf1Hrz1ntL6TfNfJGslUoWvYwTCs4AcBkfnv32k
     organization: null
     project: null
-    model: gpt-4o-mini
+    model: gpt-4.1-mini
     timeout_s: 60.0
     max_retries: 2
     temperature: 0.0

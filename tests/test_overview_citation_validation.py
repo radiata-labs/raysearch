@@ -4,6 +4,7 @@ import pytest
 
 from serpsage import Engine, SearchRequest
 from serpsage.app.bootstrap import Overrides
+from serpsage.contracts.llm import ChatJSONResult, LLMUsage
 from serpsage.settings.models import AppSettings
 
 
@@ -19,28 +20,31 @@ class FakeProvider:
 class FakeLLM:
     async def chat_json(self, *, model, messages, schema, timeout_s=None):  # noqa: ANN001
         _ = model, messages, schema, timeout_s
-        return {
-            "summary": "ok",
-            "key_points": ["p1"],
-            "citations": [
-                {
-                    "cite_id": "X",
-                    "source_id": "S99",
-                    "url": "https://nope",
-                    "title": "bad",
-                    "chunk_id": None,
-                    "quote": None,
-                },
-                {
-                    "cite_id": "X",
-                    "source_id": "S1",
-                    "url": "https://wrong.example",
-                    "title": "t",
-                    "chunk_id": "S1:C999",
-                    "quote": "q",
-                },
-            ],
-        }
+        return ChatJSONResult(
+            data={
+                "summary": "ok",
+                "key_points": ["p1"],
+                "citations": [
+                    {
+                        "cite_id": "X",
+                        "source_id": "S99",
+                        "url": "https://nope",
+                        "title": "bad",
+                        "chunk_id": None,
+                        "quote": None,
+                    },
+                    {
+                        "cite_id": "X",
+                        "source_id": "S1",
+                        "url": "https://wrong.example",
+                        "title": "t",
+                        "chunk_id": "S1:C999",
+                        "quote": "q",
+                    },
+                ],
+            },
+            usage=LLMUsage(),
+        )
 
 
 @pytest.mark.anyio
@@ -68,4 +72,3 @@ async def test_overview_citations_are_sanitized():
     assert c.url == "https://e.com"
     assert c.chunk_id is None
     assert c.cite_id == "C1"
-

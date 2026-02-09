@@ -21,7 +21,7 @@ from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.fetch.http import HttpFetcher
 from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.overview.null import NullLLMClient
-from serpsage.overview.openai import OpenAIOfficialLLMClient
+from serpsage.overview.openai import OpenAIClient
 from serpsage.pipeline.builtins import (
     DedupeStep,
     EnrichStep,
@@ -80,7 +80,7 @@ def build_runtime(
     ov = overrides or Overrides()
     clock = ov.clock or SystemClock()
     telemetry = ov.telemetry or (
-        TraceTelemetry(settings.telemetry)
+        TraceTelemetry(settings.telemetry, clock=clock)
         if settings.telemetry.enabled
         else NoopTelemetry()
     )
@@ -117,7 +117,7 @@ def build_engine(
     ranker: Ranker = ov.ranker or BlendRanker(rt=rt)
 
     llm: LLMClient = ov.llm or (
-        OpenAIOfficialLLMClient(rt=rt, http=http)
+        OpenAIClient(rt=rt, http=http)
         if settings.overview.enabled and settings.overview.llm.api_key
         else NullLLMClient(rt=rt)
     )
@@ -128,7 +128,7 @@ def build_engine(
     deduper = ResultDeduper(rt=rt)
     enricher = Enricher(rt=rt, fetcher=fetcher, extractor=extractor, ranker=ranker)
     reranker = Reranker(rt=rt, ranker=ranker)
-    overview_builder = OverviewBuilder(rt=rt)
+    overview_builder = OverviewBuilder(rt=rt, llm=llm)
 
     steps: list[Step] = [
         SearchStep(rt=rt, provider=provider, cache=cache),
@@ -139,9 +139,7 @@ def build_engine(
         EnrichStep(rt=rt, enricher=enricher),
         RerankStep(rt=rt, reranker=reranker),
     ]
-    overview_step: Step = OverviewStep(
-        rt=rt, llm=llm, builder=overview_builder, cache=cache
-    )
+    overview_step: Step = OverviewStep(rt=rt, builder=overview_builder, cache=cache)
 
     async def _close() -> None:
         await stack.aclose()

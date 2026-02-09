@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import time
+import contextvars
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.contracts.protocols import Span, Telemetry
+from serpsage.contracts.protocols import Clock, Span, Telemetry
 
 if TYPE_CHECKING:
     from serpsage.settings.models import TelemetrySettings
@@ -28,11 +29,18 @@ class NoopSpan(Span):
 class NoopTelemetry(Telemetry):
     @override
     def start_span(self, name: str, **attrs: Any) -> Span:
+        _ = name, attrs
         return NoopSpan()
 
+    @override
+    def summary(self) -> dict[str, Any]:
+        return {"enabled": False, "trace_id": "noop", "spans": []}
 
-@dataclass
+
+@dataclass(slots=True)
 class SpanRecord:
+    span_id: str
+    parent_id: str | None
     name: str
     start_ms: int
     end_ms: int | None = None
@@ -41,13 +49,22 @@ class SpanRecord:
 
 
 class TraceSpan(Span):
-    def __init__(self, telemetry: TraceTelemetry, record: SpanRecord) -> None:
+    def __init__(
+        self,
+        telemetry: TraceTelemetry,
+        record: SpanRecord,
+        *,
+        stack_token: contextvars.Token[tuple[str, ...]] | None,
+    ) -> None:
         self._telemetry = telemetry
         self._record = record
+        self._stack_token = stack_token
 
     @override
     def add_event(self, name: str, **fields: Any) -> None:
-        self._record.events.append({"name": name, "t_ms": _now_ms(), "fields": fields})
+        self._record.events.append(
+            {"name": name, "t_ms": self._telemetry._now_ms(), "fields": fields}
+        )
 
     @override
     def set_attr(self, name: str, value: Any) -> None:
@@ -56,37 +73,92 @@ class TraceSpan(Span):
     @override
     def end(self) -> None:
         if self._record.end_ms is None:
-            self._record.end_ms = _now_ms()
+            self._record.end_ms = self._telemetry._now_ms()
+        self._telemetry._pop_stack(self._record.span_id, self._stack_token)
 
 
 class TraceTelemetry(Telemetry):
-    def __init__(self, settings: TelemetrySettings) -> None:
+    def __init__(self, settings: TelemetrySettings, *, clock: Clock) -> None:
         self._settings = settings
+        self._clock = clock
+        self._trace_id = uuid.uuid4().hex
         self._spans: list[SpanRecord] = []
+        # Store a tuple, never mutate in place.
+        self._stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+            "serpsage_trace_stack", default=()
+        )
 
     @override
     def start_span(self, name: str, **attrs: Any) -> Span:
-        rec = SpanRecord(name=name, start_ms=_now_ms(), attrs=dict(attrs))
-        self._spans.append(rec)
-        return TraceSpan(self, rec)
+        stack = self._stack.get()
+        parent_id = stack[-1] if stack else None
+        span_id = uuid.uuid4().hex
 
+        rec = SpanRecord(
+            span_id=span_id,
+            parent_id=parent_id,
+            name=name,
+            start_ms=self._now_ms(),
+            attrs=dict(attrs),
+        )
+        self._spans.append(rec)
+
+        token: contextvars.Token[tuple[str, ...]] | None = None
+        try:
+            token = self._stack.set(stack + (span_id,))
+        except Exception:  # noqa: BLE001
+            token = None
+        return TraceSpan(self, rec, stack_token=token)
+
+    @override
     def summary(self) -> dict[str, Any]:
         spans = []
-        for s in self._spans:
-            end_ms = s.end_ms if s.end_ms is not None else _now_ms()
+        for s in sorted(self._spans, key=lambda r: int(r.start_ms)):
+            end_ms = s.end_ms if s.end_ms is not None else self._now_ms()
             spans.append(
                 {
+                    "span_id": s.span_id,
+                    "parent_id": s.parent_id,
                     "name": s.name,
                     "duration_ms": max(0, int(end_ms - s.start_ms)),
                     "attrs": s.attrs,
                     "events": s.events if self._settings.include_events else [],
                 }
             )
-        return {"spans": spans}
+        return {"enabled": True, "trace_id": self._trace_id, "spans": spans}
 
+    def _now_ms(self) -> int:
+        return int(self._clock.now_ms())
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
+    def _pop_stack(
+        self,
+        span_id: str,
+        token: contextvars.Token[tuple[str, ...]] | None,
+    ) -> None:
+        if token is not None:
+            try:
+                self._stack.reset(token)
+                return
+            except Exception:  # noqa: BLE001
+                # Fall back to best-effort removal.
+                pass
+
+        stack = self._stack.get()
+        if not stack:
+            return
+        if stack and stack[-1] == span_id:
+            try:
+                self._stack.set(stack[:-1])
+            except Exception:  # noqa: BLE001
+                return
+            return
+        if span_id in stack:
+            new_stack = tuple(x for x in stack if x != span_id)
+            try:
+                self._stack.set(new_stack)
+            except Exception:  # noqa: BLE001
+                return
 
 
 __all__ = ["NoopTelemetry", "TraceTelemetry"]
+

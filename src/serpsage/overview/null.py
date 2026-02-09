@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.llm import ChatJSONResult
 from serpsage.contracts.protocols import LLMClient
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ class NullLLMClient(WorkUnit, LLMClient):
         messages: list[dict[str, str]],
         schema: dict[str, Any],
         timeout_s: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> ChatJSONResult:
         raise RuntimeError("LLM is not configured (missing api_key or disabled).")
 
 

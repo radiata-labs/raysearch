@@ -21,10 +21,20 @@ async def main(
         resp = await engine.run(req)
 
     if type == "json":
-        return {"search_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2)}
+        return {
+            "search_result": json.dumps(
+                resp.model_dump(), ensure_ascii=False, indent=2
+            ),
+        }
 
     # Minimal markdown rendering (intentionally thin; renderers can be modularized later).
-    lines: list[str] = ["# 网络搜索结果", "", f"## 用户问题\n{query}", "", "## 搜索结果"]
+    lines: list[str] = [
+        "# 网络搜索结果",
+        "",
+        f"## 用户问题\n{query}",
+        "",
+        "## 搜索结果",
+    ]
     for r in resp.results:
         sid = r.source_id or "S?"
         lines.append(f"### [{sid}] {r.title or '(no-title)'}")
@@ -57,5 +67,11 @@ async def main(
 
 
 if __name__ == "__main__":
+    import time
+
+    t1 = time.time()
     out = anyio.run(main, "2026 llm 最新 研究", "high", 5, "json")
+    t2 = time.time()
+
     print(out["search_result"])
+    print(f"Search took {t2 - t1:.2f} seconds")

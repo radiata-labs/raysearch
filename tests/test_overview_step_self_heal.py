@@ -4,6 +4,7 @@ import pytest
 
 from serpsage import Engine, SearchRequest
 from serpsage.app.bootstrap import Overrides
+from serpsage.contracts.llm import ChatJSONResult, LLMUsage
 from serpsage.settings.models import AppSettings
 
 
@@ -25,8 +26,14 @@ class FlakyLLM:
         self.calls += 1
         if self.calls == 1:
             # Invalid type: summary must be str.
-            return {"summary": 123, "key_points": [], "citations": []}
-        return {"summary": "ok", "key_points": ["p1"], "citations": []}
+            return ChatJSONResult(
+                data={"summary": 123, "key_points": [], "citations": []},
+                usage=LLMUsage(),
+            )
+        return ChatJSONResult(
+            data={"summary": "ok", "key_points": ["p1"], "citations": []},
+            usage=LLMUsage(),
+        )
 
 
 @pytest.mark.anyio
@@ -51,4 +58,3 @@ async def test_overview_self_heal_retries_on_validation_error():
     assert resp.errors == []
     assert resp.overview is not None
     assert resp.overview.summary == "ok"
-

@@ -4,7 +4,6 @@ import pytest
 
 from serpsage import Engine, SearchRequest
 from serpsage.app.bootstrap import Overrides
-from serpsage.contracts.llm import ChatJSONResult, LLMUsage
 from serpsage.settings.models import AppSettings
 
 
@@ -17,31 +16,33 @@ class FakeProvider:
         return list(self._items)
 
 
-class FakeLLM:
-    async def chat_json(self, *, model, messages, schema, timeout_s=None):  # noqa: ANN001
-        _ = model, messages, schema, timeout_s
-        return ChatJSONResult(
-            data={"summary": "ok", "key_points": ["p1"], "citations": []},
-            usage=LLMUsage(prompt_tokens=1, completion_tokens=2, total_tokens=3),
-        )
-
-
 @pytest.mark.anyio
-async def test_overview_runs_when_enabled_and_key_present():
+async def test_trace_telemetry_has_parent_child_spans():
     settings = AppSettings.model_validate(
         {
             "pipeline": {"min_score": 0.0},
             "enrich": {"enabled": False},
-            "overview": {"enabled": True, "llm": {"api_key": "dummy"}},
+            "overview": {"enabled": False},
             "cache": {"enabled": False},
+            "telemetry": {"enabled": True, "include_events": True},
         }
     )
     overrides = Overrides(
-        provider=FakeProvider([{"url": "https://e.com", "title": "python", "snippet": "x"}]),
-        llm=FakeLLM(),
+        provider=FakeProvider([{"url": "https://e.com", "title": "python", "snippet": "x"}])
     )
+
     async with Engine.from_settings(settings, overrides=overrides) as engine:
         resp = await engine.run(SearchRequest(query="python", depth="simple", max_results=5))
 
-    assert resp.overview is not None
-    assert resp.overview.summary == "ok"
+    tel = resp.telemetry
+    assert tel["enabled"] is True
+    assert isinstance(tel["trace_id"], str) and tel["trace_id"]
+    spans = tel["spans"]
+    assert isinstance(spans, list) and spans
+
+    engine_span = next(s for s in spans if s["name"] == "engine.run")
+    engine_id = engine_span["span_id"]
+    step_spans = [s for s in spans if isinstance(s.get("name"), str) and s["name"].startswith("step.")]
+    assert step_spans
+    assert all(s.get("parent_id") == engine_id for s in step_spans)
+

@@ -5,9 +5,9 @@ from typing_extensions import override
 
 from serpsage.contracts.base import WorkUnit
 from serpsage.contracts.protocols import Ranker
-from serpsage.rank.bm25 import BM25_AVAILABLE, bm25_scores
-from serpsage.rank.heuristic import heuristic_scores
-from serpsage.rank.normalize import normalize_scores, rank_scales
+from serpsage.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
+from serpsage.rank.heuristic import HeuristicRanker
+from serpsage.rank.utils import normalize_scores, rank_scales
 
 if TYPE_CHECKING:
     from serpsage.app.runtime import CoreRuntime
@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 class BlendRanker(WorkUnit, Ranker):
     def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
+        self._heuristic = HeuristicRanker(rt=rt)
+        self._bm25: Bm25Ranker | None = Bm25Ranker(rt=rt) if BM25_AVAILABLE else None
 
     def _provider_weights(self) -> dict[str, float]:
         raw = {
@@ -23,7 +25,7 @@ class BlendRanker(WorkUnit, Ranker):
             for k, v in (self.settings.rank.providers or {}).items()
             if float(v) > 0
         }
-        if raw.get("bm25") and not BM25_AVAILABLE:
+        if raw.get("bm25") and self._bm25 is None:
             raw.pop("bm25", None)
         if not raw:
             return {"heuristic": 1.0}
@@ -44,10 +46,9 @@ class BlendRanker(WorkUnit, Ranker):
         if not texts:
             return []
 
-        heur = heuristic_scores(
-            texts,
+        heur = self._heuristic.score_texts(
+            texts=texts,
             query=query,
-            cfg=self.settings.rank.heuristic,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
         )
@@ -57,8 +58,8 @@ class BlendRanker(WorkUnit, Ranker):
         bm25_w = float(weights.get("bm25", 0.0))
 
         blended = [float(s) * heur_w for s in heur]
-        if bm25_w > 0:
-            bm25_raw = bm25_scores(texts, query=query)
+        if bm25_w > 0 and self._bm25 is not None:
+            bm25_raw = self._bm25.score_texts(texts=texts, query=query)
             scaled = rank_scales(bm25_raw)
             max_heur = max(heur) if heur else 0.0
             anchor = float(max_heur) if float(max_heur) > 0 else 1.0

@@ -1,61 +1,75 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from typing_extensions import override
 
+from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.protocols import Ranker
 from serpsage.text.normalize import normalize_text
 from serpsage.text.tokenize import tokenize
 
 if TYPE_CHECKING:
-    from serpsage.settings.models import HeuristicRankSettings
+    from serpsage.app.runtime import CoreRuntime
 
 
-def heuristic_scores(
-    texts: list[str],
-    *,
-    query: str,
-    cfg: HeuristicRankSettings,
-    query_tokens: list[str] | None = None,
-    intent_tokens: list[str] | None = None,
-) -> list[float]:
-    q_tokens = query_tokens if query_tokens is not None else tokenize(query)
-    q_tokens = [t for t in (q_tokens or []) if len(t) >= int(cfg.min_token_len)]
-    i_tokens = intent_tokens or []
+class HeuristicRanker(WorkUnit, Ranker):
+    def __init__(self, *, rt: CoreRuntime) -> None:
+        super().__init__(rt=rt)
 
-    normalized_query = normalize_text(query)
-    out: list[float] = []
-    for text in texts:
-        normalized_text = normalize_text(text)
-        if not normalized_text:
-            out.append(0.0)
-            continue
+    @override
+    def score_texts(
+        self,
+        *,
+        texts: list[str],
+        query: str,
+        query_tokens: list[str] | None = None,
+        intent_tokens: list[str] | None = None,
+    ) -> list[float]:
+        cfg = self.settings.rank.heuristic
+        q_tokens = query_tokens if query_tokens is not None else tokenize(query)
+        q_tokens = [t for t in (q_tokens or []) if len(t) >= int(cfg.min_token_len)]
+        i_tokens = intent_tokens or []
 
-        unique_hits: set[str] = set()
-        count_hits = 0
-        for t in q_tokens:
-            tl = t.lower()
-            if tl and tl in normalized_text:
-                unique_hits.add(tl)
-                count_hits += min(
-                    normalized_text.count(tl), int(cfg.max_count_per_token)
-                )
+        normalized_query = normalize_text(query)
+        out: list[float] = []
+        for text in texts:
+            normalized_text = normalize_text(text)
+            if not normalized_text:
+                out.append(0.0)
+                continue
 
-        intent_hits = 0
-        for t in i_tokens:
-            tl = (t or "").lower()
-            if tl and tl in normalized_text:
-                intent_hits += 1
+            unique_hits: set[str] = set()
+            count_hits = 0
+            for t in q_tokens:
+                tl = t.lower()
+                if tl and tl in normalized_text:
+                    unique_hits.add(tl)
+                    count_hits += min(
+                        normalized_text.count(tl), int(cfg.max_count_per_token)
+                    )
 
-        score = 0.0
-        score += float(cfg.unique_hit_weight) * float(len(unique_hits))
-        score += float(cfg.count_weight) * float(count_hits)
-        score += float(cfg.intent_hit_weight) * float(intent_hits)
+            intent_hits = 0
+            for t in i_tokens:
+                tl = (t or "").lower()
+                if tl and tl in normalized_text:
+                    intent_hits += 1
 
-        if normalized_query and normalized_query in normalized_text:
-            score += float(cfg.phrase_bonus)
+            score = 0.0
+            score += float(cfg.unique_hit_weight) * float(len(unique_hits))
+            score += float(cfg.count_weight) * float(count_hits)
+            score += float(cfg.intent_hit_weight) * float(intent_hits)
 
-        out.append(float(score))
+            if normalized_query and normalized_query in normalized_text:
+                score += float(cfg.phrase_bonus)
 
-    return out
+            out.append(float(score))
+
+        return out
+
+    @override
+    def normalize(self, *, scores: list[float]) -> list[float]:
+        # The combiner owns normalization.
+        return list(scores or [])
 
 
-__all__ = ["heuristic_scores"]
+__all__ = ["HeuristicRanker"]
