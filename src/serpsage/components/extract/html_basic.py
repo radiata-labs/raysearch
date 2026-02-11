@@ -6,8 +6,11 @@ from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
+from serpsage.components.extract.utils import (
+    decode_best_effort,
+    guess_apparent_encoding,
+)
 from serpsage.contracts.services import ExtractorBase
-from serpsage.extract.utils import decode_best_effort, guess_apparent_encoding
 from serpsage.models.extract import ExtractedText
 from serpsage.text.normalize import clean_whitespace
 

@@ -4,11 +4,11 @@ import httpx
 import pytest
 
 from serpsage import Engine
+from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import SearchProviderBase
 from serpsage.core.runtime import Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
-from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 

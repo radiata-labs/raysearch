@@ -94,9 +94,31 @@ enrich:
 
 cache:
   enabled: false
-  db_path: .serpsage_cache.sqlite3
+  backend: sqlite # sqlite|memory|redis|mysql|sqlalchemy
   search_ttl_s: 600
   fetch_ttl_s: 86400
+  sqlite:
+    db_path: serpsage_cache.sqlite3
+    table: cache
+  redis:
+    url: redis://127.0.0.1:6379/0
+    key_prefix: serpsage
+  mysql:
+    driver: auto # auto|asyncmy|aiomysql
+    host: 127.0.0.1
+    port: 3306
+    user: root
+    password: ""
+    database: serpsage
+    table: cache
+    minsize: 1
+    maxsize: 10
+    connect_timeout: 10.0
+    charset: utf8mb4
+  sqlalchemy:
+    url: sqlite+aiosqlite:///./.serpsage_cache.sqlite3
+    table: cache
+  # Missing optional dependencies will emit a warning and fall back to memory cache.
 
 overview:
   enabled: true

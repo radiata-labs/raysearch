@@ -9,14 +9,14 @@ from urllib.parse import urlparse
 
 from anyio import to_thread
 
+from serpsage.components.fetch.common import looks_like_html, parse_content_type
 from serpsage.contracts.services import CacheBase, ExtractorBase, FetcherBase
-from serpsage.fetch.common import looks_like_html, parse_content_type
 from serpsage.models.fetch import FetchAttempt, FetchResult
 from serpsage.util.json import stable_json
 
 if TYPE_CHECKING:
-    from serpsage.fetch.curl_cffi import CurlCffiFetcher
-    from serpsage.fetch.http import HttpxFetcher
+    from serpsage.components.fetch.curl_cffi import CurlCffiFetcher
+    from serpsage.components.fetch.http import HttpxFetcher
 
 
 _BLOCKED_RE = re.compile(
@@ -134,7 +134,9 @@ class AutoFetcher(FetcherBase):
                 content=attempt.content,
             )
 
-    async def _fetch_useful(self, *, url: str, strategy: str, span: Any) -> FetchAttempt:
+    async def _fetch_useful(
+        self, *, url: str, strategy: str, span: Any
+    ) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
 
         if strategy == "httpx":
@@ -201,8 +203,11 @@ class AutoFetcher(FetcherBase):
             for x in (fetch_cfg.allow_content_types or [])
             if str(x).strip()
         }
-        if allow and ct and ct not in allow and not looks_like_html(
-            res.content[: int(fetch_cfg.sniff_html_bytes)]
+        if (
+            allow
+            and ct
+            and ct not in allow
+            and not looks_like_html(res.content[: int(fetch_cfg.sniff_html_bytes)])
         ):
             return False
 

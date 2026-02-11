@@ -11,7 +11,14 @@ class Model(BaseModel):
 
 
 DepthKey = Literal["low", "medium", "high"]
-RankProviderKey = Literal["heuristic", "bm25"]
+ProviderBackendKey = Literal["searxng"]
+ExtractorBackendKey = Literal["basic", "main_content"]
+FetchBackendKey = Literal["httpx", "curl_cffi", "auto"]
+RankBackendKey = Literal["blend", "heuristic", "bm25"]
+RankBlendProviderKey = Literal["heuristic", "bm25"]
+CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
+CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
+OverviewBackendKey = Literal["openai", "null"]
 
 
 class RetrySettings(Model):
@@ -30,6 +37,7 @@ class SearxngSettings(Model):
 
 
 class ProviderSettings(Model):
+    backend: ProviderBackendKey = "searxng"
     searxng: SearxngSettings = Field(default_factory=SearxngSettings)
 
 
@@ -71,7 +79,6 @@ class EnrichDepthPreset(Model):
 
 
 def _default_depth_presets() -> dict[DepthKey, EnrichDepthPreset]:
-    # Helper keeps mypy happy about Literal dict keys.
     return {
         "low": EnrichDepthPreset(
             pages_ratio=0.25, min_pages=1, max_pages=3, top_chunks_per_page=2
@@ -85,11 +92,11 @@ def _default_depth_presets() -> dict[DepthKey, EnrichDepthPreset]:
     }
 
 
-def _default_rank_providers() -> dict[RankProviderKey, float]:
+def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
     return {"heuristic": 1.0}
 
 
-class FetchSettings(Model):
+class FetchCommonSettings(Model):
     user_agent: str = "serpsage-bot/3.0"
     timeout_s: float = 10.0
     max_bytes: int = 2_000_000
@@ -103,39 +110,44 @@ class FetchSettings(Model):
     global_concurrency: int = 16
     per_host_concurrency: int = 2
     politeness_delay_ms: int = 0
-
-    # Fetch strategy.
-    strategy: Literal["httpx", "curl_cffi", "auto"] = "auto"
-    total_budget_s: float = 3.0
-    max_attempts_total: int = 4
-    max_attempts_per_strategy: int = 3
-
-    # Identity / request headers.
     extra_headers: dict[str, str] = Field(default_factory=dict)
     accept_language: str = "zh-CN,zh;q=0.9,en;q=0.8"
     use_browser_headers: bool = True
     disable_br: bool = True
-
-    # Proxy & cookies.
     proxy: str | None = None
     cookies: dict[str, str] = Field(default_factory=dict)
-
-    # Size & content policy.
     max_bytes_behavior: Literal["truncate", "error"] = "truncate"
     sniff_html_bytes: int = 16_384
     min_html_bytes: int = 512
     cache_blocked_pages: bool = False
-
-    # Validate "useful" fetches by checking whether extractor can produce blocks.
     validate_extractable: bool = True
     min_blocks: int = 3
     min_text_chars: int = 400
     validate_max_chars: int = 200_000
 
-    # curl_cffi options.
-    curl_impersonate: str = "chrome120"
-    curl_http2: bool = True
-    curl_verify_ssl: bool = True
+
+class FetchHttpxSettings(Model):
+    pass
+
+
+class FetchCurlCffiSettings(Model):
+    impersonate: str = "chrome120"
+    http2: bool = True
+    verify_ssl: bool = True
+
+
+class FetchAutoSettings(Model):
+    total_budget_s: float = 3.0
+    max_attempts_total: int = 4
+    max_attempts_per_strategy: int = 3
+
+
+class FetchSettings(Model):
+    backend: FetchBackendKey = "auto"
+    common: FetchCommonSettings = Field(default_factory=FetchCommonSettings)
+    httpx: FetchHttpxSettings = Field(default_factory=FetchHttpxSettings)
+    curl_cffi: FetchCurlCffiSettings = Field(default_factory=FetchCurlCffiSettings)
+    auto: FetchAutoSettings = Field(default_factory=FetchAutoSettings)
 
 
 class ChunkingSettings(Model):
@@ -152,16 +164,25 @@ class SelectSettings(Model):
     early_bonus: float = 1.15
     template_hard_drop_threshold: float = 0.95
     block_hard_drop_threshold: float = 0.90
-    # Enrich-specific chunk threshold (do NOT couple to pipeline.min_score).
     min_chunk_score: float = 0.20
-    # Smooth gating around min_chunk_score. Set to 0 to disable and use hard thresholding.
     score_soft_gate_tau: float = 0.07
-    # How strongly template-like chunks are penalized in logit space.
     template_penalty_weight: float = 2.0
 
 
+class ExtractorBasicSettings(Model):
+    pass
+
+
+class ExtractorMainContentSettings(Model):
+    pass
+
+
 class EnrichExtractorSettings(Model):
-    kind: Literal["basic", "main_content"] = "main_content"
+    backend: ExtractorBackendKey = "main_content"
+    basic: ExtractorBasicSettings = Field(default_factory=ExtractorBasicSettings)
+    main_content: ExtractorMainContentSettings = Field(
+        default_factory=ExtractorMainContentSettings
+    )
 
 
 class EnrichSettings(Model):
@@ -170,7 +191,7 @@ class EnrichSettings(Model):
     fetch: FetchSettings = Field(default_factory=FetchSettings)
     chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     select: SelectSettings = Field(default_factory=SelectSettings)
-    depth_presets: dict[Literal["low", "medium", "high"], EnrichDepthPreset] = Field(
+    depth_presets: dict[DepthKey, EnrichDepthPreset] = Field(
         default_factory=_default_depth_presets
     )
 
@@ -184,6 +205,10 @@ class HeuristicRankSettings(Model):
     max_count_per_token: int = 5
 
 
+class RankBm25Settings(Model):
+    pass
+
+
 class NormalizationSettings(Model):
     method: Literal["robust_sigmoid", "rank"] = "robust_sigmoid"
     temperature: float = 1.0
@@ -194,19 +219,58 @@ class NormalizationSettings(Model):
     single_item_scale: float = 1.0
 
 
-class RankSettings(Model):
-    providers: dict[Literal["heuristic", "bm25"], float] = Field(
-        default_factory=_default_rank_providers
+class RankBlendSettings(Model):
+    providers: dict[RankBlendProviderKey, float] = Field(
+        default_factory=_default_rank_blend_providers
     )
+
+
+class RankSettings(Model):
+    backend: RankBackendKey = "blend"
+    blend: RankBlendSettings = Field(default_factory=RankBlendSettings)
     heuristic: HeuristicRankSettings = Field(default_factory=HeuristicRankSettings)
+    bm25: RankBm25Settings = Field(default_factory=RankBm25Settings)
     normalization: NormalizationSettings = Field(default_factory=NormalizationSettings)
+
+
+class CacheSqliteSettings(Model):
+    db_path: str = ".serpsage_cache.sqlite3"
+    table: str = "cache"
+
+
+class CacheRedisSettings(Model):
+    url: str = "redis://127.0.0.1:6379/0"
+    key_prefix: str = "serpsage"
+
+
+class CacheMySQLSettings(Model):
+    driver: CacheMySQLDriverKey = "auto"
+    host: str = "127.0.0.1"
+    port: int = 3306
+    user: str = "root"
+    password: str = ""
+    database: str = "serpsage"
+    table: str = "cache"
+    minsize: int = 1
+    maxsize: int = 10
+    connect_timeout: float = 10.0
+    charset: str = "utf8mb4"
+
+
+class CacheSQLAlchemySettings(Model):
+    url: str = "sqlite+aiosqlite:///./.serpsage_cache.sqlite3"
+    table: str = "cache"
 
 
 class CacheSettings(Model):
     enabled: bool = False
-    db_path: str = ".serpsage_cache.sqlite3"
+    backend: CacheBackendKey = "sqlite"
     search_ttl_s: int = 600
     fetch_ttl_s: int = 86_400
+    sqlite: CacheSqliteSettings = Field(default_factory=CacheSqliteSettings)
+    redis: CacheRedisSettings = Field(default_factory=CacheRedisSettings)
+    mysql: CacheMySQLSettings = Field(default_factory=CacheMySQLSettings)
+    sqlalchemy: CacheSQLAlchemySettings = Field(default_factory=CacheSQLAlchemySettings)
 
 
 class OpenAICompatSettings(Model):
@@ -219,9 +283,20 @@ class OpenAICompatSettings(Model):
     headers: dict[str, str] = Field(default_factory=dict)
 
 
+class OverviewOpenAISettings(Model):
+    llm: OpenAICompatSettings = Field(default_factory=OpenAICompatSettings)
+    schema_strict: bool = True
+
+
+class OverviewNullSettings(Model):
+    pass
+
+
 class OverviewSettings(Model):
     enabled: bool = True
-    llm: OpenAICompatSettings = Field(default_factory=OpenAICompatSettings)
+    backend: OverviewBackendKey = "openai"
+    openai: OverviewOpenAISettings = Field(default_factory=OverviewOpenAISettings)
+    null: OverviewNullSettings = Field(default_factory=OverviewNullSettings)
     max_sources: int = 8
     max_chunks_per_source: int = 2
     max_chunk_chars: int = 900
@@ -230,7 +305,6 @@ class OverviewSettings(Model):
     cache_ttl_s: int = 0
     self_heal_retries: int = 1
     force_language: Literal["auto", "zh", "en"] = "auto"
-    schema_strict: bool = True
 
 
 class TelemetrySettings(Model):
@@ -252,7 +326,6 @@ class AppSettings(Model):
             return self.pipeline.profiles[name]
         if self.pipeline.default_profile in self.pipeline.profiles:
             return self.pipeline.profiles[self.pipeline.default_profile]
-        # fallback to a default instance
         return ProfileSettings()
 
     def select_profile(
@@ -291,18 +364,29 @@ class AppSettings(Model):
 
 __all__ = [
     "AppSettings",
+    "CacheMySQLSettings",
+    "CacheRedisSettings",
+    "CacheSQLAlchemySettings",
     "CacheSettings",
     "ChunkingSettings",
     "EnrichDepthPreset",
     "EnrichSettings",
+    "EnrichExtractorSettings",
+    "FetchAutoSettings",
+    "FetchCommonSettings",
+    "FetchCurlCffiSettings",
+    "FetchHttpxSettings",
     "FetchSettings",
     "HeuristicRankSettings",
     "NormalizationSettings",
     "OpenAICompatSettings",
+    "OverviewOpenAISettings",
     "OverviewSettings",
     "PipelineSettings",
     "ProfileSettings",
     "ProviderSettings",
+    "RankBlendSettings",
+    "RankSettings",
     "RetrySettings",
     "SearxngSettings",
     "TelemetrySettings",

@@ -4,8 +4,8 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
+from serpsage.components.fetch.common import browser_headers, truncate_bytes
 from serpsage.contracts.services import FetcherBase
-from serpsage.fetch.common import browser_headers, truncate_bytes
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 CurlSessionFactory: Any = None
@@ -73,14 +73,17 @@ class CurlCffiFetcher(FetcherBase):
             raise RuntimeError("curl_cffi session is not initialized")
 
         fetch_cfg = self.settings.enrich.fetch
+        common = fetch_cfg.common
+        auto_cfg = fetch_cfg.auto
+        curl_cfg = fetch_cfg.curl_cffi
         started = time.time()
 
-        headers = browser_headers(fetch_cfg)
-        cookies = dict(getattr(fetch_cfg, "cookies", None) or {})
-        proxy = getattr(fetch_cfg, "proxy", None)
+        headers = browser_headers(common)
+        cookies = dict(common.cookies or {})
+        proxy = common.proxy
 
-        timeout_s = float(getattr(fetch_cfg, "timeout_s", 10.0))
-        budget = float(getattr(fetch_cfg, "total_budget_s", 3.0))
+        timeout_s = float(common.timeout_s)
+        budget = float(auto_cfg.total_budget_s)
         timeout_s = max(0.5, min(timeout_s, max(0.5, budget * 0.6)))
 
         try:
@@ -89,15 +92,11 @@ class CurlCffiFetcher(FetcherBase):
                 headers=headers,
                 cookies=cookies or None,
                 timeout=timeout_s,
-                allow_redirects=bool(fetch_cfg.follow_redirects),
+                allow_redirects=bool(common.follow_redirects),
                 proxy=proxy,
-                impersonate=cast(
-                    "Any", str(getattr(fetch_cfg, "curl_impersonate", "chrome120"))
-                ),
-                http_version="v2"
-                if bool(getattr(fetch_cfg, "curl_http2", True))
-                else "v1",
-                verify=bool(getattr(fetch_cfg, "curl_verify_ssl", True)),
+                impersonate=cast("Any", str(curl_cfg.impersonate)),
+                http_version="v2" if bool(curl_cfg.http2) else "v1",
+                verify=bool(curl_cfg.verify_ssl),
             )
             status_code = int(getattr(resp, "status_code", 0) or 0)
             final_url = str(getattr(resp, "url", url))
@@ -116,10 +115,8 @@ class CurlCffiFetcher(FetcherBase):
             content_length_header = _hget("content-length")
 
             data = bytes(getattr(resp, "content", b"") or b"")
-            max_bytes = int(fetch_cfg.max_bytes)
-            behavior = str(
-                getattr(fetch_cfg, "max_bytes_behavior", "truncate") or "truncate"
-            )
+            max_bytes = int(common.max_bytes)
+            behavior = str(common.max_bytes_behavior or "truncate")
             if behavior == "error" and max_bytes > 0 and len(data) > max_bytes:
                 raise ValueError(f"exceeded max_bytes={max_bytes}")
             data, truncated = truncate_bytes(data, max_bytes=max_bytes)

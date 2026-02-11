@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
-import httpx
-
 from serpsage.app.engine import Engine
-from serpsage.cache.null import NullCache
-from serpsage.cache.sqlite import SqliteCache
+from serpsage.components.cache import build_cache
+from serpsage.components.extract import build_extractor
+from serpsage.components.fetch import build_fetcher
+from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.fetch.rate_limit import RateLimiter
+from serpsage.components.overview.null import NullLLMClient
+from serpsage.components.overview.openai import OpenAIClient
+from serpsage.components.provider.searxng import SearxngProvider
+from serpsage.components.rank.blend import BlendRanker
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import (
     CacheBase,
@@ -27,15 +32,6 @@ from serpsage.domain.filter import ResultFilterer
 from serpsage.domain.normalize import ResultNormalizer
 from serpsage.domain.overview import OverviewBuilder
 from serpsage.domain.rerank import Reranker
-from serpsage.extract.html_basic import BasicHtmlExtractor
-from serpsage.extract.html_main import MainContentHtmlExtractor
-from serpsage.fetch.auto import AutoFetcher
-from serpsage.fetch.curl_cffi import CURL_CFFI_AVAILABLE, CurlCffiFetcher
-from serpsage.fetch.http import HttpxFetcher
-from serpsage.fetch.http_client_unit import HttpClientUnit
-from serpsage.fetch.rate_limit import RateLimiter
-from serpsage.overview.null import NullLLMClient
-from serpsage.overview.openai import OpenAIClient
 from serpsage.pipeline.steps import (
     DedupeStep,
     EnrichStep,
@@ -46,8 +42,6 @@ from serpsage.pipeline.steps import (
     RerankStep,
     SearchStep,
 )
-from serpsage.provider.searxng import SearxngProvider
-from serpsage.rank.blend import BlendRanker
 from serpsage.telemetry.trace import NoopTelemetry, TraceTelemetry
 
 if TYPE_CHECKING:
@@ -93,62 +87,20 @@ def build_engine(
             )
         return shared_http_unit
 
-    cache: CacheBase = ov.cache or (
-        SqliteCache(rt=rt) if settings.cache.enabled else NullCache(rt=rt)
-    )
-    rate_limiter: RateLimiter = (
-        cast("RateLimiter", ov.rate_limiter)
-        if ov.rate_limiter is not None
-        else RateLimiter(rt=rt)
-    )
+    cache: CacheBase = ov.cache or build_cache(rt=rt)
+    rate_limiter: RateLimiter = ov.rate_limiter or RateLimiter(rt=rt)
     provider: SearchProviderBase = ov.provider or SearxngProvider(
         rt=rt, http=get_shared_http_unit()
     )
-    extractor: ExtractorBase = ov.extractor or (
-        MainContentHtmlExtractor(rt=rt)
-        if (settings.enrich.extractor.kind or "main_content") == "main_content"
-        else BasicHtmlExtractor(rt=rt)
+    extractor: ExtractorBase = ov.extractor or build_extractor(rt=rt)
+
+    fetcher: FetcherBase = ov.fetcher or build_fetcher(
+        rt=rt,
+        cache=cache,
+        rate_limiter=rate_limiter,
+        extractor=extractor,
+        ov=ov,
     )
-
-    fetcher: FetcherBase
-    if ov.fetcher is not None:
-        fetcher = ov.fetcher
-    else:
-        fetch_cfg = settings.enrich.fetch
-        fetch_http_unit = HttpClientUnit(
-            rt=rt,
-            client=ov.fetch_http
-            or httpx.AsyncClient(
-                proxy=getattr(fetch_cfg, "proxy", None),
-                timeout=httpx.Timeout(float(fetch_cfg.timeout_s)),
-                follow_redirects=bool(fetch_cfg.follow_redirects),
-                max_redirects=int(getattr(fetch_cfg, "max_redirects", 10)),
-                trust_env=False,
-            ),
-            owns_client=ov.fetch_http is None,
-        )
-
-        httpx_fetcher = HttpxFetcher(rt=rt, http=fetch_http_unit)
-
-        curl_fetcher = None
-        if str(getattr(fetch_cfg, "strategy", "auto") or "auto") in {
-            "auto",
-            "curl_cffi",
-        }:
-            if CURL_CFFI_AVAILABLE:
-                try:
-                    curl_fetcher = CurlCffiFetcher(rt=rt)
-                except Exception:
-                    curl_fetcher = None
-
-        fetcher = AutoFetcher(
-            rt=rt,
-            cache=cache,
-            rate_limiter=rate_limiter,
-            httpx_fetcher=httpx_fetcher,
-            curl_fetcher=curl_fetcher,
-            extractor=extractor,
-        )
     ranker: RankerBase = ov.ranker or BlendRanker(rt=rt)
 
     llm: LLMClientBase = ov.llm or (

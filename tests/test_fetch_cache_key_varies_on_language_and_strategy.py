@@ -3,14 +3,14 @@
 import httpx
 import pytest
 
+from serpsage.components.extract.html_basic import BasicHtmlExtractor
+from serpsage.components.fetch.auto import AutoFetcher
+from serpsage.components.fetch.http import HttpxFetcher
+from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.fetch.rate_limit import RateLimiter
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import CacheBase
 from serpsage.core.runtime import Runtime
-from serpsage.extract.html_basic import BasicHtmlExtractor
-from serpsage.fetch.auto import AutoFetcher
-from serpsage.fetch.http import HttpxFetcher
-from serpsage.fetch.http_client_unit import HttpClientUnit
-from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 

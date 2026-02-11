@@ -1,8 +1,8 @@
 ﻿from __future__ import annotations
 
+from serpsage.components.rank.blend import BlendRanker
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Runtime
-from serpsage.rank.blend import BlendRanker
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 

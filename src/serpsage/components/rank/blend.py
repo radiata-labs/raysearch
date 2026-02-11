@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
+from serpsage.components.rank.heuristic import HeuristicRanker
+from serpsage.components.rank.utils import normalize_scores, rank_scales
 from serpsage.contracts.services import RankerBase
-from serpsage.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
-from serpsage.rank.heuristic import HeuristicRanker
-from serpsage.rank.utils import normalize_scores, rank_scales
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

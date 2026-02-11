@@ -11,7 +11,7 @@ def parse_content_type(content_type: str | None) -> str:
 
 def looks_like_html(sample: bytes) -> bool:
     try:
-        from serpsage.extract.utils import (
+        from serpsage.components.extract.utils import (
             looks_like_html as _looks_like_html,  # noqa: PLC0415
         )
 

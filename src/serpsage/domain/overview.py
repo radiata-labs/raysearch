@@ -10,9 +10,9 @@ from serpsage.app.response import (
     OverviewResult,
     ResultItem,
 )
+from serpsage.components.overview.schema import overview_json_schema
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.llm import LLMUsage
-from serpsage.overview.schema import overview_json_schema
 
 if TYPE_CHECKING:
     from serpsage.contracts.services import LLMClientBase

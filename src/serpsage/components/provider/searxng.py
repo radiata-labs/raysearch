@@ -5,8 +5,8 @@ from typing_extensions import override
 
 import httpx
 
+from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.contracts.services import SearchProviderBase
-from serpsage.fetch.http_client_unit import HttpClientUnit
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

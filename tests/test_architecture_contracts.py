@@ -15,12 +15,12 @@ INCLUDED_PREFIXES = (
     "serpsage.app.engine",
     "serpsage.pipeline.",  # steps excluded below
     "serpsage.domain.",
-    "serpsage.provider.",
-    "serpsage.fetch.",
-    "serpsage.extract.",
-    "serpsage.rank.",
-    "serpsage.cache.",
-    "serpsage.overview.",
+    "serpsage.components.provider.",
+    "serpsage.components.fetch.",
+    "serpsage.components.extract.",
+    "serpsage.components.rank.",
+    "serpsage.components.cache.",
+    "serpsage.components.overview.",
 )
 
 EXCLUDED_MODULES: set[str] = set()
@@ -62,7 +62,9 @@ def _is_work_class(name: str) -> bool:
     return any(tok in name for tok in NAME_PATTERN)
 
 
-@pytest.mark.parametrize("module_name", [m for m in _iter_serpsage_modules() if _included(m)])
+@pytest.mark.parametrize(
+    "module_name", [m for m in _iter_serpsage_modules() if _included(m)]
+)
 def test_work_classes_inherit_workunit_and_require_rt(module_name: str) -> None:
     mod = importlib.import_module(module_name)
     for name, obj in vars(mod).items():
@@ -80,9 +82,9 @@ def test_work_classes_inherit_workunit_and_require_rt(module_name: str) -> None:
         sig = inspect.signature(obj.__init__)
         rt_param = sig.parameters.get("rt")
         assert rt_param is not None, f"{module_name}.{name}.__init__ must accept rt"
-        assert (
-            rt_param.kind == inspect.Parameter.KEYWORD_ONLY
-        ), f"{module_name}.{name}.__init__ rt must be keyword-only"
+        assert rt_param.kind == inspect.Parameter.KEYWORD_ONLY, (
+            f"{module_name}.{name}.__init__ rt must be keyword-only"
+        )
 
 
 def test_no_env_access_outside_settings_loader() -> None:

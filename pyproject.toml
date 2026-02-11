@@ -35,6 +35,13 @@ dependencies = [
 [project.optional-dependencies]
 # Not required by the core SERP pipeline; kept as extras to avoid heavy/compiled
 # dependencies for headless Docker/API deployments.
+cache = [
+    "aiosqlite>=0.22.1",
+    "aioredis>=2.0.1",
+    "aiomysql>=0.3.2",
+    "asyncmy>=0.2.11",
+    "sqlalchemy>=2.0.46",
+]
 image = ["pillow", "imagehash", "rawpy", "numpy"]
 gui = ["PySide6"]
 api = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1"]

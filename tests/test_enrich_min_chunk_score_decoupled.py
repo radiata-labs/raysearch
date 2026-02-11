@@ -3,12 +3,12 @@
 import pytest
 
 from serpsage.app.response import ResultItem
+from serpsage.components.extract.html_main import MainContentHtmlExtractor
+from serpsage.components.rank.blend import BlendRanker
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import FetcherBase
 from serpsage.core.runtime import Runtime
 from serpsage.domain.enrich import Enricher
-from serpsage.extract.html_main import MainContentHtmlExtractor
-from serpsage.rank.blend import BlendRanker
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 from serpsage.text.tokenize import tokenize

@@ -6,7 +6,9 @@ import sys
 def test_overview_schema_has_additional_properties_false_everywhere():
     # Import via sys.path so this test works without an editable install.
     sys.path.insert(0, "src")
-    from serpsage.overview.schema import overview_json_schema  # noqa: PLC0415
+    from serpsage.components.overview.schema import (
+        overview_json_schema,  # noqa: PLC0415
+    )
 
     schema = overview_json_schema()
 
@@ -37,7 +39,9 @@ def test_overview_schema_has_additional_properties_false_everywhere():
 
 def test_overview_schema_strict_required_includes_all_properties():
     sys.path.insert(0, "src")
-    from serpsage.overview.schema import overview_json_schema  # noqa: PLC0415
+    from serpsage.components.overview.schema import (
+        overview_json_schema,  # noqa: PLC0415
+    )
 
     schema = overview_json_schema()
 

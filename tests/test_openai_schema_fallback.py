@@ -3,12 +3,12 @@ from __future__ import annotations
 import httpx
 import pytest
 
-import serpsage.overview.openai as mod
+import serpsage.components.overview.openai as mod
+from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.overview.openai import OpenAIClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Runtime
-from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.models.llm import ChatJSONResult
-from serpsage.overview.openai import OpenAIClient
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 

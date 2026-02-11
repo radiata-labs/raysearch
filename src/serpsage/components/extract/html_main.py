@@ -7,9 +7,12 @@ from typing_extensions import override
 
 from bs4 import BeautifulSoup
 
+from serpsage.components.extract.html_basic import BasicHtmlExtractor
+from serpsage.components.extract.utils import (
+    decode_best_effort,
+    guess_apparent_encoding,
+)
 from serpsage.contracts.services import ExtractorBase
-from serpsage.extract.html_basic import BasicHtmlExtractor
-from serpsage.extract.utils import decode_best_effort, guess_apparent_encoding
 from serpsage.models.extract import ExtractedText
 from serpsage.text.normalize import clean_whitespace
 

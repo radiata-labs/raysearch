@@ -8,9 +8,13 @@ from typing_extensions import override
 import anyio
 import httpx
 
+from serpsage.components.fetch.common import (
+    browser_headers,
+    looks_like_html,
+    parse_content_type,
+)
+from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.contracts.services import FetcherBase
-from serpsage.fetch.common import browser_headers, looks_like_html, parse_content_type
-from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 
@@ -80,33 +84,33 @@ class HttpxFetcher(FetcherBase):
 
     async def fetch_attempt(self, *, url: str, profile: str, span: Any) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
-        retry = fetch_cfg.retry
+        common = fetch_cfg.common
+        auto_cfg = fetch_cfg.auto
+        retry = common.retry
 
         started = time.time()
         max_attempts = min(
-            int(getattr(fetch_cfg, "max_attempts_per_strategy", 3)),
+            int(auto_cfg.max_attempts_per_strategy),
             int(getattr(retry, "max_attempts", 3)),
         )
         max_attempts = max(1, max_attempts)
 
-        budget = float(getattr(fetch_cfg, "total_budget_s", 3.0))
-        timeout_s = float(getattr(fetch_cfg, "timeout_s", 10.0))
+        budget = float(auto_cfg.total_budget_s)
+        timeout_s = float(common.timeout_s)
         timeout_s = max(0.5, min(timeout_s, max(0.5, budget * 0.7)))
         timeout = httpx.Timeout(timeout_s)
 
-        headers = browser_headers(fetch_cfg, profile=profile)
-        cookies = dict(getattr(fetch_cfg, "cookies", None) or {})
+        headers = browser_headers(common, profile=profile)
+        cookies = dict(common.cookies or {})
 
         allow = {
             str(x).strip().lower()
-            for x in (fetch_cfg.allow_content_types or [])
+            for x in (common.allow_content_types or [])
             if str(x).strip()
         }
-        sniff_n = max(1024, int(getattr(fetch_cfg, "sniff_html_bytes", 16384)))
-        behavior = str(
-            getattr(fetch_cfg, "max_bytes_behavior", "truncate") or "truncate"
-        )
-        max_bytes = int(fetch_cfg.max_bytes)
+        sniff_n = max(1024, int(common.sniff_html_bytes))
+        behavior = str(common.max_bytes_behavior or "truncate")
+        max_bytes = int(common.max_bytes)
 
         last_status: int | None = None
         last_url = url
@@ -126,7 +130,7 @@ class HttpxFetcher(FetcherBase):
                     headers=headers,
                     cookies=cookies or None,
                     timeout=timeout,
-                    follow_redirects=bool(fetch_cfg.follow_redirects),
+                    follow_redirects=bool(common.follow_redirects),
                 ) as resp:
                     last_status = int(resp.status_code)
                     last_url = str(resp.url)

@@ -7,8 +7,8 @@ from typing_extensions import override
 import openai
 from openai import AsyncOpenAI
 
+from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.contracts.services import LLMClientBase
-from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.models.llm import ChatJSONResult, LLMUsage
 
 if TYPE_CHECKING:

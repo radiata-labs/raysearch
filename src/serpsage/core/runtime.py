@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 from pydantic import ConfigDict
 
+from serpsage.components.fetch.rate_limit import RateLimiter
 from serpsage.contracts.lifecycle import ClockBase, TelemetryBase
 from serpsage.contracts.services import (
     CacheBase,
@@ -39,7 +40,7 @@ class Overrides(MutableModel):
     telemetry: TelemetryBase | None = None
     clock: ClockBase | None = None
     cache: CacheBase | None = None
-    rate_limiter: object | None = None
+    rate_limiter: RateLimiter | None = None
     provider: SearchProviderBase | None = None
     fetcher: FetcherBase | None = None
     extractor: ExtractorBase | None = None

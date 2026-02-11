@@ -1,12 +1,24 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+import importlib.util
 
 import pytest
 
-from serpsage.cache.sqlite import SqliteCache
+from serpsage.components.cache.sqlite import SqliteCache
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Runtime
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
+
+
+def _has_aiosqlite() -> bool:
+    return importlib.util.find_spec("aiosqlite") is not None
+
+
+pytestmark = pytest.mark.skipif(
+    not _has_aiosqlite(),
+    reason="requires optional dependency aiosqlite",
+)
 
 
 class FakeClock(ClockBase):
