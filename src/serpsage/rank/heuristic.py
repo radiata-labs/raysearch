@@ -3,16 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import Ranker
+from serpsage.contracts.services import RankerBase
 from serpsage.text.normalize import normalize_text
 from serpsage.text.tokenize import tokenize
 
 if TYPE_CHECKING:
-    from serpsage.app.runtime import CoreRuntime
+    from serpsage.core.runtime import CoreRuntime
 
 
-class HeuristicRanker(WorkUnit, Ranker):
+class HeuristicRanker(RankerBase):
     def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
 

@@ -3,12 +3,13 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.bootstrap import Overrides
-from serpsage.contracts.llm import ChatJSONResult, LLMUsage
+from serpsage.contracts.services import CacheBase, LLMClientBase, SearchProviderBase
+from serpsage.core.runtime import ComponentOverrides
+from serpsage.models.llm import ChatJSONResult, LLMUsage
 from serpsage.settings.models import AppSettings
 
 
-class FakeProvider:
+class FakeProvider(SearchProviderBase):
     def __init__(self, items):
         self._items = items
 
@@ -17,7 +18,7 @@ class FakeProvider:
         return list(self._items)
 
 
-class FakeCache:
+class FakeCache(CacheBase):
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], bytes] = {}
 
@@ -32,7 +33,7 @@ class FakeCache:
         return
 
 
-class FakeLLM:
+class FakeLLM(LLMClientBase):
     def __init__(self) -> None:
         self.calls = 0
 
@@ -60,7 +61,7 @@ async def test_overview_cache_hit_skips_llm_call():
         }
     )
     llm = FakeLLM()
-    overrides = Overrides(
+    overrides = ComponentOverrides(
         provider=FakeProvider(
             [{"url": "https://e.com", "title": "python", "snippet": "x"}]
         ),

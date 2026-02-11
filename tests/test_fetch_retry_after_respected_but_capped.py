@@ -1,15 +1,16 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import httpx
 import pytest
 
-from serpsage.app.runtime import CoreRuntime
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
 from serpsage.fetch.http import HttpxFetcher
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
 
-class FakeClock:
+class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 
@@ -63,4 +64,8 @@ async def test_retry_after_is_capped(monkeypatch: pytest.MonkeyPatch):
     assert res.status_code == 200
     assert calls, "expected at least one sleep call"
     assert calls[0] <= 1.5
+
+
+
+
 

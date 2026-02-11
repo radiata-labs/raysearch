@@ -2,27 +2,20 @@ from __future__ import annotations
 
 import html as html_mod
 import re
-from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import ExtractedText, Extractor
+from serpsage.contracts.services import ExtractorBase
 from serpsage.extract.utils import decode_best_effort, guess_apparent_encoding
+from serpsage.models.extract import ExtractedText
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
-    from serpsage.app.runtime import CoreRuntime
+    from serpsage.core.runtime import CoreRuntime
 
 
-@dataclass(frozen=True)
-class SimpleExtractedText:
-    text: str
-    blocks: list[str]
-
-
-class BasicHtmlExtractor(WorkUnit, Extractor):
+class BasicHtmlExtractor(ExtractorBase):
     """Lightweight visible-text extraction.
 
     - best-effort decoding (charset header/meta/BOM + heuristics)
@@ -67,7 +60,7 @@ class BasicHtmlExtractor(WorkUnit, Extractor):
         lines = [clean_whitespace(line) for line in visible.split("\n")]
         blocks = [line for line in lines if line]
 
-        return SimpleExtractedText(text="\n".join(blocks), blocks=blocks)
+        return ExtractedText(text="\n".join(blocks), blocks=blocks)
 
 
 _SKIP_TAGS = {"script", "style", "noscript"}
@@ -145,4 +138,4 @@ class VisibleTextParser(HTMLParser):
         return "".join(self._buf)
 
 
-__all__ = ["BasicHtmlExtractor", "SimpleExtractedText"]
+__all__ = ["BasicHtmlExtractor"]

@@ -4,7 +4,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from serpsage.app.response import ResultItem
-from serpsage.contracts.base import WorkUnit
+from serpsage.core.workunit import WorkUnit
 from serpsage.text.normalize import clean_whitespace, strip_html
 
 

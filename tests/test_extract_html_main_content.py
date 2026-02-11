@@ -1,12 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from serpsage.app.runtime import CoreRuntime
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
 from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
 
-class FakeClock:
+class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 
@@ -31,4 +32,8 @@ def test_main_content_extractor_prefers_mediawiki_content_and_drops_noise():
     assert "menu should drop" not in text
     assert "toc should drop" not in text
     assert "footer should drop" not in text
+
+
+
+
 

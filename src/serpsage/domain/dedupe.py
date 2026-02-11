@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from serpsage.contracts.base import WorkUnit
+from serpsage.core.workunit import WorkUnit
 from serpsage.text.normalize import clean_whitespace
 from serpsage.text.similarity import hybrid_similarity, simhash64
 

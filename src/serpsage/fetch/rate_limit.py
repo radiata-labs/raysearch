@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 import anyio
 
-from serpsage.contracts.base import WorkUnit
+from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
-    from serpsage.app.runtime import CoreRuntime
+    from serpsage.core.runtime import CoreRuntime
 
 
 class RateLimiter(WorkUnit):

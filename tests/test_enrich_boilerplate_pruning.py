@@ -1,9 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
 from serpsage.app.response import ResultItem
-from serpsage.app.runtime import CoreRuntime
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
 from serpsage.domain.enrich import Enricher
 from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.rank.blend import BlendRanker
@@ -12,7 +13,7 @@ from serpsage.telemetry.trace import NoopTelemetry
 from serpsage.text.tokenize import tokenize
 
 
-class FakeClock:
+class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 
@@ -58,9 +59,7 @@ async def test_enrich_prunes_leading_boilerplate_blocks():
       <p>此页面中存在需要长期更新的内容及资料列表，现存条目中资料未必是最新。</p>
     """
     main = f"<p>{('这是正文内容 ' + keyword + '。') * 30}</p>"
-    html = f"<!doctype html><html><body><article>{boiler}{main}</article></body></html>".encode(
-        "utf-8"
-    )
+    html = f"<!doctype html><html><body><article>{boiler}{main}</article></body></html>".encode()
 
     settings = AppSettings.model_validate(
         {
@@ -105,4 +104,7 @@ async def test_enrich_prunes_leading_boilerplate_blocks():
     assert keyword in txt0
     assert "欢迎" not in txt0
     assert "编辑前请阅读" not in txt0
+
+
+
 

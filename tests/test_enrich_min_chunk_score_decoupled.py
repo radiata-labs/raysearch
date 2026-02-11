@@ -1,9 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
 from serpsage.app.response import ResultItem
-from serpsage.app.runtime import CoreRuntime
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
 from serpsage.domain.enrich import Enricher
 from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.rank.blend import BlendRanker
@@ -12,7 +13,7 @@ from serpsage.telemetry.trace import NoopTelemetry
 from serpsage.text.tokenize import tokenize
 
 
-class FakeClock:
+class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 
@@ -104,4 +105,8 @@ async def test_enrich_min_chunk_score_is_not_coupled_to_pipeline_min_score():
     # based on enrich.select.min_chunk_score.
     assert out.error is None
     assert len(out.chunks) >= 2
+
+
+
+
 

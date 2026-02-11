@@ -3,14 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import Cache
+from serpsage.contracts.services import CacheBase
 
 if TYPE_CHECKING:
-    from serpsage.app.runtime import CoreRuntime
+    from serpsage.core.runtime import CoreRuntime
 
 
-class NullCache(WorkUnit, Cache):
+class NullCache(CacheBase):
     def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
 

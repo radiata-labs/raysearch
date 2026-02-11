@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import contextvars
 import uuid
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.contracts.protocols import Clock, Span, Telemetry
+from pydantic import Field
+
+from serpsage.contracts.lifecycle import ClockBase, SpanBase, TelemetryBase
+from serpsage.core.model_base import MutableModel
 
 if TYPE_CHECKING:
     from serpsage.settings.models import TelemetrySettings
 
 
-class NoopSpan(Span):
+class NoopSpan(SpanBase):
     @override
     def add_event(self, name: str, **fields: Any) -> None:
         return
@@ -26,9 +28,9 @@ class NoopSpan(Span):
         return
 
 
-class NoopTelemetry(Telemetry):
+class NoopTelemetry(TelemetryBase):
     @override
-    def start_span(self, name: str, **attrs: Any) -> Span:
+    def start_span(self, name: str, **attrs: Any) -> SpanBase:
         _ = name, attrs
         return NoopSpan()
 
@@ -37,18 +39,17 @@ class NoopTelemetry(Telemetry):
         return {"enabled": False, "trace_id": "noop", "spans": []}
 
 
-@dataclass(slots=True)
-class SpanRecord:
+class SpanRecord(MutableModel):
     span_id: str
     parent_id: str | None
     name: str
     start_ms: int
     end_ms: int | None = None
-    attrs: dict[str, Any] = field(default_factory=dict)
-    events: list[dict[str, Any]] = field(default_factory=list)
+    attrs: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class TraceSpan(Span):
+class TraceSpan(SpanBase):
     def __init__(
         self,
         telemetry: TraceTelemetry,
@@ -77,19 +78,18 @@ class TraceSpan(Span):
         self._telemetry._pop_stack(self._record.span_id, self._stack_token)
 
 
-class TraceTelemetry(Telemetry):
-    def __init__(self, settings: TelemetrySettings, *, clock: Clock) -> None:
+class TraceTelemetry(TelemetryBase):
+    def __init__(self, settings: TelemetrySettings, *, clock: ClockBase) -> None:
         self._settings = settings
         self._clock = clock
         self._trace_id = uuid.uuid4().hex
         self._spans: list[SpanRecord] = []
-        # Store a tuple, never mutate in place.
         self._stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
             "serpsage_trace_stack", default=()
         )
 
     @override
-    def start_span(self, name: str, **attrs: Any) -> Span:
+    def start_span(self, name: str, **attrs: Any) -> SpanBase:
         stack = self._stack.get()
         parent_id = stack[-1] if stack else None
         span_id = uuid.uuid4().hex
@@ -106,7 +106,7 @@ class TraceTelemetry(Telemetry):
         token: contextvars.Token[tuple[str, ...]] | None = None
         try:
             token = self._stack.set(stack + (span_id,))
-        except Exception:  # noqa: BLE001
+        except Exception:
             token = None
         return TraceSpan(self, rec, stack_token=token)
 
@@ -139,8 +139,7 @@ class TraceTelemetry(Telemetry):
             try:
                 self._stack.reset(token)
                 return
-            except Exception:  # noqa: BLE001
-                # Fall back to best-effort removal.
+            except Exception:
                 pass
 
         stack = self._stack.get()
@@ -149,16 +148,15 @@ class TraceTelemetry(Telemetry):
         if stack and stack[-1] == span_id:
             try:
                 self._stack.set(stack[:-1])
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return
             return
         if span_id in stack:
             new_stack = tuple(x for x in stack if x != span_id)
             try:
                 self._stack.set(new_stack)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return
 
 
 __all__ = ["NoopTelemetry", "TraceTelemetry"]
-

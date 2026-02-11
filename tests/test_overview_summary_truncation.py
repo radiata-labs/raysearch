@@ -3,12 +3,13 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.bootstrap import Overrides
-from serpsage.contracts.llm import ChatJSONResult, LLMUsage
+from serpsage.contracts.services import LLMClientBase, SearchProviderBase
+from serpsage.core.runtime import ComponentOverrides
+from serpsage.models.llm import ChatJSONResult, LLMUsage
 from serpsage.settings.models import AppSettings
 
 
-class FakeProvider:
+class FakeProvider(SearchProviderBase):
     def __init__(self, items):
         self._items = items
 
@@ -17,7 +18,10 @@ class FakeProvider:
         return list(self._items)
 
 
-class VerboseLLM:
+class VerboseLLM(LLMClientBase):
+    def __init__(self) -> None:
+        return
+
     async def chat_json(self, *, model, messages, schema, timeout_s=None):  # noqa: ANN001
         _ = model, messages, schema, timeout_s
         return ChatJSONResult(
@@ -45,7 +49,7 @@ async def test_overview_summary_is_truncated_and_usage_present():
             "cache": {"enabled": False},
         }
     )
-    overrides = Overrides(
+    overrides = ComponentOverrides(
         provider=FakeProvider([{"url": "https://e.com", "title": "python", "snippet": "x"}]),
         llm=VerboseLLM(),
     )
@@ -56,4 +60,3 @@ async def test_overview_summary_is_truncated_and_usage_present():
     assert resp.overview is not None
     assert resp.overview.summary != "abcd efgh ijkl mnop"
     assert resp.overview.usage.total_tokens == 30
-

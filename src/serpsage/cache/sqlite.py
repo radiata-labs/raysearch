@@ -8,22 +8,19 @@ from typing_extensions import override
 
 from anyio import to_thread
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import Cache
+from serpsage.contracts.services import CacheBase
 
 if TYPE_CHECKING:
-    from serpsage.app.runtime import CoreRuntime
+    from serpsage.core.runtime import CoreRuntime
 
 
-class SqliteCache(WorkUnit, Cache):
+class SqliteCache(CacheBase):
     def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
         self._path = Path(self.settings.cache.db_path)
-        self._inited = False
 
-    async def _init(self) -> None:
-        if self._inited:
-            return
+    @override
+    async def ainit(self) -> None:
 
         def _do_init() -> None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,11 +46,9 @@ class SqliteCache(WorkUnit, Cache):
                 con.close()
 
         await to_thread.run_sync(_do_init)
-        self._inited = True
 
     @override
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
-        await self._init()
         now = int(self.clock.now_ms())
 
         def _do_get() -> bytes | None:
@@ -86,7 +81,6 @@ class SqliteCache(WorkUnit, Cache):
     async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
         if ttl_s <= 0:
             return
-        await self._init()
         exp_ms = int(self.clock.now_ms()) + int(ttl_s) * 1000
         compressed = zlib.compress(value, level=6)
 

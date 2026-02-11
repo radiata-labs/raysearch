@@ -1,19 +1,21 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 
 import httpx
 import pytest
 
-from serpsage.app.runtime import CoreRuntime
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
 from serpsage.extract.html_basic import BasicHtmlExtractor
-from serpsage.fetch.auto import AttemptResult, AutoFetcher
+from serpsage.fetch.auto import AutoFetcher
 from serpsage.fetch.http import HttpxFetcher
+from serpsage.models.fetch import FetchAttempt
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
 
-class FakeClock:
+class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 
@@ -48,8 +50,8 @@ class FakeCurl:
             "<article><p>This is main content. " + ("hello " * 120) + "</p></article>"
             "</body></html>"
         ).encode("utf-8")
-        return AttemptResult(
-            final_url=url,
+        return FetchAttempt(
+            url=url,
             status_code=200,
             content_type="text/html; charset=utf-8",
             content=html,
@@ -116,3 +118,7 @@ async def test_auto_fetcher_switches_to_curl_on_challenge_page_and_caches_good_r
     payload = json.loads(blob.decode("utf-8"))
     assert payload["strategy_used"] == "curl_cffi"
     assert "This is main content" in bytes.fromhex(payload["content_hex"]).decode("utf-8")
+
+
+
+

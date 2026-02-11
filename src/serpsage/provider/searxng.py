@@ -5,16 +5,15 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import SearchProvider
+from serpsage.contracts.services import SearchProviderBase
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from serpsage.app.runtime import CoreRuntime
+    from serpsage.core.runtime import CoreRuntime
 
 
-class SearxngProvider(WorkUnit, SearchProvider):
+class SearxngProvider(SearchProviderBase):
     def __init__(
         self,
         *,

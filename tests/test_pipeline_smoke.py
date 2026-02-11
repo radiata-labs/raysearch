@@ -3,11 +3,12 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.bootstrap import Overrides
+from serpsage.contracts.services import SearchProviderBase
+from serpsage.core.runtime import ComponentOverrides
 from serpsage.settings.models import AppSettings
 
 
-class FakeProvider:
+class FakeProvider(SearchProviderBase):
     def __init__(self, items):
         self._items = items
 
@@ -32,7 +33,7 @@ async def test_pipeline_smoke_basic_ranking_and_ids():
             {"url": "https://example.com/b", "title": "beta", "snippet": "python y"},
         ]
     )
-    overrides = Overrides(provider=provider)
+    overrides = ComponentOverrides(provider=provider)
 
     async with Engine.from_settings(settings, overrides=overrides) as engine:
         resp = await engine.run(SearchRequest(query="python", depth="simple", max_results=10))

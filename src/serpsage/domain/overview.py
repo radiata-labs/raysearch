@@ -6,24 +6,24 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from serpsage.app.response import (
-    LLMUsage,
     OverviewLLMOutput,
     OverviewResult,
     ResultItem,
 )
-from serpsage.contracts.base import WorkUnit
+from serpsage.core.workunit import WorkUnit
+from serpsage.models.llm import LLMUsage
 from serpsage.overview.schema import overview_json_schema
 
 if TYPE_CHECKING:
-    from serpsage.app.runtime import CoreRuntime
-    from serpsage.contracts.llm import ChatJSONResult
-    from serpsage.contracts.protocols import LLMClient
+    from serpsage.contracts.services import LLMClientBase
+    from serpsage.core.runtime import CoreRuntime
+    from serpsage.models.llm import ChatJSONResult
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff]")
 
 
 class OverviewBuilder(WorkUnit):
-    def __init__(self, *, rt: CoreRuntime, llm: LLMClient) -> None:
+    def __init__(self, *, rt: CoreRuntime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
 

@@ -1,12 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from serpsage.app.runtime import CoreRuntime
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
 
-class FakeClock:
+class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 
@@ -26,3 +27,7 @@ def test_basic_html_extractor_drops_nav_footer():
     assert "main content" in text
     assert "menu should drop" not in text
     assert "footer should drop" not in text
+
+
+
+

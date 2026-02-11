@@ -3,11 +3,12 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.bootstrap import Overrides
+from serpsage.contracts.services import SearchProviderBase
+from serpsage.core.runtime import ComponentOverrides
 from serpsage.settings.models import AppSettings
 
 
-class FakeProvider:
+class FakeProvider(SearchProviderBase):
     def __init__(self, items):
         self._items = items
 
@@ -27,7 +28,7 @@ async def test_trace_telemetry_has_parent_child_spans():
             "telemetry": {"enabled": True, "include_events": True},
         }
     )
-    overrides = Overrides(
+    overrides = ComponentOverrides(
         provider=FakeProvider([{"url": "https://e.com", "title": "python", "snippet": "x"}])
     )
 
@@ -45,4 +46,3 @@ async def test_trace_telemetry_has_parent_child_spans():
     step_spans = [s for s in spans if isinstance(s.get("name"), str) and s["name"].startswith("step.")]
     assert step_spans
     assert all(s.get("parent_id") == engine_id for s in step_spans)
-

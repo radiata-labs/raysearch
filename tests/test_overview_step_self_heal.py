@@ -3,12 +3,13 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
-from serpsage.app.bootstrap import Overrides
-from serpsage.contracts.llm import ChatJSONResult, LLMUsage
+from serpsage.contracts.services import LLMClientBase, SearchProviderBase
+from serpsage.core.runtime import ComponentOverrides
+from serpsage.models.llm import ChatJSONResult, LLMUsage
 from serpsage.settings.models import AppSettings
 
 
-class FakeProvider:
+class FakeProvider(SearchProviderBase):
     def __init__(self, items):
         self._items = items
 
@@ -17,7 +18,7 @@ class FakeProvider:
         return list(self._items)
 
 
-class FlakyLLM:
+class FlakyLLM(LLMClientBase):
     def __init__(self) -> None:
         self.calls = 0
 
@@ -47,7 +48,7 @@ async def test_overview_self_heal_retries_on_validation_error():
         }
     )
     llm = FlakyLLM()
-    overrides = Overrides(
+    overrides = ComponentOverrides(
         provider=FakeProvider([{"url": "https://e.com", "title": "python", "snippet": "x"}]),
         llm=llm,
     )

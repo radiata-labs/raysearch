@@ -10,12 +10,11 @@ except Exception:  # noqa: BLE001
     BM25Okapi = None
     BM25_AVAILABLE = False
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import Ranker
+from serpsage.contracts.services import RankerBase
 from serpsage.text.tokenize import tokenize
 
 
-class Bm25Ranker(WorkUnit, Ranker):
+class Bm25Ranker(RankerBase):
     def __init__(self, *, rt):  # noqa: ANN001
         super().__init__(rt=rt)
 

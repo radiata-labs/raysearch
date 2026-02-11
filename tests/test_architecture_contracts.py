@@ -4,12 +4,12 @@ import importlib
 import inspect
 import pathlib
 import pkgutil
-from dataclasses import is_dataclass
 
 import pytest
 
 import serpsage
-from serpsage.contracts.base import WorkUnit
+from serpsage.contracts.lifecycle import ClockBase, TelemetryBase
+from serpsage.core.workunit import WorkUnit
 
 INCLUDED_PREFIXES = (
     "serpsage.app.engine",
@@ -20,12 +20,10 @@ INCLUDED_PREFIXES = (
     "serpsage.extract.",
     "serpsage.rank.",
     "serpsage.cache.",
-    "serpsage.overview.openai_compat",
+    "serpsage.overview.",
 )
 
-EXCLUDED_MODULES = {
-    "serpsage.pipeline.steps",
-}
+EXCLUDED_MODULES: set[str] = set()
 
 NAME_PATTERN = (
     "Engine",
@@ -72,9 +70,9 @@ def test_work_classes_inherit_workunit_and_require_rt(module_name: str) -> None:
             continue
         if obj.__module__ != module_name:
             continue
-        if is_dataclass(obj):
-            continue
         if not _is_work_class(name):
+            continue
+        if issubclass(obj, (TelemetryBase, ClockBase)):
             continue
 
         assert issubclass(obj, WorkUnit), f"{module_name}.{name} must inherit WorkUnit"
@@ -99,3 +97,23 @@ def test_no_env_access_outside_settings_loader() -> None:
         if "os.environ" in txt or "os.getenv" in txt:
             offenders.append(rel)
     assert offenders == [], f"env access found outside settings loader: {offenders}"
+
+
+def test_no_dataclass_in_src() -> None:
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "serpsage"
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        txt = path.read_text(encoding="utf-8")
+        if "@dataclass" in txt or "from dataclasses import" in txt:
+            offenders.append(path.as_posix())
+    assert offenders == [], f"dataclass usage found: {offenders}"
+
+
+def test_no_protocol_in_src() -> None:
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "serpsage"
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        txt = path.read_text(encoding="utf-8")
+        if " Protocol" in txt or "typing.Protocol" in txt or "(Protocol)" in txt:
+            offenders.append(path.as_posix())
+    assert offenders == [], f"Protocol usage found: {offenders}"

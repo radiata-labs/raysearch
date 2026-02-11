@@ -2,28 +2,21 @@ from __future__ import annotations
 
 import html as html_mod
 import re
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from bs4 import BeautifulSoup
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import ExtractedText, Extractor
+from serpsage.contracts.services import ExtractorBase
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.extract.utils import decode_best_effort, guess_apparent_encoding
+from serpsage.models.extract import ExtractedText
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
     from bs4.element import Tag  # type: ignore[import-untyped]
 
-    from serpsage.app.runtime import CoreRuntime
-
-
-@dataclass(frozen=True)
-class MainContentExtractedText:
-    text: str
-    blocks: list[str]
+    from serpsage.core.runtime import CoreRuntime
 
 
 _DROP_TAGS = {
@@ -72,7 +65,7 @@ def _link_density(tag: Tag) -> float:
     return float(link_len) / float(total)
 
 
-class MainContentHtmlExtractor(WorkUnit, Extractor):
+class MainContentHtmlExtractor(ExtractorBase):
     """HTML extractor that tries hard to focus on main/article content.
 
     It is still best-effort and intentionally lightweight:
@@ -147,7 +140,7 @@ class MainContentHtmlExtractor(WorkUnit, Extractor):
 
         joined = "\n".join(blocks)
         joined = html_mod.unescape(joined)
-        return MainContentExtractedText(text=joined, blocks=list(blocks))
+        return ExtractedText(text=joined, blocks=list(blocks))
 
     def _drop_noise(self, soup: BeautifulSoup) -> None:
         for tag in list(soup.find_all(_DROP_TAGS)):
@@ -199,7 +192,9 @@ class MainContentHtmlExtractor(WorkUnit, Extractor):
         best: Tag | None = None
         best_score = -1.0
         try:
-            candidates = soup.find_all(["div", "section", "article", "main"])
+            candidates: list[Tag] = list(
+                soup.find_all(["div", "section", "article", "main"])
+            )
         except Exception:
             candidates = []
         for c in candidates:
@@ -236,4 +231,4 @@ class MainContentHtmlExtractor(WorkUnit, Extractor):
         return blocks
 
 
-__all__ = ["MainContentHtmlExtractor", "MainContentExtractedText"]
+__all__ = ["MainContentHtmlExtractor"]

@@ -2,81 +2,15 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import dataclass
 from typing import Any
 from typing_extensions import override
 
 import anyio
 import httpx
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import Fetcher, FetchResult
-
-from .auto import AttemptResult
-
-
-@dataclass(frozen=True)
-class SimpleFetchResult:
-    url: str
-    status_code: int
-    content_type: str | None
-    content: bytes
-
-
-def _parse_ct(content_type: str | None) -> str:
-    if not content_type:
-        return ""
-    return (content_type.split(";", 1)[0] or "").strip().lower()
-
-
-def _looks_like_html(sample: bytes) -> bool:
-    try:
-        from serpsage.extract.utils import looks_like_html  # noqa: PLC0415
-
-        return bool(looks_like_html(sample))
-    except Exception:
-        head = (sample or b"")[:8192].lower()
-        return any(
-            tok in head for tok in (b"<!doctype", b"<html", b"<body", b"</p", b"</div")
-        )
-
-
-def _browser_headers(fetch_cfg: Any, *, profile: str) -> dict[str, str]:
-    ua = str(fetch_cfg.user_agent)
-    lang = str(getattr(fetch_cfg, "accept_language", "") or "en")
-    enc = (
-        "gzip, deflate"
-        if bool(getattr(fetch_cfg, "disable_br", True))
-        else "gzip, deflate, br"
-    )
-
-    headers: dict[str, str] = {
-        "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": lang,
-        "Accept-Encoding": enc,
-        "Upgrade-Insecure-Requests": "1",
-        "DNT": "1",
-    }
-
-    if profile == "browser":
-        # Some sites expect these; keep minimal to reduce false positives.
-        headers.update(
-            {
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-            }
-        )
-
-    extra = getattr(fetch_cfg, "extra_headers", None) or {}
-    for k, v in extra.items():
-        if not k:
-            continue
-        headers[str(k)] = str(v)
-
-    return headers
+from serpsage.contracts.services import FetcherBase
+from serpsage.fetch.common import browser_headers, looks_like_html, parse_content_type
+from serpsage.models.fetch import FetchAttempt, FetchResult
 
 
 def _backoff_s(attempt: int, base_ms: int, max_ms: int) -> float:
@@ -100,10 +34,6 @@ def _parse_retry_after_s(v: str | None) -> float | None:
 async def _read_with_limit(
     aiter, *, max_bytes: int, behavior: str
 ) -> tuple[bytes, bool]:
-    """Read bytes from an async iterator with size control.
-
-    Returns (content, truncated).
-    """
     if max_bytes <= 0:
         chunks: list[bytes] = [part async for part in aiter if part]
         return b"".join(chunks), False
@@ -128,12 +58,7 @@ async def _read_with_limit(
     return bytes(buf), bool(truncated)
 
 
-class HttpxFetcher(WorkUnit, Fetcher):
-    """httpx-based fetcher with browser-like headers and robust retry behavior.
-
-    This is used by AutoFetcher; it does not handle caching or rate limiting itself.
-    """
-
+class HttpxFetcher(FetcherBase):
     def __init__(self, *, rt, http: httpx.AsyncClient) -> None:  # noqa: ANN001
         super().__init__(rt=rt)
         self._http = http
@@ -144,8 +69,8 @@ class HttpxFetcher(WorkUnit, Fetcher):
             res = await self.fetch_attempt(url=url, profile="browser", span=sp)
             if int(res.status_code) <= 0:
                 raise RuntimeError("httpx fetch failed")
-            return SimpleFetchResult(
-                url=str(res.final_url or url),
+            return FetchResult(
+                url=str(res.url or url),
                 status_code=int(res.status_code),
                 content_type=res.content_type,
                 content=bytes(res.content or b""),
@@ -153,7 +78,7 @@ class HttpxFetcher(WorkUnit, Fetcher):
 
     async def fetch_attempt(
         self, *, url: str, profile: str, span: Any
-    ) -> AttemptResult:  # noqa: ANN401
+    ) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
         retry = fetch_cfg.retry
 
@@ -164,13 +89,12 @@ class HttpxFetcher(WorkUnit, Fetcher):
         )
         max_attempts = max(1, max_attempts)
 
-        # Keep a tighter timeout under auto budget.
         budget = float(getattr(fetch_cfg, "total_budget_s", 3.0))
         timeout_s = float(getattr(fetch_cfg, "timeout_s", 10.0))
         timeout_s = max(0.5, min(timeout_s, max(0.5, budget * 0.7)))
         timeout = httpx.Timeout(timeout_s)
 
-        headers = _browser_headers(fetch_cfg, profile=profile)
+        headers = browser_headers(fetch_cfg, profile=profile)
         cookies = dict(getattr(fetch_cfg, "cookies", None) or {})
 
         allow = {
@@ -210,10 +134,9 @@ class HttpxFetcher(WorkUnit, Fetcher):
                     last_enc = resp.headers.get("content-encoding")
                     last_len_hdr = resp.headers.get("content-length")
 
-                    ct_main = _parse_ct(last_ct)
+                    ct_main = parse_content_type(last_ct)
                     sniff_needed = not (ct_main and (not allow or ct_main in allow))
 
-                    # Read up to max_bytes (truncate by default).
                     body, truncated = await _read_with_limit(
                         resp.aiter_bytes(),
                         max_bytes=max_bytes,
@@ -222,7 +145,6 @@ class HttpxFetcher(WorkUnit, Fetcher):
                     last_body = body
                     last_truncated = bool(truncated)
 
-                    # Retryable statuses first (do not let content-type sniffing short-circuit retries).
                     if last_status == 429 or (500 <= last_status < 600):
                         if attempt >= max_attempts:
                             break
@@ -240,19 +162,10 @@ class HttpxFetcher(WorkUnit, Fetcher):
                         await anyio.sleep(delay)
                         continue
 
-                    # Content-type filter with HTML sniffing for mislabelled responses.
-                    if allow and ct_main and ct_main not in allow:
-                        if not _looks_like_html(body[:sniff_n]):
-                            break
-                    elif sniff_needed and allow:  # noqa: SIM102
-                        # Missing/unknown content-type: if it doesn't look like html, treat as unusable.
-                        if (
-                            not _looks_like_html(body[:sniff_n])
-                            and ct_main != "text/plain"
-                        ):
+                    if allow and ct_main and ct_main not in allow or sniff_needed and allow and ct_main != "text/plain":
+                        if not looks_like_html(body[:sniff_n]):
                             break
 
-                    # For other statuses, return what we have (AutoFetcher decides usefulness).
                     break
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 span.set_attr("httpx_error_type", type(exc).__name__)
@@ -274,8 +187,8 @@ class HttpxFetcher(WorkUnit, Fetcher):
         span.set_attr("httpx_bytes", int(len(last_body)))
         span.set_attr("httpx_truncated", bool(last_truncated))
 
-        return AttemptResult(
-            final_url=last_url,
+        return FetchAttempt(
+            url=last_url,
             status_code=int(last_status or 0),
             content_type=last_ct,
             content=last_body,
@@ -286,4 +199,4 @@ class HttpxFetcher(WorkUnit, Fetcher):
         )
 
 
-__all__ = ["HttpxFetcher", "SimpleFetchResult", "_read_with_limit"]
+__all__ = ["HttpxFetcher", "_read_with_limit"]

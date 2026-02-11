@@ -3,15 +3,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.protocols import LLMClient
+from serpsage.contracts.services import LLMClientBase
 
 if TYPE_CHECKING:
-    from serpsage.app.runtime import CoreRuntime
-    from serpsage.contracts.llm import ChatJSONResult
+    from serpsage.core.runtime import CoreRuntime
+    from serpsage.models.llm import ChatJSONResult
 
 
-class NullLLMClient(WorkUnit, LLMClient):
+class NullLLMClient(LLMClientBase):
     def __init__(self, *, rt: CoreRuntime) -> None:
         super().__init__(rt=rt)
 

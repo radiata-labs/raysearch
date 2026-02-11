@@ -1,9 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import httpx
 import pytest
 
-from serpsage.app.runtime import CoreRuntime
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.fetch.auto import AutoFetcher
 from serpsage.fetch.http import HttpxFetcher
@@ -11,7 +12,7 @@ from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
 
-class FakeClock:
+class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 
@@ -77,4 +78,8 @@ async def test_truncate_behavior_returns_prefix_and_can_still_be_extractable():
         res = await af.afetch(url="https://example.com/x")
 
     assert len(res.content) == 600
+
+
+
+
 

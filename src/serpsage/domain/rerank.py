@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from serpsage.contracts.base import WorkUnit
+from serpsage.core.workunit import WorkUnit
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
-    from serpsage.app.runtime import CoreRuntime
-    from serpsage.contracts.protocols import Ranker
+    from serpsage.contracts.services import RankerBase
+    from serpsage.core.runtime import CoreRuntime
 
 
 class Reranker(WorkUnit):
-    def __init__(self, *, rt: CoreRuntime, ranker: Ranker) -> None:
+    def __init__(self, *, rt: CoreRuntime, ranker: RankerBase) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
 

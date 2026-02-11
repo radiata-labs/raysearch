@@ -4,14 +4,15 @@ import httpx
 import pytest
 
 import serpsage.overview.openai as mod
-from serpsage.app.runtime import CoreRuntime
-from serpsage.contracts.llm import ChatJSONResult
+from serpsage.contracts.lifecycle import ClockBase
+from serpsage.core.runtime import CoreRuntime
+from serpsage.models.llm import ChatJSONResult
 from serpsage.overview.openai import OpenAIClient
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
 
-class _FakeClock:
+class _FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
 

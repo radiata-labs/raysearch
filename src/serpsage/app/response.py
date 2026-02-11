@@ -4,15 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from serpsage.contracts.errors import AppError  # noqa: TC001
-
-
-class LLMUsage(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
+from serpsage.models.errors import AppError  # noqa: TC001
+from serpsage.models.llm import LLMUsage  # noqa: TC001
 
 
 class PageChunk(BaseModel):
@@ -88,7 +81,6 @@ class SearchResponse(BaseModel):
 
 __all__ = [
     "Citation",
-    "LLMUsage",
     "OverviewLLMOutput",
     "OverviewResult",
     "PageChunk",

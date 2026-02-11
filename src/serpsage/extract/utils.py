@@ -34,7 +34,7 @@ def extract_meta_charset(data: bytes) -> str | None:
 def guess_apparent_encoding(data: bytes) -> str | None:
     sample = data[:65536]
     with suppress(Exception):
-        from charset_normalizer import from_bytes  # noqa: PLC0415
+        from charset_normalizer import from_bytes  # type: ignore[import-not-found] # noqa: I001, PLC0415
 
         best = from_bytes(sample).best()
         enc = getattr(best, "encoding", None) if best is not None else None
@@ -42,7 +42,7 @@ def guess_apparent_encoding(data: bytes) -> str | None:
             return str(enc)
 
     with suppress(Exception):
-        import chardet  # noqa: PLC0415
+        import chardet  # type: ignore[import-not-found] # noqa: PLC0415
 
         det = chardet.detect(sample)
         enc = det.get("encoding") if isinstance(det, dict) else None

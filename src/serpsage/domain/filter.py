@@ -1,24 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from serpsage.contracts.base import WorkUnit
+from serpsage.core.workunit import WorkUnit
+from serpsage.models.outcomes import FilterOutcome
 from serpsage.text.normalize import normalize_text
 from serpsage.text.tokenize import tokenize
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
     from serpsage.settings.models import ProfileSettings
-
-
-@dataclass(frozen=True, slots=True)
-class FilterOutcome:
-    profile_name: str
-    profile: ProfileSettings
-    query_tokens: list[str]
-    results: list[ResultItem]
 
 
 class ResultFilterer(WorkUnit):

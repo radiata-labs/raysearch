@@ -7,19 +7,18 @@ from typing_extensions import override
 import openai
 from openai import AsyncOpenAI
 
-from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.llm import ChatJSONResult, LLMUsage
-from serpsage.contracts.protocols import LLMClient
+from serpsage.contracts.services import LLMClientBase
+from serpsage.models.llm import ChatJSONResult, LLMUsage
 
 if TYPE_CHECKING:
     import httpx
     from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
-    from serpsage.app.runtime import CoreRuntime
+    from serpsage.core.runtime import CoreRuntime
 
 
-class OpenAIClient(WorkUnit, LLMClient):
+class OpenAIClient(LLMClientBase):
     """LLMClient implemented via the official OpenAI Python SDK (async).
 
     Notes:
