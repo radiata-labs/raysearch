@@ -43,11 +43,19 @@ class RankStep(StepBase):
 
         docs = [f"{r.title} {r.snippet}".strip() for r in ctx.results]
         span.set_attr("items_count", int(len(docs)))
-        weights = {
-            k: float(v)
-            for k, v in (self.settings.rank.providers or {}).items()
-            if float(v) > 0
-        }
+        backend = str(self.settings.rank.backend or "blend").lower()
+        if backend == "blend":
+            weights = {
+                k: float(v)
+                for k, v in (self.settings.rank.blend.providers or {}).items()
+                if float(v) > 0
+            }
+        elif backend == "heuristic":
+            weights = {"heuristic": 1.0}
+        elif backend == "bm25":
+            weights = {"bm25": 1.0}
+        else:
+            weights = {}
         span.set_attr("providers_used", sorted(weights.keys()))
         span.set_attr("weights", weights)
         raw_scores = self._ranker.score_texts(

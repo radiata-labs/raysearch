@@ -13,13 +13,19 @@ Config file: `serpsage.yaml` (YAML/JSON supported).
 
 Environment variables:
 - `SERPSAGE_CONFIG_PATH`: path to JSON/YAML config (default: `serpsage.yaml`)
-- `SEARXNG_BASE_URL`: overrides `searxng.base_url`
-- `SEARCH_API_KEY`: overrides `searxng.search_api_key`
+- `SEARXNG_BASE_URL`: overrides `provider.searxng.base_url`
+- `SEARCH_API_KEY`: overrides `provider.searxng.api_key`
 
 Note: when using the default `base_url`, `SEARCH_API_KEY` is required. This is enforced at request time.
 
+Componentized config shape:
+- Each component selects implementation via `backend` (for example: `provider.backend`, `rank.backend`, `enrich.fetch.backend`, `enrich.extractor.backend`, `overview.backend`, `cache.backend`).
+- `cache` and `overview` keep an `enabled` switch.
+- Backend-specific options live under component sub-blocks (for example `overview.openai.llm`, `enrich.fetch.common`, `rank.blend.providers`).
+- See `src/search_config_example.yaml` for a full reference.
+
 Score filtering:
-- `score_filter.min_score` (default `0.5`) applies to both ranked results and web chunks.
+- `pipeline.min_score` (default `0.5`) applies to ranked results.
 - Items with `score == 0.0` are always dropped.
 
 ## Python usage (async-only)

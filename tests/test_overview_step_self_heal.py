@@ -49,7 +49,8 @@ async def test_overview_self_heal_retries_on_validation_error():
             "overview": {
                 "enabled": True,
                 "self_heal_retries": 1,
-                "llm": {"api_key": "dummy"},
+                "backend": "openai",
+                "openai": {"llm": {"api_key": "dummy"}},
             },
             "cache": {"enabled": False},
         }

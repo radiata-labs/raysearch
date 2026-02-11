@@ -67,7 +67,7 @@ async def test_enrich_prunes_leading_boilerplate_blocks():
         {
             "enrich": {
                 "enabled": True,
-                "extractor": {"kind": "main_content"},
+                "extractor": {"backend": "main_content"},
                 "chunking": {
                     "target_chars": 200,
                     "overlap_sentences": 0,

@@ -47,10 +47,13 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
             "enrich": {
                 "enabled": True,
                 "fetch": {
-                    "validate_extractable": True,
-                    "min_blocks": 1,
-                    "min_text_chars": 10,
-                    "timeout_s": 1.0,
+                    "backend": "auto",
+                    "common": {
+                        "validate_extractable": True,
+                        "min_blocks": 1,
+                        "min_text_chars": 10,
+                        "timeout_s": 1.0,
+                    },
                 },
             },
             "overview": {"enabled": False},
@@ -63,8 +66,11 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
                     **base["enrich"],
                     "fetch": {
                         **base["enrich"]["fetch"],
-                        "strategy": "auto",
-                        "accept_language": "zh-CN",
+                        "backend": "auto",
+                        "common": {
+                            **base["enrich"]["fetch"]["common"],
+                            "accept_language": "zh-CN",
+                        },
                     },
                 },
             }
@@ -76,8 +82,11 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
                     **base["enrich"],
                     "fetch": {
                         **base["enrich"]["fetch"],
-                        "strategy": "httpx",
-                        "accept_language": "en-US",
+                        "backend": "httpx",
+                        "common": {
+                            **base["enrich"]["fetch"]["common"],
+                            "accept_language": "en-US",
+                        },
                     },
                 },
             }

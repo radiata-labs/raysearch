@@ -39,7 +39,7 @@ class SearxngProvider(SearchProviderBase):
             payload.update({k: str(v) for k, v in dict(params).items()})
 
         headers = dict(se.headers or {})
-        headers.setdefault("User-Agent", self.settings.enrich.fetch.user_agent)
+        headers.setdefault("User-Agent", self.settings.enrich.fetch.common.user_agent)
         if se.api_key:
             headers.setdefault("Authorization", f"Bearer {se.api_key}")
 

@@ -38,21 +38,14 @@ class OverviewStep(StepBase):
         enabled = self.settings.overview.enabled
         if ctx.request.overview is not None:
             enabled = bool(ctx.request.overview)
+        if str(self.settings.overview.backend or "openai").lower() == "null":
+            enabled = False
         if not enabled:
             return ctx
         if not ctx.results:
             return ctx
-        if not self.settings.overview.llm.api_key:
-            ctx.errors.append(
-                AppError(
-                    code="overview_skipped",
-                    message="LLM api_key not configured; skipping overview",
-                    details={},
-                )
-            )
-            return ctx
 
-        llm_cfg = self.settings.overview.llm
+        llm_cfg = self.settings.overview.openai.llm
         model = llm_cfg.model
         messages = self._builder.build_messages(
             query=ctx.request.query, results=ctx.results
@@ -61,7 +54,9 @@ class OverviewStep(StepBase):
 
         prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
         span.set_attr("model", model)
-        span.set_attr("schema_strict", bool(self.settings.overview.schema_strict))
+        span.set_attr(
+            "schema_strict", bool(self.settings.overview.openai.schema_strict)
+        )
         span.set_attr("prompt_chars", int(prompt_chars))
         span.set_attr(
             "max_summary_tokens", int(self.settings.overview.max_output_tokens)
@@ -74,7 +69,7 @@ class OverviewStep(StepBase):
                 model=model,
                 messages=messages,
                 schema=schema,
-                schema_strict=bool(self.settings.overview.schema_strict),
+                schema_strict=bool(self.settings.overview.openai.schema_strict),
             )
             cached = await self._cache.aget(namespace="overview", key=cache_key)
             if cached:

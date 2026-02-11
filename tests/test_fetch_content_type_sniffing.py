@@ -35,11 +35,13 @@ async def test_sniff_allows_mislabeled_html():
             "enrich": {
                 "enabled": True,
                 "fetch": {
-                    "strategy": "httpx",
-                    "validate_extractable": True,
-                    "min_blocks": 1,
-                    "min_text_chars": 20,
-                    "timeout_s": 1.0,
+                    "backend": "httpx",
+                    "common": {
+                        "validate_extractable": True,
+                        "min_blocks": 1,
+                        "min_text_chars": 20,
+                        "timeout_s": 1.0,
+                    },
                 },
             },
             "overview": {"enabled": False},
@@ -77,11 +79,13 @@ async def test_sniff_rejects_non_html_and_raises_unusable():
             "enrich": {
                 "enabled": True,
                 "fetch": {
-                    "strategy": "httpx",
-                    "validate_extractable": True,
-                    "min_blocks": 1,
-                    "min_text_chars": 10,
-                    "timeout_s": 1.0,
+                    "backend": "httpx",
+                    "common": {
+                        "validate_extractable": True,
+                        "min_blocks": 1,
+                        "min_text_chars": 10,
+                        "timeout_s": 1.0,
+                    },
                 },
             },
             "overview": {"enabled": False},

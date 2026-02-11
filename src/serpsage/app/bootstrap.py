@@ -5,15 +5,16 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.app.engine import Engine
-from serpsage.components.cache import build_cache
-from serpsage.components.extract import build_extractor
-from serpsage.components.fetch import build_fetcher
+from serpsage.components import (
+    build_cache,
+    build_extractor,
+    build_fetcher,
+    build_overview_client,
+    build_provider,
+    build_ranker,
+)
 from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.components.fetch.rate_limit import RateLimiter
-from serpsage.components.overview.null import NullLLMClient
-from serpsage.components.overview.openai import OpenAIClient
-from serpsage.components.provider.searxng import SearxngProvider
-from serpsage.components.rank.blend import BlendRanker
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import (
     CacheBase,
@@ -89,7 +90,7 @@ def build_engine(
 
     cache: CacheBase = ov.cache or build_cache(rt=rt)
     rate_limiter: RateLimiter = ov.rate_limiter or RateLimiter(rt=rt)
-    provider: SearchProviderBase = ov.provider or SearxngProvider(
+    provider: SearchProviderBase = ov.provider or build_provider(
         rt=rt, http=get_shared_http_unit()
     )
     extractor: ExtractorBase = ov.extractor or build_extractor(rt=rt)
@@ -101,12 +102,9 @@ def build_engine(
         extractor=extractor,
         ov=ov,
     )
-    ranker: RankerBase = ov.ranker or BlendRanker(rt=rt)
-
-    llm: LLMClientBase = ov.llm or (
-        OpenAIClient(rt=rt, http=get_shared_http_unit())
-        if settings.overview.enabled and settings.overview.llm.api_key
-        else NullLLMClient(rt=rt)
+    ranker: RankerBase = ov.ranker or build_ranker(rt=rt)
+    llm: LLMClientBase = ov.llm or build_overview_client(
+        rt=rt, http=get_shared_http_unit()
     )
 
     normalizer = ResultNormalizer(rt=rt)

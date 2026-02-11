@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from serpsage.components.cache import factory
-from serpsage.components.cache.memory import MemoryCache
+import serpsage.components.cache as factory
 from serpsage.components.cache.null import NullCache
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Runtime
@@ -34,11 +33,11 @@ def test_memory_backend_uses_memory_cache() -> None:
         {"cache": {"enabled": True, "backend": "memory"}}
     )
     cache = factory.build_cache(rt=_rt(settings))
-    assert isinstance(cache, MemoryCache)
+    assert cache.__class__.__name__ == "MemoryCache"
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "redis", "sqlalchemy"])
-def test_missing_dependency_falls_back_to_memory(monkeypatch, backend: str) -> None:
+def test_missing_dependency_fail_fast(monkeypatch, backend: str) -> None:
     monkeypatch.setattr(
         factory,
         "_check_dep",
@@ -47,12 +46,11 @@ def test_missing_dependency_falls_back_to_memory(monkeypatch, backend: str) -> N
     settings = AppSettings.model_validate(
         {"cache": {"enabled": True, "backend": backend}}
     )
-    with pytest.warns(RuntimeWarning, match=f"cache backend `{backend}`"):
-        cache = factory.build_cache(rt=_rt(settings))
-    assert isinstance(cache, MemoryCache)
+    with pytest.raises(RuntimeError, match=f"cache backend `{backend}`"):
+        factory.build_cache(rt=_rt(settings))
 
 
-def test_mysql_missing_driver_falls_back_to_memory(monkeypatch) -> None:
+def test_mysql_missing_driver_fail_fast(monkeypatch) -> None:
     monkeypatch.setattr(
         factory,
         "_pick_mysql_driver",
@@ -61,6 +59,5 @@ def test_mysql_missing_driver_falls_back_to_memory(monkeypatch) -> None:
     settings = AppSettings.model_validate(
         {"cache": {"enabled": True, "backend": "mysql"}}
     )
-    with pytest.warns(RuntimeWarning, match="cache backend `mysql`"):
-        cache = factory.build_cache(rt=_rt(settings))
-    assert isinstance(cache, MemoryCache)
+    with pytest.raises(RuntimeError, match="cache backend `mysql`"):
+        factory.build_cache(rt=_rt(settings))

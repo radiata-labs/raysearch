@@ -75,20 +75,21 @@ class AutoFetcher(FetcherBase):
     @override
     async def afetch(self, *, url: str) -> FetchResult:
         fetch_cfg = self.settings.enrich.fetch
+        common = fetch_cfg.common
         host = urlparse(url).netloc.lower()
-        strategy = str(getattr(fetch_cfg, "strategy", "auto") or "auto")
+        backend = str(fetch_cfg.backend or "auto").lower()
 
-        cache_allowed = not _should_disable_cache(fetch_cfg)
+        cache_allowed = not _should_disable_cache(common)
         cache_key = _hash_key(
             {
                 "url": url,
                 "kind": "fetch",
-                "accept_language": str(getattr(fetch_cfg, "accept_language", "")),
-                "strategy": strategy,
+                "accept_language": str(common.accept_language),
+                "strategy": backend,
             }
         )
 
-        with self.span("fetch.auto", url=url, strategy=strategy) as sp:
+        with self.span("fetch.auto", url=url, strategy=backend) as sp:
             if cache_allowed:
                 cached = await self._cache.aget(namespace="fetch", key=cache_key)
                 if cached:
@@ -104,12 +105,12 @@ class AutoFetcher(FetcherBase):
 
             await self._rl.acquire(host=host)
             try:
-                attempt = await self._fetch_useful(url=url, strategy=strategy, span=sp)
+                attempt = await self._fetch_useful(url=url, strategy=backend, span=sp)
             finally:
                 await self._rl.release(host=host)
 
             blocked = self._is_blocked(attempt)
-            if cache_allowed and (not blocked or bool(fetch_cfg.cache_blocked_pages)):
+            if cache_allowed and (not blocked or bool(common.cache_blocked_pages)):
                 payload = {
                     "status_code": int(attempt.status_code),
                     "content_type": attempt.content_type,
@@ -138,6 +139,7 @@ class AutoFetcher(FetcherBase):
         self, *, url: str, strategy: str, span: Any
     ) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
+        auto_cfg = fetch_cfg.auto
 
         if strategy == "httpx":
             res = await self._httpx.fetch_attempt(url=url, profile="browser", span=span)
@@ -154,7 +156,7 @@ class AutoFetcher(FetcherBase):
                 return res
             raise RuntimeError("fetch_unusable:curl_cffi")
 
-        max_total = max(1, int(fetch_cfg.max_attempts_total))
+        max_total = max(1, int(auto_cfg.max_attempts_total))
         attempts = 0
 
         last: FetchAttempt | None = None
@@ -184,43 +186,43 @@ class AutoFetcher(FetcherBase):
         raise RuntimeError("fetch_unusable:auto")
 
     def _is_blocked(self, res: FetchAttempt) -> bool:
+        common = self.settings.enrich.fetch.common
         try:
-            s = (
-                res.content[
-                    : max(4096, int(self.settings.enrich.fetch.sniff_html_bytes))
-                ]
-            ).decode("utf-8", errors="ignore")
+            s = res.content[: max(4096, int(common.sniff_html_bytes))].decode(
+                "utf-8", errors="ignore"
+            )
         except Exception:
             return False
         return bool(_BLOCKED_RE.search(s))
 
     async def _is_useful(self, res: FetchAttempt) -> bool:  # noqa: PLR0911
         fetch_cfg = self.settings.enrich.fetch
+        common = fetch_cfg.common
 
         ct = parse_content_type(res.content_type)
         allow = {
             str(x).strip().lower()
-            for x in (fetch_cfg.allow_content_types or [])
+            for x in (common.allow_content_types or [])
             if str(x).strip()
         }
         if (
             allow
             and ct
             and ct not in allow
-            and not looks_like_html(res.content[: int(fetch_cfg.sniff_html_bytes)])
+            and not looks_like_html(res.content[: int(common.sniff_html_bytes)])
         ):
             return False
 
-        if len(res.content or b"") < int(fetch_cfg.min_html_bytes):
+        if len(res.content or b"") < int(common.min_html_bytes):
             return False
 
-        if self._is_blocked(res) and not bool(fetch_cfg.cache_blocked_pages):
+        if self._is_blocked(res) and not bool(common.cache_blocked_pages):
             return False
 
-        if not bool(fetch_cfg.validate_extractable):
+        if not bool(common.validate_extractable):
             return True
 
-        max_chars = int(fetch_cfg.validate_max_chars)
+        max_chars = int(common.validate_max_chars)
         sample = res.content if max_chars <= 0 else res.content[:max_chars]
 
         try:
@@ -233,10 +235,10 @@ class AutoFetcher(FetcherBase):
             return False
 
         blocks = list(getattr(extracted, "blocks", []) or [])
-        if len(blocks) < int(fetch_cfg.min_blocks):
+        if len(blocks) < int(common.min_blocks):
             return False
         txt_chars = sum(len(str(b)) for b in blocks)
-        return not txt_chars < int(fetch_cfg.min_text_chars)
+        return not txt_chars < int(common.min_text_chars)
 
 
 __all__ = ["AutoFetcher"]

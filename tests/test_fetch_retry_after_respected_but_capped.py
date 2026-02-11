@@ -23,13 +23,18 @@ async def test_retry_after_is_capped(monkeypatch: pytest.MonkeyPatch):
             "enrich": {
                 "enabled": True,
                 "fetch": {
-                    "timeout_s": 1.0,
-                    "max_attempts_per_strategy": 2,
-                    "total_budget_s": 3.0,
-                    "retry": {
-                        "max_attempts": 2,
-                        "base_delay_ms": 10,
-                        "max_delay_ms": 20,
+                    "backend": "httpx",
+                    "common": {
+                        "timeout_s": 1.0,
+                        "retry": {
+                            "max_attempts": 2,
+                            "base_delay_ms": 10,
+                            "max_delay_ms": 20,
+                        },
+                    },
+                    "auto": {
+                        "max_attempts_per_strategy": 2,
+                        "total_budget_s": 3.0,
                     },
                 },
             },

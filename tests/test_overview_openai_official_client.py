@@ -56,7 +56,13 @@ async def test_official_client_passes_response_format_and_limits(monkeypatch):
     monkeypatch.setattr(mod, "AsyncOpenAI", _DummyAsyncOpenAI)
 
     settings = AppSettings.model_validate(
-        {"overview": {"enabled": True, "llm": {"api_key": "dummy"}}}
+        {
+            "overview": {
+                "enabled": True,
+                "backend": "openai",
+                "openai": {"llm": {"api_key": "dummy"}},
+            }
+        }
     )
     rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=_FakeClock())
 

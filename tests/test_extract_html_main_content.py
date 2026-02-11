@@ -24,7 +24,7 @@ def test_main_content_extractor_prefers_mediawiki_content_and_drops_noise():
       <footer>FOOTER SHOULD DROP</footer>
     </body></html>"""
     settings = AppSettings.model_validate(
-        {"enrich": {"extractor": {"kind": "main_content"}}}
+        {"enrich": {"extractor": {"backend": "main_content"}}}
     )
     rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
     ex = MainContentHtmlExtractor(rt=rt)

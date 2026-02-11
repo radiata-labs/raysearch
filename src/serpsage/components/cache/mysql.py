@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import re
 import zlib
-from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -48,13 +47,29 @@ def _module_available(module_name: str) -> bool:
         return False
 
 
-@dataclass(frozen=True, slots=True)
 class _SQL:
-    create_table: str
-    select_one: str
-    delete_one: str
-    upsert_one: str
-    cleanup_expired: str
+    __slots__ = (
+        "create_table",
+        "select_one",
+        "delete_one",
+        "upsert_one",
+        "cleanup_expired",
+    )
+
+    def __init__(
+        self,
+        *,
+        create_table: str,
+        select_one: str,
+        delete_one: str,
+        upsert_one: str,
+        cleanup_expired: str,
+    ) -> None:
+        self.create_table = create_table
+        self.select_one = select_one
+        self.delete_one = delete_one
+        self.upsert_one = upsert_one
+        self.cleanup_expired = cleanup_expired
 
 
 class MySQLCache(CacheBase):
@@ -76,11 +91,9 @@ class MySQLCache(CacheBase):
         pref = self._driver_pref
         if pref == "auto":
             if _module_available("asyncmy"):
-                mod = importlib.import_module("asyncmy")
-                return "asyncmy", mod
+                return importlib.import_module("asyncmy")
             if _module_available("aiomysql"):
-                mod = importlib.import_module("aiomysql")
-                return "aiomysql", mod
+                return importlib.import_module("aiomysql")
             raise RuntimeError("neither asyncmy nor aiomysql is available")
 
         if pref not in {"asyncmy", "aiomysql"}:

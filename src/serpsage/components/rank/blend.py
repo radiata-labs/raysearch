@@ -22,7 +22,7 @@ class BlendRanker(RankerBase):
     def _provider_weights(self) -> dict[str, float]:
         raw = {
             k: float(v)
-            for k, v in (self.settings.rank.providers or {}).items()
+            for k, v in (self.settings.rank.blend.providers or {}).items()
             if float(v) > 0
         }
         if raw.get("bm25") and self._bm25 is None:

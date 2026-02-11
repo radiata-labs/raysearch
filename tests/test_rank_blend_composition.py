@@ -14,7 +14,7 @@ class FakeClock(ClockBase):
 
 def test_blend_ranker_scores_length_matches_inputs():
     settings = AppSettings.model_validate(
-        {"rank": {"providers": {"bm25": 0.7, "heuristic": 0.3}}}
+        {"rank": {"blend": {"providers": {"bm25": 0.7, "heuristic": 0.3}}}}
     )
     rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
     r = BlendRanker(rt=rt)

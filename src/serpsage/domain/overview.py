@@ -121,7 +121,7 @@ class OverviewBuilder(WorkUnit):
     async def build_overview(
         self, *, query: str, results: list[ResultItem]
     ) -> OverviewResult:
-        llm_cfg = self.settings.overview.llm
+        llm_cfg = self.settings.overview.openai.llm
         model = llm_cfg.model
 
         messages = self.build_messages(query=query, results=results)
@@ -132,7 +132,7 @@ class OverviewBuilder(WorkUnit):
         cur_messages = list(messages)
 
         with self.span("overview.build", model=model) as sp:
-            sp.set_attr("schema_strict", bool(self.settings.overview.schema_strict))
+            sp.set_attr("schema_strict", bool(self.settings.overview.openai.schema_strict))
             sp.set_attr("prompt_chars", int(prompt_chars))
             sp.set_attr("self_heal_retries", int(retries))
 

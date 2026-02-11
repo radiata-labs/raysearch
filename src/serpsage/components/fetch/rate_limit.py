@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 class RateLimiter(WorkUnit):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
-        fetch = self.settings.enrich.fetch
-        self._global = anyio.Semaphore(max(1, int(fetch.global_concurrency)))
-        self._per_host_limit = max(1, int(fetch.per_host_concurrency))
-        self._politeness_delay_ms = max(0, int(fetch.politeness_delay_ms))
+        common = self.settings.enrich.fetch.common
+        self._global = anyio.Semaphore(max(1, int(common.global_concurrency)))
+        self._per_host_limit = max(1, int(common.per_host_concurrency))
+        self._politeness_delay_ms = max(0, int(common.politeness_delay_ms))
         self._host_sems: dict[str, anyio.Semaphore] = {}
         self._host_lock = anyio.Lock()
         self._last_host_ms: dict[str, int] = {}

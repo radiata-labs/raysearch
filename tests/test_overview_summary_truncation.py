@@ -46,7 +46,8 @@ async def test_overview_summary_is_truncated_and_usage_present():
                 "enabled": True,
                 "max_output_tokens": 2,
                 "self_heal_retries": 0,
-                "llm": {"api_key": "dummy"},
+                "backend": "openai",
+                "openai": {"llm": {"api_key": "dummy"}},
             },
             "cache": {"enabled": False},
         }

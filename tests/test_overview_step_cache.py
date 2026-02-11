@@ -59,7 +59,8 @@ async def test_overview_cache_hit_skips_llm_call():
             "overview": {
                 "enabled": True,
                 "cache_ttl_s": 60,
-                "llm": {"api_key": "dummy"},
+                "backend": "openai",
+                "openai": {"llm": {"api_key": "dummy"}},
             },
             "cache": {"enabled": False},
         }

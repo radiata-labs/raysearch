@@ -69,8 +69,8 @@ async def test_shared_dependency_inits_once_and_closes_in_reverse_order():
     left = _TraceUnit(rt=rt, name="left", events=events)
     right = _TraceUnit(rt=rt, name="right", events=events)
     root = _TraceUnit(rt=rt, name="root", events=events)
-    left.bind_dep(shared)
-    right.bind_dep(shared)
+    left.bind_deps(shared)
+    right.bind_deps(shared)
     root.bind_deps(left, right)
 
     await root.ainit()

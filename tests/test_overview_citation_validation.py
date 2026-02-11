@@ -59,7 +59,11 @@ async def test_overview_citations_are_sanitized():
         {
             "pipeline": {"min_score": 0.0},
             "enrich": {"enabled": False},
-            "overview": {"enabled": True, "llm": {"api_key": "dummy"}},
+            "overview": {
+                "enabled": True,
+                "backend": "openai",
+                "openai": {"llm": {"api_key": "dummy"}},
+            },
             "cache": {"enabled": False},
         }
     )

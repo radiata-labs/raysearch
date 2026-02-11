@@ -1,8 +1,9 @@
 provider:
+  backend: searxng
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
     # Prefer env override: SEARCH_API_KEY
-    api_key: sk-63133540a039c3443e874d71928b0d0d777a39f0
+    api_key: null
     timeout_s: 20.0
     allow_redirects: false
     headers: {}
@@ -22,7 +23,19 @@ pipeline:
         keywords: ["新曲", "新歌", "MV", "single", "album"]
         regex: []
         priority: 10
-      intent_terms: ["新曲", "新歌", "发布", "上线", "单曲", "专辑", "release", "new song", "single", "album"]
+      intent_terms:
+        [
+          "新曲",
+          "新歌",
+          "发布",
+          "上线",
+          "单曲",
+          "专辑",
+          "release",
+          "new song",
+          "single",
+          "album",
+        ]
       noise_words: ["dict.txt", "privacy", "terms", "cookie"]
       domain_bonus:
         wikipedia.org: 3
@@ -34,9 +47,11 @@ pipeline:
         - "(?:-?\\s*)?(wikipedia.*)$"
 
 rank:
-  providers:
-    bm25: 0.7
-    heuristic: 0.3
+  backend: blend # blend|heuristic|bm25
+  blend:
+    providers:
+      bm25: 0.7
+      heuristic: 0.3
   normalization:
     min_items_for_sigmoid: 1
     single_item_method: sigmoid_log1p
@@ -45,44 +60,52 @@ rank:
 enrich:
   enabled: true
   extractor:
-    kind: main_content
+    backend: main_content # basic|main_content
+    basic: {}
+    main_content: {}
   fetch:
-    user_agent: serpsage-bot/3.0
-    timeout_s: 10.0
-    max_bytes: 2000000
-    max_extracted_chars: 50000
-    follow_redirects: true
-    max_redirects: 10
-    global_concurrency: 16
-    per_host_concurrency: 2
-    politeness_delay_ms: 0
+    backend: auto # httpx|curl_cffi|auto
+    common:
+      user_agent: serpsage-bot/3.0
+      timeout_s: 10.0
+      max_bytes: 2000000
+      max_extracted_chars: 50000
+      allow_content_types: [text/html, application/xhtml+xml, text/plain]
+      follow_redirects: true
+      max_redirects: 10
+      retry:
+        max_attempts: 3
+        base_delay_ms: 200
+        max_delay_ms: 2000
+      global_concurrency: 16
+      per_host_concurrency: 2
+      politeness_delay_ms: 0
 
-    # Stronger crawling (auto httpx -> curl_cffi fallback) tuned for "extractable blocks".
-    strategy: auto
-    total_budget_s: 3.0
-    max_attempts_total: 4
-    max_attempts_per_strategy: 3
+      accept_language: zh-CN,zh;q=0.9,en;q=0.8
+      use_browser_headers: true
+      disable_br: true
+      extra_headers: {}
+      proxy: null
+      cookies: {}
 
-    accept_language: zh-CN,zh;q=0.9,en;q=0.8
-    use_browser_headers: true
-    disable_br: true
-    extra_headers: {}
-    proxy: null
-    cookies: {}
+      max_bytes_behavior: truncate
+      sniff_html_bytes: 16384
+      min_html_bytes: 512
+      cache_blocked_pages: false
 
-    max_bytes_behavior: truncate
-    sniff_html_bytes: 16384
-    min_html_bytes: 512
-    cache_blocked_pages: false
-
-    validate_extractable: true
-    min_blocks: 3
-    min_text_chars: 400
-    validate_max_chars: 200000
-
-    curl_impersonate: chrome120
-    curl_http2: true
-    curl_verify_ssl: true
+      validate_extractable: true
+      min_blocks: 3
+      min_text_chars: 400
+      validate_max_chars: 200000
+    httpx: {}
+    curl_cffi:
+      impersonate: chrome120
+      http2: true
+      verify_ssl: true
+    auto:
+      total_budget_s: 3.0
+      max_attempts_total: 4
+      max_attempts_per_strategy: 3
   select:
     min_chunk_score: 0.20
     score_soft_gate_tau: 0.07
@@ -118,19 +141,21 @@ cache:
   sqlalchemy:
     url: sqlite+aiosqlite:///./.serpsage_cache.sqlite3
     table: cache
-  # Missing optional dependencies will emit a warning and fall back to memory cache.
 
 overview:
   enabled: true
-  llm:
-    # OpenAI-compatible endpoint
-    base_url: https://api.chatanywhere.tech/
-    api_key: sk-GK5XItnMgPf1Hrz1ntL6TfNfJGslUoWvYwTCs4AcBkfnv32k
-    model: gpt-4.1-mini
-    timeout_s: 60.0
-    max_retries: 2
-    temperature: 0.0
-    headers: {}
+  backend: openai # openai|null
+  openai:
+    llm:
+      base_url: https://api.openai.com/v1
+      api_key: null
+      model: gpt-4.1-mini
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+    schema_strict: true
+  null: {}
   max_sources: 8
   max_chunks_per_source: 2
   max_chunk_chars: 900
@@ -139,7 +164,6 @@ overview:
   cache_ttl_s: 0
   self_heal_retries: 1
   force_language: auto
-  schema_strict: true
 
 telemetry:
   enabled: false

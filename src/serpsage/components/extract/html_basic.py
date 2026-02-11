@@ -55,7 +55,7 @@ class BasicHtmlExtractor(ExtractorBase):
             else:
                 visible = html_mod.unescape(parser.get_text())
 
-        max_chars = int(self.settings.enrich.fetch.max_extracted_chars)
+        max_chars = int(self.settings.enrich.fetch.common.max_extracted_chars)
         if max_chars and len(visible) > max_chars:
             visible = visible[:max_chars]
 

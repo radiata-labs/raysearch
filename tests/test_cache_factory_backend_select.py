@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from serpsage.components.cache import factory
+import serpsage.components.cache as factory
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import CacheBase
 from serpsage.core.runtime import Runtime

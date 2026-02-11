@@ -67,7 +67,7 @@ async def test_enrich_min_chunk_score_is_not_coupled_to_pipeline_min_score():
             "pipeline": {"min_score": 0.95},
             "enrich": {
                 "enabled": True,
-                "extractor": {"kind": "main_content"},
+                "extractor": {"backend": "main_content"},
                 "chunking": {
                     "target_chars": 90,
                     "overlap_sentences": 0,

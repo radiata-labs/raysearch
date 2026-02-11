@@ -67,8 +67,11 @@ async def test_schema_rejected_falls_back_to_json_object(monkeypatch):
         {
             "overview": {
                 "enabled": True,
-                "schema_strict": True,
-                "llm": {"api_key": "dummy"},
+                "backend": "openai",
+                "openai": {
+                    "schema_strict": True,
+                    "llm": {"api_key": "dummy"},
+                },
             }
         }
     )

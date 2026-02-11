@@ -38,7 +38,11 @@ async def test_overview_runs_when_enabled_and_key_present():
         {
             "pipeline": {"min_score": 0.0},
             "enrich": {"enabled": False},
-            "overview": {"enabled": True, "llm": {"api_key": "dummy"}},
+            "overview": {
+                "enabled": True,
+                "backend": "openai",
+                "openai": {"llm": {"api_key": "dummy"}},
+            },
             "cache": {"enabled": False},
         }
     )

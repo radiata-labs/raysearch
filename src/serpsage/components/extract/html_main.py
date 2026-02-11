@@ -125,7 +125,7 @@ class MainContentHtmlExtractor(ExtractorBase):
         blocks = [b for b in (clean_whitespace(b) for b in blocks) if b]
 
         # Apply max_extracted_chars budget after block extraction to avoid distorting blocks.
-        max_chars = int(self.settings.enrich.fetch.max_extracted_chars)
+        max_chars = int(self.settings.enrich.fetch.common.max_extracted_chars)
         if max_chars > 0:
             out: list[str] = []
             used = 0
