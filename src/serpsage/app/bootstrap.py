@@ -19,7 +19,9 @@ from serpsage.domain.overview import OverviewBuilder
 from serpsage.domain.rerank import Reranker
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.extract.html_main import MainContentHtmlExtractor
-from serpsage.fetch.http import HttpFetcher
+from serpsage.fetch.auto import AutoFetcher
+from serpsage.fetch.curl_cffi import CURL_CFFI_AVAILABLE, CurlCffiFetcher
+from serpsage.fetch.http import HttpxFetcher
 from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.overview.null import NullLLMClient
 from serpsage.overview.openai import OpenAIClient
@@ -111,14 +113,46 @@ def build_engine(
 
     rate_limiter = ov.rate_limiter or RateLimiter(rt=rt)
     provider: SearchProvider = ov.provider or SearxngProvider(rt=rt, http=http)
-    fetcher: Fetcher = ov.fetcher or HttpFetcher(
-        rt=rt, http=http, cache=cache, rate_limiter=rate_limiter
-    )
     extractor: Extractor = ov.extractor or (
         MainContentHtmlExtractor(rt=rt)
         if (settings.enrich.extractor.kind or "main_content") == "main_content"
         else BasicHtmlExtractor(rt=rt)
     )
+
+    fetcher: Fetcher
+    if ov.fetcher is not None:
+        fetcher = ov.fetcher
+    else:
+        fetch_cfg = settings.enrich.fetch
+        fetch_http = httpx.AsyncClient(
+            proxy=getattr(fetch_cfg, "proxy", None),
+            timeout=httpx.Timeout(float(fetch_cfg.timeout_s)),
+            follow_redirects=bool(fetch_cfg.follow_redirects),
+            max_redirects=int(getattr(fetch_cfg, "max_redirects", 10)),
+            trust_env=False,
+        )
+        stack.push_async_callback(fetch_http.aclose)
+
+        httpx_fetcher = HttpxFetcher(rt=rt, http=fetch_http)
+
+        curl_fetcher = None
+        if str(getattr(fetch_cfg, "strategy", "auto") or "auto") in {"auto", "curl_cffi"}:
+            if CURL_CFFI_AVAILABLE:
+                try:
+                    curl_fetcher = CurlCffiFetcher(rt=rt)
+                except Exception:
+                    curl_fetcher = None
+            if curl_fetcher is not None:
+                stack.push_async_callback(curl_fetcher.aclose)
+
+        fetcher = AutoFetcher(
+            rt=rt,
+            cache=cache,
+            rate_limiter=rate_limiter,
+            httpx_fetcher=httpx_fetcher,
+            curl_fetcher=curl_fetcher,
+            extractor=extractor,
+        )
     ranker: Ranker = ov.ranker or BlendRanker(rt=rt)
 
     llm: LLMClient = ov.llm or (

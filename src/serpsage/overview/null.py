@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.contracts.base import WorkUnit
-from serpsage.contracts.llm import ChatJSONResult
 from serpsage.contracts.protocols import LLMClient
 
 if TYPE_CHECKING:
     from serpsage.app.runtime import CoreRuntime
+    from serpsage.contracts.llm import ChatJSONResult
 
 
 class NullLLMClient(WorkUnit, LLMClient):

@@ -35,8 +35,6 @@ class OpenAIClient(WorkUnit, LLMClient):
         self.client = AsyncOpenAI(
             api_key=llm.api_key,
             base_url=llm.base_url,
-            organization=llm.organization,
-            project=llm.project,
             timeout=float(llm.timeout_s),
             max_retries=int(llm.max_retries),
             default_headers=dict(llm.headers or {}),

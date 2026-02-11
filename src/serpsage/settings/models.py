@@ -98,10 +98,44 @@ class FetchSettings(Model):
         default_factory=lambda: ["text/html", "application/xhtml+xml", "text/plain"]
     )
     follow_redirects: bool = True
+    max_redirects: int = 10
     retry: RetrySettings = Field(default_factory=RetrySettings)
     global_concurrency: int = 16
     per_host_concurrency: int = 2
     politeness_delay_ms: int = 0
+
+    # Fetch strategy.
+    strategy: Literal["httpx", "curl_cffi", "auto"] = "auto"
+    total_budget_s: float = 3.0
+    max_attempts_total: int = 4
+    max_attempts_per_strategy: int = 3
+
+    # Identity / request headers.
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    accept_language: str = "zh-CN,zh;q=0.9,en;q=0.8"
+    use_browser_headers: bool = True
+    disable_br: bool = True
+
+    # Proxy & cookies.
+    proxy: str | None = None
+    cookies: dict[str, str] = Field(default_factory=dict)
+
+    # Size & content policy.
+    max_bytes_behavior: Literal["truncate", "error"] = "truncate"
+    sniff_html_bytes: int = 16_384
+    min_html_bytes: int = 512
+    cache_blocked_pages: bool = False
+
+    # Validate "useful" fetches by checking whether extractor can produce blocks.
+    validate_extractable: bool = True
+    min_blocks: int = 3
+    min_text_chars: int = 400
+    validate_max_chars: int = 200_000
+
+    # curl_cffi options.
+    curl_impersonate: str = "chrome120"
+    curl_http2: bool = True
+    curl_verify_ssl: bool = True
 
 
 class ChunkingSettings(Model):
@@ -178,8 +212,6 @@ class CacheSettings(Model):
 class OpenAICompatSettings(Model):
     base_url: str = "https://api.openai.com/v1"
     api_key: str | None = None
-    organization: str | None = None
-    project: str | None = None
     model: str = "gpt-4o-mini"
     timeout_s: float = 60.0
     max_retries: int = 2

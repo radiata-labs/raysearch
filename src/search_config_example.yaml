@@ -52,9 +52,37 @@ enrich:
     max_bytes: 2000000
     max_extracted_chars: 50000
     follow_redirects: true
+    max_redirects: 10
     global_concurrency: 16
     per_host_concurrency: 2
     politeness_delay_ms: 0
+
+    # Stronger crawling (auto httpx -> curl_cffi fallback) tuned for "extractable blocks".
+    strategy: auto
+    total_budget_s: 3.0
+    max_attempts_total: 4
+    max_attempts_per_strategy: 3
+
+    accept_language: zh-CN,zh;q=0.9,en;q=0.8
+    use_browser_headers: true
+    disable_br: true
+    extra_headers: {}
+    proxy: null
+    cookies: {}
+
+    max_bytes_behavior: truncate
+    sniff_html_bytes: 16384
+    min_html_bytes: 512
+    cache_blocked_pages: false
+
+    validate_extractable: true
+    min_blocks: 3
+    min_text_chars: 400
+    validate_max_chars: 200000
+
+    curl_impersonate: chrome120
+    curl_http2: true
+    curl_verify_ssl: true
   select:
     min_chunk_score: 0.20
     score_soft_gate_tau: 0.07
@@ -76,8 +104,6 @@ overview:
     # OpenAI-compatible endpoint
     base_url: https://api.chatanywhere.tech/
     api_key: sk-GK5XItnMgPf1Hrz1ntL6TfNfJGslUoWvYwTCs4AcBkfnv32k
-    organization: null
-    project: null
     model: gpt-4.1-mini
     timeout_s: 60.0
     max_retries: 2

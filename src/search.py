@@ -15,7 +15,9 @@ async def main(
     type: Literal["json", "markdown"] = "json",
 ) -> dict[str, Any]:
     settings = load_settings("src/search_config_example.yaml")
-    req = SearchRequest(query=query, depth=depth, max_results=max_results)
+    req = SearchRequest(
+        query=query, depth=depth, max_results=max_results, overview=False
+    )
 
     async with Engine.from_settings(settings) as engine:
         resp = await engine.run(req)
