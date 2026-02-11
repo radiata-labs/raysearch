@@ -11,7 +11,6 @@ class FetchResult(FrozenModel):
 
 
 class FetchAttempt(FetchResult):
-    truncated: bool = False
     strategy_used: str = ""
     content_encoding: str | None = None
     content_length_header: str | None = None

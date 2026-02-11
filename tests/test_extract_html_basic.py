@@ -27,3 +27,12 @@ def test_basic_html_extractor_drops_nav_footer():
     assert "main content" in text
     assert "menu should drop" not in text
     assert "footer should drop" not in text
+
+
+def test_basic_html_extractor_applies_fixed_max_chars_budget():
+    payload = ("hello " * 20_000).encode("utf-8")
+    settings = AppSettings()
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    ex = BasicHtmlExtractor(rt=rt)
+    out = ex.extract(url="https://x", content=payload, content_type="text/plain")
+    assert len(out.text) <= 50_000

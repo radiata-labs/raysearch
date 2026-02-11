@@ -42,10 +42,6 @@ async def test_truncate_behavior_returns_prefix_and_can_still_be_extractable():
                     "backend": "httpx",
                     "common": {
                         "max_bytes": 600,
-                        "max_bytes_behavior": "truncate",
-                        "validate_extractable": True,
-                        "min_blocks": 1,
-                        "min_text_chars": 50,
                         "timeout_s": 1.0,
                     },
                 },

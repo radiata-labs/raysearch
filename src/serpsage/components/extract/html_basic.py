@@ -55,10 +55,6 @@ class BasicHtmlExtractor(ExtractorBase):
             else:
                 visible = html_mod.unescape(parser.get_text())
 
-        max_chars = int(self.settings.enrich.fetch.common.max_extracted_chars)
-        if max_chars and len(visible) > max_chars:
-            visible = visible[:max_chars]
-
         visible = visible.replace("\r\n", "\n").replace("\r", "\n")
         lines = [clean_whitespace(line) for line in visible.split("\n")]
         blocks = [line for line in lines if line]

@@ -33,7 +33,7 @@ class MemCache(CacheBase):
 
 
 @pytest.mark.anyio
-async def test_cache_key_varies_with_accept_language_and_strategy():
+async def test_cache_key_varies_with_strategy():
     html = b"<html><body><p>" + (b"x" * 2000) + b"</p></body></html>"
 
     def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
@@ -49,9 +49,6 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
                 "fetch": {
                     "backend": "auto",
                     "common": {
-                        "validate_extractable": True,
-                        "min_blocks": 1,
-                        "min_text_chars": 10,
                         "timeout_s": 1.0,
                     },
                 },
@@ -67,10 +64,7 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
                     "fetch": {
                         **base["enrich"]["fetch"],
                         "backend": "auto",
-                        "common": {
-                            **base["enrich"]["fetch"]["common"],
-                            "accept_language": "zh-CN",
-                        },
+                        "common": {**base["enrich"]["fetch"]["common"]},
                     },
                 },
             }
@@ -83,10 +77,7 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
                     "fetch": {
                         **base["enrich"]["fetch"],
                         "backend": "httpx",
-                        "common": {
-                            **base["enrich"]["fetch"]["common"],
-                            "accept_language": "en-US",
-                        },
+                        "common": {**base["enrich"]["fetch"]["common"]},
                     },
                 },
             }

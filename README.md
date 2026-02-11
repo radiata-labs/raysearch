@@ -23,6 +23,7 @@ Componentized config shape:
 - Shared HTTP transport settings live under top-level `http` and are reused by provider/fetch/overview.
 - `cache` and `overview` keep an `enabled` switch.
 - Backend-specific options live under component sub-blocks (for example `overview.openai.llm`, `enrich.fetch.common`, `rank.blend.providers`).
+- `enrich.fetch.common` is intentionally minimal and follows fail-fast validation (`extra=forbid`) to prevent stale/ignored keys.
 - See `src/search_config_example.yaml` for a full reference.
 
 Score filtering:

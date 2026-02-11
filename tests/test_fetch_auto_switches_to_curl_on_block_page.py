@@ -78,9 +78,6 @@ async def test_auto_fetcher_switches_to_curl_on_challenge_page_and_caches_good_r
                 "fetch": {
                     "backend": "auto",
                     "common": {
-                        "validate_extractable": True,
-                        "min_blocks": 1,
-                        "min_text_chars": 120,
                         "timeout_s": 1.0,
                     },
                     "auto": {

@@ -124,24 +124,6 @@ class MainContentHtmlExtractor(ExtractorBase):
 
         blocks = [b for b in (clean_whitespace(b) for b in blocks) if b]
 
-        # Apply max_extracted_chars budget after block extraction to avoid distorting blocks.
-        max_chars = int(self.settings.enrich.fetch.common.max_extracted_chars)
-        if max_chars > 0:
-            out: list[str] = []
-            used = 0
-            for b in blocks:
-                if used >= max_chars:
-                    break
-                remain = max_chars - used
-                if len(b) <= remain:
-                    out.append(b)
-                    used += len(b)
-                else:
-                    out.append(b[:remain].rstrip())
-                    used = max_chars
-                    break
-            blocks = [b for b in out if b]
-
         joined = "\n".join(blocks)
         joined = html_mod.unescape(joined)
         return ExtractedText(text=joined, blocks=list(blocks))

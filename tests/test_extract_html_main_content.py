@@ -34,3 +34,15 @@ def test_main_content_extractor_prefers_mediawiki_content_and_drops_noise():
     assert "menu should drop" not in text
     assert "toc should drop" not in text
     assert "footer should drop" not in text
+
+
+def test_main_content_extractor_applies_fixed_max_chars_budget():
+    body = "<p>" + ("hello " * 20_000) + "</p>"
+    html = f"<html><body><main>{body}</main></body></html>".encode("utf-8")
+    settings = AppSettings.model_validate(
+        {"enrich": {"extractor": {"backend": "main_content"}}}
+    )
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    ex = MainContentHtmlExtractor(rt=rt)
+    out = ex.extract(url="https://x", content=html, content_type="text/html")
+    assert len(out.text) <= 50_000

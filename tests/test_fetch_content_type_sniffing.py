@@ -21,7 +21,7 @@ class FakeClock(ClockBase):
 
 
 @pytest.mark.anyio
-async def test_sniff_allows_mislabeled_html():
+async def test_fetch_allows_mislabeled_html():
     html = b"<html><body><p>Hello " + (b"x" * 800) + b"</p></body></html>"
 
     def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
@@ -37,9 +37,6 @@ async def test_sniff_allows_mislabeled_html():
                 "fetch": {
                     "backend": "httpx",
                     "common": {
-                        "validate_extractable": True,
-                        "min_blocks": 1,
-                        "min_text_chars": 20,
                         "timeout_s": 1.0,
                     },
                 },
@@ -67,8 +64,8 @@ async def test_sniff_allows_mislabeled_html():
 
 
 @pytest.mark.anyio
-async def test_sniff_rejects_non_html_and_raises_unusable():
-    body = b"\x89PNG\r\n\x1a\n" + (b"x" * 5000)
+async def test_fetch_rejects_too_small_body_and_raises_unusable():
+    body = b"tiny"
 
     def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
         return httpx.Response(200, headers={"content-type": "image/png"}, content=body)
@@ -81,9 +78,6 @@ async def test_sniff_rejects_non_html_and_raises_unusable():
                 "fetch": {
                     "backend": "httpx",
                     "common": {
-                        "validate_extractable": True,
-                        "min_blocks": 1,
-                        "min_text_chars": 10,
                         "timeout_s": 1.0,
                     },
                 },

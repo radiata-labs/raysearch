@@ -104,54 +104,43 @@ def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
     return {"heuristic": 1.0}
 
 
-class FetchCommonSettings(Model):
-    user_agent: str = "serpsage-bot/3.0"
-    timeout_s: float = 10.0
-    max_bytes: int = 2_000_000
-    max_extracted_chars: int = 50_000
-    allow_content_types: list[str] = Field(
-        default_factory=lambda: ["text/html", "application/xhtml+xml", "text/plain"]
-    )
-    follow_redirects: bool = True
-    max_redirects: int = 10
-    retry: RetrySettings = Field(default_factory=RetrySettings)
-    global_concurrency: int = 16
-    per_host_concurrency: int = 2
-    politeness_delay_ms: int = 0
-    extra_headers: dict[str, str] = Field(default_factory=dict)
-    accept_language: str = "zh-CN,zh;q=0.9,en;q=0.8"
-    use_browser_headers: bool = True
-    disable_br: bool = True
-    cookies: dict[str, str] = Field(default_factory=dict)
-    max_bytes_behavior: Literal["truncate", "error"] = "truncate"
-    sniff_html_bytes: int = 16_384
-    min_html_bytes: int = 512
-    cache_blocked_pages: bool = False
-    validate_extractable: bool = True
-    min_blocks: int = 3
-    min_text_chars: int = 400
-    validate_max_chars: int = 200_000
-
-
 class FetchHttpxSettings(Model):
-    pass
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    retry: RetrySettings = Field(default_factory=RetrySettings)
 
 
 class FetchCurlCffiSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     impersonate: str = "chrome120"
     http2: bool = True
     verify_ssl: bool = True
+    retry: RetrySettings = Field(default_factory=RetrySettings)
 
 
 class FetchAutoSettings(Model):
-    total_budget_s: float = 3.0
-    max_attempts_total: int = 4
-    max_attempts_per_strategy: int = 3
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+
+class FetchRateLimitSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    global_concurrency: int = 16
+    per_host_concurrency: int = 2
+    politeness_delay_ms: int = 0
 
 
 class FetchSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     backend: FetchBackendKey = "auto"
-    common: FetchCommonSettings = Field(default_factory=FetchCommonSettings)
+    user_agent: str = "serpsage-bot/3.0"
+    timeout_s: float = 10.0
+    follow_redirects: bool = True
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    cookies: dict[str, str] = Field(default_factory=dict)
+    rate_limit: FetchRateLimitSettings = Field(default_factory=FetchRateLimitSettings)
     httpx: FetchHttpxSettings = Field(default_factory=FetchHttpxSettings)
     curl_cffi: FetchCurlCffiSettings = Field(default_factory=FetchCurlCffiSettings)
     auto: FetchAutoSettings = Field(default_factory=FetchAutoSettings)
@@ -381,9 +370,9 @@ __all__ = [
     "EnrichSettings",
     "EnrichExtractorSettings",
     "FetchAutoSettings",
-    "FetchCommonSettings",
     "FetchCurlCffiSettings",
     "FetchHttpxSettings",
+    "FetchRateLimitSettings",
     "FetchSettings",
     "HttpSettings",
     "HeuristicRankSettings",

@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import random
 import time
-from typing import Any
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
 import httpx
 
-from serpsage.components.fetch.common import (
-    browser_headers,
-    looks_like_html,
-    parse_content_type,
-)
+from serpsage.components.fetch.common import browser_headers
 from serpsage.components.http import HttpClient
 from serpsage.contracts.services import FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
+
+if TYPE_CHECKING:
+    from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.settings.models import RetrySettings
 
 
 def _backoff_s(attempt: int, base_ms: int, max_ms: int) -> float:
@@ -36,9 +36,7 @@ def _parse_retry_after_s(v: str | None) -> float | None:
     return None
 
 
-async def _read_with_limit(
-    aiter, *, max_bytes: int, behavior: str
-) -> tuple[bytes, bool]:
+async def _read_with_limit(aiter, *, max_bytes: int) -> tuple[bytes, bool]:
     if max_bytes <= 0:
         chunks: list[bytes] = [part async for part in aiter if part]
         return b"".join(chunks), False
@@ -55,8 +53,6 @@ async def _read_with_limit(
         if len(part) <= remain:
             buf.extend(part)
         else:
-            if behavior == "error":
-                raise ValueError(f"exceeded max_bytes={max_bytes}")
             buf.extend(part[:remain])
             truncated = True
             break
@@ -82,35 +78,17 @@ class HttpxFetcher(FetcherBase):
                 content=bytes(res.content or b""),
             )
 
-    async def fetch_attempt(self, *, url: str, profile: str, span: Any) -> FetchAttempt:
+    async def fetch_attempt(
+        self, *, url: str, profile: str, span: SpanBase, retry: RetrySettings | None = None
+    ) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
-        common = fetch_cfg.common
-        auto_cfg = fetch_cfg.auto
-        retry = common.retry
+        retry = retry or fetch_cfg.httpx.retry
 
         started = time.time()
-        max_attempts = min(
-            int(auto_cfg.max_attempts_per_strategy),
-            int(getattr(retry, "max_attempts", 3)),
-        )
-        max_attempts = max(1, max_attempts)
+        max_attempts = max(1, int(getattr(retry, "max_attempts", 3)))
 
-        budget = float(auto_cfg.total_budget_s)
-        timeout_s = float(common.timeout_s)
-        timeout_s = max(0.5, min(timeout_s, max(0.5, budget * 0.7)))
+        timeout_s = max(0.5, fetch_cfg.timeout_s)
         timeout = httpx.Timeout(timeout_s)
-
-        headers = browser_headers(common, profile=profile)
-        cookies = dict(common.cookies or {})
-
-        allow = {
-            str(x).strip().lower()
-            for x in (common.allow_content_types or [])
-            if str(x).strip()
-        }
-        sniff_n = max(1024, int(common.sniff_html_bytes))
-        behavior = str(common.max_bytes_behavior or "truncate")
-        max_bytes = int(common.max_bytes)
 
         last_status: int | None = None
         last_url = url
@@ -127,10 +105,10 @@ class HttpxFetcher(FetcherBase):
                 async with self._http.stream(
                     "GET",
                     url,
-                    headers=headers,
-                    cookies=cookies or None,
+                    headers=browser_headers(fetch_cfg, profile=profile),
+                    cookies=fetch_cfg.cookies or None,
                     timeout=timeout,
-                    follow_redirects=bool(common.follow_redirects),
+                    follow_redirects=bool(fetch_cfg.follow_redirects),
                 ) as resp:
                     last_status = int(resp.status_code)
                     last_url = str(resp.url)
@@ -138,16 +116,9 @@ class HttpxFetcher(FetcherBase):
                     last_enc = resp.headers.get("content-encoding")
                     last_len_hdr = resp.headers.get("content-length")
 
-                    ct_main = parse_content_type(last_ct)
-                    sniff_needed = not (ct_main and (not allow or ct_main in allow))
-
-                    body, truncated = await _read_with_limit(
-                        resp.aiter_bytes(),
-                        max_bytes=max_bytes,
-                        behavior=behavior,
+                    last_body = b"".join(
+                        [part async for part in resp.aiter_bytes() if part]
                     )
-                    last_body = body
-                    last_truncated = bool(truncated)
 
                     if last_status == 429 or (500 <= last_status < 600):
                         if attempt >= max_attempts:
@@ -165,17 +136,6 @@ class HttpxFetcher(FetcherBase):
                         span.set_attr("httpx_retry_delay_s", float(delay))
                         await anyio.sleep(delay)
                         continue
-
-                    if (
-                        allow
-                        and ct_main
-                        and ct_main not in allow
-                        or sniff_needed
-                        and allow
-                        and ct_main != "text/plain"
-                    ):
-                        if not looks_like_html(body[:sniff_n]):
-                            break
 
                     break
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
@@ -203,7 +163,6 @@ class HttpxFetcher(FetcherBase):
             status_code=int(last_status or 0),
             content_type=last_ct,
             content=last_body,
-            truncated=bool(last_truncated),
             strategy_used="httpx",
             content_encoding=last_enc,
             content_length_header=last_len_hdr,

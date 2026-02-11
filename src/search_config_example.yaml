@@ -72,46 +72,29 @@ enrich:
     main_content: {}
   fetch:
     backend: auto # httpx|curl_cffi|auto
-    common:
-      user_agent: serpsage-bot/3.0
-      timeout_s: 10.0
-      max_bytes: 2000000
-      max_extracted_chars: 50000
-      allow_content_types: [text/html, application/xhtml+xml, text/plain]
-      follow_redirects: true
-      max_redirects: 10
+    user_agent: serpsage-bot/3.0
+    timeout_s: 10.0
+    follow_redirects: true
+    extra_headers: {}
+    cookies: {}
+    rate_limit:
+      global_concurrency: 16
+      per_host_concurrency: 2
+      politeness_delay_ms: 0
+    httpx:
       retry:
         max_attempts: 3
         base_delay_ms: 200
         max_delay_ms: 2000
-      global_concurrency: 16
-      per_host_concurrency: 2
-      politeness_delay_ms: 0
-
-      accept_language: zh-CN,zh;q=0.9,en;q=0.8
-      use_browser_headers: true
-      disable_br: true
-      extra_headers: {}
-      cookies: {}
-
-      max_bytes_behavior: truncate
-      sniff_html_bytes: 16384
-      min_html_bytes: 512
-      cache_blocked_pages: false
-
-      validate_extractable: true
-      min_blocks: 3
-      min_text_chars: 400
-      validate_max_chars: 200000
-    httpx: {}
     curl_cffi:
       impersonate: chrome120
       http2: true
       verify_ssl: true
-    auto:
-      total_budget_s: 3.0
-      max_attempts_total: 4
-      max_attempts_per_strategy: 3
+      retry:
+        max_attempts: 3
+        base_delay_ms: 200
+        max_delay_ms: 2000
+    auto: {}
   select:
     min_chunk_score: 0.20
     score_soft_gate_tau: 0.07
