@@ -9,12 +9,13 @@ from serpsage.components import (
     build_cache,
     build_extractor,
     build_fetcher,
+    build_http_client,
     build_overview_client,
     build_provider,
     build_ranker,
 )
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.components.fetch.rate_limit import RateLimiter
+from serpsage.components.http import HttpClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import (
     CacheBase,
@@ -76,16 +77,12 @@ def build_engine(
 
     _validate_override_workunits(ov)
 
-    shared_http_unit: HttpClientUnit | None = None
+    shared_http_unit: HttpClient | None = None
 
-    def get_shared_http_unit() -> HttpClientUnit:
+    def get_shared_http_unit() -> HttpClient:
         nonlocal shared_http_unit
         if shared_http_unit is None:
-            shared_http_unit = HttpClientUnit(
-                rt=rt,
-                client=ov.http,
-                owns_client=ov.http is None,
-            )
+            shared_http_unit = build_http_client(rt=rt, ov=ov)
         return shared_http_unit
 
     cache: CacheBase = ov.cache or build_cache(rt=rt)
@@ -100,7 +97,7 @@ def build_engine(
         cache=cache,
         rate_limiter=rate_limiter,
         extractor=extractor,
-        ov=ov,
+        http=get_shared_http_unit(),
     )
     ranker: RankerBase = ov.ranker or build_ranker(rt=rt)
     llm: LLMClientBase = ov.llm or build_overview_client(

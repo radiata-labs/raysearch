@@ -1,10 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import httpx
 import pytest
 
 from serpsage.components.fetch.http import HttpxFetcher
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Runtime
 from serpsage.settings.models import AppSettings
@@ -67,7 +67,7 @@ async def test_retry_after_is_capped(monkeypatch: pytest.MonkeyPatch):
     async with httpx.AsyncClient(transport=transport, follow_redirects=True) as client:
         fx = HttpxFetcher(
             rt=rt,
-            http=HttpClientUnit(rt=rt, client=client, owns_client=False),
+            http=HttpClient(rt=rt, client=client, owns_client=False),
         )
 
         # span can be a dummy object with set_attr method

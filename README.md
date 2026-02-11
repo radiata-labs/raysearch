@@ -20,6 +20,7 @@ Note: when using the default `base_url`, `SEARCH_API_KEY` is required. This is e
 
 Componentized config shape:
 - Each component selects implementation via `backend` (for example: `provider.backend`, `rank.backend`, `enrich.fetch.backend`, `enrich.extractor.backend`, `overview.backend`, `cache.backend`).
+- Shared HTTP transport settings live under top-level `http` and are reused by provider/fetch/overview.
 - `cache` and `overview` keep an `enabled` switch.
 - Backend-specific options live under component sub-blocks (for example `overview.openai.llm`, `enrich.fetch.common`, `rank.blend.providers`).
 - See `src/search_config_example.yaml` for a full reference.

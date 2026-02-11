@@ -46,7 +46,6 @@ class Overrides(MutableModel):
     extractor: ExtractorBase | None = None
     ranker: RankerBase | None = None
     llm: LLMClientBase | None = None
-    fetch_http: httpx.AsyncClient | None = None
 
 
 __all__ = ["Overrides", "Runtime"]

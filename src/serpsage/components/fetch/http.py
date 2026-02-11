@@ -13,7 +13,7 @@ from serpsage.components.fetch.common import (
     looks_like_html,
     parse_content_type,
 )
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient
 from serpsage.contracts.services import FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
@@ -64,7 +64,7 @@ async def _read_with_limit(
 
 
 class HttpxFetcher(FetcherBase):
-    def __init__(self, *, rt, http: HttpClientUnit) -> None:  # noqa: ANN001
+    def __init__(self, *, rt, http: HttpClient) -> None:  # noqa: ANN001
         super().__init__(rt=rt)
         self.bind_deps(http)
         self._http = http.client

@@ -40,8 +40,8 @@ def _decode_fetch_cache(blob: bytes) -> dict[str, Any]:
     return json.loads(blob.decode("utf-8"))
 
 
-def _should_disable_cache(fetch_cfg: Any) -> bool:
-    if getattr(fetch_cfg, "proxy", None):
+def _should_disable_cache(*, fetch_cfg: Any, http_cfg: Any) -> bool:
+    if getattr(http_cfg, "proxy", None):
         return True
     cookies = getattr(fetch_cfg, "cookies", None) or {}
     if cookies:
@@ -75,11 +75,12 @@ class AutoFetcher(FetcherBase):
     @override
     async def afetch(self, *, url: str) -> FetchResult:
         fetch_cfg = self.settings.enrich.fetch
+        http_cfg = self.settings.http
         common = fetch_cfg.common
         host = urlparse(url).netloc.lower()
         backend = str(fetch_cfg.backend or "auto").lower()
 
-        cache_allowed = not _should_disable_cache(common)
+        cache_allowed = not _should_disable_cache(fetch_cfg=common, http_cfg=http_cfg)
         cache_key = _hash_key(
             {
                 "url": url,

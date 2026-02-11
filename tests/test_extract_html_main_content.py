@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from serpsage.components.extract.html_main import MainContentHtmlExtractor
 from serpsage.contracts.lifecycle import ClockBase

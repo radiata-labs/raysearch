@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import pytest
 
@@ -106,3 +106,4 @@ async def test_enrich_prunes_leading_boilerplate_blocks():
     assert keyword in txt0
     assert "欢迎" not in txt0
     assert "编辑前请阅读" not in txt0
+

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import httpx
 import pytest
@@ -6,8 +6,8 @@ import pytest
 from serpsage.components.extract.html_basic import BasicHtmlExtractor
 from serpsage.components.fetch.auto import AutoFetcher
 from serpsage.components.fetch.http import HttpxFetcher
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.components.fetch.rate_limit import RateLimiter
+from serpsage.components.http import HttpClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import CacheBase
 from serpsage.core.runtime import Runtime
@@ -104,7 +104,7 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
             rate_limiter=RateLimiter(rt=rt1),
             httpx_fetcher=HttpxFetcher(
                 rt=rt1,
-                http=HttpClientUnit(rt=rt1, client=client, owns_client=False),
+                http=HttpClient(rt=rt1, client=client, owns_client=False),
             ),
             curl_fetcher=None,
             extractor=BasicHtmlExtractor(rt=rt1),
@@ -115,7 +115,7 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
             rate_limiter=RateLimiter(rt=rt2),
             httpx_fetcher=HttpxFetcher(
                 rt=rt2,
-                http=HttpClientUnit(rt=rt2, client=client, owns_client=False),
+                http=HttpClient(rt=rt2, client=client, owns_client=False),
             ),
             curl_fetcher=None,
             extractor=BasicHtmlExtractor(rt=rt2),

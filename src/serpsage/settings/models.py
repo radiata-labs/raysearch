@@ -36,6 +36,14 @@ class SearxngSettings(Model):
     retry: RetrySettings = Field(default_factory=RetrySettings)
 
 
+class HttpSettings(Model):
+    proxy: str | None = None
+    trust_env: bool = False
+    max_connections: int = 100
+    max_keepalive_connections: int = 20
+    keepalive_expiry_s: float = 5.0
+
+
 class ProviderSettings(Model):
     backend: ProviderBackendKey = "searxng"
     searxng: SearxngSettings = Field(default_factory=SearxngSettings)
@@ -114,7 +122,6 @@ class FetchCommonSettings(Model):
     accept_language: str = "zh-CN,zh;q=0.9,en;q=0.8"
     use_browser_headers: bool = True
     disable_br: bool = True
-    proxy: str | None = None
     cookies: dict[str, str] = Field(default_factory=dict)
     max_bytes_behavior: Literal["truncate", "error"] = "truncate"
     sniff_html_bytes: int = 16_384
@@ -313,6 +320,7 @@ class TelemetrySettings(Model):
 
 
 class AppSettings(Model):
+    http: HttpSettings = Field(default_factory=HttpSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     enrich: EnrichSettings = Field(default_factory=EnrichSettings)
@@ -377,6 +385,7 @@ __all__ = [
     "FetchCurlCffiSettings",
     "FetchHttpxSettings",
     "FetchSettings",
+    "HttpSettings",
     "HeuristicRankSettings",
     "NormalizationSettings",
     "OpenAICompatSettings",

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from serpsage.components.rank.blend import BlendRanker
 from serpsage.contracts.lifecycle import ClockBase

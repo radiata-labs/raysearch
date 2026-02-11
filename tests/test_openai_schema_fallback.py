@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 import serpsage.components.overview.openai as mod
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient
 from serpsage.components.overview.openai import OpenAIClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Runtime
@@ -80,7 +80,7 @@ async def test_schema_rejected_falls_back_to_json_object(monkeypatch):
     async with httpx.AsyncClient() as http:
         client = OpenAIClient(
             rt=rt,
-            http=HttpClientUnit(rt=rt, client=http, owns_client=False),
+            http=HttpClient(rt=rt, client=http, owns_client=False),
         )
         res = await client.chat_json(
             model="gpt-4o-mini",

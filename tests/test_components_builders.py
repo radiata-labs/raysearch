@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 import serpsage.components.overview as overview_factory
 import serpsage.components.provider as provider_factory
 import serpsage.components.rank as rank_factory
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient, build_http_client
 from serpsage.components.overview.null import NullLLMClient
 from serpsage.components.overview.openai import OpenAIClient
 from serpsage.components.provider.searxng import SearxngProvider
 from serpsage.components.rank.blend import BlendRanker
 from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import Runtime
+from serpsage.core.runtime import Overrides, Runtime
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
@@ -32,7 +33,7 @@ async def test_build_provider_selects_searxng() -> None:
     settings = AppSettings.model_validate({"provider": {"backend": "searxng"}})
     rt = _rt(settings)
     async with httpx.AsyncClient() as client:
-        unit = HttpClientUnit(rt=rt, client=client, owns_client=False)
+        unit = HttpClient(rt=rt, client=client, owns_client=False)
         provider = provider_factory.build_provider(rt=rt, http=unit)
     assert isinstance(provider, SearxngProvider)
 
@@ -63,7 +64,7 @@ async def test_build_overview_client_respects_enabled_flag() -> None:
     settings = AppSettings.model_validate({"overview": {"enabled": False}})
     rt = _rt(settings)
     async with httpx.AsyncClient() as client:
-        unit = HttpClientUnit(rt=rt, client=client, owns_client=False)
+        unit = HttpClient(rt=rt, client=client, owns_client=False)
         llm = overview_factory.build_overview_client(rt=rt, http=unit)
     assert isinstance(llm, NullLLMClient)
 
@@ -75,7 +76,7 @@ async def test_build_overview_client_openai_requires_api_key() -> None:
     )
     rt = _rt(settings)
     async with httpx.AsyncClient() as client:
-        unit = HttpClientUnit(rt=rt, client=client, owns_client=False)
+        unit = HttpClient(rt=rt, client=client, owns_client=False)
         with pytest.raises(ValueError, match="overview.openai.llm.api_key"):
             overview_factory.build_overview_client(rt=rt, http=unit)
 
@@ -93,6 +94,24 @@ async def test_build_overview_client_openai_selected() -> None:
     )
     rt = _rt(settings)
     async with httpx.AsyncClient() as client:
-        unit = HttpClientUnit(rt=rt, client=client, owns_client=False)
+        unit = HttpClient(rt=rt, client=client, owns_client=False)
         llm = overview_factory.build_overview_client(rt=rt, http=unit)
     assert isinstance(llm, OpenAIClient)
+
+
+@pytest.mark.anyio
+async def test_build_http_client_uses_override_without_ownership() -> None:
+    settings = AppSettings.model_validate({})
+    rt = _rt(settings)
+    external = httpx.AsyncClient()
+    try:
+        unit = build_http_client(rt=rt, ov=Overrides(http=external))
+        await unit.aclose()
+        assert external.is_closed is False
+    finally:
+        await external.aclose()
+
+
+def test_overrides_no_longer_accepts_fetch_http() -> None:
+    with pytest.raises(ValidationError, match="fetch_http"):
+        Overrides(fetch_http=object())  # type: ignore[call-arg]

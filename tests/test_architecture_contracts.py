@@ -17,6 +17,7 @@ INCLUDED_PREFIXES = (
     "serpsage.domain.",
     "serpsage.components.provider.",
     "serpsage.components.fetch.",
+    "serpsage.components.http.",
     "serpsage.components.extract.",
     "serpsage.components.rank.",
     "serpsage.components.cache.",

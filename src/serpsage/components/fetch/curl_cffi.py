@@ -80,7 +80,7 @@ class CurlCffiFetcher(FetcherBase):
 
         headers = browser_headers(common)
         cookies = dict(common.cookies or {})
-        proxy = common.proxy
+        proxy = self.settings.http.proxy
 
         timeout_s = float(common.timeout_s)
         budget = float(auto_cfg.total_budget_s)

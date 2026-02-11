@@ -233,7 +233,7 @@ class EnrichScoringMixin:
             "规范",
             "帮助",
             "本站",
-            "维基",
+            "百科",
             "wiki",
         }
 
@@ -413,3 +413,4 @@ class EnrichScoringMixin:
 
 
 __all__ = ["EnrichScoringMixin"]
+

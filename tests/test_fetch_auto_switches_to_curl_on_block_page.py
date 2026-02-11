@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 
@@ -8,7 +8,7 @@ import pytest
 from serpsage.components.extract.html_basic import BasicHtmlExtractor
 from serpsage.components.fetch.auto import AutoFetcher
 from serpsage.components.fetch.http import HttpxFetcher
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import CacheBase
 from serpsage.core.runtime import Runtime
@@ -110,7 +110,7 @@ async def test_auto_fetcher_switches_to_curl_on_challenge_page_and_caches_good_r
     async with httpx.AsyncClient(transport=transport, follow_redirects=True) as client:
         httpx_fetcher = HttpxFetcher(
             rt=rt,
-            http=HttpClientUnit(rt=rt, client=client, owns_client=False),
+            http=HttpClient(rt=rt, client=client, owns_client=False),
         )
         curl = FakeCurl(rt=rt)
         cache = MemCache(rt=rt)

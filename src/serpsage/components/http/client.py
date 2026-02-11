@@ -11,21 +11,17 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
 
-class HttpClientUnit(WorkUnit):
+class HttpClient(WorkUnit):
     def __init__(
         self,
         *,
         rt: Runtime,
-        client: httpx.AsyncClient | None = None,
-        owns_client: bool | None = None,
+        client: httpx.AsyncClient,
+        owns_client: bool,
     ) -> None:
         super().__init__(rt=rt)
-        if client is None:
-            self._client = httpx.AsyncClient()
-            self._owns_client = True if owns_client is None else bool(owns_client)
-            return
         self._client = client
-        self._owns_client = False if owns_client is None else bool(owns_client)
+        self._owns_client = bool(owns_client)
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -38,4 +34,4 @@ class HttpClientUnit(WorkUnit):
         await self._client.aclose()
 
 
-__all__ = ["HttpClientUnit"]
+__all__ = ["HttpClient"]

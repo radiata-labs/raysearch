@@ -8,6 +8,13 @@ provider:
     allow_redirects: false
     headers: {}
 
+http:
+  proxy: null
+  trust_env: false
+  max_connections: 100
+  max_keepalive_connections: 20
+  keepalive_expiry_s: 5.0
+
 pipeline:
   default_profile: general
   max_results: 16
@@ -85,7 +92,6 @@ enrich:
       use_browser_headers: true
       disable_br: true
       extra_headers: {}
-      proxy: null
       cookies: {}
 
       max_bytes_behavior: truncate

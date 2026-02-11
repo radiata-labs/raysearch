@@ -7,11 +7,11 @@ from serpsage.components.overview.openai import OpenAIClient
 from serpsage.contracts.services import LLMClientBase
 
 if TYPE_CHECKING:
-    from serpsage.components.fetch.http_client_unit import HttpClientUnit
+    from serpsage.components.http import HttpClient
     from serpsage.core.runtime import Runtime
 
 
-def build_overview_client(*, rt: Runtime, http: HttpClientUnit) -> LLMClientBase:
+def build_overview_client(*, rt: Runtime, http: HttpClient) -> LLMClientBase:
     cfg = rt.settings.overview
     if not bool(cfg.enabled):
         return NullLLMClient(rt=rt)
@@ -27,9 +27,7 @@ def build_overview_client(*, rt: Runtime, http: HttpClientUnit) -> LLMClientBase
             )
         return OpenAIClient(rt=rt, http=http)
 
-    raise ValueError(
-        f"unsupported overview backend `{backend}`; expected openai|null"
-    )
+    raise ValueError(f"unsupported overview backend `{backend}`; expected openai|null")
 
 
 __all__ = [

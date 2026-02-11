@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import httpx
 import pytest
@@ -7,8 +7,8 @@ from serpsage.components.cache.null import NullCache
 from serpsage.components.extract.html_basic import BasicHtmlExtractor
 from serpsage.components.fetch.auto import AutoFetcher
 from serpsage.components.fetch.http import HttpxFetcher
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
 from serpsage.components.fetch.rate_limit import RateLimiter
+from serpsage.components.http import HttpClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Runtime
 from serpsage.settings.models import AppSettings
@@ -62,7 +62,7 @@ async def test_truncate_behavior_returns_prefix_and_can_still_be_extractable():
             rate_limiter=RateLimiter(rt=rt),
             httpx_fetcher=HttpxFetcher(
                 rt=rt,
-                http=HttpClientUnit(rt=rt, client=client, owns_client=False),
+                http=HttpClient(rt=rt, client=client, owns_client=False),
             ),
             curl_fetcher=None,
             extractor=BasicHtmlExtractor(rt=rt),

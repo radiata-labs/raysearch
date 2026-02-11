@@ -7,7 +7,7 @@ from typing_extensions import override
 import openai
 from openai import AsyncOpenAI
 
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient
 from serpsage.contracts.services import LLMClientBase
 from serpsage.models.llm import ChatJSONResult, LLMUsage
 
@@ -27,7 +27,7 @@ class OpenAIClient(LLMClientBase):
       other providers / local models.
     """
 
-    def __init__(self, *, rt: Runtime, http: HttpClientUnit) -> None:
+    def __init__(self, *, rt: Runtime, http: HttpClient) -> None:
         super().__init__(rt=rt)
         self.bind_deps(http)
         llm = self.settings.overview.openai.llm
@@ -68,7 +68,9 @@ class OpenAIClient(LLMClientBase):
             response_format = {"type": "json_object"}
 
         with self.span("llm.openai.chat_json", model=model) as sp:
-            sp.set_attr("schema_strict", bool(self.settings.overview.openai.schema_strict))
+            sp.set_attr(
+                "schema_strict", bool(self.settings.overview.openai.schema_strict)
+            )
             sp.set_attr("timeout_s", float(timeout_s or llm.timeout_s))
 
             try:
@@ -83,8 +85,9 @@ class OpenAIClient(LLMClientBase):
                 # Some OpenAI-compatible providers reject strict schema validation.
                 # If so, degrade to `json_object` so the pipeline can still validate
                 # output with Pydantic (and self-heal in OverviewStep if needed).
-                if self.settings.overview.openai.schema_strict and _looks_like_schema_error(
-                    exc
+                if (
+                    self.settings.overview.openai.schema_strict
+                    and _looks_like_schema_error(exc)
                 ):
                     sp.add_event("llm.openai.schema_rejected_fallback_json_object")
                     resp = await self.client.chat.completions.create(

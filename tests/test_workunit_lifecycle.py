@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from serpsage import Engine
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import SearchProviderBase
 from serpsage.core.runtime import Overrides, Runtime
@@ -159,12 +159,41 @@ async def test_http_client_unit_ownership_controls_close_behavior():
     rt = _rt(settings)
 
     owned_client = httpx.AsyncClient()
-    owned = HttpClientUnit(rt=rt, client=owned_client, owns_client=True)
+    owned = HttpClient(rt=rt, client=owned_client, owns_client=True)
     await owned.aclose()
     assert owned_client.is_closed is True
 
     external_client = httpx.AsyncClient()
-    external = HttpClientUnit(rt=rt, client=external_client, owns_client=False)
+    external = HttpClient(rt=rt, client=external_client, owns_client=False)
     await external.aclose()
     assert external_client.is_closed is False
     await external_client.aclose()
+
+
+def test_build_engine_uses_single_shared_http_client_unit():
+    settings = AppSettings.model_validate(
+        {
+            "overview": {
+                "enabled": True,
+                "backend": "openai",
+                "openai": {"llm": {"api_key": "dummy"}},
+            }
+        }
+    )
+    engine = Engine.from_settings(settings)
+
+    seen: set[int] = set()
+    stack: list[WorkUnit] = [engine]
+    http_units: list[HttpClient] = []
+
+    while stack:
+        node = stack.pop()
+        node_id = id(node)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        if isinstance(node, HttpClient):
+            http_units.append(node)
+        stack.extend(node.dependencies)
+
+    assert len(http_units) == 1

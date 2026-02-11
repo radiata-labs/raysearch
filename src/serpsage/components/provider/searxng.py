@@ -5,7 +5,7 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.components.fetch.http_client_unit import HttpClientUnit
+from serpsage.components.http import HttpClient
 from serpsage.contracts.services import SearchProviderBase
 
 if TYPE_CHECKING:
@@ -19,7 +19,7 @@ class SearxngProvider(SearchProviderBase):
         self,
         *,
         rt: Runtime,
-        http: HttpClientUnit,
+        http: HttpClient,
     ) -> None:
         super().__init__(rt=rt)
         self.bind_deps(http)
