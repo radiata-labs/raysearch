@@ -13,18 +13,19 @@ from serpsage.util.json import stable_json
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.contracts.services import CacheBase, SearchProviderBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class SearchStep(StepBase):
     span_name = "step.search"
 
     def __init__(
-        self, *, rt: CoreRuntime, provider: SearchProviderBase, cache: CacheBase
+        self, *, rt: Runtime, provider: SearchProviderBase, cache: CacheBase
     ) -> None:
         super().__init__(rt=rt)
         self._provider = provider
         self._cache = cache
+        self.bind_deps(provider, cache)
 
     @override
     async def run_inner(
@@ -65,7 +66,9 @@ class SearchStep(StepBase):
             )
         except Exception as exc:  # noqa: BLE001
             span.set_attr("cache_hit", False)
-            ctx.errors.append(AppError(code="search_failed", message=str(exc), details={}))
+            ctx.errors.append(
+                AppError(code="search_failed", message=str(exc), details={})
+            )
         return ctx
 
 

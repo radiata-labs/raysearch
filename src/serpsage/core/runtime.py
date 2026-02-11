@@ -16,7 +16,7 @@ from serpsage.core.model_base import FrozenModel, MutableModel
 from serpsage.settings.models import AppSettings
 
 
-class CoreRuntime(FrozenModel):
+class Runtime(FrozenModel):
     model_config = ConfigDict(
         extra="forbid",
         frozen=True,
@@ -28,7 +28,7 @@ class CoreRuntime(FrozenModel):
     clock: ClockBase
 
 
-class ComponentOverrides(MutableModel):
+class Overrides(MutableModel):
     model_config = ConfigDict(
         extra="forbid",
         validate_assignment=True,
@@ -45,6 +45,7 @@ class ComponentOverrides(MutableModel):
     extractor: ExtractorBase | None = None
     ranker: RankerBase | None = None
     llm: LLMClientBase | None = None
+    fetch_http: httpx.AsyncClient | None = None
 
 
-__all__ = ["ComponentOverrides", "CoreRuntime"]
+__all__ = ["Overrides", "Runtime"]

@@ -70,6 +70,7 @@ class AutoFetcher(FetcherBase):
         self._httpx = httpx_fetcher
         self._curl = curl_fetcher
         self._extractor = extractor
+        self.bind_deps(cache, rate_limiter, httpx_fetcher, curl_fetcher, extractor)
 
     @override
     async def afetch(self, *, url: str) -> FetchResult:

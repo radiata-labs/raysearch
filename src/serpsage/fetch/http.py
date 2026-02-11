@@ -10,6 +10,7 @@ import httpx
 
 from serpsage.contracts.services import FetcherBase
 from serpsage.fetch.common import browser_headers, looks_like_html, parse_content_type
+from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 
@@ -59,9 +60,10 @@ async def _read_with_limit(
 
 
 class HttpxFetcher(FetcherBase):
-    def __init__(self, *, rt, http: httpx.AsyncClient) -> None:  # noqa: ANN001
+    def __init__(self, *, rt, http: HttpClientUnit) -> None:  # noqa: ANN001
         super().__init__(rt=rt)
-        self._http = http
+        self.bind_deps(http)
+        self._http = http.client
 
     @override
     async def afetch(self, *, url: str) -> FetchResult:
@@ -76,9 +78,7 @@ class HttpxFetcher(FetcherBase):
                 content=bytes(res.content or b""),
             )
 
-    async def fetch_attempt(
-        self, *, url: str, profile: str, span: Any
-    ) -> FetchAttempt:
+    async def fetch_attempt(self, *, url: str, profile: str, span: Any) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
         retry = fetch_cfg.retry
 
@@ -162,7 +162,14 @@ class HttpxFetcher(FetcherBase):
                         await anyio.sleep(delay)
                         continue
 
-                    if allow and ct_main and ct_main not in allow or sniff_needed and allow and ct_main != "text/plain":
+                    if (
+                        allow
+                        and ct_main
+                        and ct_main not in allow
+                        or sniff_needed
+                        and allow
+                        and ct_main != "text/plain"
+                    ):
                         if not looks_like_html(body[:sniff_n]):
                             break
 

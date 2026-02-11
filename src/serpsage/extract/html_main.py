@@ -16,7 +16,7 @@ from serpsage.text.normalize import clean_whitespace
 if TYPE_CHECKING:
     from bs4.element import Tag  # type: ignore[import-untyped]
 
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 _DROP_TAGS = {
@@ -75,9 +75,10 @@ class MainContentHtmlExtractor(ExtractorBase):
     - emit blocks from common content tags
     """
 
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         self._fallback = BasicHtmlExtractor(rt=rt)
+        self.bind_deps(self._fallback)
 
     @override
     def extract(

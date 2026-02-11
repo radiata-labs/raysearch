@@ -9,14 +9,15 @@ from serpsage.rank.heuristic import HeuristicRanker
 from serpsage.rank.utils import normalize_scores, rank_scales
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class BlendRanker(RankerBase):
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         self._heuristic = HeuristicRanker(rt=rt)
         self._bm25: Bm25Ranker | None = Bm25Ranker(rt=rt) if BM25_AVAILABLE else None
+        self.bind_deps(self._heuristic, self._bm25)
 
     def _provider_weights(self) -> dict[str, float]:
         raw = {

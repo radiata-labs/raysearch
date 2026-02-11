@@ -6,12 +6,12 @@ from typing_extensions import override
 from serpsage.contracts.services import LLMClientBase
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.models.llm import ChatJSONResult
 
 
 class NullLLMClient(LLMClientBase):
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override

@@ -6,10 +6,13 @@ import httpx
 import pytest
 
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import CoreRuntime
+from serpsage.contracts.services import CacheBase
+from serpsage.core.runtime import Runtime
+from serpsage.core.workunit import WorkUnit
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.fetch.auto import AutoFetcher
 from serpsage.fetch.http import HttpxFetcher
+from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.models.fetch import FetchAttempt
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
@@ -20,7 +23,10 @@ class FakeClock(ClockBase):
         return 0
 
 
-class DummyRateLimiter:
+class DummyRateLimiter(WorkUnit):
+    def __init__(self, *, rt: Runtime) -> None:
+        super().__init__(rt=rt)
+
     async def acquire(self, *, host: str) -> None:  # noqa: ARG002
         return
 
@@ -28,8 +34,9 @@ class DummyRateLimiter:
         return
 
 
-class MemCache:
-    def __init__(self) -> None:
+class MemCache(CacheBase):
+    def __init__(self, *, rt: Runtime) -> None:
+        super().__init__(rt=rt)
         self.store: dict[tuple[str, str], bytes] = {}
 
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
@@ -39,8 +46,9 @@ class MemCache:
         self.store[(namespace, key)] = value
 
 
-class FakeCurl:
-    def __init__(self) -> None:
+class FakeCurl(WorkUnit):
+    def __init__(self, *, rt: Runtime) -> None:
+        super().__init__(rt=rt)
         self.called = 0
 
     async def fetch_attempt(self, *, url: str, span):  # noqa: ANN001
@@ -81,9 +89,11 @@ async def test_auto_fetcher_switches_to_curl_on_challenge_page_and_caches_good_r
             "overview": {"enabled": False},
         }
     )
-    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
 
-    challenge = b"<html><title>Just a moment...</title><body>Just a moment...</body></html>"
+    challenge = (
+        b"<html><title>Just a moment...</title><body>Just a moment...</body></html>"
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
         return httpx.Response(
@@ -94,14 +104,17 @@ async def test_auto_fetcher_switches_to_curl_on_challenge_page_and_caches_good_r
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport, follow_redirects=True) as client:
-        httpx_fetcher = HttpxFetcher(rt=rt, http=client)
-        curl = FakeCurl()
-        cache = MemCache()
+        httpx_fetcher = HttpxFetcher(
+            rt=rt,
+            http=HttpClientUnit(rt=rt, client=client, owns_client=False),
+        )
+        curl = FakeCurl(rt=rt)
+        cache = MemCache(rt=rt)
         extractor = BasicHtmlExtractor(rt=rt)
         af = AutoFetcher(
             rt=rt,
             cache=cache,
-            rate_limiter=DummyRateLimiter(),
+            rate_limiter=DummyRateLimiter(rt=rt),
             httpx_fetcher=httpx_fetcher,
             curl_fetcher=curl,
             extractor=extractor,
@@ -117,8 +130,6 @@ async def test_auto_fetcher_switches_to_curl_on_challenge_page_and_caches_good_r
     (_, _), blob = next(iter(cache.store.items()))
     payload = json.loads(blob.decode("utf-8"))
     assert payload["strategy_used"] == "curl_cffi"
-    assert "This is main content" in bytes.fromhex(payload["content_hex"]).decode("utf-8")
-
-
-
-
+    assert "This is main content" in bytes.fromhex(payload["content_hex"]).decode(
+        "utf-8"
+    )

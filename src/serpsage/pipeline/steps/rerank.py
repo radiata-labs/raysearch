@@ -10,16 +10,17 @@ from serpsage.text.utils import extract_intent_tokens
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.domain.rerank import Reranker
 
 
 class RerankStep(StepBase):
     span_name = "step.rerank"
 
-    def __init__(self, *, rt: CoreRuntime, reranker: Reranker) -> None:
+    def __init__(self, *, rt: Runtime, reranker: Reranker) -> None:
         super().__init__(rt=rt)
         self._reranker = reranker
+        self.bind_deps(reranker)
 
     @override
     async def run_inner(

@@ -8,16 +8,17 @@ from serpsage.pipeline.context import SearchStepContext
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.domain.filter import ResultFilterer
 
 
 class FilterStep(StepBase):
     span_name = "step.filter"
 
-    def __init__(self, *, rt: CoreRuntime, filterer: ResultFilterer) -> None:
+    def __init__(self, *, rt: Runtime, filterer: ResultFilterer) -> None:
         super().__init__(rt=rt)
         self._filterer = filterer
+        self.bind_deps(filterer)
 
     @override
     async def run_inner(

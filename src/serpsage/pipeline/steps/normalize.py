@@ -8,16 +8,17 @@ from serpsage.pipeline.context import SearchStepContext
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.domain.normalize import ResultNormalizer
 
 
 class NormalizeStep(StepBase):
     span_name = "step.normalize"
 
-    def __init__(self, *, rt: CoreRuntime, normalizer: ResultNormalizer) -> None:
+    def __init__(self, *, rt: Runtime, normalizer: ResultNormalizer) -> None:
         super().__init__(rt=rt)
         self._normalizer = normalizer
+        self.bind_deps(normalizer)
 
     @override
     async def run_inner(

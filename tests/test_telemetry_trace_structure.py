@@ -3,13 +3,15 @@ from __future__ import annotations
 import pytest
 
 from serpsage import Engine, SearchRequest
+from serpsage.app.bootstrap import build_runtime
 from serpsage.contracts.services import SearchProviderBase
-from serpsage.core.runtime import ComponentOverrides
+from serpsage.core.runtime import Overrides, Runtime
 from serpsage.settings.models import AppSettings
 
 
 class FakeProvider(SearchProviderBase):
-    def __init__(self, items):
+    def __init__(self, *, rt: Runtime, items):
+        super().__init__(rt=rt)
         self._items = items
 
     async def asearch(self, *, query: str, params=None):  # noqa: ANN001
@@ -28,12 +30,17 @@ async def test_trace_telemetry_has_parent_child_spans():
             "telemetry": {"enabled": True, "include_events": True},
         }
     )
-    overrides = ComponentOverrides(
-        provider=FakeProvider([{"url": "https://e.com", "title": "python", "snippet": "x"}])
+    rt = build_runtime(settings=settings)
+    overrides = Overrides(
+        provider=FakeProvider(
+            rt=rt, items=[{"url": "https://e.com", "title": "python", "snippet": "x"}]
+        )
     )
 
     async with Engine.from_settings(settings, overrides=overrides) as engine:
-        resp = await engine.run(SearchRequest(query="python", depth="simple", max_results=5))
+        resp = await engine.run(
+            SearchRequest(query="python", depth="simple", max_results=5)
+        )
 
     tel = resp.telemetry
     assert tel["enabled"] is True
@@ -43,6 +50,10 @@ async def test_trace_telemetry_has_parent_child_spans():
 
     engine_span = next(s for s in spans if s["name"] == "engine.run")
     engine_id = engine_span["span_id"]
-    step_spans = [s for s in spans if isinstance(s.get("name"), str) and s["name"].startswith("step.")]
+    step_spans = [
+        s
+        for s in spans
+        if isinstance(s.get("name"), str) and s["name"].startswith("step.")
+    ]
     assert step_spans
     assert all(s.get("parent_id") == engine_id for s in step_spans)

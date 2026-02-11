@@ -6,11 +6,11 @@ from typing_extensions import override
 from serpsage.contracts.services import CacheBase
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class NullCache(CacheBase):
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override

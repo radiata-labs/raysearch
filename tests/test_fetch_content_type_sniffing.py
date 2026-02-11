@@ -3,11 +3,14 @@
 import httpx
 import pytest
 
+from serpsage.cache.null import NullCache
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import CoreRuntime
+from serpsage.core.runtime import Runtime
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.fetch.auto import AutoFetcher
 from serpsage.fetch.http import HttpxFetcher
+from serpsage.fetch.http_client_unit import HttpClientUnit
+from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
@@ -15,22 +18,6 @@ from serpsage.telemetry.trace import NoopTelemetry
 class FakeClock(ClockBase):
     def now_ms(self) -> int:
         return 0
-
-
-class DummyRateLimiter:
-    async def acquire(self, *, host: str) -> None:  # noqa: ARG002
-        return
-
-    async def release(self, *, host: str) -> None:  # noqa: ARG002
-        return
-
-
-class NullCache:
-    async def aget(self, *, namespace: str, key: str) -> bytes | None:  # noqa: ARG002
-        return None
-
-    async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:  # noqa: ARG002
-        return
 
 
 @pytest.mark.anyio
@@ -58,14 +45,17 @@ async def test_sniff_allows_mislabeled_html():
             "overview": {"enabled": False},
         }
     )
-    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport, follow_redirects=True) as client:
         af = AutoFetcher(
             rt=rt,
-            cache=NullCache(),
-            rate_limiter=DummyRateLimiter(),
-            httpx_fetcher=HttpxFetcher(rt=rt, http=client),
+            cache=NullCache(rt=rt),
+            rate_limiter=RateLimiter(rt=rt),
+            httpx_fetcher=HttpxFetcher(
+                rt=rt,
+                http=HttpClientUnit(rt=rt, client=client, owns_client=False),
+            ),
             curl_fetcher=None,
             extractor=BasicHtmlExtractor(rt=rt),
         )
@@ -97,21 +87,19 @@ async def test_sniff_rejects_non_html_and_raises_unusable():
             "overview": {"enabled": False},
         }
     )
-    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport, follow_redirects=True) as client:
         af = AutoFetcher(
             rt=rt,
-            cache=NullCache(),
-            rate_limiter=DummyRateLimiter(),
-            httpx_fetcher=HttpxFetcher(rt=rt, http=client),
+            cache=NullCache(rt=rt),
+            rate_limiter=RateLimiter(rt=rt),
+            httpx_fetcher=HttpxFetcher(
+                rt=rt,
+                http=HttpClientUnit(rt=rt, client=client, owns_client=False),
+            ),
             curl_fetcher=None,
             extractor=BasicHtmlExtractor(rt=rt),
         )
         with pytest.raises(RuntimeError):
             await af.afetch(url="https://example.com/x")
-
-
-
-
-

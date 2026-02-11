@@ -16,7 +16,7 @@ from serpsage.util.json import stable_json
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.contracts.services import CacheBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.domain.overview import OverviewBuilder
 
 
@@ -24,11 +24,12 @@ class OverviewStep(StepBase):
     span_name = "step.overview"
 
     def __init__(
-        self, *, rt: CoreRuntime, builder: OverviewBuilder, cache: CacheBase
+        self, *, rt: Runtime, builder: OverviewBuilder, cache: CacheBase
     ) -> None:
         super().__init__(rt=rt)
         self._builder = builder
         self._cache = cache
+        self.bind_deps(builder, cache)
 
     @override
     async def run_inner(

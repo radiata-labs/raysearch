@@ -12,15 +12,16 @@ from serpsage.util.collections import uniq_preserve_order
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.contracts.services import RankerBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class RankStep(StepBase):
     span_name = "step.rank"
 
-    def __init__(self, *, rt: CoreRuntime, ranker: RankerBase) -> None:
+    def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
+        self.bind_deps(ranker)
 
     @override
     async def run_inner(

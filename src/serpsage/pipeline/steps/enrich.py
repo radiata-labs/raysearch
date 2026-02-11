@@ -13,16 +13,17 @@ from serpsage.text.tokenize import tokenize
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
     from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.domain.enrich import Enricher
 
 
 class EnrichStep(StepBase):
     span_name = "step.enrich"
 
-    def __init__(self, *, rt: CoreRuntime, enricher: Enricher) -> None:
+    def __init__(self, *, rt: Runtime, enricher: Enricher) -> None:
         super().__init__(rt=rt)
         self._enricher = enricher
+        self.bind_deps(enricher)
 
     @override
     async def run_inner(

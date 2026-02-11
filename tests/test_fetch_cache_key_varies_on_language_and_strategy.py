@@ -4,10 +4,13 @@ import httpx
 import pytest
 
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import CoreRuntime
+from serpsage.contracts.services import CacheBase
+from serpsage.core.runtime import Runtime
 from serpsage.extract.html_basic import BasicHtmlExtractor
 from serpsage.fetch.auto import AutoFetcher
 from serpsage.fetch.http import HttpxFetcher
+from serpsage.fetch.http_client_unit import HttpClientUnit
+from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
@@ -17,16 +20,9 @@ class FakeClock(ClockBase):
         return 0
 
 
-class DummyRateLimiter:
-    async def acquire(self, *, host: str) -> None:  # noqa: ARG002
-        return
-
-    async def release(self, *, host: str) -> None:  # noqa: ARG002
-        return
-
-
-class MemCache:
-    def __init__(self) -> None:
+class MemCache(CacheBase):
+    def __init__(self, *, rt: Runtime) -> None:
+        super().__init__(rt=rt)
         self.keys: list[str] = []
 
     async def aget(self, *, namespace: str, key: str) -> bytes | None:  # noqa: ARG002
@@ -63,35 +59,55 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
         s1 = AppSettings.model_validate(
             {
                 **base,
-                "enrich": {**base["enrich"], "fetch": {**base["enrich"]["fetch"], "strategy": "auto", "accept_language": "zh-CN"}},
+                "enrich": {
+                    **base["enrich"],
+                    "fetch": {
+                        **base["enrich"]["fetch"],
+                        "strategy": "auto",
+                        "accept_language": "zh-CN",
+                    },
+                },
             }
         )
         s2 = AppSettings.model_validate(
             {
                 **base,
-                "enrich": {**base["enrich"], "fetch": {**base["enrich"]["fetch"], "strategy": "httpx", "accept_language": "en-US"}},
+                "enrich": {
+                    **base["enrich"],
+                    "fetch": {
+                        **base["enrich"]["fetch"],
+                        "strategy": "httpx",
+                        "accept_language": "en-US",
+                    },
+                },
             }
         )
 
-        rt1 = CoreRuntime(settings=s1, telemetry=NoopTelemetry(), clock=FakeClock())
-        rt2 = CoreRuntime(settings=s2, telemetry=NoopTelemetry(), clock=FakeClock())
+        rt1 = Runtime(settings=s1, telemetry=NoopTelemetry(), clock=FakeClock())
+        rt2 = Runtime(settings=s2, telemetry=NoopTelemetry(), clock=FakeClock())
 
-        cache1 = MemCache()
-        cache2 = MemCache()
+        cache1 = MemCache(rt=rt1)
+        cache2 = MemCache(rt=rt2)
 
         af1 = AutoFetcher(
             rt=rt1,
             cache=cache1,
-            rate_limiter=DummyRateLimiter(),
-            httpx_fetcher=HttpxFetcher(rt=rt1, http=client),
+            rate_limiter=RateLimiter(rt=rt1),
+            httpx_fetcher=HttpxFetcher(
+                rt=rt1,
+                http=HttpClientUnit(rt=rt1, client=client, owns_client=False),
+            ),
             curl_fetcher=None,
             extractor=BasicHtmlExtractor(rt=rt1),
         )
         af2 = AutoFetcher(
             rt=rt2,
             cache=cache2,
-            rate_limiter=DummyRateLimiter(),
-            httpx_fetcher=HttpxFetcher(rt=rt2, http=client),
+            rate_limiter=RateLimiter(rt=rt2),
+            httpx_fetcher=HttpxFetcher(
+                rt=rt2,
+                http=HttpClientUnit(rt=rt2, client=client, owns_client=False),
+            ),
             curl_fetcher=None,
             extractor=BasicHtmlExtractor(rt=rt2),
         )
@@ -101,8 +117,3 @@ async def test_cache_key_varies_with_accept_language_and_strategy():
 
     assert cache1.keys and cache2.keys
     assert cache1.keys[0] != cache2.keys[0]
-
-
-
-
-

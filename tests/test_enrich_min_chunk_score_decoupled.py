@@ -4,7 +4,8 @@ import pytest
 
 from serpsage.app.response import ResultItem
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import CoreRuntime
+from serpsage.contracts.services import FetcherBase
+from serpsage.core.runtime import Runtime
 from serpsage.domain.enrich import Enricher
 from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.rank.blend import BlendRanker
@@ -41,8 +42,9 @@ class FakeFetchResult:
         return self._content
 
 
-class FakeFetcher:
-    def __init__(self, html: bytes) -> None:
+class FakeFetcher(FetcherBase):
+    def __init__(self, *, rt: Runtime, html: bytes) -> None:
+        super().__init__(rt=rt)
         self._html = html
 
     async def afetch(self, *, url: str) -> FakeFetchResult:
@@ -83,10 +85,10 @@ async def test_enrich_min_chunk_score_is_not_coupled_to_pipeline_min_score():
             "overview": {"enabled": False},
         }
     )
-    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
     enricher = Enricher(
         rt=rt,
-        fetcher=FakeFetcher(html),
+        fetcher=FakeFetcher(rt=rt, html=html),
         extractor=MainContentHtmlExtractor(rt=rt),
         ranker=BlendRanker(rt=rt),
     )
@@ -105,8 +107,3 @@ async def test_enrich_min_chunk_score_is_not_coupled_to_pipeline_min_score():
     # based on enrich.select.min_chunk_score.
     assert out.error is None
     assert len(out.chunks) >= 2
-
-
-
-
-

@@ -6,22 +6,24 @@ from typing_extensions import override
 import httpx
 
 from serpsage.contracts.services import SearchProviderBase
+from serpsage.fetch.http_client_unit import HttpClientUnit
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class SearxngProvider(SearchProviderBase):
     def __init__(
         self,
         *,
-        rt: CoreRuntime,
-        http: httpx.AsyncClient,
+        rt: Runtime,
+        http: HttpClientUnit,
     ) -> None:
         super().__init__(rt=rt)
-        self._http = http
+        self.bind_deps(http)
+        self._http = http.client
 
     @override
     async def asearch(

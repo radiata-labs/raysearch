@@ -4,7 +4,8 @@ import pytest
 
 from serpsage.app.response import ResultItem
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import CoreRuntime
+from serpsage.contracts.services import FetcherBase
+from serpsage.core.runtime import Runtime
 from serpsage.domain.enrich import Enricher
 from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.rank.blend import BlendRanker
@@ -41,8 +42,9 @@ class FakeFetchResult:
         return self._content
 
 
-class FakeFetcher:
-    def __init__(self, html: bytes) -> None:
+class FakeFetcher(FetcherBase):
+    def __init__(self, *, rt: Runtime, html: bytes) -> None:
+        super().__init__(rt=rt)
         self._html = html
 
     async def afetch(self, *, url: str) -> FakeFetchResult:
@@ -80,10 +82,10 @@ async def test_enrich_prunes_leading_boilerplate_blocks():
             "overview": {"enabled": False},
         }
     )
-    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
     enricher = Enricher(
         rt=rt,
-        fetcher=FakeFetcher(html),
+        fetcher=FakeFetcher(rt=rt, html=html),
         extractor=MainContentHtmlExtractor(rt=rt),
         ranker=BlendRanker(rt=rt),
     )
@@ -104,7 +106,3 @@ async def test_enrich_prunes_leading_boilerplate_blocks():
     assert keyword in txt0
     assert "欢迎" not in txt0
     assert "编辑前请阅读" not in txt0
-
-
-
-

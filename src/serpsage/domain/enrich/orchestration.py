@@ -11,7 +11,7 @@ from serpsage.text.chunking import chunk_sentences, split_sentences
 
 if TYPE_CHECKING:
     from serpsage.contracts.services import ExtractorBase, FetcherBase, RankerBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.settings.models import ProfileSettings
 
 
@@ -19,7 +19,7 @@ class Enricher(WorkUnit, EnrichScoringMixin):
     def __init__(
         self,
         *,
-        rt: CoreRuntime,
+        rt: Runtime,
         fetcher: FetcherBase,
         extractor: ExtractorBase,
         ranker: RankerBase,
@@ -28,6 +28,7 @@ class Enricher(WorkUnit, EnrichScoringMixin):
         self._fetcher = fetcher
         self._extractor = extractor
         self._ranker = ranker
+        self.bind_deps(fetcher, extractor, ranker)
 
     async def enrich_one(
         self,

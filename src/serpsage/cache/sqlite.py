@@ -11,16 +11,16 @@ from anyio import to_thread
 from serpsage.contracts.services import CacheBase
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class SqliteCache(CacheBase):
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         self._path = Path(self.settings.cache.db_path)
 
     @override
-    async def ainit(self) -> None:
+    async def on_init(self) -> None:
 
         def _do_init() -> None:
             self._path.parent.mkdir(parents=True, exist_ok=True)

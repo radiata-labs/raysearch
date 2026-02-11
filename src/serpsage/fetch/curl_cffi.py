@@ -18,15 +18,20 @@ except Exception:  # noqa: BLE001
     CURL_CFFI_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class CurlCffiFetcher(FetcherBase):
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         if not CURL_CFFI_AVAILABLE:
             raise RuntimeError("curl_cffi is not available; install curl_cffi")
-        self._session: Any = CurlSessionFactory()
+        self._session: Any | None = None
+
+    @override
+    async def on_init(self) -> None:
+        if self._session is None:
+            self._session = CurlSessionFactory()
 
     @override
     async def afetch(self, *, url: str) -> FetchResult:
@@ -42,21 +47,31 @@ class CurlCffiFetcher(FetcherBase):
             )
 
     @override
-    async def aclose(self) -> None:
+    async def on_close(self) -> None:
+        if self._session is None:
+            return
         try:
             fn = getattr(self._session, "aclose", None)
             if fn is not None:
                 await fn()
-                return
-            fn = getattr(self._session, "close", None)
-            if fn is not None:
-                out = fn()
-                if hasattr(out, "__await__"):
-                    await out
+            else:
+                fn = getattr(self._session, "close", None)
+                if fn is not None:
+                    out = fn()
+                    if hasattr(out, "__await__"):
+                        await out
         except Exception:
             return
+        finally:
+            self._session = None
 
     async def fetch_attempt(self, *, url: str, span: Any) -> FetchAttempt:
+        if self._session is None:
+            await self.ainit()
+        session = self._session
+        if session is None:
+            raise RuntimeError("curl_cffi session is not initialized")
+
         fetch_cfg = self.settings.enrich.fetch
         started = time.time()
 
@@ -69,7 +84,7 @@ class CurlCffiFetcher(FetcherBase):
         timeout_s = max(0.5, min(timeout_s, max(0.5, budget * 0.6)))
 
         try:
-            resp = await self._session.get(
+            resp = await session.get(
                 url,
                 headers=headers,
                 cookies=cookies or None,

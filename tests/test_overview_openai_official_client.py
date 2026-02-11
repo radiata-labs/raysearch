@@ -5,7 +5,8 @@ import pytest
 
 import serpsage.overview.openai as mod
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import CoreRuntime
+from serpsage.core.runtime import Runtime
+from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.models.llm import ChatJSONResult
 from serpsage.overview.openai import OpenAIClient
 from serpsage.settings.models import AppSettings
@@ -57,10 +58,13 @@ async def test_official_client_passes_response_format_and_limits(monkeypatch):
     settings = AppSettings.model_validate(
         {"overview": {"enabled": True, "llm": {"api_key": "dummy"}}}
     )
-    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=_FakeClock())
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=_FakeClock())
 
     async with httpx.AsyncClient() as http:
-        client = OpenAIClient(rt=rt, http=http)
+        client = OpenAIClient(
+            rt=rt,
+            http=HttpClientUnit(rt=rt, client=http, owns_client=False),
+        )
         res = await client.chat_json(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": "hi"}],

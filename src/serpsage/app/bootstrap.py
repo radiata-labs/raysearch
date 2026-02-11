@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import time
-from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 import httpx
@@ -20,7 +19,8 @@ from serpsage.contracts.services import (
     RankerBase,
     SearchProviderBase,
 )
-from serpsage.core.runtime import ComponentOverrides, CoreRuntime
+from serpsage.core.runtime import Overrides, Runtime
+from serpsage.core.workunit import WorkUnit
 from serpsage.domain.dedupe import ResultDeduper
 from serpsage.domain.enrich import Enricher
 from serpsage.domain.filter import ResultFilterer
@@ -32,6 +32,7 @@ from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.fetch.auto import AutoFetcher
 from serpsage.fetch.curl_cffi import CURL_CFFI_AVAILABLE, CurlCffiFetcher
 from serpsage.fetch.http import HttpxFetcher
+from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.fetch.rate_limit import RateLimiter
 from serpsage.overview.null import NullLLMClient
 from serpsage.overview.openai import OpenAIClient
@@ -60,40 +61,49 @@ class SystemClock(ClockBase):
 
 
 def build_runtime(
-    *, settings: AppSettings, overrides: ComponentOverrides | None = None
-) -> CoreRuntime:
-    ov = overrides or ComponentOverrides()
+    *, settings: AppSettings, overrides: Overrides | None = None
+) -> Runtime:
+    ov = overrides or Overrides()
     clock = ov.clock or SystemClock()
     telemetry = ov.telemetry or (
         TraceTelemetry(settings.telemetry, clock=clock)
         if settings.telemetry.enabled
         else NoopTelemetry()
     )
-    return CoreRuntime(settings=settings, telemetry=telemetry, clock=clock)
+    return Runtime(settings=settings, telemetry=telemetry, clock=clock)
 
 
 def build_engine(
-    *, settings: AppSettings, overrides: ComponentOverrides | None = None
+    *, settings: AppSettings, overrides: Overrides | None = None
 ) -> Engine:
-    ov = overrides or ComponentOverrides()
+    ov = overrides or Overrides()
     rt = build_runtime(settings=settings, overrides=ov)
 
-    stack = AsyncExitStack()
+    _validate_override_workunits(ov)
 
-    http = ov.http or httpx.AsyncClient()
-    owns_http = ov.http is None
-    if owns_http:
-        stack.push_async_callback(http.aclose)
+    shared_http_unit: HttpClientUnit | None = None
+
+    def get_shared_http_unit() -> HttpClientUnit:
+        nonlocal shared_http_unit
+        if shared_http_unit is None:
+            shared_http_unit = HttpClientUnit(
+                rt=rt,
+                client=ov.http,
+                owns_client=ov.http is None,
+            )
+        return shared_http_unit
 
     cache: CacheBase = ov.cache or (
         SqliteCache(rt=rt) if settings.cache.enabled else NullCache(rt=rt)
     )
-    owns_cache = ov.cache is None
-    if owns_cache:
-        stack.push_async_callback(cache.aclose)
-
-    rate_limiter = ov.rate_limiter or RateLimiter(rt=rt)
-    provider: SearchProviderBase = ov.provider or SearxngProvider(rt=rt, http=http)
+    rate_limiter: RateLimiter = (
+        cast("RateLimiter", ov.rate_limiter)
+        if ov.rate_limiter is not None
+        else RateLimiter(rt=rt)
+    )
+    provider: SearchProviderBase = ov.provider or SearxngProvider(
+        rt=rt, http=get_shared_http_unit()
+    )
     extractor: ExtractorBase = ov.extractor or (
         MainContentHtmlExtractor(rt=rt)
         if (settings.enrich.extractor.kind or "main_content") == "main_content"
@@ -105,16 +115,20 @@ def build_engine(
         fetcher = ov.fetcher
     else:
         fetch_cfg = settings.enrich.fetch
-        fetch_http = httpx.AsyncClient(
-            proxy=getattr(fetch_cfg, "proxy", None),
-            timeout=httpx.Timeout(float(fetch_cfg.timeout_s)),
-            follow_redirects=bool(fetch_cfg.follow_redirects),
-            max_redirects=int(getattr(fetch_cfg, "max_redirects", 10)),
-            trust_env=False,
+        fetch_http_unit = HttpClientUnit(
+            rt=rt,
+            client=ov.fetch_http
+            or httpx.AsyncClient(
+                proxy=getattr(fetch_cfg, "proxy", None),
+                timeout=httpx.Timeout(float(fetch_cfg.timeout_s)),
+                follow_redirects=bool(fetch_cfg.follow_redirects),
+                max_redirects=int(getattr(fetch_cfg, "max_redirects", 10)),
+                trust_env=False,
+            ),
+            owns_client=ov.fetch_http is None,
         )
-        stack.push_async_callback(fetch_http.aclose)
 
-        httpx_fetcher = HttpxFetcher(rt=rt, http=fetch_http)
+        httpx_fetcher = HttpxFetcher(rt=rt, http=fetch_http_unit)
 
         curl_fetcher = None
         if str(getattr(fetch_cfg, "strategy", "auto") or "auto") in {
@@ -126,8 +140,6 @@ def build_engine(
                     curl_fetcher = CurlCffiFetcher(rt=rt)
                 except Exception:
                     curl_fetcher = None
-            if curl_fetcher is not None:
-                stack.push_async_callback(curl_fetcher.aclose)
 
         fetcher = AutoFetcher(
             rt=rt,
@@ -140,7 +152,7 @@ def build_engine(
     ranker: RankerBase = ov.ranker or BlendRanker(rt=rt)
 
     llm: LLMClientBase = ov.llm or (
-        OpenAIClient(rt=rt, http=http)
+        OpenAIClient(rt=rt, http=get_shared_http_unit())
         if settings.overview.enabled and settings.overview.llm.api_key
         else NullLLMClient(rt=rt)
     )
@@ -165,48 +177,34 @@ def build_engine(
         rt=rt, builder=overview_builder, cache=cache
     )
 
-    init_targets = [
-        cache,
-        rate_limiter,
-        provider,
-        extractor,
-        fetcher,
-        ranker,
-        llm,
-        normalizer,
-        filterer,
-        deduper,
-        enricher,
-        reranker,
-        overview_builder,
-        *steps,
-        overview_step,
-    ]
-
-    async def _init() -> None:
-        seen: set[int] = set()
-        for obj in init_targets:
-            oid = id(obj)
-            if oid in seen:
-                continue
-            seen.add(oid)
-            fn = getattr(obj, "ainit", None)
-            if fn is None:
-                continue
-            out = fn()
-            if hasattr(out, "__await__"):
-                await out
-
-    async def _close() -> None:
-        await stack.aclose()
-
     return Engine(
         rt=rt,
         steps=steps,
         overview_step=overview_step,
-        ainit_hook=_init,
-        aclose_hook=_close,
     )
 
 
-__all__ = ["ComponentOverrides", "build_engine", "build_runtime"]
+def _validate_override_workunits(ov: Overrides) -> None:
+    _ensure_workunit_override("cache", ov.cache)
+    _ensure_workunit_override("rate_limiter", ov.rate_limiter)
+    _ensure_workunit_override("provider", ov.provider)
+    _ensure_workunit_override("fetcher", ov.fetcher)
+    _ensure_workunit_override("extractor", ov.extractor)
+    _ensure_workunit_override("ranker", ov.ranker)
+    _ensure_workunit_override("llm", ov.llm)
+
+
+def _ensure_workunit_override(name: str, obj: object | None) -> None:
+    if obj is None:
+        return
+    if not isinstance(obj, WorkUnit):
+        raise TypeError(
+            f"override `{name}` must be a WorkUnit, got `{type(obj).__name__}`"
+        )
+    if not bool(getattr(obj, "_wu_bootstrapped", False)):
+        raise TypeError(
+            f"override `{name}` must call WorkUnit.__init__(rt=...) via super().__init__"
+        )
+
+
+__all__ = ["Overrides", "build_engine", "build_runtime"]

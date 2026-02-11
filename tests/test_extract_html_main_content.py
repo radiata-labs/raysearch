@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.core.runtime import CoreRuntime
+from serpsage.core.runtime import Runtime
 from serpsage.extract.html_main import MainContentHtmlExtractor
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
@@ -23,8 +23,10 @@ def test_main_content_extractor_prefers_mediawiki_content_and_drops_noise():
       </div>
       <footer>FOOTER SHOULD DROP</footer>
     </body></html>"""
-    settings = AppSettings.model_validate({"enrich": {"extractor": {"kind": "main_content"}}})
-    rt = CoreRuntime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
+    settings = AppSettings.model_validate(
+        {"enrich": {"extractor": {"kind": "main_content"}}}
+    )
+    rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=FakeClock())
     ex = MainContentHtmlExtractor(rt=rt)
     out = ex.extract(url="https://x", content=html, content_type="text/html")
     text = out.text.lower()
@@ -32,8 +34,3 @@ def test_main_content_extractor_prefers_mediawiki_content_and_drops_noise():
     assert "menu should drop" not in text
     assert "toc should drop" not in text
     assert "footer should drop" not in text
-
-
-
-
-

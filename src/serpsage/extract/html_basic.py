@@ -12,7 +12,7 @@ from serpsage.models.extract import ExtractedText
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class BasicHtmlExtractor(ExtractorBase):
@@ -23,7 +23,7 @@ class BasicHtmlExtractor(ExtractorBase):
     - block segmentation by newlines
     """
 
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override

@@ -8,11 +8,11 @@ from serpsage.text.normalize import normalize_text
 from serpsage.text.tokenize import tokenize
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class HeuristicRanker(RankerBase):
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override

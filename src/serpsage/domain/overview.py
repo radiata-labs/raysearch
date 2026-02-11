@@ -16,16 +16,17 @@ from serpsage.overview.schema import overview_json_schema
 
 if TYPE_CHECKING:
     from serpsage.contracts.services import LLMClientBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.models.llm import ChatJSONResult
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff]")
 
 
 class OverviewBuilder(WorkUnit):
-    def __init__(self, *, rt: CoreRuntime, llm: LLMClientBase) -> None:
+    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
+        self.bind_deps(llm)
 
     def schema(self) -> dict:
         return overview_json_schema()

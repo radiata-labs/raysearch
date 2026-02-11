@@ -7,11 +7,11 @@ import anyio
 from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class RateLimiter(WorkUnit):
-    def __init__(self, *, rt: CoreRuntime) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         fetch = self.settings.enrich.fetch
         self._global = anyio.Semaphore(max(1, int(fetch.global_concurrency)))

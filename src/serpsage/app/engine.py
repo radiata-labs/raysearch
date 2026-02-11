@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from typing_extensions import override
 
 from serpsage.app.response import ResultItem, SearchResponse
 from serpsage.contracts.services import PipelineStepBase
-from serpsage.core.runtime import ComponentOverrides
+from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import SearchStepContext
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from serpsage.app.request import SearchRequest
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
     from serpsage.settings.models import AppSettings
 
 
@@ -24,42 +21,23 @@ class Engine(WorkUnit):
     def __init__(
         self,
         *,
-        rt: CoreRuntime,
+        rt: Runtime,
         steps: list[PipelineStepBase],
         overview_step: PipelineStepBase,
-        ainit_hook: Callable[[], Awaitable[None]],
-        aclose_hook: Callable[[], Awaitable[None]],
     ) -> None:
         super().__init__(rt=rt)
-        self._inited = False
-        self._closed = False
         self._steps = steps
         self._overview_step = overview_step
-        self._ainit_hook = ainit_hook
-        self._aclose_hook = aclose_hook
+        self.bind_deps(*steps, overview_step)
 
     @classmethod
     def from_settings(
-        cls, settings: AppSettings, *, overrides: ComponentOverrides | None = None
+        cls, settings: AppSettings, *, overrides: Overrides | None = None
     ) -> Engine:
         # Lazy import to avoid a bootstrap <-> engine import cycle.
         from serpsage.app.bootstrap import build_engine  # noqa: PLC0415
 
         return build_engine(settings=settings, overrides=overrides)
-
-    @override
-    async def ainit(self) -> None:
-        if self._inited:
-            return
-        self._inited = True
-        await self._ainit_hook()
-
-    @override
-    async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        await self._aclose_hook()
 
     async def run(self, req: SearchRequest) -> SearchResponse:
         await self.ainit()

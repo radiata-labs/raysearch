@@ -8,13 +8,14 @@ from serpsage.text.normalize import clean_whitespace
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
     from serpsage.contracts.services import RankerBase
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class Reranker(WorkUnit):
-    def __init__(self, *, rt: CoreRuntime, ranker: RankerBase) -> None:
+    def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
+        self.bind_deps(ranker)
 
     def rerank(
         self,

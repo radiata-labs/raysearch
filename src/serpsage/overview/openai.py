@@ -8,27 +8,28 @@ import openai
 from openai import AsyncOpenAI
 
 from serpsage.contracts.services import LLMClientBase
+from serpsage.fetch.http_client_unit import HttpClientUnit
 from serpsage.models.llm import ChatJSONResult, LLMUsage
 
 if TYPE_CHECKING:
-    import httpx
     from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
-    from serpsage.core.runtime import CoreRuntime
+    from serpsage.core.runtime import Runtime
 
 
 class OpenAIClient(LLMClientBase):
     """LLMClient implemented via the official OpenAI Python SDK (async).
 
     Notes:
-    - Reuses the injected `httpx.AsyncClient` for connection pooling.
+    - Reuses the injected `HttpClientUnit.client` for connection pooling.
     - Keeps the narrow `LLMClient.chat_json()` interface for easy swapping with
       other providers / local models.
     """
 
-    def __init__(self, *, rt: CoreRuntime, http: httpx.AsyncClient) -> None:
+    def __init__(self, *, rt: Runtime, http: HttpClientUnit) -> None:
         super().__init__(rt=rt)
+        self.bind_deps(http)
         llm = self.settings.overview.llm
         # AsyncOpenAI is cheap, but we keep a single instance to reuse config.
         self.client = AsyncOpenAI(
@@ -37,7 +38,7 @@ class OpenAIClient(LLMClientBase):
             timeout=float(llm.timeout_s),
             max_retries=int(llm.max_retries),
             default_headers=dict(llm.headers or {}),
-            http_client=http,
+            http_client=http.client,
         )
 
     @override
