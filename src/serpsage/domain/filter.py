@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from serpsage.settings.models import ProfileSettings
 
 
-class ResultFilterer(WorkUnit):
+class Filterer(WorkUnit):
     def filter(
         self,
         *,
@@ -78,4 +78,4 @@ class ResultFilterer(WorkUnit):
         return any(tok in t or tok in s for tok in query_tokens)
 
 
-__all__ = ["FilterOutcome", "ResultFilterer"]
+__all__ = ["FilterOutcome", "Filterer"]

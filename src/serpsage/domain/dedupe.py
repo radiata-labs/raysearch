@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 _WS_RE = re.compile(r"\s+")
 
 
-class ResultDeduper(WorkUnit):
+class Deduper(WorkUnit):
     def dedupe(
         self, *, results: list[ResultItem], profile: ProfileSettings
     ) -> tuple[list[ResultItem], int]:
@@ -148,4 +148,4 @@ class ResultDeduper(WorkUnit):
         return ordered, comparisons
 
 
-__all__ = ["ResultDeduper"]
+__all__ = ["Deduper"]

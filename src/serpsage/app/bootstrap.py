@@ -9,31 +9,23 @@ from serpsage.components import (
     build_cache,
     build_extractor,
     build_fetcher,
-    build_http_client,
     build_overview_client,
     build_provider,
     build_ranker,
+    build_rate_limiter,
 )
-from serpsage.components.fetch.rate_limit import RateLimiter
-from serpsage.components.http import HttpClient
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.contracts.services import (
-    CacheBase,
-    ExtractorBase,
-    FetcherBase,
-    LLMClientBase,
-    PipelineStepBase,
-    RankerBase,
-    SearchProviderBase,
-)
 from serpsage.core.runtime import Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
-from serpsage.domain.dedupe import ResultDeduper
-from serpsage.domain.enrich import Enricher
-from serpsage.domain.filter import ResultFilterer
-from serpsage.domain.normalize import ResultNormalizer
-from serpsage.domain.overview import OverviewBuilder
-from serpsage.domain.rerank import Reranker
+from serpsage.domain import (
+    Deduper,
+    Enricher,
+    Filterer,
+    HttpClient,
+    Normalizer,
+    OverviewBuilder,
+    Reranker,
+)
 from serpsage.pipeline.steps import (
     DedupeStep,
     EnrichStep,
@@ -44,9 +36,22 @@ from serpsage.pipeline.steps import (
     RerankStep,
     SearchStep,
 )
-from serpsage.telemetry.trace import NoopTelemetry, TraceTelemetry
+from serpsage.telemetry.trace import (
+    NoopTelemetry,
+    TraceTelemetry,
+)
 
 if TYPE_CHECKING:
+    from serpsage.contracts.services import (
+        CacheBase,
+        ExtractorBase,
+        FetcherBase,
+        LLMClientBase,
+        PipelineStepBase,
+        RankerBase,
+        RateLimiterBase,
+        SearchProviderBase,
+    )
     from serpsage.settings.models import AppSettings
 
 
@@ -82,11 +87,11 @@ def build_engine(
     def get_shared_http_unit() -> HttpClient:
         nonlocal shared_http_unit
         if shared_http_unit is None:
-            shared_http_unit = build_http_client(rt=rt, ov=ov)
+            shared_http_unit = HttpClient(rt=rt, ov=ov)
         return shared_http_unit
 
     cache: CacheBase = ov.cache or build_cache(rt=rt)
-    rate_limiter: RateLimiter = ov.rate_limiter or RateLimiter(rt=rt)
+    rate_limiter: RateLimiterBase = ov.rate_limiter or build_rate_limiter(rt=rt)
     provider: SearchProviderBase = ov.provider or build_provider(
         rt=rt, http=get_shared_http_unit()
     )
@@ -104,9 +109,9 @@ def build_engine(
         rt=rt, http=get_shared_http_unit()
     )
 
-    normalizer = ResultNormalizer(rt=rt)
-    filterer = ResultFilterer(rt=rt)
-    deduper = ResultDeduper(rt=rt)
+    normalizer = Normalizer(rt=rt)
+    filterer = Filterer(rt=rt)
+    deduper = Deduper(rt=rt)
     enricher = Enricher(rt=rt, fetcher=fetcher, extractor=extractor, ranker=ranker)
     reranker = Reranker(rt=rt, ranker=ranker)
     overview_builder = OverviewBuilder(rt=rt, llm=llm)

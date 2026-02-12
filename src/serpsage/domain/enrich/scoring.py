@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from serpsage.text.normalize import normalize_text
 from serpsage.text.similarity import is_duplicate_text
@@ -10,14 +10,19 @@ from serpsage.text.tokenize import tokenize
 from serpsage.text.utils import extract_intent_tokens
 
 if TYPE_CHECKING:
-    from serpsage.settings.models import ProfileSettings
+    from serpsage.contracts.services import RankerBase
+    from serpsage.settings.models import AppSettings, ProfileSettings
 
 
 class EnrichScoringMixin:
-    settings: Any
-    _ranker: Any
+    settings: AppSettings
+    ranker: RankerBase
 
-    def _filter_blocks(
+    def __init__(self, *, settings: AppSettings, ranker: RankerBase) -> None:
+        self.settings = settings
+        self.ranker = ranker
+
+    def filter_blocks(
         self, blocks: list[str], *, profile: ProfileSettings, query: str
     ) -> tuple[list[str], dict[str, int]]:
         noise_words = list(profile.noise_words or [])
@@ -80,7 +85,7 @@ class EnrichScoringMixin:
         stats["blocks_kept"] = int(len(kept))
         return kept, stats
 
-    def _score_chunks(
+    def score_chunks(
         self,
         *,
         chunks: list[str],
@@ -117,13 +122,13 @@ class EnrichScoringMixin:
             stats["chunks_candidates"] = 0
             return [], stats
 
-        raw_scores = self._ranker.score_texts(
+        raw_scores = self.ranker.score_texts(
             texts=[c for _, c in filtered],
             query=query,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
         )
-        norm = self._ranker.normalize(scores=raw_scores)
+        norm = self.ranker.normalize(scores=raw_scores)
         if norm and max(norm) <= 0.0 and max(raw_scores) > 0.0:
             norm = [0.5 for _ in norm]
 
@@ -413,4 +418,3 @@ class EnrichScoringMixin:
 
 
 __all__ = ["EnrichScoringMixin"]
-

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from typing_extensions import override
 
 import anyio
 
-from serpsage.core.workunit import WorkUnit
+from serpsage.contracts.services import RateLimiterBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
 
-class RateLimiter(WorkUnit):
+class BasicRateLimiter(RateLimiterBase):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         cfg = self.settings.enrich.fetch.rate_limit
@@ -21,6 +22,7 @@ class RateLimiter(WorkUnit):
         self._host_lock = anyio.Lock()
         self._last_host_ms: dict[str, int] = {}
 
+    @override
     async def acquire(self, *, host: str) -> None:
         await self._global.acquire()
         sem = await self._get_host_sem(host)
@@ -34,6 +36,7 @@ class RateLimiter(WorkUnit):
                     await anyio.sleep(wait_ms / 1000.0)
                 self._last_host_ms[host] = int(self.clock.now_ms())
 
+    @override
     async def release(self, *, host: str) -> None:
         sem = await self._get_host_sem(host)
         sem.release()
@@ -51,4 +54,4 @@ class RateLimiter(WorkUnit):
             return sem
 
 
-__all__ = ["RateLimiter"]
+__all__ = ["BasicRateLimiter"]

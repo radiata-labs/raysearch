@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -8,55 +7,18 @@ from typing_extensions import override
 import anyio
 import httpx
 
-from serpsage.components.fetch.common import browser_headers
-from serpsage.components.http import HttpClient
+from serpsage.components.fetch.utils import (
+    browser_headers,
+    get_delay_s,
+    parse_retry_after_s,
+)
 from serpsage.contracts.services import FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.domain.http import HttpClient
     from serpsage.settings.models import RetrySettings
-
-
-def _backoff_s(attempt: int, base_ms: int, max_ms: int) -> float:
-    base = max(1, int(base_ms))
-    cap = max(base, int(max_ms))
-    exp = min(cap, int(base * (2 ** max(0, attempt - 1))))
-    return float(min(cap, random.randint(base, exp))) / 1000.0
-
-
-def _parse_retry_after_s(v: str | None) -> float | None:
-    if not v:
-        return None
-    v = v.strip()
-    if not v:
-        return None
-    if v.isdigit():
-        return float(int(v))
-    return None
-
-
-async def _read_with_limit(aiter, *, max_bytes: int) -> tuple[bytes, bool]:
-    if max_bytes <= 0:
-        chunks: list[bytes] = [part async for part in aiter if part]
-        return b"".join(chunks), False
-
-    buf = bytearray()
-    truncated = False
-    async for part in aiter:
-        if not part:
-            continue
-        remain = max_bytes - len(buf)
-        if remain <= 0:
-            truncated = True
-            break
-        if len(part) <= remain:
-            buf.extend(part)
-        else:
-            buf.extend(part[:remain])
-            truncated = True
-            break
-    return bytes(buf), bool(truncated)
 
 
 class HttpxFetcher(FetcherBase):
@@ -79,7 +41,12 @@ class HttpxFetcher(FetcherBase):
             )
 
     async def fetch_attempt(
-        self, *, url: str, profile: str, span: SpanBase, retry: RetrySettings | None = None
+        self,
+        *,
+        url: str,
+        profile: str,
+        span: SpanBase,
+        retry: RetrySettings | None = None,
     ) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
         retry = retry or fetch_cfg.httpx.retry
@@ -123,15 +90,8 @@ class HttpxFetcher(FetcherBase):
                     if last_status == 429 or (500 <= last_status < 600):
                         if attempt >= max_attempts:
                             break
-                        ra = _parse_retry_after_s(resp.headers.get("retry-after"))
-                        delay = (
-                            ra
-                            if ra is not None
-                            else _backoff_s(
-                                attempt, retry.base_delay_ms, retry.max_delay_ms
-                            )
-                        )
-                        delay = min(delay, 1.5)
+                        ra = parse_retry_after_s(resp.headers.get("retry-after"))
+                        delay = ra if ra is not None else get_delay_s(retry.delay_ms)
                         span.set_attr("httpx_retry_reason", "status")
                         span.set_attr("httpx_retry_delay_s", float(delay))
                         await anyio.sleep(delay)
@@ -142,8 +102,7 @@ class HttpxFetcher(FetcherBase):
                 span.set_attr("httpx_error_type", type(exc).__name__)
                 if attempt >= max_attempts:
                     break
-                delay = _backoff_s(attempt, retry.base_delay_ms, retry.max_delay_ms)
-                delay = min(delay, 1.5)
+                delay = get_delay_s(retry.delay_ms)
                 span.set_attr("httpx_retry_reason", "network")
                 span.set_attr("httpx_retry_delay_s", float(delay))
                 await anyio.sleep(delay)
@@ -169,4 +128,4 @@ class HttpxFetcher(FetcherBase):
         )
 
 
-__all__ = ["HttpxFetcher", "_read_with_limit"]
+__all__ = ["HttpxFetcher"]

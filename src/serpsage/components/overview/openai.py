@@ -7,7 +7,6 @@ from typing_extensions import override
 import openai
 from openai import AsyncOpenAI
 
-from serpsage.components.http import HttpClient
 from serpsage.contracts.services import LLMClientBase
 from serpsage.models.llm import ChatJSONResult, LLMUsage
 
@@ -16,6 +15,7 @@ if TYPE_CHECKING:
     from openai.types.completion_usage import CompletionUsage
 
     from serpsage.core.runtime import Runtime
+    from serpsage.domain.http import HttpClient
 
 
 class OpenAIClient(LLMClientBase):

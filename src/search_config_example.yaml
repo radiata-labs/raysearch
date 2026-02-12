@@ -3,7 +3,7 @@ provider:
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
     # Prefer env override: SEARCH_API_KEY
-    api_key: null
+    api_key: sk-63133540a039c3443e874d71928b0d0d777a39f0
     timeout_s: 20.0
     allow_redirects: false
     headers: {}
@@ -71,7 +71,7 @@ enrich:
     basic: {}
     main_content: {}
   fetch:
-    backend: auto # httpx|curl_cffi|auto
+    backend: curl_cffi # httpx|curl_cffi|auto
     user_agent: serpsage-bot/3.0
     timeout_s: 10.0
     follow_redirects: true
@@ -79,21 +79,19 @@ enrich:
     cookies: {}
     rate_limit:
       global_concurrency: 16
-      per_host_concurrency: 2
+      per_host_concurrency: 16
       politeness_delay_ms: 0
     httpx:
       retry:
-        max_attempts: 3
-        base_delay_ms: 200
-        max_delay_ms: 2000
+        max_attempts: 1
+        delay_ms: 200
     curl_cffi:
       impersonate: chrome120
       http2: true
       verify_ssl: true
       retry:
-        max_attempts: 3
-        base_delay_ms: 200
-        max_delay_ms: 2000
+        max_attempts: 1
+        delay_ms: 200
     auto: {}
   select:
     min_chunk_score: 0.20
@@ -132,7 +130,7 @@ cache:
     table: cache
 
 overview:
-  enabled: true
+  enabled: false
   backend: openai # openai|null
   openai:
     llm:

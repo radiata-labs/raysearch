@@ -9,13 +9,13 @@ from serpsage.pipeline.context import SearchStepContext
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
-    from serpsage.domain.dedupe import ResultDeduper
+    from serpsage.domain.dedupe import Deduper
 
 
 class DedupeStep(StepBase):
     span_name = "step.dedupe"
 
-    def __init__(self, *, rt: Runtime, deduper: ResultDeduper) -> None:
+    def __init__(self, *, rt: Runtime, deduper: Deduper) -> None:
         super().__init__(rt=rt)
         self._deduper = deduper
         self.bind_deps(deduper)

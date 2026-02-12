@@ -38,6 +38,16 @@ class FetcherBase(WorkUnit, ABC):
         raise NotImplementedError
 
 
+class RateLimiterBase(WorkUnit, ABC):
+    @abstractmethod
+    async def acquire(self, *, host: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def release(self, *, host: str) -> None:
+        raise NotImplementedError
+
+
 class ExtractorBase(WorkUnit, ABC):
     @abstractmethod
     def extract(

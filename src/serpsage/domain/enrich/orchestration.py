@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from serpsage.settings.models import ProfileSettings
 
 
-class Enricher(WorkUnit, EnrichScoringMixin):
+class Enricher(WorkUnit):
     def __init__(
         self,
         *,
@@ -27,7 +27,7 @@ class Enricher(WorkUnit, EnrichScoringMixin):
         super().__init__(rt=rt)
         self._fetcher = fetcher
         self._extractor = extractor
-        self._ranker = ranker
+        self._scoring = EnrichScoringMixin(settings=self.settings, ranker=ranker)
         self.bind_deps(fetcher, extractor, ranker)
 
     async def enrich_one(
@@ -58,7 +58,7 @@ class Enricher(WorkUnit, EnrichScoringMixin):
                     sp.set_attr("blocks_total", 0)
                     return PageEnrichment(chunks=[], error="no blocks extracted")
 
-                kept, block_stats = self._filter_blocks(
+                kept, block_stats = self._scoring.filter_blocks(
                     blocks, profile=profile, query=query
                 )
                 stats.update(block_stats)
@@ -94,7 +94,7 @@ class Enricher(WorkUnit, EnrichScoringMixin):
                 if len(chunks) > int(self.settings.enrich.chunking.max_chunks):
                     chunks = chunks[: int(self.settings.enrich.chunking.max_chunks)]
 
-                scored, score_stats = self._score_chunks(
+                scored, score_stats = self._scoring.score_chunks(
                     chunks=chunks,
                     query=query,
                     query_tokens=query_tokens,

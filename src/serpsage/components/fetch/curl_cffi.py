@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import random
 import time
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 import anyio
 
-from serpsage.components.fetch.common import browser_headers
+from serpsage.components.fetch.utils import (
+    browser_headers,
+    get_delay_s,
+    parse_retry_after_s,
+)
 from serpsage.contracts.services import FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
@@ -26,24 +29,6 @@ if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
-
-
-def _backoff_s(attempt: int, base_ms: int, max_ms: int) -> float:
-    base = max(1, int(base_ms))
-    cap = max(base, int(max_ms))
-    exp = min(cap, int(base * (2 ** max(0, attempt - 1))))
-    return float(min(cap, random.randint(base, exp))) / 1000.0
-
-
-def _parse_retry_after_s(v: str | None) -> float | None:
-    if not v:
-        return None
-    v = v.strip()
-    if not v:
-        return None
-    if v.isdigit():
-        return float(int(v))
-    return None
 
 
 class CurlCffiFetcher(FetcherBase):
@@ -143,15 +128,8 @@ class CurlCffiFetcher(FetcherBase):
                 if last_status == 429 or (500 <= last_status < 600):
                     if attempt >= max_attempts:
                         break
-                    ra = _parse_retry_after_s(_hget(hdrs, "retry-after"))
-                    delay = (
-                        ra
-                        if ra is not None
-                        else _backoff_s(
-                            attempt, retry.base_delay_ms, retry.max_delay_ms
-                        )
-                    )
-                    delay = min(delay, 1.5)
+                    ra = parse_retry_after_s(_hget(hdrs, "retry-after"))
+                    delay = ra if ra is not None else get_delay_s(retry.delay_ms)
                     span.set_attr("curl_retry_reason", "status")
                     span.set_attr("curl_retry_delay_s", float(delay))
                     await anyio.sleep(delay)
@@ -162,8 +140,7 @@ class CurlCffiFetcher(FetcherBase):
                 span.set_attr("curl_error_type", type(exc).__name__)
                 if attempt >= max_attempts:
                     break
-                delay = _backoff_s(attempt, retry.base_delay_ms, retry.max_delay_ms)
-                delay = min(delay, 1.5)
+                delay = get_delay_s(retry.delay_ms)
                 span.set_attr("curl_retry_reason", "network")
                 span.set_attr("curl_retry_delay_s", float(delay))
                 await anyio.sleep(delay)

@@ -23,8 +23,7 @@ OverviewBackendKey = Literal["openai", "null"]
 
 class RetrySettings(Model):
     max_attempts: int = 3
-    base_delay_ms: int = 200
-    max_delay_ms: int = 2_000
+    delay_ms: int = 200
 
 
 class SearxngSettings(Model):

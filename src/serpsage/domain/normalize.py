@@ -8,7 +8,7 @@ from serpsage.core.workunit import WorkUnit
 from serpsage.text.normalize import clean_whitespace, strip_html
 
 
-class ResultNormalizer(WorkUnit):
+class Normalizer(WorkUnit):
     def normalize_many(self, raw_results: list[dict[str, Any]]) -> list[ResultItem]:
         include_raw = bool(self.settings.pipeline.include_raw)
         return [
@@ -54,4 +54,4 @@ class ResultNormalizer(WorkUnit):
         return host.lower()
 
 
-__all__ = ["ResultNormalizer"]
+__all__ = ["Normalizer"]

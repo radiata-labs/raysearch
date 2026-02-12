@@ -9,13 +9,15 @@ from urllib.parse import urlparse
 
 from serpsage.contracts.services import CacheBase, ExtractorBase, FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
+from serpsage.settings.models import RetrySettings
 from serpsage.util.json import stable_json
 
 if TYPE_CHECKING:
     from serpsage.components.fetch.curl_cffi import CurlCffiFetcher
     from serpsage.components.fetch.http import HttpxFetcher
-    from serpsage.components.fetch.rate_limit import RateLimiter
     from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.contracts.services import RateLimiterBase
+    from serpsage.settings.models import FetchSettings
 
 
 _BLOCKED_RE = re.compile(
@@ -41,9 +43,7 @@ def _decode_fetch_cache(blob: bytes) -> dict[str, Any]:
     return json.loads(blob.decode("utf-8"))
 
 
-def _should_disable_cache(*, fetch_cfg: Any, http_cfg: Any) -> bool:
-    if getattr(http_cfg, "proxy", None):
-        return True
+def _should_disable_cache(*, fetch_cfg: FetchSettings) -> bool:
     cookies = getattr(fetch_cfg, "cookies", None) or {}
     if cookies:
         return True
@@ -60,7 +60,7 @@ class AutoFetcher(FetcherBase):
         *,
         rt,
         cache: CacheBase,
-        rate_limiter: RateLimiter,
+        rate_limiter: RateLimiterBase,
         httpx_fetcher: HttpxFetcher,
         curl_fetcher: CurlCffiFetcher | None,
         extractor: ExtractorBase,
@@ -76,13 +76,10 @@ class AutoFetcher(FetcherBase):
     @override
     async def afetch(self, *, url: str) -> FetchResult:
         fetch_cfg = self.settings.enrich.fetch
-        http_cfg = self.settings.http
         host = urlparse(url).netloc.lower()
         backend = str(fetch_cfg.backend or "auto").lower()
 
-        cache_allowed = not _should_disable_cache(
-            fetch_cfg=fetch_cfg, http_cfg=http_cfg
-        )
+        cache_allowed = not _should_disable_cache(fetch_cfg=fetch_cfg)
         cache_key = _hash_key(
             {
                 "url": url,
@@ -158,14 +155,18 @@ class AutoFetcher(FetcherBase):
         last_useful = False
 
         for prof in ("browser", "compat"):
-            res = await self._httpx.fetch_attempt(url=url, profile=prof, span=span)
+            res = await self._httpx.fetch_attempt(
+                url=url, profile=prof, span=span, retry=RetrySettings(max_attempts=1)
+            )
             last = res
             last_useful = await self._is_useful(res)
             if last_useful:
                 return res
 
         if self._curl is not None:
-            res = await self._curl.fetch_attempt(url=url, span=span)
+            res = await self._curl.fetch_attempt(
+                url=url, span=span, retry=RetrySettings(max_attempts=1)
+            )
             last = res
             last_useful = await self._is_useful(res)
             if last_useful:

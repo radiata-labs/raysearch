@@ -35,4 +35,19 @@ def browser_headers(
     return headers
 
 
-__all__ = ["browser_headers"]
+def get_delay_s(base_ms: int) -> float:
+    return min(base_ms, 100) / 1000.0
+
+
+def parse_retry_after_s(v: str | None) -> float | None:
+    if not v:
+        return None
+    v = v.strip()
+    if not v:
+        return None
+    if v.isdigit():
+        return float(int(v))
+    return None
+
+
+__all__ = ["get_delay_s", "parse_retry_after_s"]
