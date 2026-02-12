@@ -58,7 +58,7 @@ class RankStep(StepBase):
             weights = {}
         span.set_attr("providers_used", sorted(weights.keys()))
         span.set_attr("weights", weights)
-        raw_scores = self._ranker.score_texts(
+        raw_scores = await self._ranker.score_texts(
             texts=docs,
             query=query,
             query_tokens=list(query_tokens),

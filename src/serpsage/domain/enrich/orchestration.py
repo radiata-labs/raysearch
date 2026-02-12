@@ -94,7 +94,7 @@ class Enricher(WorkUnit):
                 if len(chunks) > int(self.settings.enrich.chunking.max_chunks):
                     chunks = chunks[: int(self.settings.enrich.chunking.max_chunks)]
 
-                scored, score_stats = self._scoring.score_chunks(
+                scored, score_stats = await self._scoring.score_chunks(
                     chunks=chunks,
                     query=query,
                     query_tokens=query_tokens,

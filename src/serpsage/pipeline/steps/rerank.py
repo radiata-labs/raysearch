@@ -42,7 +42,7 @@ class RerankStep(StepBase):
         )
         ctx.intent_tokens = list(intent_tokens)
 
-        ctx.results = self._reranker.rerank(
+        ctx.results = await self._reranker.rerank(
             results=ctx.results,
             query=query,
             query_tokens=list(query_tokens),

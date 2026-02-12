@@ -58,7 +58,7 @@ class ExtractorBase(WorkUnit, ABC):
 
 class RankerBase(WorkUnit, ABC):
     @abstractmethod
-    def score_texts(
+    async def score_texts(
         self,
         *,
         texts: list[str],

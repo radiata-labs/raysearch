@@ -16,7 +16,7 @@ class HeuristicRanker(RankerBase):
         super().__init__(rt=rt)
 
     @override
-    def score_texts(
+    async def score_texts(
         self,
         *,
         texts: list[str],

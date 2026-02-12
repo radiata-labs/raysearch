@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing_extensions import override
 
+from anyio import to_thread
+
 try:
     from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
@@ -19,7 +21,7 @@ class Bm25Ranker(RankerBase):
         super().__init__(rt=rt)
 
     @override
-    def score_texts(
+    async def score_texts(
         self,
         *,
         texts: list[str],
@@ -38,8 +40,8 @@ class Bm25Ranker(RankerBase):
             return [0.0 for _ in texts]
 
         corpus = [tokenize(doc) for doc in texts]
-        bm25 = BM25Okapi(corpus)
-        scores = bm25.get_scores(q)
+        bm25 = await to_thread.run_sync(BM25Okapi, corpus)
+        scores = await to_thread.run_sync(bm25.get_scores, q)
         return [float(s) for s in scores]
 
     @override

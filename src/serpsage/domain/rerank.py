@@ -17,7 +17,7 @@ class Reranker(WorkUnit):
         self._ranker = ranker
         self.bind_deps(ranker)
 
-    def rerank(
+    async def rerank(
         self,
         *,
         results: list[ResultItem],
@@ -41,7 +41,7 @@ class Reranker(WorkUnit):
         if not has_any_page:
             return results
 
-        raw = self._ranker.score_texts(
+        raw = await self._ranker.score_texts(
             texts=page_docs,
             query=query,
             query_tokens=query_tokens,

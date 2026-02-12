@@ -1,5 +1,5 @@
 
-# SerpSage (Async-only 3.0)
+# SerpSage
 
 SerpSage is an async-only SERP utility built on top of SearxNG. It fetches results,
 ranks/filters them, optionally crawls top pages to enrich the context, and can produce an AI overview with citations.

@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+import anyio
+
 from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
 from serpsage.components.rank.heuristic import HeuristicRanker
-from serpsage.components.rank.utils import normalize_scores, rank_scales
+from serpsage.components.rank.utils import blend_weighted, normalize_scores, rank_scales
 from serpsage.contracts.services import RankerBase
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from serpsage.core.runtime import Runtime
 
 
@@ -35,7 +39,7 @@ class BlendRanker(RankerBase):
         return {k: float(v) / total for k, v in raw.items()}
 
     @override
-    def score_texts(
+    async def score_texts(
         self,
         *,
         texts: list[str],
@@ -46,31 +50,52 @@ class BlendRanker(RankerBase):
         if not texts:
             return []
 
-        heur = self._heuristic.score_texts(
-            texts=texts,
-            query=query,
-            query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
-        )
-
         weights = self._provider_weights()
         heur_w = float(weights.get("heuristic", 0.0))
         bm25_w = float(weights.get("bm25", 0.0))
+        need_bm25 = bm25_w > 0 and self._bm25 is not None
 
-        blended = [float(s) * heur_w for s in heur]
-        if bm25_w > 0 and self._bm25 is not None:
-            bm25_raw = self._bm25.score_texts(texts=texts, query=query)
-            scaled = rank_scales(bm25_raw)
-            max_heur = max(heur) if heur else 0.0
-            anchor = float(max_heur) if float(max_heur) > 0 else 1.0
-            for i in range(len(blended)):
-                blended[i] += float(scaled[i]) * bm25_w * anchor
+        heur: list[float] | None = None
+        bm25_raw: list[float] | None = None
 
-        return blended
+        async def run_heuristic() -> None:
+            nonlocal heur
+            heur = await self._heuristic.score_texts(
+                texts=texts,
+                query=query,
+                query_tokens=query_tokens,
+                intent_tokens=intent_tokens,
+            )
+
+        async def run_bm25() -> None:
+            nonlocal bm25_raw
+            bm25_raw = await self._bm25.score_texts(texts=texts, query=query)  # type: ignore[union-attr]
+
+        async with anyio.create_task_group() as tg:
+            if heur_w > 0:
+                tg.start_soon(run_heuristic)
+            else:
+                heur = [0.0] * len(texts)
+            if need_bm25:
+                tg.start_soon(run_bm25)
+
+        heur = heur or [0.0] * len(texts)
+        max_heur = max(heur) if heur else 0.0
+        anchor = float(max_heur) if float(max_heur) > 0 else 1.0
+
+        score_map: dict[str, list[float]] = {"heuristic": heur}
+        transforms: dict[str, Callable[[list[float]], list[float]]] = {}
+        if need_bm25 and bm25_raw is not None:
+            score_map["bm25"] = bm25_raw
+            transforms["bm25"] = lambda s, a=anchor: [
+                float(x) * a for x in rank_scales(s)
+            ]
+
+        return blend_weighted(scores=score_map, weights=weights, transforms=transforms)
 
     @override
     def normalize(self, *, scores: list[float]) -> list[float]:
         return normalize_scores(scores, self.settings.rank.normalization)
 
 
-__all__ = ["BlendRanker"]
+__all__ = ["BlendRanker", "blend_weighted"]

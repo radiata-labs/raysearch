@@ -85,7 +85,7 @@ class EnrichScoringMixin:
         stats["blocks_kept"] = int(len(kept))
         return kept, stats
 
-    def score_chunks(
+    async def score_chunks(
         self,
         *,
         chunks: list[str],
@@ -122,7 +122,7 @@ class EnrichScoringMixin:
             stats["chunks_candidates"] = 0
             return [], stats
 
-        raw_scores = self.ranker.score_texts(
+        raw_scores = await self.ranker.score_texts(
             texts=[c for _, c in filtered],
             query=query,
             query_tokens=query_tokens,

@@ -153,5 +153,5 @@ overview:
   force_language: auto
 
 telemetry:
-  enabled: false
+  enabled: true
   include_events: false

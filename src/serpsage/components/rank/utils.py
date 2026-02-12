@@ -5,6 +5,8 @@ import statistics
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from serpsage.settings.models import NormalizationSettings
 
 
@@ -98,4 +100,29 @@ def normalize_scores(scores: list[float], cfg: NormalizationSettings) -> list[fl
     return [min(1.0, max(0.0, x)) for x in out]
 
 
-__all__ = ["normalize_scores", "rank_scales", "safe_float"]
+def blend_weighted(
+    *,
+    scores: dict[str, list[float]],
+    weights: dict[str, float],
+    transforms: dict[str, Callable[[list[float]], list[float]]] | None = None,
+) -> list[float]:
+    if not scores:
+        return []
+    n = len(next(iter(scores.values())))
+    out = [0.0] * n
+    for name, w in weights.items():
+        if w <= 0:
+            continue
+        s = scores.get(name)
+        if s is None:
+            continue
+        if transforms is not None:
+            fn = transforms.get(name)
+            if fn is not None:
+                s = fn(s)
+        for i in range(n):
+            out[i] += float(s[i]) * float(w)
+    return out
+
+
+__all__ = ["normalize_scores", "rank_scales", "safe_float", "blend_weighted"]
