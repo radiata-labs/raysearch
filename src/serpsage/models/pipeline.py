@@ -22,7 +22,6 @@ class SearchStepContext(BaseStepContext):
     profile: ProfileSettings | None = None
     query_tokens: list[str] | None = None
     intent_tokens: list[str] | None = None
-    dedupe_comparisons: int = 0
     overview: OverviewResult | None = None
     errors: list[AppError] = Field(default_factory=list)
 

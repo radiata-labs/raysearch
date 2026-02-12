@@ -121,8 +121,8 @@ class OverviewBuilder(WorkUnit):
     async def build_overview(
         self, *, query: str, results: list[ResultItem]
     ) -> OverviewResult:
-        llm_cfg = self.settings.overview.openai.llm
-        model = llm_cfg.model
+        active_model = self.settings.overview.resolve_model()
+        model = active_model.model
 
         messages = self.build_messages(query=query, results=results)
         schema = self.schema()
@@ -132,7 +132,9 @@ class OverviewBuilder(WorkUnit):
         cur_messages = list(messages)
 
         with self.span("overview.build", model=model) as sp:
-            sp.set_attr("schema_strict", bool(self.settings.overview.openai.schema_strict))
+            sp.set_attr("backend", str(active_model.backend))
+            sp.set_attr("model_name", str(active_model.name))
+            sp.set_attr("schema_strict", bool(active_model.schema_strict))
             sp.set_attr("prompt_chars", int(prompt_chars))
             sp.set_attr("self_heal_retries", int(retries))
 
@@ -146,7 +148,7 @@ class OverviewBuilder(WorkUnit):
                         model=model,
                         messages=cur_messages,
                         schema=schema,
-                        timeout_s=float(llm_cfg.timeout_s),
+                        timeout_s=float(active_model.timeout_s),
                     )
                     out = OverviewLLMOutput.model_validate(last_res.data)
                     out = self._sanitize_overview(out, results)

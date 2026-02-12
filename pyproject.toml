@@ -24,7 +24,6 @@ dependencies = [
     "beautifulsoup4",
     "curl_cffi",
     "httpx>=0.27,<1",
-    "openai>=2.17.0",
     "pydantic>=2.7,<3",
     "rank-bm25",
     "jieba",
@@ -42,9 +41,9 @@ cache = [
     "asyncmy>=0.2.11",
     "sqlalchemy>=2.0.46",
 ]
-image = ["pillow", "imagehash", "rawpy", "numpy"]
-gui = ["PySide6"]
 api = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1"]
+overview = ["openai>=2.17.0", "google-genai>=1.63.0"]
+to_zh_tw = ["opencc>=1.2.0"]
 
 [build-system]
 requires = ["setuptools>=74"]

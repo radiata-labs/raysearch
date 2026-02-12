@@ -16,6 +16,14 @@ except Exception:  # noqa: BLE001
     jieba = None
     JIEBA_AVAILABLE = False
 
+try:
+    import opencc  # type: ignore[import-untyped]
+
+    OPENCC_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    opencc = None
+    OPENCC_AVAILABLE = False
+
 
 def ngrams(text: str, n: int) -> list[str]:
     if n <= 0 or len(text) < n:
@@ -60,4 +68,25 @@ def tokenize(text: str) -> list[str]:
     return uniq_preserve_order(tokens)
 
 
-__all__ = ["tokenize"]
+def tokenize_for_query(query: str) -> list[str]:
+    items = tokenize(query)
+
+    def to_zh_tw(s: str) -> str:
+        if OPENCC_AVAILABLE and opencc is not None:
+            return opencc.OpenCC("s2t").convert(s)
+        import zhconv
+
+        return zhconv.convert(s, "zh-tw")
+
+    merged = items + [to_zh_tw(x) for x in items]
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in merged:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+__all__ = ["tokenize", "tokenize_for_query"]

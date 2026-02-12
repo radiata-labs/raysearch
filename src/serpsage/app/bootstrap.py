@@ -113,7 +113,7 @@ def build_engine(
     filterer = Filterer(rt=rt)
     deduper = Deduper(rt=rt)
     enricher = Enricher(rt=rt, fetcher=fetcher, extractor=extractor, ranker=ranker)
-    reranker = Reranker(rt=rt, ranker=ranker)
+    reranker = Reranker(rt=rt)
     overview_builder = OverviewBuilder(rt=rt, llm=llm)
 
     steps: list[PipelineStepBase] = [

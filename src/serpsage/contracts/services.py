@@ -63,13 +63,9 @@ class RankerBase(WorkUnit, ABC):
         *,
         texts: list[str],
         query: str,
-        query_tokens: list[str] | None = None,
-        intent_tokens: list[str] | None = None,
+        query_tokens: list[str],
+        intent_tokens: list[str],
     ) -> list[float]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def normalize(self, *, scores: list[float]) -> list[float]:
         raise NotImplementedError
 
 

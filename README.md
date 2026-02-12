@@ -15,16 +15,24 @@ Environment variables:
 - `SERPSAGE_CONFIG_PATH`: path to JSON/YAML config (default: `serpsage.yaml`)
 - `SEARXNG_BASE_URL`: overrides `provider.searxng.base_url`
 - `SEARCH_API_KEY`: overrides `provider.searxng.api_key`
+- `OPENAI_API_KEY`: fallback for `overview.models[*].api_key` where `backend=openai` and YAML value is empty
+- `OPENAI_BASE_URL`: fallback for `overview.models[*].base_url` where `backend=openai` and YAML value is empty
+- `GEMINI_API_KEY`: fallback for `overview.models[*].api_key` where `backend=gemini` and YAML value is empty
+- `GEMINI_BASE_URL`: fallback for `overview.models[*].base_url` where `backend=gemini` and YAML value is empty
 
 Note: when using the default `base_url`, `SEARCH_API_KEY` is required. This is enforced at request time.
 
 Componentized config shape:
-- Each component selects implementation via `backend` (for example: `provider.backend`, `rank.backend`, `enrich.fetch.backend`, `enrich.extractor.backend`, `overview.backend`, `cache.backend`).
+- Each component selects implementation via `backend` (for example: `provider.backend`, `rank.backend`, `enrich.fetch.backend`, `enrich.extractor.backend`, `cache.backend`).
 - Shared HTTP transport settings live under top-level `http` and are reused by provider/fetch/overview.
 - `cache` and `overview` keep an `enabled` switch.
-- Backend-specific options live under component sub-blocks (for example `overview.openai.llm`, `enrich.fetch.common`, `rank.blend.providers`).
+- `overview` uses `overview.use_model` to select an entry in `overview.models[]`; each model row declares `backend` and per-model LLM options.
+- Backend-specific options live under component sub-blocks (for example `enrich.fetch.common`, `rank.blend.providers`).
 - `enrich.fetch.common` is intentionally minimal and follows fail-fast validation (`extra=forbid`) to prevent stale/ignored keys.
 - See `src/search_config_example.yaml` for a full reference.
+
+Overview optional dependencies:
+- Install `serpsage[overview]` to enable OpenAI/Gemini overview backends.
 
 Score filtering:
 - `pipeline.min_score` (default `0.5`) applies to ranked results.

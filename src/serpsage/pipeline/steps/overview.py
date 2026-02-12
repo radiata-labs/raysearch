@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 import httpx
-import openai
 
 from serpsage.app.response import OverviewResult
 from serpsage.models.errors import AppError
@@ -38,14 +37,12 @@ class OverviewStep(StepBase):
         enabled = self.settings.overview.enabled
         if ctx.request.overview is not None:
             enabled = bool(ctx.request.overview)
-        if str(self.settings.overview.backend or "openai").lower() == "null":
-            enabled = False
         if not enabled:
             return ctx
         if not ctx.results:
             return ctx
 
-        llm_cfg = self.settings.overview.openai.llm
+        llm_cfg = self.settings.overview.resolve_model()
         model = llm_cfg.model
         messages = self._builder.build_messages(
             query=ctx.request.query, results=ctx.results
@@ -53,10 +50,10 @@ class OverviewStep(StepBase):
         schema = self._builder.schema()
 
         prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
+        span.set_attr("backend", str(llm_cfg.backend))
+        span.set_attr("model_name", str(llm_cfg.name))
         span.set_attr("model", model)
-        span.set_attr(
-            "schema_strict", bool(self.settings.overview.openai.schema_strict)
-        )
+        span.set_attr("schema_strict", bool(llm_cfg.schema_strict))
         span.set_attr("prompt_chars", int(prompt_chars))
         span.set_attr(
             "max_summary_tokens", int(self.settings.overview.max_output_tokens)
@@ -67,9 +64,12 @@ class OverviewStep(StepBase):
         if cache_ttl_s > 0:
             cache_key = self._overview_cache_key(
                 model=model,
+                backend=str(llm_cfg.backend),
+                model_name=str(llm_cfg.name),
+                base_url=str(llm_cfg.base_url),
                 messages=messages,
                 schema=schema,
-                schema_strict=bool(self.settings.overview.openai.schema_strict),
+                schema_strict=bool(llm_cfg.schema_strict),
             )
             cached = await self._cache.aget(namespace="overview", key=cache_key)
             if cached:
@@ -98,6 +98,8 @@ class OverviewStep(StepBase):
             retries = max(0, int(self.settings.overview.self_heal_retries))
             code, details = self._map_overview_error(
                 exc if isinstance(exc, Exception) else Exception(str(exc)),
+                backend=str(llm_cfg.backend),
+                model_name=str(llm_cfg.name),
                 model=model,
                 base_url=str(llm_cfg.base_url),
                 attempt=retries,
@@ -108,12 +110,18 @@ class OverviewStep(StepBase):
     def _overview_cache_key(
         self,
         model: str,
+        backend: str,
+        model_name: str,
+        base_url: str,
         messages: list[dict[str, str]],
         schema: dict[str, Any],
         schema_strict: bool,
     ) -> str:
         payload = {
+            "backend": backend,
+            "model_name": model_name,
             "model": model,
+            "base_url": base_url,
             "messages": messages,
             "schema": schema,
             "schema_strict": bool(schema_strict),
@@ -121,9 +129,18 @@ class OverviewStep(StepBase):
         return hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
 
     def _map_overview_error(
-        self, exc: Exception, *, model: str, base_url: str, attempt: int
+        self,
+        exc: Exception,
+        *,
+        backend: str,
+        model_name: str,
+        model: str,
+        base_url: str,
+        attempt: int,
     ) -> tuple[str, dict[str, Any]]:
         details: dict[str, Any] = {
+            "backend": backend,
+            "model_name": model_name,
             "model": model,
             "base_url": base_url,
             "attempt": int(attempt),
@@ -134,28 +151,84 @@ class OverviewStep(StepBase):
         if request_id:
             details["request_id"] = str(request_id)
 
-        status = getattr(exc, "status_code", None)
+        status = _extract_status_code(exc)
         if status is not None:
             details["status_code"] = int(status)
 
         code = "overview_failed"
-        if isinstance(exc, openai.RateLimitError):
+        if _looks_like_timeout(exc, status=status):
+            code = "overview_timeout"
+        elif _looks_like_rate_limited(exc, status=status):
             code = "overview_rate_limited"
-        elif isinstance(exc, openai.APITimeoutError):
-            code = "overview_timeout"
-        elif isinstance(exc, openai.AuthenticationError):
+        elif _looks_like_auth_error(exc, status=status):
             code = "overview_auth_failed"
-        elif isinstance(exc, openai.BadRequestError):
+        elif status is not None and 500 <= int(status) < 600:
+            code = "overview_server_error"
+        elif status is not None and 400 <= int(status) < 500:
             code = "overview_bad_request"
-        elif isinstance(exc, openai.APIStatusError):
-            sc = getattr(exc, "status_code", None)
-            if sc is not None and 500 <= int(sc) < 600:
-                code = "overview_server_error"
-            else:
-                code = "overview_failed"
-        elif isinstance(exc, (openai.APIConnectionError, httpx.TimeoutException)):
-            code = "overview_timeout"
         return code, details
+
+
+def _extract_status_code(exc: Exception) -> int | None:
+    for attr in ("status_code", "code"):
+        raw = getattr(exc, attr, None)
+        if raw is None:
+            continue
+        try:
+            status = int(raw)
+        except Exception:  # noqa: S112
+            continue
+        if 100 <= status <= 599:
+            return status
+
+    resp = getattr(exc, "response", None)
+    raw_resp_status = getattr(resp, "status_code", None)
+    if raw_resp_status is None:
+        return None
+    try:
+        status = int(raw_resp_status)
+    except Exception:  # noqa: BLE001
+        return None
+    if 100 <= status <= 599:
+        return status
+    return None
+
+
+def _looks_like_timeout(exc: Exception, *, status: int | None) -> bool:
+    if status == 408:
+        return True
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return True
+    name = type(exc).__name__.lower()
+    if "timeout" in name or "connection" in name:
+        return True
+    msg = str(exc).lower()
+    return (
+        "timed out" in msg
+        or "timeout" in msg
+        or "connection error" in msg
+        or "connection timed out" in msg
+    )
+
+
+def _looks_like_rate_limited(exc: Exception, *, status: int | None) -> bool:
+    if status == 429:
+        return True
+    name = type(exc).__name__.lower()
+    if "ratelimit" in name or "rate_limit" in name:
+        return True
+    msg = str(exc).lower()
+    return "rate limit" in msg or "too many requests" in msg
+
+
+def _looks_like_auth_error(exc: Exception, *, status: int | None) -> bool:
+    if status in {401, 403}:
+        return True
+    name = type(exc).__name__.lower()
+    if "auth" in name:
+        return True
+    msg = str(exc).lower()
+    return "authentication" in msg or "permission denied" in msg
 
 
 __all__ = ["OverviewStep"]

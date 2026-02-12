@@ -26,27 +26,22 @@ class Bm25Ranker(RankerBase):
         *,
         texts: list[str],
         query: str,
-        query_tokens: list[str] | None = None,
-        intent_tokens: list[str] | None = None,
+        query_tokens: list[str],
+        intent_tokens: list[str],
     ) -> list[float]:
-        _ = query_tokens, intent_tokens
+        _ = intent_tokens
         if not texts:
             return []
         if not BM25_AVAILABLE or BM25Okapi is None:
             return [0.0 for _ in texts]
 
-        q = tokenize(query)
-        if not q:
+        if not query_tokens:
             return [0.0 for _ in texts]
 
         corpus = [tokenize(doc) for doc in texts]
         bm25 = await to_thread.run_sync(BM25Okapi, corpus)
-        scores = await to_thread.run_sync(bm25.get_scores, q)
+        scores = await to_thread.run_sync(bm25.get_scores, query_tokens)
         return [float(s) for s in scores]
-
-    @override
-    def normalize(self, *, scores: list[float]) -> list[float]:
-        return list(scores or [])
 
 
 __all__ = ["BM25_AVAILABLE", "Bm25Ranker"]

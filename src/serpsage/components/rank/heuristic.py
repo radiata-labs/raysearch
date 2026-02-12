@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.rank.utils import normalize_scores
 from serpsage.contracts.services import RankerBase
 from serpsage.text.normalize import normalize_text
-from serpsage.text.tokenize import tokenize
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -21,15 +21,11 @@ class HeuristicRanker(RankerBase):
         *,
         texts: list[str],
         query: str,
-        query_tokens: list[str] | None = None,
-        intent_tokens: list[str] | None = None,
+        query_tokens: list[str],
+        intent_tokens: list[str],
     ) -> list[float]:
         cfg = self.settings.rank.heuristic
-        q_tokens = query_tokens if query_tokens is not None else tokenize(query)
-        q_tokens = [t for t in (q_tokens or []) if len(t) >= int(cfg.min_token_len)]
-        i_tokens = intent_tokens or []
 
-        normalized_query = normalize_text(query)
         out: list[float] = []
         for text in texts:
             normalized_text = normalize_text(text)
@@ -39,7 +35,7 @@ class HeuristicRanker(RankerBase):
 
             unique_hits: set[str] = set()
             count_hits = 0
-            for t in q_tokens:
+            for t in query_tokens:
                 tl = t.lower()
                 if tl and tl in normalized_text:
                     unique_hits.add(tl)
@@ -48,7 +44,7 @@ class HeuristicRanker(RankerBase):
                     )
 
             intent_hits = 0
-            for t in i_tokens:
+            for t in intent_tokens:
                 tl = (t or "").lower()
                 if tl and tl in normalized_text:
                     intent_hits += 1
@@ -58,17 +54,9 @@ class HeuristicRanker(RankerBase):
             score += float(cfg.count_weight) * float(count_hits)
             score += float(cfg.intent_hit_weight) * float(intent_hits)
 
-            if normalized_query and normalized_query in normalized_text:
-                score += float(cfg.phrase_bonus)
-
             out.append(float(score))
 
-        return out
-
-    @override
-    def normalize(self, *, scores: list[float]) -> list[float]:
-        # The combiner owns normalization.
-        return list(scores or [])
+        return normalize_scores(out, self.settings.rank.normalization)
 
 
 __all__ = ["HeuristicRanker"]

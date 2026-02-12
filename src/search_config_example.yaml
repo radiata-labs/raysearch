@@ -3,7 +3,7 @@ provider:
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
     # Prefer env override: SEARCH_API_KEY
-    api_key: sk-63133540a039c3443e874d71928b0d0d777a39f0
+    api_key: null
     timeout_s: 20.0
     allow_redirects: false
     headers: {}
@@ -18,7 +18,7 @@ http:
 pipeline:
   default_profile: general
   max_results: 16
-  min_score: 0.5
+  min_score: 0.3
   include_raw: false
   profiles:
     general: {}
@@ -57,8 +57,8 @@ rank:
   backend: blend # blend|heuristic|bm25
   blend:
     providers:
-      bm25: 0.7
-      heuristic: 0.3
+      bm25: 0.9
+      heuristic: 0.1
   normalization:
     min_items_for_sigmoid: 1
     single_item_method: sigmoid_log1p
@@ -93,10 +93,11 @@ enrich:
         max_attempts: 1
         delay_ms: 200
     auto: {}
+  chunking:
+    target_chars: 600
+    overlap_sentences: 2
   select:
-    min_chunk_score: 0.20
-    score_soft_gate_tau: 0.07
-    template_penalty_weight: 2.0
+    min_chunk_score: 0.3
   depth_presets:
     low: {pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2}
     medium: {pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3}
@@ -130,19 +131,33 @@ cache:
     table: cache
 
 overview:
-  enabled: false
-  backend: openai # openai|null
-  openai:
-    llm:
-      base_url: https://api.openai.com/v1
+  enabled: true
+  use_model: gpt-5-mini
+  models:
+    - name: gpt-5-mini
+      backend: openai
+      # Prefer env fallback when YAML is empty: OPENAI_BASE_URL
+      base_url: https://api.chatanywhere.tech/v1
+      # Prefer env fallback when YAML is empty: OPENAI_API_KEY
       api_key: null
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       timeout_s: 60.0
       max_retries: 2
       temperature: 0.0
       headers: {}
-    schema_strict: true
-  null: {}
+      schema_strict: true
+    - name: gemini-3-flash
+      backend: gemini
+      # Prefer env fallback when YAML is empty: GEMINI_BASE_URL
+      base_url: null
+      # Prefer env fallback when YAML is empty: GEMINI_API_KEY
+      api_key: null
+      model: gemini-3-flash-preview
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      schema_strict: true
   max_sources: 8
   max_chunks_per_source: 2
   max_chunk_chars: 900

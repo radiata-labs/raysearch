@@ -8,6 +8,40 @@ from typing import Any
 from serpsage.settings.models import AppSettings
 
 
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
+def _overview_env_keys(backend: str) -> tuple[str | None, str | None]:
+    key = str(backend or "").strip().lower()
+    if key == "openai":
+        return "OPENAI_API_KEY", "OPENAI_BASE_URL"
+    if key == "gemini":
+        return "GEMINI_API_KEY", "GEMINI_BASE_URL"
+    return None, None
+
+
+def _raw_overview_models(data: dict[str, Any]) -> list[dict[str, Any]]:
+    overview_raw = data.get("overview")
+    if not isinstance(overview_raw, dict):
+        return []
+    models_raw = overview_raw.get("models")
+    if not isinstance(models_raw, list):
+        return []
+    return [item for item in models_raw if isinstance(item, dict)]
+
+
+def _yaml_model_has_non_empty(
+    *, raw_models: list[dict[str, Any]], index: int, field: str
+) -> bool:
+    if index < 0 or index >= len(raw_models):
+        return False
+    raw = raw_models[index]
+    if field not in raw:
+        return False
+    return not _is_blank(raw.get(field))
+
+
 def load_settings(
     path: str | None = None, *, env: dict[str, str] | None = None
 ) -> AppSettings:
@@ -37,6 +71,7 @@ def load_settings(
             raise ValueError(f"Unsupported settings file type: {p.suffix}")
 
     settings = AppSettings.model_validate(data)
+    raw_ov_models = _raw_overview_models(data)
 
     # Env overrides (centralized; components must not read env).
     base_url = env_map.get("SEARXNG_BASE_URL")
@@ -54,6 +89,23 @@ def load_settings(
         settings.provider.searxng.headers.setdefault(
             "CF-Access-Client-Secret", cf_secret
         )
+
+    # Overview per-backend env fallback.
+    # YAML explicit non-empty values always win over env.
+    for idx, model in enumerate(settings.overview.models):
+        env_api_key_name, env_base_url_name = _overview_env_keys(str(model.backend))
+        if env_api_key_name and not _yaml_model_has_non_empty(
+            raw_models=raw_ov_models, index=idx, field="api_key"
+        ):
+            env_api_key = env_map.get(env_api_key_name)
+            if env_api_key:
+                model.api_key = env_api_key
+        if env_base_url_name and not _yaml_model_has_non_empty(
+            raw_models=raw_ov_models, index=idx, field="base_url"
+        ):
+            env_base_url = env_map.get(env_base_url_name)
+            if env_base_url:
+                model.base_url = env_base_url
 
     return settings
 

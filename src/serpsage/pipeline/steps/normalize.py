@@ -5,6 +5,8 @@ from typing_extensions import override
 
 from serpsage.pipeline.base import StepBase
 from serpsage.pipeline.context import SearchStepContext
+from serpsage.text.tokenize import tokenize_for_query
+from serpsage.text.utils import extract_intent_tokens
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
@@ -26,6 +28,14 @@ class NormalizeStep(StepBase):
     ) -> SearchStepContext:
         span.set_attr("raw_results_count", int(len(ctx.raw_results or [])))
         ctx.results = self._normalizer.normalize_many(ctx.raw_results)
+        ctx.query_tokens = tokenize_for_query(ctx.request.query)
+        ctx.profile_name, ctx.profile = self.settings.select_profile(
+            query=ctx.request.query, explicit=ctx.request.profile
+        )
+        ctx.intent_tokens = extract_intent_tokens(
+            ctx.request.query, ctx.profile.intent_terms
+        )
+        span.set_attr("profile_name", str(ctx.profile_name or ""))
         span.set_attr("results_count", int(len(ctx.results or [])))
         return ctx
 

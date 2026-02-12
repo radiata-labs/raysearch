@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Model(BaseModel):
@@ -18,7 +18,7 @@ RankBackendKey = Literal["blend", "heuristic", "bm25"]
 RankBlendProviderKey = Literal["heuristic", "bm25"]
 CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
 CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
-OverviewBackendKey = Literal["openai", "null"]
+OverviewModelBackendKey = Literal["openai", "gemini"]
 
 
 class RetrySettings(Model):
@@ -156,12 +156,9 @@ class ChunkingSettings(Model):
 
 
 class SelectSettings(Model):
+    min_query_token_hits: int = 2
     early_bonus: float = 1.15
-    template_hard_drop_threshold: float = 0.95
-    block_hard_drop_threshold: float = 0.90
     min_chunk_score: float = 0.20
-    score_soft_gate_tau: float = 0.07
-    template_penalty_weight: float = 2.0
 
 
 class ExtractorBasicSettings(Model):
@@ -195,8 +192,6 @@ class HeuristicRankSettings(Model):
     unique_hit_weight: float = 6.0
     count_weight: float = 1.5
     intent_hit_weight: float = 5.0
-    phrase_bonus: float = 8.0
-    min_token_len: int = 2
     max_count_per_token: int = 5
 
 
@@ -268,30 +263,33 @@ class CacheSettings(Model):
     sqlalchemy: CacheSQLAlchemySettings = Field(default_factory=CacheSQLAlchemySettings)
 
 
-class OpenAICompatSettings(Model):
-    base_url: str = "https://api.openai.com/v1"
+class OverviewModelSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    name: str = "gpt-4.1-mini"
+    backend: OverviewModelBackendKey = "openai"
+    base_url: str | None = None
     api_key: str | None = None
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-4.1-mini"
     timeout_s: float = 60.0
     max_retries: int = 2
     temperature: float = 0.0
     headers: dict[str, str] = Field(default_factory=dict)
-
-
-class OverviewOpenAISettings(Model):
-    llm: OpenAICompatSettings = Field(default_factory=OpenAICompatSettings)
     schema_strict: bool = True
 
 
-class OverviewNullSettings(Model):
-    pass
+def _default_overview_models() -> list[OverviewModelSettings]:
+    return [OverviewModelSettings()]
 
 
 class OverviewSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     enabled: bool = True
-    backend: OverviewBackendKey = "openai"
-    openai: OverviewOpenAISettings = Field(default_factory=OverviewOpenAISettings)
-    null: OverviewNullSettings = Field(default_factory=OverviewNullSettings)
+    use_model: str = "gpt-4o-mini"
+    models: list[OverviewModelSettings] = Field(
+        default_factory=_default_overview_models
+    )
     max_sources: int = 8
     max_chunks_per_source: int = 2
     max_chunk_chars: int = 900
@@ -300,6 +298,35 @@ class OverviewSettings(Model):
     cache_ttl_s: int = 0
     self_heal_retries: int = 1
     force_language: Literal["auto", "zh", "en"] = "auto"
+
+    @model_validator(mode="after")
+    def _validate_models(self) -> OverviewSettings:
+        if not self.models:
+            raise ValueError("overview.models must contain at least one model")
+
+        names: set[str] = set()
+        for idx, item in enumerate(self.models):
+            if not item.name:
+                raise ValueError(f"overview.models[{idx}].name must be non-empty")
+            if item.name in names:
+                raise ValueError(
+                    f"duplicate overview model name `{item.name}` in overview.models"
+                )
+            names.add(item.name)
+
+        if self.use_model not in names:
+            raise ValueError(
+                "overview.use_model must match one of overview.models[].name"
+            )
+        return self
+
+    def resolve_model(self) -> OverviewModelSettings:
+        for item in self.models:
+            if item.name == self.use_model:
+                return item
+        raise ValueError(
+            f"overview.use_model `{self.use_model}` does not exist in overview.models"
+        )
 
 
 class TelemetrySettings(Model):
@@ -376,8 +403,8 @@ __all__ = [
     "HttpSettings",
     "HeuristicRankSettings",
     "NormalizationSettings",
-    "OpenAICompatSettings",
-    "OverviewOpenAISettings",
+    "OverviewModelBackendKey",
+    "OverviewModelSettings",
     "OverviewSettings",
     "PipelineSettings",
     "ProfileSettings",

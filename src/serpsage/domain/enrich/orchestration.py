@@ -36,6 +36,7 @@ class Enricher(WorkUnit):
         result: ResultItem,
         query: str,
         query_tokens: list[str],
+        intent_tokens: list[str],
         profile: ProfileSettings,
         top_k: int,
     ) -> PageEnrichment:
@@ -58,16 +59,7 @@ class Enricher(WorkUnit):
                     sp.set_attr("blocks_total", 0)
                     return PageEnrichment(chunks=[], error="no blocks extracted")
 
-                kept, block_stats = self._scoring.filter_blocks(
-                    blocks, profile=profile, query=query
-                )
-                stats.update(block_stats)
-                if not kept:
-                    for k, v in stats.items():
-                        sp.set_attr(k, v)
-                    return PageEnrichment(chunks=[], error="no blocks after filtering")
-
-                text_for_chunking = "\n\n".join(kept)
+                text_for_chunking = "\n\n".join(blocks)
                 sents = split_sentences(
                     text_for_chunking,
                     max_sentence_chars=int(
@@ -98,6 +90,7 @@ class Enricher(WorkUnit):
                     chunks=chunks,
                     query=query,
                     query_tokens=query_tokens,
+                    intent_tokens=intent_tokens,
                     profile=profile,
                 )
                 stats.update(score_stats)

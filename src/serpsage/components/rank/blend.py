@@ -7,7 +7,7 @@ import anyio
 
 from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
 from serpsage.components.rank.heuristic import HeuristicRanker
-from serpsage.components.rank.utils import blend_weighted, normalize_scores, rank_scales
+from serpsage.components.rank.utils import blend_weighted, rank_scales
 from serpsage.contracts.services import RankerBase
 
 if TYPE_CHECKING:
@@ -44,8 +44,8 @@ class BlendRanker(RankerBase):
         *,
         texts: list[str],
         query: str,
-        query_tokens: list[str] | None = None,
-        intent_tokens: list[str] | None = None,
+        query_tokens: list[str],
+        intent_tokens: list[str],
     ) -> list[float]:
         if not texts:
             return []
@@ -69,7 +69,13 @@ class BlendRanker(RankerBase):
 
         async def run_bm25() -> None:
             nonlocal bm25_raw
-            bm25_raw = await self._bm25.score_texts(texts=texts, query=query)  # type: ignore[union-attr]
+            assert self._bm25 is not None
+            bm25_raw = await self._bm25.score_texts(
+                texts=texts,
+                query=query,
+                query_tokens=query_tokens,
+                intent_tokens=intent_tokens,
+            )
 
         async with anyio.create_task_group() as tg:
             if heur_w > 0:
@@ -92,10 +98,6 @@ class BlendRanker(RankerBase):
             ]
 
         return blend_weighted(scores=score_map, weights=weights, transforms=transforms)
-
-    @override
-    def normalize(self, *, scores: list[float]) -> list[float]:
-        return normalize_scores(scores, self.settings.rank.normalization)
 
 
 __all__ = ["BlendRanker", "blend_weighted"]

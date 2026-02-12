@@ -1,72 +1,91 @@
 from __future__ import annotations
 
+import math
+import statistics
 from typing import TYPE_CHECKING
 
 from serpsage.core.workunit import WorkUnit
-from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
-    from serpsage.contracts.services import RankerBase
     from serpsage.core.runtime import Runtime
 
 
 class Reranker(WorkUnit):
-    def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
-        self._ranker = ranker
-        self.bind_deps(ranker)
 
     async def rerank(
         self,
         *,
         results: list[ResultItem],
-        query: str,
-        query_tokens: list[str],
-        intent_tokens: list[str],
     ) -> list[ResultItem]:
         if not results:
             return []
 
-        page_docs: list[str] = []
+        page_scores: list[float] = []
         has_any_page = False
         for r in results:
             if r.page and r.page.chunks:
-                doc = clean_whitespace(" ".join(c.text for c in r.page.chunks))
-                page_docs.append(doc)
-                if doc:
-                    has_any_page = True
+                scores = [float(c.score or 0.0) for c in r.page.chunks]
+                page_scores.append(max(scores) if scores else 0.0)
+                has_any_page = True
             else:
-                page_docs.append("")
-        if not has_any_page:
+                page_scores.append(0)
+
+        result_scores = [float(r.score) if r.score else 0.0 for r in results]
+
+        if not has_any_page or max(page_scores) <= min(result_scores):
             return results
 
-        raw = await self._ranker.score_texts(
-            texts=page_docs,
-            query=query,
-            query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
+        print(result_scores, "\n", page_scores)
+
+        sn_w = 0.7
+        pg_w = 0.3
+        combined: list[float] = self._blend_scores(
+            result_scores, page_scores, k=sn_w / pg_w
         )
-        page_scores = self._ranker.normalize(scores=raw)
-        if page_scores and max(page_scores) <= 0.0 and max(raw) > 0.0:
-            page_scores = [0.5 for _ in page_scores]
 
-        sn_w = 0.4
-        pg_w = 0.6
-        combined_raw: list[float] = []
-        for i, r in enumerate(results):
-            snippet_s = float(r.score)
-            page_s = float(page_scores[i]) if i < len(page_scores) else 0.0
-            combined_raw.append(sn_w * snippet_s + pg_w * page_s)
+        combine_calibration = (
+            max(result_scores) / max(combined) if max(combined) > 0 else 1.0
+        )
+        combined = [s * combine_calibration for s in combined]
 
-        combined = self._ranker.normalize(scores=combined_raw)
-        if combined and max(combined) <= 0.0 and max(combined_raw) > 0.0:
-            combined = [0.5 for _ in combined]
+        print(combined)
 
         for i, r in enumerate(results):
-            r.score = float(combined[i]) if i < len(combined) else 0.0
+            r.score = float(combined[i]) if i < len(combined) else r.score
 
         return sorted(results, key=lambda r: float(r.score), reverse=True)
+
+    def _blend_scores(
+        self,
+        result_scores: list[float],
+        page_scores: list[float],
+        *,
+        k: float = 0.6,
+    ) -> list[float]:
+        eps = 1e-6
+        out: list[float] = []
+        for x, y in zip(result_scores, page_scores, strict=False):
+            x = min(1.0 - eps, max(eps, x))
+            g = max(-0.5, min(0.5, y - 0.5))
+            t = math.log(x / (1.0 - x)) + k * g
+            out.append(1.0 / (1.0 + math.exp(-t)))
+        return out
+
+    def _get_calibration(
+        self, result_scores: list[float], page_scores: list[float]
+    ) -> float:
+        result_scores = [float(s) for s in result_scores if s > 0.01]
+        page_scores = [float(s) for s in page_scores if s > 0.01]
+        if not result_scores or not page_scores:
+            return 1.0
+        return (
+            statistics.median(result_scores) / statistics.median(page_scores)
+            if statistics.median(page_scores) > 0
+            else 1.0
+        )
 
 
 __all__ = ["Reranker"]
