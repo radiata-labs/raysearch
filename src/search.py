@@ -36,7 +36,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "花谱寓話专辑有哪些歌", "medium", 5)
+    out = anyio.run(main, "花谱寓話专辑有哪些歌", "high", 5)
     t2 = time.time()
 
     print(out["search_result"])

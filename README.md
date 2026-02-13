@@ -28,6 +28,7 @@ Componentized config shape:
 - `cache` and `overview` keep an `enabled` switch.
 - `overview` uses `overview.use_model` to select an entry in `overview.models[]`; each model row declares `backend` and per-model LLM options.
 - Backend-specific options live under component sub-blocks (for example `enrich.fetch.common`, `rank.blend.providers`).
+- Heuristic ranking and score normalization are configured under `rank.heuristic` (there is no separate `rank.normalization` block).
 - `enrich.fetch.common` is intentionally minimal and follows fail-fast validation (`extra=forbid`) to prevent stale/ignored keys.
 - See `src/search_config_example.yaml` for a full reference.
 

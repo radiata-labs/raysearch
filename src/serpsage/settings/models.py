@@ -189,24 +189,19 @@ class EnrichSettings(Model):
 
 
 class HeuristicRankSettings(Model):
+    early_bonus: float = 1.15
     unique_hit_weight: float = 6.0
     count_weight: float = 1.5
     intent_hit_weight: float = 5.0
     max_count_per_token: int = 5
-
-
-class RankBm25Settings(Model):
-    pass
-
-
-class NormalizationSettings(Model):
-    method: Literal["robust_sigmoid", "rank"] = "robust_sigmoid"
     temperature: float = 1.0
     min_items_for_sigmoid: int = 5
     flat_spread_eps: float = 1e-9
     z_clip: float = 8.0
-    single_item_method: Literal["sigmoid_log1p", "exp", "fixed_0.5"] = "sigmoid_log1p"
-    single_item_scale: float = 1.0
+
+
+class RankBm25Settings(Model):
+    pass
 
 
 class RankBlendSettings(Model):
@@ -220,7 +215,6 @@ class RankSettings(Model):
     blend: RankBlendSettings = Field(default_factory=RankBlendSettings)
     heuristic: HeuristicRankSettings = Field(default_factory=HeuristicRankSettings)
     bm25: RankBm25Settings = Field(default_factory=RankBm25Settings)
-    normalization: NormalizationSettings = Field(default_factory=NormalizationSettings)
 
 
 class CacheSqliteSettings(Model):
@@ -402,7 +396,6 @@ __all__ = [
     "FetchSettings",
     "HttpSettings",
     "HeuristicRankSettings",
-    "NormalizationSettings",
     "OverviewModelBackendKey",
     "OverviewModelSettings",
     "OverviewSettings",

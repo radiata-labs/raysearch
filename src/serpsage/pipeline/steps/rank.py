@@ -61,7 +61,11 @@ class RankStep(StepBase):
             r.score = float(scores[i]) if i < len(scores) else 0.0
             title_l = (r.title or "").lower()
             snippet_l = (r.snippet or "").lower()
-            hits = [t for t in query_tokens if t in title_l or t in snippet_l]
+            hits = [
+                t
+                for t in query_tokens
+                if t.lower() in title_l or t.lower() in snippet_l
+            ]
             r.hit_keywords = uniq_preserve_order(hits)
 
         ctx.results.sort(key=lambda r: float(r.score), reverse=True)

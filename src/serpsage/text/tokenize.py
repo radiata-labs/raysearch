@@ -3,18 +3,61 @@ from __future__ import annotations
 import re
 
 from serpsage.text.normalize import normalize_text
+from serpsage.text.stopwords import is_stopword
 from serpsage.util.collections import uniq_preserve_order
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+")
-CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff]+")
+CJK_KANA_RUN_RE = re.compile(
+    r"[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\u3005\u30fc\uff66-\uff9d]+"
+)
+
+KEEP_POS_ZH = {
+    "n",
+    "nr",
+    "nr1",
+    "nr2",
+    "nrj",
+    "nrf",
+    "ns",
+    "nsf",
+    "nt",
+    "nz",
+    "nl",
+    "ng",
+    "v",
+    "vd",
+    "vn",
+    "a",
+    "ad",
+    "an",
+    "i",
+    "l",
+    "j",
+}
+
+KEEP_POS_JA = {"名詞", "動詞", "形容詞", "副詞", "記号", "接頭詞", "接尾辞"}
 
 try:
-    import jieba  # type: ignore[import-untyped]
+    import jieba.posseg as pseg  # type: ignore[import-untyped]
 
     JIEBA_AVAILABLE = True
 except Exception:  # noqa: BLE001
-    jieba = None
+    pseg = None
     JIEBA_AVAILABLE = False
+
+try:
+    from sudachipy import (  # type: ignore[import-untyped]
+        dictionary as sudachi_dictionary,
+    )
+    from sudachipy import tokenizer as sudachi_tokenizer  # type: ignore[import-untyped]
+
+    sudachi = sudachi_dictionary.Dictionary().create()
+    sudachi_mode = sudachi_tokenizer.Tokenizer.SplitMode.A
+    SUDACHI_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    sudachi = None
+    sudachi_mode = None
+    SUDACHI_AVAILABLE = False
 
 try:
     import opencc  # type: ignore[import-untyped]
@@ -25,10 +68,16 @@ except Exception:  # noqa: BLE001
     OPENCC_AVAILABLE = False
 
 
-def ngrams(text: str, n: int) -> list[str]:
-    if n <= 0 or len(text) < n:
-        return []
-    return [text[i : i + n] for i in range(len(text) - n + 1)]
+def _has_kana(s: str) -> bool:
+    for ch in s:
+        o = ord(ch)
+        if (
+            (0x3040 <= o <= 0x30FF)
+            or (0x31F0 <= o <= 0x31FF)
+            or (0xFF66 <= o <= 0xFF9D)
+        ):
+            return True
+    return False
 
 
 def tokenize(text: str) -> list[str]:
@@ -39,31 +88,48 @@ def tokenize(text: str) -> list[str]:
     tokens: list[str] = []
     tokens.extend(m.group(0).lower() for m in WORD_RE.finditer(t))
 
-    if JIEBA_AVAILABLE and jieba is not None:
-        for tok in jieba.lcut(t, cut_all=False):
+    if JIEBA_AVAILABLE and pseg is not None:
+        for tok, flag in pseg.cut(t, use_paddle=True):
             tok = tok.strip()
             if not tok:
                 continue
-            # Filter extremely short tokens.
-            if len(tok) == 1 and CJK_RUN_RE.fullmatch(tok):
+            if flag not in KEEP_POS_ZH:
                 continue
-            if CJK_RUN_RE.fullmatch(tok):
+            if is_stopword(tok):
+                continue
+            if CJK_KANA_RUN_RE.fullmatch(tok):
                 tokens.append(tok)
             elif WORD_RE.fullmatch(tok):
                 tokens.append(tok.lower())
-    else:
-        # Fallback: take CJK runs directly.
-        for run in CJK_RUN_RE.findall(t):
-            if len(run) >= 2:
-                tokens.append(run)  # noqa: PERF401
 
-    # Add CJK n-grams as recall boost.
-    for run in CJK_RUN_RE.findall(t):
-        if len(run) <= 3:
+    if (
+        SUDACHI_AVAILABLE
+        and sudachi is not None
+        and sudachi_mode is not None
+        and _has_kana(t)
+    ):
+        for m in sudachi.tokenize(t, sudachi_mode):
+            tok, pos = m.surface().strip(), m.part_of_speech()
+            if not tok:
+                continue
+            if WORD_RE.fullmatch(tok):
+                tok = tok.lower()
+            if is_stopword(tok):
+                continue
+            if pos and not any(p in KEEP_POS_JA for p in pos):
+                continue
+            if not CJK_KANA_RUN_RE.fullmatch(tok) and not WORD_RE.fullmatch(tok):
+                continue
+            tokens.append(tok)
+
+    if (not JIEBA_AVAILABLE or pseg is None) and (
+        not SUDACHI_AVAILABLE or sudachi is None
+    ):
+        for run in CJK_KANA_RUN_RE.findall(t):
+            run = run.strip()
+            if len(run) < 2:
+                continue
             tokens.append(run)
-        else:
-            tokens.extend(ngrams(run, 2))
-            tokens.extend(ngrams(run, 3))
 
     return uniq_preserve_order(tokens)
 
@@ -74,7 +140,7 @@ def tokenize_for_query(query: str) -> list[str]:
     def to_zh_tw(s: str) -> str:
         if OPENCC_AVAILABLE and opencc is not None:
             return opencc.OpenCC("s2t").convert(s)
-        import zhconv
+        import zhconv  # type: ignore[import-not-found]
 
         return zhconv.convert(s, "zh-tw")
 

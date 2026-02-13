@@ -57,12 +57,18 @@ rank:
   backend: blend # blend|heuristic|bm25
   blend:
     providers:
-      bm25: 0.9
-      heuristic: 0.1
-  normalization:
+      bm25: 0.7
+      heuristic: 0.3
+  heuristic:
+    early_bonus: 1.15
+    unique_hit_weight: 6.0
+    count_weight: 1.5
+    intent_hit_weight: 5.0
+    max_count_per_token: 5
+    temperature: 1.0
     min_items_for_sigmoid: 1
-    single_item_method: sigmoid_log1p
-    single_item_scale: 1.0
+    flat_spread_eps: 1e-9
+    z_clip: 8.0
 
 enrich:
   enabled: true
@@ -97,6 +103,7 @@ enrich:
     target_chars: 600
     overlap_sentences: 2
   select:
+    min_query_token_hits: 3
     min_chunk_score: 0.3
   depth_presets:
     low: {pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2}
@@ -132,15 +139,15 @@ cache:
 
 overview:
   enabled: true
-  use_model: gpt-5-mini
+  use_model: gpt-4.1-mini
   models:
-    - name: gpt-5-mini
+    - name: gpt-4.1-mini
       backend: openai
       # Prefer env fallback when YAML is empty: OPENAI_BASE_URL
       base_url: https://api.chatanywhere.tech/v1
       # Prefer env fallback when YAML is empty: OPENAI_API_KEY
       api_key: null
-      model: gpt-5-mini
+      model: gpt-4.1-mini
       timeout_s: 60.0
       max_retries: 2
       temperature: 0.0

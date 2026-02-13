@@ -38,20 +38,12 @@ class Reranker(WorkUnit):
         if not has_any_page or max(page_scores) <= min(result_scores):
             return results
 
-        print(result_scores, "\n", page_scores)
-
-        sn_w = 0.7
-        pg_w = 0.3
-        combined: list[float] = self._blend_scores(
-            result_scores, page_scores, k=sn_w / pg_w
-        )
+        combined: list[float] = self._blend_scores(result_scores, page_scores, k=0.5)
 
         combine_calibration = (
             max(result_scores) / max(combined) if max(combined) > 0 else 1.0
         )
         combined = [s * combine_calibration for s in combined]
-
-        print(combined)
 
         for i, r in enumerate(results):
             r.score = float(combined[i]) if i < len(combined) else r.score
@@ -69,7 +61,7 @@ class Reranker(WorkUnit):
         out: list[float] = []
         for x, y in zip(result_scores, page_scores, strict=False):
             x = min(1.0 - eps, max(eps, x))
-            g = max(-0.5, min(0.5, y - 0.5))
+            g = max(0, min(1, y))
             t = math.log(x / (1.0 - x)) + k * g
             out.append(1.0 / (1.0 + math.exp(-t)))
         return out

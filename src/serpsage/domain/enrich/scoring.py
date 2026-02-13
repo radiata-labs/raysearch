@@ -146,13 +146,7 @@ class EnrichScoringMixin:
 
         scored: list[tuple[float, str]] = []
         for chunk, base_score in zip(chunks, base_scores, strict=False):
-            hit_location = self._get_hit_location(
-                chunk, query_tokens=query_tokens, intent_tokens=intent_tokens
-            )
-            early_bonus = 0.5 * math.tanh(2.0 * early_bonus - 2.0)
-            lg = logit(base_score) - early_bonus * process_location(hit_location)
-            final = sigmoid(lg)
-            scored.append((float(final), chunk))
+            scored.append((base_score, chunk))
 
         scored.sort(key=lambda t: t[0], reverse=True)
 

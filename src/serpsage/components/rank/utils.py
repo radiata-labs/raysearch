@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from serpsage.settings.models import NormalizationSettings
+    from serpsage.settings.models import HeuristicRankSettings
 
 
 def safe_float(x: float) -> float:
@@ -49,55 +49,55 @@ def rank_scales(scores: list[float]) -> list[float]:
     return out
 
 
-def normalize_scores(scores: list[float], cfg: NormalizationSettings) -> list[float]:  # noqa: PLR0911
+def normalize_scores(scores: list[float], cfg: HeuristicRankSettings) -> list[float]:
     cleaned = [safe_float(s) for s in (scores or [])]
     n = len(cleaned)
     if n == 0:
         return []
-    if n == 1:
-        method = (cfg.single_item_method or "sigmoid_log1p").lower()
-        x = max(0.0, float(cleaned[0]))
-        scale = (
-            float(cfg.single_item_scale) if float(cfg.single_item_scale) > 0 else 1.0
-        )
-        if method == "fixed_0.5":
-            return [0.5]
-        if method == "exp":
-            # Smooth (0,1): 1 - exp(-x/scale). Avoids saturating too quickly.
-            return [float(1.0 - math.exp(-x / scale))]
-        # Default: "rounder" head/tail without saturating to 1.0.
-        # Map x=0 -> 0.0 by re-scaling sigmoid from [0.5, 1) to [0, 1).
-        t = math.log1p(x) / scale
-        sig = 1.0 / (1.0 + math.exp(-t))
-        return [float(max(0.0, min(1.0, (2.0 * sig) - 1.0)))]
 
-    spread = max(cleaned) - min(cleaned)
-    if spread < float(cfg.flat_spread_eps):
-        # Flat/degenerate: do not collapse to 0.0 (which misleads downstream filters).
-        return [0.5 for _ in cleaned]
+    out = [0.0 for _ in cleaned]
+    pos_idx = [i for i, x in enumerate(cleaned) if x > 0.0]
+    if not pos_idx:
+        return out
 
-    method = (cfg.method or "robust_sigmoid").lower()
-    if method == "rank" or n < int(cfg.min_items_for_sigmoid):
-        return rank_scales(cleaned)
+    pos_vals = [float(cleaned[i]) for i in pos_idx]
+    if len(pos_vals) == 1:
+        out[pos_idx[0]] = 1.0
+        return out
 
-    m = statistics.median(cleaned)
-    deviations = [abs(x - m) for x in cleaned]
-    mad = statistics.median(deviations)
-    scale = 1.4826 * mad + 1e-12
-
-    z_clip = max(0.0, float(cfg.z_clip))
+    log_vals = [math.log1p(x) for x in pos_vals]
     temp = float(cfg.temperature) if float(cfg.temperature) > 0 else 1.0
+    min_items = max(1, int(cfg.min_items_for_sigmoid))
+    flat_eps = max(0.0, float(cfg.flat_spread_eps))
+    z_clip = max(0.0, float(cfg.z_clip))
 
-    out: list[float] = []
-    for x in cleaned:
-        z = (x - m) / scale
-        if z_clip:
-            z = max(-z_clip, min(z_clip, z))
-        t = z / temp
-        p = 1.0 / (1.0 + math.exp(-t))
-        out.append(float(p))
+    spread = max(log_vals) - min(log_vals)
+    if spread <= flat_eps:
+        pos_norm = [0.5 for _ in log_vals]
+    elif len(log_vals) < min_items:
+        pos_norm = rank_scales(log_vals)
+    else:
+        med = statistics.median(log_vals)
+        deviations = [abs(x - med) for x in log_vals]
+        mad = statistics.median(deviations)
+        scale = 1.4826 * mad + 1e-12
 
-    return [min(1.0, max(0.0, x)) for x in out]
+        sig: list[float] = []
+        for x in log_vals:
+            z = (x - med) / scale
+            if z_clip:
+                z = max(-z_clip, min(z_clip, z))
+            p = 1.0 / (1.0 + math.exp(-(z / temp)))
+            sig.append(float(p))
+
+        rank_part = rank_scales(log_vals)
+        pos_norm = [
+            float((0.65 * sig[i]) + (0.35 * rank_part[i])) for i in range(len(sig))
+        ]
+
+    for idx, value in zip(pos_idx, pos_norm, strict=False):
+        out[idx] = float(min(1.0, max(0.0, value)))
+    return out
 
 
 def blend_weighted(
