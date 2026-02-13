@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from serpsage.text.normalize import clean_whitespace
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"([\u3002\uFF01\uFF1F!?;\uFF1B.\n])")
 _LONG_SENT_SPLIT_RE = re.compile(r"([,\uFF0C\u3001\t ])")
+_MD_LIST_RE = re.compile(r"^(\s*[-*+]\s+|\s*\d+[.)]\s+)")
+_MD_HEAD_RE = re.compile(r"^(#{1,6})\s+")
+_MD_TABLE_RE = re.compile(r"^\|.*\|$")
+
+
+@dataclass(frozen=True, slots=True)
+class MarkdownSegment:
+    kind: str
+    text: str
 
 
 def split_sentences(text: str, *, max_sentence_chars: int) -> list[str]:
@@ -48,6 +58,127 @@ def _split_long_sentence(sentence: str, max_len: int) -> list[str]:
     return out or [sentence]
 
 
+def markdown_to_segments(
+    markdown: str,
+    *,
+    max_markdown_chars: int,
+    max_segments: int,
+    max_sentence_chars: int,
+) -> list[MarkdownSegment]:
+    text = (markdown or "").strip()
+    if max_markdown_chars > 0 and len(text) > max_markdown_chars:
+        text = text[:max_markdown_chars]
+    if not text:
+        return []
+
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    segments: list[MarkdownSegment] = []
+    in_code = False
+    buf: list[str] = []
+    buf_kind = "paragraph"
+
+    def flush() -> None:
+        nonlocal buf, buf_kind
+        if not buf:
+            return
+        chunk = clean_whitespace(" ".join(buf))
+        if chunk:
+            if buf_kind == "paragraph" and len(chunk) > max_sentence_chars:
+                for sent in split_sentences(chunk, max_sentence_chars=max_sentence_chars):
+                    segments.append(MarkdownSegment(kind=buf_kind, text=sent))
+            else:
+                segments.append(MarkdownSegment(kind=buf_kind, text=chunk))
+        buf = []
+        buf_kind = "paragraph"
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not in_code:
+                flush()
+                in_code = True
+                buf_kind = "code"
+                buf = []
+            else:
+                flush()
+                in_code = False
+            continue
+        if in_code:
+            buf.append(line)
+            continue
+
+        if not stripped:
+            flush()
+            continue
+        if _MD_HEAD_RE.match(stripped):
+            flush()
+            segments.append(MarkdownSegment(kind="heading", text=_MD_HEAD_RE.sub("", stripped)))
+            continue
+        if _MD_LIST_RE.match(stripped):
+            flush()
+            segments.append(MarkdownSegment(kind="list", text=_MD_LIST_RE.sub("", stripped)))
+            continue
+        if stripped.startswith(">"):
+            flush()
+            segments.append(MarkdownSegment(kind="quote", text=stripped.lstrip(">").strip()))
+            continue
+        if _MD_TABLE_RE.match(stripped):
+            flush()
+            segments.append(MarkdownSegment(kind="table", text=stripped.strip("| ").replace("|", " ")))
+            continue
+        if buf_kind != "paragraph":
+            flush()
+        buf_kind = "paragraph"
+        buf.append(stripped)
+
+    flush()
+    if max_segments > 0:
+        segments = segments[:max_segments]
+    return [s for s in segments if s.text]
+
+
+def chunk_segments(
+    segments: list[MarkdownSegment],
+    *,
+    target_chars: int,
+    overlap_segments: int,
+    min_chunk_chars: int,
+) -> list[str]:
+    if not segments:
+        return []
+    target = max(1, int(target_chars))
+    overlap = max(0, int(overlap_segments))
+
+    chunks: list[str] = []
+    cur: list[MarkdownSegment] = []
+    cur_len = 0
+
+    def flush() -> None:
+        nonlocal cur, cur_len
+        if not cur:
+            return
+        chunk = clean_whitespace(" ".join(seg.text for seg in cur))
+        if len(chunk) >= int(min_chunk_chars):
+            chunks.append(chunk)
+        if overlap > 0:
+            cur = cur[-overlap:]
+            cur_len = sum(len(seg.text) + 1 for seg in cur)
+        else:
+            cur = []
+            cur_len = 0
+
+    for seg in segments:
+        seg_text = (seg.text or "").strip()
+        if not seg_text:
+            continue
+        if cur and cur_len + len(seg_text) + 1 > target:
+            flush()
+        cur.append(seg)
+        cur_len += len(seg_text) + 1
+    flush()
+    return chunks
+
+
 def chunk_sentences(
     sentences: list[str],
     *,
@@ -55,39 +186,21 @@ def chunk_sentences(
     overlap_sentences: int,
     min_chunk_chars: int,
 ) -> list[str]:
-    if not sentences:
-        return []
-    target = max(1, int(target_chars))
-    overlap = max(0, int(overlap_sentences))
-
-    chunks: list[str] = []
-    cur: list[str] = []
-    cur_len = 0
-
-    def flush() -> None:
-        nonlocal cur, cur_len
-        if not cur:
-            return
-        chunk = clean_whitespace(" ".join(cur))
-        if len(chunk) >= int(min_chunk_chars):
-            chunks.append(chunk)
-        if overlap > 0:
-            cur = cur[-overlap:]
-            cur_len = sum(len(s) + 1 for s in cur)
-        else:
-            cur = []
-            cur_len = 0
-
-    for s in sentences:
-        s = (s or "").strip()
-        if not s:
-            continue
-        if cur and cur_len + len(s) + 1 > target:
-            flush()
-        cur.append(s)
-        cur_len += len(s) + 1
-    flush()
-    return chunks
+    # Compatibility wrapper for old call sites.
+    segments = [MarkdownSegment(kind="paragraph", text=s) for s in sentences if s]
+    return chunk_segments(
+        segments,
+        target_chars=target_chars,
+        overlap_segments=overlap_sentences,
+        min_chunk_chars=min_chunk_chars,
+    )
 
 
-__all__ = ["chunk_sentences", "split_sentences"]
+__all__ = [
+    "MarkdownSegment",
+    "chunk_segments",
+    "chunk_sentences",
+    "markdown_to_segments",
+    "split_sentences",
+]
+

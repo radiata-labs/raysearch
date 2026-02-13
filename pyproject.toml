@@ -24,6 +24,8 @@ dependencies = [
     "beautifulsoup4",
     "curl_cffi",
     "httpx>=0.27,<1",
+    "playwright>=1.49.1",
+    "pypdf>=5.2.0",
     "pydantic>=2.7,<3",
     "rank-bm25",
     "jieba",
@@ -44,6 +46,7 @@ cache = [
 api = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1"]
 overview = ["openai>=2.17.0", "google-genai>=1.63.0"]
 to_zh_tw = ["opencc>=1.2.0"]
+stopwords = ["marisa-trie>=1.3.1"]
 
 [build-system]
 requires = ["setuptools>=74"]

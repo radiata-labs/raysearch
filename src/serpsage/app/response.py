@@ -20,6 +20,9 @@ class PageEnrichment(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     chunks: list[PageChunk] = Field(default_factory=list)
+    markdown: str = ""
+    content_kind: str | None = None
+    fetch_mode: str | None = None
     error: str | None = None
 
 

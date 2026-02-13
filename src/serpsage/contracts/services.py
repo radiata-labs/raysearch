@@ -8,7 +8,7 @@ from serpsage.core.workunit import WorkUnit
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from serpsage.models.extract import ExtractedText
+    from serpsage.models.extract import ExtractedDocument
     from serpsage.models.fetch import FetchResult
     from serpsage.models.llm import ChatJSONResult
     from serpsage.models.pipeline import SearchStepContext
@@ -34,7 +34,15 @@ class SearchProviderBase(WorkUnit, ABC):
 
 class FetcherBase(WorkUnit, ABC):
     @abstractmethod
-    async def afetch(self, *, url: str) -> FetchResult:
+    async def afetch(
+        self,
+        *,
+        url: str,
+        timeout_s: float | None = None,
+        allow_render: bool = True,
+        depth: str | None = None,
+        rank_index: int = 0,
+    ) -> FetchResult:
         raise NotImplementedError
 
 
@@ -52,7 +60,7 @@ class ExtractorBase(WorkUnit, ABC):
     @abstractmethod
     def extract(
         self, *, url: str, content: bytes, content_type: str | None
-    ) -> ExtractedText:
+    ) -> ExtractedDocument:
         raise NotImplementedError
 
 

@@ -101,7 +101,6 @@ def build_engine(
         rt=rt,
         cache=cache,
         rate_limiter=rate_limiter,
-        extractor=extractor,
         http=get_shared_http_unit(),
     )
     ranker: RankerBase = ov.ranker or build_ranker(rt=rt)

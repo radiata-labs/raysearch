@@ -8,18 +8,14 @@ if TYPE_CHECKING:
 
 
 def build_extractor(*, rt: Runtime) -> ExtractorBase:
-    backend = str(rt.settings.enrich.extractor.backend or "main_content").lower()
-    if backend == "main_content":
-        from serpsage.components.extract.main import MainContentHtmlExtractor
+    backend = str(rt.settings.enrich.extractor.backend or "markdown").lower()
+    if backend != "markdown":
+        raise ValueError(
+            f"unsupported extractor backend `{backend}`; expected markdown"
+        )
+    from serpsage.components.extract.markdown import MarkdownExtractor
 
-        return MainContentHtmlExtractor(rt=rt)
-    if backend == "basic":
-        from serpsage.components.extract.basic import BasicHtmlExtractor
-
-        return BasicHtmlExtractor(rt=rt)
-    raise ValueError(
-        f"unsupported extractor backend `{backend}`; expected basic|main_content"
-    )
+    return MarkdownExtractor(rt=rt)
 
 
 __all__ = [

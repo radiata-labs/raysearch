@@ -27,9 +27,9 @@ Componentized config shape:
 - Shared HTTP transport settings live under top-level `http` and are reused by provider/fetch/overview.
 - `cache` and `overview` keep an `enabled` switch.
 - `overview` uses `overview.use_model` to select an entry in `overview.models[]`; each model row declares `backend` and per-model LLM options.
-- Backend-specific options live under component sub-blocks (for example `enrich.fetch.common`, `rank.blend.providers`).
+- Backend-specific options live under component sub-blocks (for example `enrich.fetch.playwright`, `enrich.fetch.quality_gate`, `rank.blend.providers`).
 - Heuristic ranking and score normalization are configured under `rank.heuristic` (there is no separate `rank.normalization` block).
-- `enrich.fetch.common` is intentionally minimal and follows fail-fast validation (`extra=forbid`) to prevent stale/ignored keys.
+- `enrich.fetch` follows fail-fast validation (`extra=forbid`) to prevent stale/ignored keys.
 - See `src/search_config_example.yaml` for a full reference.
 
 Overview optional dependencies:
@@ -56,6 +56,11 @@ async with Engine.from_settings(settings) as engine:
 
 `depth` is a runtime parameter:
 - `simple`: only uses SearxNG snippets (default)
-- `low|medium|high`: crawls the top-scoring pages, extracts full page text, chunks it with overlap, scores chunks, then appends best chunks into each result (`result.page.chunks`)
+- `low|medium|high`: crawls top-scoring pages, auto-switches between HTTP and Playwright rendering, extracts main content as clean Markdown, performs semantic chunking, and appends best chunks into each result (`result.page.chunks`)
 
 Depth presets and fetch/chunk defaults are configurable under top-level `enrich` in settings YAML.
+
+Enrich output now includes:
+- `result.page.markdown`: cleaned main-content markdown
+- `result.page.content_kind`: `html|pdf|text|binary`
+- `result.page.fetch_mode`: `httpx|curl_cffi|playwright`

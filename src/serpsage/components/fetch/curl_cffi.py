@@ -8,6 +8,8 @@ import anyio
 
 from serpsage.components.fetch.utils import (
     browser_headers,
+    classify_content_kind,
+    estimate_text_quality,
     get_delay_s,
     parse_retry_after_s,
 )
@@ -44,9 +46,18 @@ class CurlCffiFetcher(FetcherBase):
             self._session = CurlSessionFactory()
 
     @override
-    async def afetch(self, *, url: str) -> FetchResult:
+    async def afetch(
+        self,
+        *,
+        url: str,
+        timeout_s: float | None = None,
+        allow_render: bool = True,
+        depth: str | None = None,
+        rank_index: int = 0,
+    ) -> FetchResult:
+        _ = allow_render, depth, rank_index
         with self.span("fetch.curl", url=url) as sp:
-            res = await self.fetch_attempt(url=url, span=sp)
+            res = await self.fetch_attempt(url=url, span=sp, timeout_s=timeout_s)
             if int(res.status_code) <= 0:
                 raise RuntimeError("curl_cffi fetch failed")
             return FetchResult(
@@ -54,6 +65,10 @@ class CurlCffiFetcher(FetcherBase):
                 status_code=int(res.status_code),
                 content_type=res.content_type,
                 content=bytes(res.content or b""),
+                fetch_mode="curl_cffi",
+                rendered=False,
+                content_kind=res.content_kind,
+                headers=dict(res.headers or {}),
             )
 
     @override
@@ -68,7 +83,12 @@ class CurlCffiFetcher(FetcherBase):
             self._session = None
 
     async def fetch_attempt(
-        self, *, url: str, span: SpanBase, retry: RetrySettings | None = None
+        self,
+        *,
+        url: str,
+        span: SpanBase,
+        retry: RetrySettings | None = None,
+        timeout_s: float | None = None,
     ) -> FetchAttempt:
         if self._session is None:
             await self.ainit()
@@ -82,7 +102,11 @@ class CurlCffiFetcher(FetcherBase):
         headers = browser_headers(fetch_cfg)
         proxy = self.settings.http.proxy
 
-        timeout_s = max(0.5, fetch_cfg.timeout_s)
+        req_timeout_s = (
+            max(0.5, float(timeout_s))
+            if timeout_s is not None
+            else max(0.5, fetch_cfg.timeout_s)
+        )
 
         retry = retry or fetch_cfg.curl_cffi.retry
         max_attempts = max(1, int(getattr(retry, "max_attempts", 3)))
@@ -93,6 +117,7 @@ class CurlCffiFetcher(FetcherBase):
         last_body: bytes = b""
         last_enc: str | None = None
         last_len_hdr: str | None = None
+        last_headers: dict[str, str] = {}
 
         for attempt in range(1, max_attempts + 1):
             span.set_attr("curl_attempt", int(attempt))
@@ -101,7 +126,7 @@ class CurlCffiFetcher(FetcherBase):
                     url,
                     headers=headers | fetch_cfg.extra_headers,
                     cookies=fetch_cfg.cookies or None,
-                    timeout=timeout_s,
+                    timeout=req_timeout_s,
                     allow_redirects=bool(fetch_cfg.follow_redirects),
                     proxy=proxy,
                     impersonate=cast("Any", str(curl_cfg.impersonate)),
@@ -124,6 +149,10 @@ class CurlCffiFetcher(FetcherBase):
                 last_enc = _hget(hdrs, "content-encoding")
                 last_len_hdr = _hget(hdrs, "content-length")
                 last_body = bytes(getattr(resp, "content", b"") or b"")
+                last_headers = {
+                    str(k): str(v)
+                    for k, v in ((hdrs.items() if isinstance(hdrs, dict) else []))
+                }
 
                 if last_status == 429 or (500 <= last_status < 600):
                     if attempt >= max_attempts:
@@ -150,6 +179,15 @@ class CurlCffiFetcher(FetcherBase):
         span.set_attr("curl_status", int(last_status or 0))
         span.set_attr("curl_elapsed_ms", int(elapsed_ms))
         span.set_attr("curl_bytes", int(len(last_body)))
+        content_kind = classify_content_kind(
+            content_type=last_ct, url=last_url, content=last_body
+        )
+        text_chars, content_score, _ = estimate_text_quality(
+            last_body, content_kind=content_kind
+        )
+        span.set_attr("content_kind", content_kind)
+        span.set_attr("text_chars", int(text_chars))
+        span.set_attr("content_score", float(content_score))
 
         return FetchAttempt(
             url=last_url,
@@ -157,8 +195,15 @@ class CurlCffiFetcher(FetcherBase):
             content_type=last_ct,
             content=last_body,
             strategy_used="curl_cffi",
+            fetch_mode="curl_cffi",
+            rendered=False,
+            content_kind=content_kind,
+            headers=last_headers,
             content_encoding=last_enc,
             content_length_header=last_len_hdr,
+            content_score=float(content_score),
+            text_chars=int(text_chars),
+            blocked=False,
         )
 
 

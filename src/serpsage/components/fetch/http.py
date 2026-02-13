@@ -9,6 +9,8 @@ import httpx
 
 from serpsage.components.fetch.utils import (
     browser_headers,
+    classify_content_kind,
+    estimate_text_quality,
     get_delay_s,
     parse_retry_after_s,
 )
@@ -28,9 +30,20 @@ class HttpxFetcher(FetcherBase):
         self._http = http.client
 
     @override
-    async def afetch(self, *, url: str) -> FetchResult:
+    async def afetch(
+        self,
+        *,
+        url: str,
+        timeout_s: float | None = None,
+        allow_render: bool = True,
+        depth: str | None = None,
+        rank_index: int = 0,
+    ) -> FetchResult:
+        _ = allow_render, depth, rank_index
         with self.span("fetch.httpx", url=url) as sp:
-            res = await self.fetch_attempt(url=url, profile="browser", span=sp)
+            res = await self.fetch_attempt(
+                url=url, profile="browser", span=sp, timeout_s=timeout_s
+            )
             if int(res.status_code) <= 0:
                 raise RuntimeError("httpx fetch failed")
             return FetchResult(
@@ -38,6 +51,10 @@ class HttpxFetcher(FetcherBase):
                 status_code=int(res.status_code),
                 content_type=res.content_type,
                 content=bytes(res.content or b""),
+                fetch_mode="httpx",
+                rendered=False,
+                content_kind=res.content_kind,
+                headers=dict(res.headers or {}),
             )
 
     async def fetch_attempt(
@@ -47,6 +64,7 @@ class HttpxFetcher(FetcherBase):
         profile: str,
         span: SpanBase,
         retry: RetrySettings | None = None,
+        timeout_s: float | None = None,
     ) -> FetchAttempt:
         fetch_cfg = self.settings.enrich.fetch
         retry = retry or fetch_cfg.httpx.retry
@@ -54,8 +72,12 @@ class HttpxFetcher(FetcherBase):
         started = time.time()
         max_attempts = max(1, int(getattr(retry, "max_attempts", 3)))
 
-        timeout_s = max(0.5, fetch_cfg.timeout_s)
-        timeout = httpx.Timeout(timeout_s)
+        req_timeout_s = (
+            max(0.5, float(timeout_s))
+            if timeout_s is not None
+            else max(0.5, fetch_cfg.timeout_s)
+        )
+        timeout = httpx.Timeout(req_timeout_s)
 
         last_status: int | None = None
         last_url = url
@@ -64,6 +86,7 @@ class HttpxFetcher(FetcherBase):
         last_truncated = False
         last_enc: str | None = None
         last_len_hdr: str | None = None
+        last_headers: dict[str, str] = {}
 
         for attempt in range(1, max_attempts + 1):
             span.set_attr("httpx_profile", profile)
@@ -82,6 +105,7 @@ class HttpxFetcher(FetcherBase):
                     last_ct = resp.headers.get("content-type")
                     last_enc = resp.headers.get("content-encoding")
                     last_len_hdr = resp.headers.get("content-length")
+                    last_headers = {str(k): str(v) for k, v in resp.headers.items()}
 
                     last_body = b"".join(
                         [part async for part in resp.aiter_bytes() if part]
@@ -117,14 +141,31 @@ class HttpxFetcher(FetcherBase):
         span.set_attr("httpx_bytes", int(len(last_body)))
         span.set_attr("httpx_truncated", bool(last_truncated))
 
+        content_kind = classify_content_kind(
+            content_type=last_ct, url=last_url, content=last_body
+        )
+        text_chars, content_score, _ = estimate_text_quality(
+            last_body, content_kind=content_kind
+        )
+        span.set_attr("content_kind", content_kind)
+        span.set_attr("text_chars", int(text_chars))
+        span.set_attr("content_score", float(content_score))
+
         return FetchAttempt(
             url=last_url,
             status_code=int(last_status or 0),
             content_type=last_ct,
             content=last_body,
             strategy_used="httpx",
+            fetch_mode="httpx",
+            rendered=False,
+            content_kind=content_kind,
+            headers=last_headers,
             content_encoding=last_enc,
             content_length_header=last_len_hdr,
+            content_score=float(content_score),
+            text_chars=int(text_chars),
+            blocked=False,
         )
 
 

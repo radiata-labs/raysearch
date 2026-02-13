@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase
-    from serpsage.components.extract import ExtractorBase
     from serpsage.contracts.services import FetcherBase, RateLimiterBase
     from serpsage.core.runtime import Runtime
     from serpsage.domain.http import HttpClient
@@ -15,7 +14,6 @@ def build_fetcher(
     rt: Runtime,
     cache: CacheBase,
     rate_limiter: RateLimiterBase,
-    extractor: ExtractorBase,
     http: HttpClient,
 ) -> FetcherBase:
     fetch_cfg = rt.settings.enrich.fetch
@@ -40,6 +38,19 @@ def build_fetcher(
             except Exception:
                 curl_fetcher = None
 
+    playwright_fetcher = None
+    if backend in {"auto", "playwright"}:
+        from serpsage.components.fetch.playwright import (
+            PLAYWRIGHT_AVAILABLE,
+            PlaywrightFetcher,
+        )
+
+        if PLAYWRIGHT_AVAILABLE:
+            try:
+                playwright_fetcher = PlaywrightFetcher(rt=rt)
+            except Exception:
+                playwright_fetcher = None
+
     if backend == "httpx":
         assert httpx_fetcher is not None
         return httpx_fetcher
@@ -51,7 +62,18 @@ def build_fetcher(
             )
         return curl_fetcher
 
+    if backend == "playwright":
+        if playwright_fetcher is None:
+            raise RuntimeError(
+                "fetch backend `playwright` is unavailable: install playwright and browsers"
+            )
+        return playwright_fetcher
+
     if backend == "auto":
+        if bool(fetch_cfg.playwright.enabled) and playwright_fetcher is None:
+            raise RuntimeError(
+                "fetch backend `auto` requires playwright when enrich.fetch.playwright.enabled=true"
+            )
         from serpsage.components.fetch.auto import AutoFetcher
 
         assert httpx_fetcher is not None
@@ -61,11 +83,11 @@ def build_fetcher(
             rate_limiter=rate_limiter,
             httpx_fetcher=httpx_fetcher,
             curl_fetcher=curl_fetcher,
-            extractor=extractor,
+            playwright_fetcher=playwright_fetcher,
         )
 
     raise ValueError(
-        f"unsupported fetch backend `{backend}`; expected httpx|curl_cffi|auto"
+        f"unsupported fetch backend `{backend}`; expected httpx|curl_cffi|playwright|auto"
     )
 
 

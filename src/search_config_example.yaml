@@ -73,11 +73,10 @@ rank:
 enrich:
   enabled: true
   extractor:
-    backend: main_content # basic|main_content
-    basic: {}
-    main_content: {}
+    backend: markdown # markdown
+    markdown: {}
   fetch:
-    backend: curl_cffi # httpx|curl_cffi|auto
+    backend: auto # httpx|curl_cffi|playwright|auto
     user_agent: serpsage-bot/3.0
     timeout_s: 10.0
     follow_redirects: true
@@ -98,10 +97,41 @@ enrich:
       retry:
         max_attempts: 1
         delay_ms: 200
-    auto: {}
+    playwright:
+      enabled: true
+      headless: true
+      nav_timeout_ms: 1200
+      wait_for_network_idle_ms: 300
+      block_resources: true
+      js_concurrency: 2
+      max_render_pages_per_depth:
+        low: 0
+        medium: 2
+        high: 6
+    quality_gate:
+      min_text_chars: 220
+      min_content_score: 0.42
+      script_ratio_threshold: 0.35
+      blocked_markers:
+        - cloudflare
+        - just a moment
+        - verify you are human
+        - captcha
+        - access denied
+        - please enable javascript
+    auto:
+      version: v2
+      enable_speculative_render: true
+      render_for_top_rank_only: true
   chunking:
     target_chars: 600
-    overlap_sentences: 2
+    overlap_segments: 2
+    min_chunk_chars: 200
+    max_sentence_chars: 600
+    max_markdown_chars: 120000
+    max_segments: 600
+    max_sentences: 600
+    max_chunks: 80
   select:
     min_query_token_hits: 3
     min_chunk_score: 0.3
@@ -109,6 +139,10 @@ enrich:
     low: {pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2}
     medium: {pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3}
     high: {pages_ratio: 0.75, min_pages: 3, max_pages: 10, top_chunks_per_page: 5}
+  latency_budgets:
+    low: {step_timeout_s: 1.2, page_timeout_s: 0.9}
+    medium: {step_timeout_s: 2.0, page_timeout_s: 1.6}
+    high: {step_timeout_s: 4.0, page_timeout_s: 2.5}
 
 cache:
   enabled: false
