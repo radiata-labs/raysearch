@@ -7,9 +7,18 @@ import anyio
 from anyio import to_thread
 
 from serpsage.app.response import PageChunk, PageEnrichment, ResultItem
+from serpsage.core.tuning import (
+    chunk_profile_for_depth,
+    deadline_profile_for_depth,
+    normalize_depth,
+)
 from serpsage.core.workunit import WorkUnit
 from serpsage.domain.enrich.scoring import EnrichScoringMixin
-from serpsage.text.chunking import chunk_segments, markdown_to_segments
+from serpsage.text.chunking import (
+    chunk_segments,
+    markdown_to_segments,
+    prefilter_segments_by_tokens,
+)
 
 if TYPE_CHECKING:
     from serpsage.contracts.services import ExtractorBase, FetcherBase, RankerBase
@@ -50,12 +59,15 @@ class Enricher(WorkUnit):
         if not url:
             return PageEnrichment(chunks=[], markdown="", error="empty url")
 
+        depth_key = normalize_depth(depth)
+        chunk_cfg = chunk_profile_for_depth(depth_key)
         with self.span("enrich.one", url=url, domain=result.domain) as sp:
-            stats: dict[str, int | float] = {}
+            timing_ms: dict[str, int] = {}
+            warnings: list[str] = []
             started = time.monotonic()
             try:
                 timeout_s = self._resolve_page_timeout(
-                    depth=depth,
+                    depth=depth_key,
                     step_deadline_ts=step_deadline_ts,
                     page_timeout_s=page_timeout_s,
                 )
@@ -63,6 +75,8 @@ class Enricher(WorkUnit):
                     return PageEnrichment(
                         chunks=[],
                         markdown="",
+                        timing_ms={"total_ms": 0},
+                        warnings=["deadline exceeded before start"],
                         error="deadline exceeded",
                     )
 
@@ -72,12 +86,16 @@ class Enricher(WorkUnit):
                         url=url,
                         timeout_s=timeout_s,
                         allow_render=True,
-                        depth=depth,
+                        depth=depth_key,
                         rank_index=rank_index,
                     )
-                    stats["fetch_ms"] = int((time.monotonic() - t0) * 1000)
+                    timing_ms["fetch_ms"] = int((time.monotonic() - t0) * 1000)
                     sp.set_attr("fetch_mode", str(fetch.fetch_mode))
                     sp.set_attr("fetch_content_kind", str(fetch.content_kind))
+                    if fetch.attempt_chain:
+                        warnings.append(
+                            f"attempt_chain:{'->'.join(fetch.attempt_chain)}"
+                        )
 
                     t1 = time.monotonic()
                     extracted = await to_thread.run_sync(
@@ -87,49 +105,60 @@ class Enricher(WorkUnit):
                             content_type=fetch.content_type,
                         )
                     )
-                    stats["extract_ms"] = int((time.monotonic() - t1) * 1000)
+                    timing_ms["extract_ms"] = int((time.monotonic() - t1) * 1000)
 
                     markdown = (extracted.markdown or "").strip()
                     plain_text = (extracted.plain_text or "").strip()
+                    warnings.extend(extracted.warnings or [])
                     if not plain_text:
+                        timing_ms["total_ms"] = int((time.monotonic() - started) * 1000)
                         return PageEnrichment(
                             chunks=[],
                             markdown=markdown,
                             content_kind=extracted.content_kind,
                             fetch_mode=fetch.fetch_mode,
+                            timing_ms=timing_ms,
+                            warnings=warnings,
                             error="no content extracted",
                         )
 
-                    ck = self.settings.enrich.chunking
                     t2 = time.monotonic()
                     segments = markdown_to_segments(
                         markdown or plain_text,
-                        max_markdown_chars=int(ck.max_markdown_chars),
-                        max_segments=int(ck.max_segments),
-                        max_sentence_chars=int(ck.max_sentence_chars),
+                        max_markdown_chars=int(chunk_cfg.max_markdown_chars),
+                        max_segments=int(chunk_cfg.max_segments),
+                        max_sentence_chars=int(chunk_cfg.max_sentence_chars),
                     )
-                    stats["segments"] = int(len(segments))
-
-                    chunks = chunk_segments(
+                    filtered_segments = prefilter_segments_by_tokens(
                         segments,
-                        target_chars=int(ck.target_chars),
-                        overlap_segments=int(ck.overlap_segments),
-                        min_chunk_chars=int(ck.min_chunk_chars),
+                        query_tokens=query_tokens or [],
+                        min_hits=int(chunk_cfg.min_query_token_hits),
+                        max_segments=int(chunk_cfg.query_prefilter_window),
                     )
-                    stats["chunk_ms"] = int((time.monotonic() - t2) * 1000)
-                    stats["chunks_total"] = int(len(chunks))
+                    chunks = chunk_segments(
+                        filtered_segments,
+                        target_chars=int(chunk_cfg.target_chars),
+                        overlap_segments=int(chunk_cfg.overlap_segments),
+                        min_chunk_chars=int(chunk_cfg.min_chunk_chars),
+                    )
+                    if len(chunks) > int(chunk_cfg.max_chunks):
+                        chunks = chunks[: int(chunk_cfg.max_chunks)]
+                    timing_ms["chunk_ms"] = int((time.monotonic() - t2) * 1000)
+                    sp.set_attr("segments", int(len(segments)))
+                    sp.set_attr("segments_filtered", int(len(filtered_segments)))
+                    sp.set_attr("chunks_total", int(len(chunks)))
+
                     if not chunks:
-                        for k, v in stats.items():
-                            sp.set_attr(k, v)
+                        timing_ms["total_ms"] = int((time.monotonic() - started) * 1000)
                         return PageEnrichment(
                             chunks=[],
                             markdown=markdown,
                             content_kind=extracted.content_kind,
                             fetch_mode=fetch.fetch_mode,
+                            timing_ms=timing_ms,
+                            warnings=warnings,
                             error="no chunks",
                         )
-                    if len(chunks) > int(ck.max_chunks):
-                        chunks = chunks[: int(ck.max_chunks)]
 
                     t3 = time.monotonic()
                     scored, score_stats = await self._scoring.score_chunks(
@@ -138,41 +167,60 @@ class Enricher(WorkUnit):
                         query_tokens=query_tokens,
                         intent_tokens=intent_tokens,
                         profile=profile,
+                        depth=depth_key,
                     )
-                    stats["score_ms"] = int((time.monotonic() - t3) * 1000)
-                    stats.update(score_stats)
+                    timing_ms["score_ms"] = int((time.monotonic() - t3) * 1000)
+                    for key, val in score_stats.items():
+                        sp.set_attr(key, val)
                     if not scored:
-                        for k, v in stats.items():
-                            sp.set_attr(k, v)
+                        timing_ms["total_ms"] = int((time.monotonic() - started) * 1000)
                         return PageEnrichment(
                             chunks=[],
                             markdown=markdown,
                             content_kind=extracted.content_kind,
                             fetch_mode=fetch.fetch_mode,
+                            timing_ms=timing_ms,
+                            warnings=warnings,
                             error="no matching chunks",
                         )
 
                     top = scored[: int(top_k)]
-                    stats["chunks_kept"] = int(len(top))
-                    stats["markdown_chars"] = int(len(markdown))
-                    stats["plain_text_chars"] = int(len(plain_text))
-                    stats["total_ms"] = int((time.monotonic() - started) * 1000)
-                    for k, v in stats.items():
-                        sp.set_attr(k, v)
+                    timing_ms["total_ms"] = int((time.monotonic() - started) * 1000)
+                    sp.set_attr("chunks_kept", int(len(top)))
+                    sp.set_attr("markdown_chars", int(len(markdown)))
+                    sp.set_attr("plain_text_chars", int(len(plain_text)))
+                    sp.set_attr("extractor_used", str(extracted.extractor_used))
+                    sp.set_attr("extract_quality", float(extracted.quality_score))
+                    for key, val in timing_ms.items():
+                        sp.set_attr(key, int(val))
 
                     return PageEnrichment(
                         chunks=[PageChunk(text=c, score=float(s)) for s, c in top],
                         markdown=markdown,
                         content_kind=extracted.content_kind,
                         fetch_mode=fetch.fetch_mode,
+                        timing_ms=timing_ms,
+                        warnings=warnings,
                         error=None,
                     )
             except TimeoutError:
                 sp.set_attr("timeout", True)
-                return PageEnrichment(chunks=[], markdown="", error="timeout")
+                return PageEnrichment(
+                    chunks=[],
+                    markdown="",
+                    timing_ms={"total_ms": int((time.monotonic() - started) * 1000)},
+                    warnings=warnings,
+                    error="timeout",
+                )
             except Exception as exc:  # noqa: BLE001
                 sp.set_attr("error_type", type(exc).__name__)
-                return PageEnrichment(chunks=[], markdown="", error=str(exc))
+                return PageEnrichment(
+                    chunks=[],
+                    markdown="",
+                    timing_ms={"total_ms": int((time.monotonic() - started) * 1000)},
+                    warnings=warnings,
+                    error=str(exc),
+                )
 
     def _resolve_page_timeout(
         self,
@@ -181,11 +229,11 @@ class Enricher(WorkUnit):
         step_deadline_ts: float | None,
         page_timeout_s: float | None,
     ) -> float:
-        latency_budgets = self.settings.enrich.latency_budgets or {}
-        cfg = latency_budgets.get(depth) or latency_budgets.get("medium")
-        depth_timeout = float(getattr(cfg, "page_timeout_s", 1.6) or 1.6)
+        cfg = deadline_profile_for_depth(depth)
         effective = (
-            float(page_timeout_s) if page_timeout_s is not None else depth_timeout
+            float(page_timeout_s)
+            if page_timeout_s is not None
+            else float(cfg.page_timeout_s)
         )
         if step_deadline_ts is not None:
             remain = float(step_deadline_ts - time.monotonic())

@@ -196,11 +196,46 @@ def chunk_sentences(
     )
 
 
+def prefilter_segments_by_tokens(
+    segments: list[MarkdownSegment],
+    *,
+    query_tokens: list[str],
+    min_hits: int,
+    max_segments: int,
+) -> list[MarkdownSegment]:
+    if not segments:
+        return []
+    if not query_tokens:
+        return segments[: max(1, int(max_segments))]
+    wanted = max(1, int(min_hits))
+    limited = max(1, int(max_segments))
+    kept: list[MarkdownSegment] = []
+    fallback: list[MarkdownSegment] = []
+    lowered_tokens = [t.lower() for t in query_tokens if t]
+    for seg in segments:
+        txt = (seg.text or "").lower()
+        if not txt:
+            continue
+        hits = 0
+        for tok in lowered_tokens:
+            if tok in txt:
+                hits += 1
+        if hits >= wanted:
+            kept.append(seg)
+        elif seg.kind in {"heading", "list"}:
+            fallback.append(seg)
+        if len(kept) >= limited:
+            break
+    if kept:
+        return kept[:limited]
+    return (fallback or segments)[:limited]
+
+
 __all__ = [
     "MarkdownSegment",
     "chunk_segments",
     "chunk_sentences",
     "markdown_to_segments",
+    "prefilter_segments_by_tokens",
     "split_sentences",
 ]
-

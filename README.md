@@ -23,13 +23,13 @@ Environment variables:
 Note: when using the default `base_url`, `SEARCH_API_KEY` is required. This is enforced at request time.
 
 Componentized config shape:
-- Each component selects implementation via `backend` (for example: `provider.backend`, `rank.backend`, `enrich.fetch.backend`, `enrich.extractor.backend`, `cache.backend`).
+- Each component selects implementation via `backend` (for example: `provider.backend`, `rank.backend`, `enrich.fetch.backend`, `cache.backend`).
 - Shared HTTP transport settings live under top-level `http` and are reused by provider/fetch/overview.
 - `cache` and `overview` keep an `enabled` switch.
 - `overview` uses `overview.use_model` to select an entry in `overview.models[]`; each model row declares `backend` and per-model LLM options.
-- Backend-specific options live under component sub-blocks (for example `enrich.fetch.playwright`, `enrich.fetch.quality_gate`, `rank.blend.providers`).
+- Backend-specific options live under component sub-blocks (for example `rank.blend.providers`).
 - Heuristic ranking and score normalization are configured under `rank.heuristic` (there is no separate `rank.normalization` block).
-- `enrich.fetch` follows fail-fast validation (`extra=forbid`) to prevent stale/ignored keys.
+- `enrich.fetch` is intentionally minimal (`backend` only). Advanced fetch/extract/chunk/deadline tuning is built in and auto-selected by depth.
 - See `src/search_config_example.yaml` for a full reference.
 
 Overview optional dependencies:
@@ -58,9 +58,16 @@ async with Engine.from_settings(settings) as engine:
 - `simple`: only uses SearxNG snippets (default)
 - `low|medium|high`: crawls top-scoring pages, auto-switches between HTTP and Playwright rendering, extracts main content as clean Markdown, performs semantic chunking, and appends best chunks into each result (`result.page.chunks`)
 
-Depth presets and fetch/chunk defaults are configurable under top-level `enrich` in settings YAML.
+Public enrich config is minimal by design:
+- `enrich.enabled`
+- `enrich.depth_presets`
+- `enrich.fetch.backend`
+
+All advanced optimization knobs are internal constants (auto strategy): hedged fetching, render gates, extraction engine fallback, semantic chunking, and depth deadlines.
 
 Enrich output now includes:
 - `result.page.markdown`: cleaned main-content markdown
 - `result.page.content_kind`: `html|pdf|text|binary`
 - `result.page.fetch_mode`: `httpx|curl_cffi|playwright`
+- `result.page.timing_ms`: per-page stage timings (`fetch/extract/chunk/score/total`)
+- `result.page.warnings`: extraction/fetch warnings (challenge hints, fallback notices)

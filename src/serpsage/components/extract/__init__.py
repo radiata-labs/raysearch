@@ -8,11 +8,6 @@ if TYPE_CHECKING:
 
 
 def build_extractor(*, rt: Runtime) -> ExtractorBase:
-    backend = str(rt.settings.enrich.extractor.backend or "markdown").lower()
-    if backend != "markdown":
-        raise ValueError(
-            f"unsupported extractor backend `{backend}`; expected markdown"
-        )
     from serpsage.components.extract.markdown import MarkdownExtractor
 
     return MarkdownExtractor(rt=rt)

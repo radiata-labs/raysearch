@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from serpsage.text.chunking import chunk_segments, markdown_to_segments
+from serpsage.text.chunking import (
+    chunk_segments,
+    markdown_to_segments,
+    prefilter_segments_by_tokens,
+)
 
 
 def test_markdown_to_segments_preserves_structure() -> None:
@@ -42,3 +46,26 @@ def test_chunk_segments_with_overlap() -> None:
     assert len(chunks) >= 2
     assert all(len(c) >= 80 for c in chunks)
 
+
+def test_prefilter_segments_by_tokens() -> None:
+    md = (
+        "# Intro\n\n"
+        "General context section.\n\n"
+        "Python async scraping performance guide.\n\n"
+        "Another paragraph with playwright rendering notes.\n\n"
+        "- unrelated list item"
+    )
+    segs = markdown_to_segments(
+        md,
+        max_markdown_chars=10_000,
+        max_segments=100,
+        max_sentence_chars=600,
+    )
+    filtered = prefilter_segments_by_tokens(
+        segs,
+        query_tokens=["python", "playwright"],
+        min_hits=1,
+        max_segments=10,
+    )
+    assert filtered
+    assert any("python" in s.text.lower() or "playwright" in s.text.lower() for s in filtered)

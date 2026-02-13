@@ -12,7 +12,6 @@ class Model(BaseModel):
 
 DepthKey = Literal["low", "medium", "high"]
 ProviderBackendKey = Literal["searxng"]
-ExtractorBackendKey = Literal["markdown"]
 FetchBackendKey = Literal["httpx", "curl_cffi", "playwright", "auto"]
 RankBackendKey = Literal["blend", "heuristic", "bm25"]
 RankBlendProviderKey = Literal["heuristic", "bm25"]
@@ -103,148 +102,19 @@ def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
     return {"heuristic": 1.0}
 
 
-class FetchHttpxSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    retry: RetrySettings = Field(default_factory=RetrySettings)
-
-
-class FetchCurlCffiSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    impersonate: str = "chrome120"
-    http2: bool = True
-    verify_ssl: bool = True
-    retry: RetrySettings = Field(default_factory=RetrySettings)
-
-
-class FetchAutoSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    version: str = "v2"
-    enable_speculative_render: bool = True
-    render_for_top_rank_only: bool = True
-
-
-class FetchRateLimitSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    global_concurrency: int = 16
-    per_host_concurrency: int = 2
-    politeness_delay_ms: int = 0
-
-
-def _default_render_pages_per_depth() -> dict[DepthKey, int]:
-    return {
-        "low": 0,
-        "medium": 2,
-        "high": 6,
-    }
-
-
-class FetchPlaywrightSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    enabled: bool = True
-    headless: bool = True
-    nav_timeout_ms: int = 1200
-    wait_for_network_idle_ms: int = 300
-    block_resources: bool = True
-    js_concurrency: int = 2
-    max_render_pages_per_depth: dict[DepthKey, int] = Field(
-        default_factory=_default_render_pages_per_depth
-    )
-
-
-class FetchQualityGateSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    min_text_chars: int = 220
-    min_content_score: float = 0.42
-    script_ratio_threshold: float = 0.35
-    blocked_markers: list[str] = Field(
-        default_factory=lambda: [
-            "cloudflare",
-            "just a moment",
-            "verify you are human",
-            "captcha",
-            "access denied",
-            "please enable javascript",
-        ]
-    )
-
-
 class FetchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     backend: FetchBackendKey = "auto"
-    user_agent: str = "serpsage-bot/3.0"
-    timeout_s: float = 10.0
-    follow_redirects: bool = True
-    extra_headers: dict[str, str] = Field(default_factory=dict)
-    cookies: dict[str, str] = Field(default_factory=dict)
-    rate_limit: FetchRateLimitSettings = Field(default_factory=FetchRateLimitSettings)
-    httpx: FetchHttpxSettings = Field(default_factory=FetchHttpxSettings)
-    curl_cffi: FetchCurlCffiSettings = Field(default_factory=FetchCurlCffiSettings)
-    playwright: FetchPlaywrightSettings = Field(default_factory=FetchPlaywrightSettings)
-    quality_gate: FetchQualityGateSettings = Field(
-        default_factory=FetchQualityGateSettings
-    )
-    auto: FetchAutoSettings = Field(default_factory=FetchAutoSettings)
-
-
-class ChunkingSettings(Model):
-    target_chars: int = 1200
-    overlap_segments: int = 1
-    min_chunk_chars: int = 200
-    max_sentence_chars: int = 600
-    max_markdown_chars: int = 120_000
-    max_segments: int = 600
-    max_sentences: int = 600
-    max_chunks: int = 80
-
-
-class SelectSettings(Model):
-    min_query_token_hits: int = 2
-    early_bonus: float = 1.15
-    min_chunk_score: float = 0.20
-
-
-class ExtractorSmartMarkdownSettings(Model):
-    pass
-
-
-class EnrichExtractorSettings(Model):
-    backend: ExtractorBackendKey = "markdown"
-    markdown: ExtractorSmartMarkdownSettings = Field(
-        default_factory=ExtractorSmartMarkdownSettings
-    )
-
-
-class EnrichDepthLatencyBudget(Model):
-    step_timeout_s: float = 2.0
-    page_timeout_s: float = 1.6
-
-
-def _default_latency_budgets() -> dict[DepthKey, EnrichDepthLatencyBudget]:
-    return {
-        "low": EnrichDepthLatencyBudget(step_timeout_s=1.2, page_timeout_s=0.9),
-        "medium": EnrichDepthLatencyBudget(step_timeout_s=2.0, page_timeout_s=1.6),
-        "high": EnrichDepthLatencyBudget(step_timeout_s=4.0, page_timeout_s=2.5),
-    }
 
 
 class EnrichSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     enabled: bool = True
-    extractor: EnrichExtractorSettings = Field(default_factory=EnrichExtractorSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
-    chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
-    select: SelectSettings = Field(default_factory=SelectSettings)
     depth_presets: dict[DepthKey, EnrichDepthPreset] = Field(
         default_factory=_default_depth_presets
-    )
-    latency_budgets: dict[DepthKey, EnrichDepthLatencyBudget] = Field(
-        default_factory=_default_latency_budgets
     )
 
 
@@ -445,18 +315,8 @@ __all__ = [
     "CacheRedisSettings",
     "CacheSQLAlchemySettings",
     "CacheSettings",
-    "ChunkingSettings",
     "EnrichDepthPreset",
-    "EnrichDepthLatencyBudget",
     "EnrichSettings",
-    "EnrichExtractorSettings",
-    "ExtractorSmartMarkdownSettings",
-    "FetchAutoSettings",
-    "FetchCurlCffiSettings",
-    "FetchHttpxSettings",
-    "FetchPlaywrightSettings",
-    "FetchQualityGateSettings",
-    "FetchRateLimitSettings",
     "FetchSettings",
     "HttpSettings",
     "HeuristicRankSettings",

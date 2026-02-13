@@ -1,8 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from typing import TYPE_CHECKING
 
+from serpsage.core.tuning import chunk_profile_for_depth
 from serpsage.text.normalize import normalize_text
 from serpsage.text.similarity import is_duplicate_text
 
@@ -27,7 +28,9 @@ class EnrichScoringMixin:
         query_tokens: list[str],
         intent_tokens: list[str],
         profile: ProfileSettings,
+        depth: str = "medium",
     ) -> tuple[list[tuple[float, str]], dict[str, int | float]]:
+        cfg = chunk_profile_for_depth(depth)
 
         stats: dict[str, int | float] = {
             "chunks_raw_count": int(len(chunks)),
@@ -37,6 +40,7 @@ class EnrichScoringMixin:
             chunks,
             query_tokens=query_tokens,
             profile=profile,
+            min_query_token_hits=int(cfg.min_query_token_hits),
         )
 
         stats["chunks_after_filter"] = int(len(chunks))
@@ -55,9 +59,9 @@ class EnrichScoringMixin:
         scored, post_stats = self._post_process_chunk_scores(
             chunks,
             base_scores=scores,
-            early_bonus=float(self.settings.enrich.select.early_bonus),
+            early_bonus=float(cfg.early_bonus),
             dedupe_threshold=float(profile.fuzzy_threshold),
-            min_score=float(self.settings.enrich.select.min_chunk_score),
+            min_score=float(cfg.min_chunk_score),
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
         )
@@ -71,6 +75,7 @@ class EnrichScoringMixin:
         *,
         query_tokens: list[str],
         profile: ProfileSettings,
+        min_query_token_hits: int,
     ) -> list[str]:
         filtered: list[str] = []
         for chunk in chunks:
@@ -88,7 +93,7 @@ class EnrichScoringMixin:
                 tl = t.lower()
                 if tl in lowered:
                     hit += 1
-            if hit >= self.settings.enrich.select.min_query_token_hits:
+            if hit >= int(min_query_token_hits):
                 filtered.append(chunk)
         return filtered
 

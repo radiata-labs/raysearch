@@ -7,11 +7,25 @@ Public API:
 - SearchRequest/SearchResponse: request/response models
 """
 
-from serpsage.app.engine import Engine
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from serpsage.app.engine import Engine
+
+
 from serpsage.app.request import SearchRequest
 from serpsage.app.response import SearchResponse
 from serpsage.settings.load import load_settings
 from serpsage.settings.models import AppSettings
+
+
+def __getattr__(name: str):
+    if name == "Engine":
+        from serpsage.app.engine import Engine
+
+        return Engine
+    raise AttributeError(name)
+
 
 __all__ = [
     "AppSettings",

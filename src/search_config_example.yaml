@@ -2,7 +2,6 @@ provider:
   backend: searxng
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
-    # Prefer env override: SEARCH_API_KEY
     api_key: null
     timeout_s: 20.0
     allow_redirects: false
@@ -22,28 +21,15 @@ pipeline:
   include_raw: false
   profiles:
     general: {}
-
     music:
       fuzzy_threshold: 0.88
       auto_match:
         enabled: true
-        keywords: ["新曲", "新歌", "MV", "single", "album"]
+        keywords: ["new song", "single", "album", "MV"]
         regex: []
         priority: 10
-      intent_terms:
-        [
-          "新曲",
-          "新歌",
-          "发布",
-          "上线",
-          "单曲",
-          "专辑",
-          "release",
-          "new song",
-          "single",
-          "album",
-        ]
-      noise_words: ["dict.txt", "privacy", "terms", "cookie"]
+      intent_terms: ["release", "single", "album", "new song"]
+      noise_words: ["privacy", "terms", "cookie"]
       domain_bonus:
         wikipedia.org: 3
         youtube.com: 2
@@ -54,7 +40,7 @@ pipeline:
         - "(?:-?\\s*)?(wikipedia.*)$"
 
 rank:
-  backend: blend # blend|heuristic|bm25
+  backend: blend
   blend:
     providers:
       bm25: 0.7
@@ -72,77 +58,12 @@ rank:
 
 enrich:
   enabled: true
-  extractor:
-    backend: markdown # markdown
-    markdown: {}
   fetch:
-    backend: auto # httpx|curl_cffi|playwright|auto
-    user_agent: serpsage-bot/3.0
-    timeout_s: 10.0
-    follow_redirects: true
-    extra_headers: {}
-    cookies: {}
-    rate_limit:
-      global_concurrency: 16
-      per_host_concurrency: 16
-      politeness_delay_ms: 0
-    httpx:
-      retry:
-        max_attempts: 1
-        delay_ms: 200
-    curl_cffi:
-      impersonate: chrome120
-      http2: true
-      verify_ssl: true
-      retry:
-        max_attempts: 1
-        delay_ms: 200
-    playwright:
-      enabled: true
-      headless: true
-      nav_timeout_ms: 1200
-      wait_for_network_idle_ms: 300
-      block_resources: true
-      js_concurrency: 2
-      max_render_pages_per_depth:
-        low: 0
-        medium: 2
-        high: 6
-    quality_gate:
-      min_text_chars: 220
-      min_content_score: 0.42
-      script_ratio_threshold: 0.35
-      blocked_markers:
-        - cloudflare
-        - just a moment
-        - verify you are human
-        - captcha
-        - access denied
-        - please enable javascript
-    auto:
-      version: v2
-      enable_speculative_render: true
-      render_for_top_rank_only: true
-  chunking:
-    target_chars: 600
-    overlap_segments: 2
-    min_chunk_chars: 200
-    max_sentence_chars: 600
-    max_markdown_chars: 120000
-    max_segments: 600
-    max_sentences: 600
-    max_chunks: 80
-  select:
-    min_query_token_hits: 3
-    min_chunk_score: 0.3
+    backend: auto # auto|httpx|curl_cffi|playwright
   depth_presets:
     low: {pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2}
     medium: {pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3}
     high: {pages_ratio: 0.75, min_pages: 3, max_pages: 10, top_chunks_per_page: 5}
-  latency_budgets:
-    low: {step_timeout_s: 1.2, page_timeout_s: 0.9}
-    medium: {step_timeout_s: 2.0, page_timeout_s: 1.6}
-    high: {step_timeout_s: 4.0, page_timeout_s: 2.5}
 
 cache:
   enabled: false
@@ -177,9 +98,7 @@ overview:
   models:
     - name: gpt-4.1-mini
       backend: openai
-      # Prefer env fallback when YAML is empty: OPENAI_BASE_URL
-      base_url: https://api.chatanywhere.tech/v1
-      # Prefer env fallback when YAML is empty: OPENAI_API_KEY
+      base_url: null
       api_key: null
       model: gpt-4.1-mini
       timeout_s: 60.0
@@ -189,9 +108,7 @@ overview:
       schema_strict: true
     - name: gemini-3-flash
       backend: gemini
-      # Prefer env fallback when YAML is empty: GEMINI_BASE_URL
       base_url: null
-      # Prefer env fallback when YAML is empty: GEMINI_API_KEY
       api_key: null
       model: gemini-3-flash-preview
       timeout_s: 60.0

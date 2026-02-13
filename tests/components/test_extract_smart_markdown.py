@@ -45,6 +45,8 @@ def test_markdown_extracts_main_content() -> None:
     assert "Main Title" in doc.markdown
     assert "Hello world body." in doc.plain_text
     assert "Menu" not in doc.markdown
+    assert doc.extractor_used != ""
+    assert 0.0 <= doc.quality_score <= 1.0
 
 
 def test_pdf_extension_is_not_default_noise_extension() -> None:

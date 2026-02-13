@@ -8,6 +8,11 @@ from typing_extensions import override
 import anyio
 
 from serpsage.app.response import PageEnrichment
+from serpsage.core.tuning import (
+    RATE_LIMIT_GLOBAL_CONCURRENCY,
+    deadline_profile_for_depth,
+    normalize_depth,
+)
 from serpsage.pipeline.base import StepBase
 from serpsage.pipeline.context import SearchStepContext
 
@@ -56,21 +61,30 @@ class EnrichStep(StepBase):
         query = ctx.request.query
         profile = cast("ProfileSettings", ctx.profile)
         top_k = int(preset.top_chunks_per_page)
-        latency_cfg = self.settings.enrich.latency_budgets.get(depth)  # type: ignore[index]
-        step_budget_s = float(getattr(latency_cfg, "step_timeout_s", 2.0) or 2.0)
-        page_timeout_s = float(getattr(latency_cfg, "page_timeout_s", 1.6) or 1.6)
+        depth_key = normalize_depth(depth)
+        deadline_cfg = deadline_profile_for_depth(depth_key)
+        step_budget_s = float(deadline_cfg.step_timeout_s)
+        page_timeout_s = float(deadline_cfg.page_timeout_s)
         step_deadline_ts = time.monotonic() + max(0.1, step_budget_s)
         max_parallel = min(
-            max(1, int(self.settings.enrich.fetch.rate_limit.global_concurrency)),
+            max(1, int(RATE_LIMIT_GLOBAL_CONCURRENCY)),
             max(1, m),
         )
         sem = anyio.Semaphore(max_parallel)
         timeout_count = 0
+        completed_count = 0
+        rendered_count = 0
 
         async def enrich_one(rank_index: int, r: ResultItem) -> None:
-            nonlocal timeout_count
+            nonlocal timeout_count, completed_count, rendered_count
             if time.monotonic() >= step_deadline_ts:
-                r.page = PageEnrichment(chunks=[], markdown="", error="deadline exceeded")
+                r.page = PageEnrichment(
+                    chunks=[],
+                    markdown="",
+                    timing_ms={"total_ms": 0},
+                    warnings=["step deadline exceeded"],
+                    error="deadline exceeded",
+                )
                 timeout_count += 1
                 return
             async with sem:
@@ -81,11 +95,14 @@ class EnrichStep(StepBase):
                     intent_tokens=ctx.intent_tokens or [],
                     profile=profile,
                     top_k=top_k,
-                    depth=depth,
+                    depth=depth_key,
                     rank_index=rank_index,
                     step_deadline_ts=step_deadline_ts,
                     page_timeout_s=page_timeout_s,
                 )
+                completed_count += 1
+                if (r.page.fetch_mode or "") == "playwright":
+                    rendered_count += 1
                 if (r.page.error or "") in {"timeout", "deadline exceeded"}:
                     timeout_count += 1
 
@@ -93,9 +110,12 @@ class EnrichStep(StepBase):
             for idx, r in enumerate(work):
                 tg.start_soon(enrich_one, idx, r)
         span.set_attr("pages_enriched", int(m))
+        span.set_attr("pages_completed", int(completed_count))
         span.set_attr("step_budget_s", float(step_budget_s))
         span.set_attr("page_timeout_s", float(page_timeout_s))
         span.set_attr("pages_timeout", int(timeout_count))
+        span.set_attr("pages_rendered", int(rendered_count))
+        span.set_attr("deadline_hit", bool(time.monotonic() >= step_deadline_ts))
         return ctx
 
 

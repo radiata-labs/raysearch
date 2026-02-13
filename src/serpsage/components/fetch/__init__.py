@@ -70,9 +70,11 @@ def build_fetcher(
         return playwright_fetcher
 
     if backend == "auto":
-        if bool(fetch_cfg.playwright.enabled) and playwright_fetcher is None:
+        from serpsage.core.tuning import PLAYWRIGHT_ENABLED
+
+        if bool(PLAYWRIGHT_ENABLED) and playwright_fetcher is None:
             raise RuntimeError(
-                "fetch backend `auto` requires playwright when enrich.fetch.playwright.enabled=true"
+                "fetch backend `auto` requires playwright runtime dependencies"
             )
         from serpsage.components.fetch.auto import AutoFetcher
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -7,14 +8,23 @@ from typing_extensions import override
 import anyio
 
 from serpsage.components.fetch.utils import (
+    blocked_marker_hit,
     classify_content_kind,
     estimate_text_quality,
 )
 from serpsage.contracts.services import FetcherBase
+from serpsage.core.tuning import (
+    DEFAULT_FETCH_USER_AGENT,
+    PLAYWRIGHT_BLOCK_RESOURCES,
+    PLAYWRIGHT_HEADLESS,
+    PLAYWRIGHT_JS_CONCURRENCY,
+    PLAYWRIGHT_NAV_TIMEOUT_MS,
+    PLAYWRIGHT_WAIT_NETWORK_IDLE_MS,
+)
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, BrowserContext, Playwright
+    from playwright.async_api import Browser, BrowserContext, Page, Playwright
 
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
@@ -29,6 +39,17 @@ try:
 except Exception:  # noqa: BLE001
     PLAYWRIGHT_AVAILABLE = False
 
+_BLOCK_RESOURCE_TYPES = {"image", "media", "font"}
+_BLOCK_TRACKING_RE = (
+    "googletagmanager",
+    "google-analytics",
+    "doubleclick",
+    "hotjar",
+    "mixpanel",
+    "segment",
+    "clarity.ms",
+)
+
 
 class PlaywrightFetcher(FetcherBase):
     def __init__(self, *, rt: Runtime) -> None:
@@ -38,8 +59,7 @@ class PlaywrightFetcher(FetcherBase):
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        js_cfg = self.settings.enrich.fetch.playwright
-        self._sem = anyio.Semaphore(max(1, int(js_cfg.js_concurrency)))
+        self._sem = anyio.Semaphore(max(1, int(PLAYWRIGHT_JS_CONCURRENCY)))
 
     @override
     async def on_init(self) -> None:
@@ -49,32 +69,27 @@ class PlaywrightFetcher(FetcherBase):
             raise RuntimeError("playwright is not available")
         self._pw = await _pw_factory().start()
         self._browser = await self._pw.chromium.launch(
-            headless=bool(self.settings.enrich.fetch.playwright.headless)
+            headless=bool(PLAYWRIGHT_HEADLESS)
         )
         self._context = await self._browser.new_context(
-            user_agent=str(self.settings.enrich.fetch.user_agent),
+            user_agent=str(DEFAULT_FETCH_USER_AGENT),
             ignore_https_errors=True,
+            locale="en-US",
         )
 
     @override
     async def on_close(self) -> None:
         if self._context is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._context.close()
-            except Exception:
-                pass
             self._context = None
         if self._browser is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._browser.close()
-            except Exception:
-                pass
             self._browser = None
         if self._pw is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._pw.stop()
-            except Exception:
-                pass
             self._pw = None
 
     @override
@@ -87,9 +102,14 @@ class PlaywrightFetcher(FetcherBase):
         depth: str | None = None,
         rank_index: int = 0,
     ) -> FetchResult:
-        _ = allow_render, depth, rank_index
+        _ = allow_render, rank_index
         with self.span("fetch.playwright", url=url) as sp:
-            attempt = await self.fetch_attempt(url=url, span=sp, timeout_s=timeout_s)
+            attempt = await self.fetch_attempt(
+                url=url,
+                span=sp,
+                timeout_s=timeout_s,
+                depth=depth,
+            )
             if int(attempt.status_code or 0) <= 0:
                 raise RuntimeError("playwright fetch failed")
             return FetchResult(
@@ -101,6 +121,8 @@ class PlaywrightFetcher(FetcherBase):
                 rendered=True,
                 content_kind=attempt.content_kind,
                 headers=dict(attempt.headers or {}),
+                attempt_chain=list(attempt.attempt_chain or []),
+                quality_score=float(attempt.quality_score or attempt.content_score),
             )
 
     async def fetch_attempt(
@@ -110,78 +132,54 @@ class PlaywrightFetcher(FetcherBase):
         span: SpanBase,
         timeout_s: float | None = None,
         render_reason: str | None = None,
+        depth: str | None = None,
     ) -> FetchAttempt:
-        if self._browser is None:
+        if self._browser is None or self._context is None:
             await self.ainit()
         if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
 
-        cfg = self.settings.enrich.fetch.playwright
-        timeout_ms = max(300, int(cfg.nav_timeout_ms))
+        timeout_ms = int(PLAYWRIGHT_NAV_TIMEOUT_MS)
         if timeout_s is not None:
-            timeout_ms = max(300, min(timeout_ms, int(timeout_s * 1000)))
-        wait_idle_ms = max(0, int(cfg.wait_for_network_idle_ms))
+            timeout_ms = max(350, min(timeout_ms, int(timeout_s * 1000)))
+        wait_idle_ms = max(0, int(PLAYWRIGHT_WAIT_NETWORK_IDLE_MS))
 
         started = time.time()
         async with self._sem:
             page = await self._context.new_page()
-
-            if bool(cfg.block_resources):
-                blocked_types = {"image", "media", "font"}
-
-                async def route_handler(route) -> None:  # noqa: ANN001
-                    req = route.request
-                    if req.resource_type in blocked_types:
-                        await route.abort()
-                        return
-                    await route.continue_()
-
-                await page.route("**/*", route_handler)
-
-            status = 0
-            final_url = url
-            content_type: str | None = None
-            body = b""
-            headers: dict[str, str] = {}
-
             try:
-                resp = await page.goto(
-                    url,
-                    timeout=timeout_ms,
-                    wait_until="domcontentloaded",
+                await self._prepare_page(page)
+                status, final_url, headers = await self._navigate(
+                    page=page,
+                    url=url,
+                    timeout_ms=timeout_ms,
+                    wait_idle_ms=wait_idle_ms,
                 )
-                if wait_idle_ms > 0:
-                    try:
-                        await page.wait_for_load_state(
-                            "networkidle",
-                            timeout=wait_idle_ms,
-                        )
-                    except Exception:
-                        pass
                 html = await page.content()
-                body = (html or "").encode("utf-8", errors="ignore")
-                final_url = str(page.url or url)
-                if resp is not None:
-                    status = int(resp.status or 0)
-                    headers = {str(k): str(v) for k, v in resp.headers.items()}
-                    content_type = headers.get("content-type")
-                else:
-                    status = 200 if body else 0
             finally:
                 await page.close()
 
+        body = (html or "").encode("utf-8", errors="ignore")
         elapsed_ms = int((time.time() - started) * 1000)
+        content_type = headers.get("content-type")
         content_kind = classify_content_kind(
             content_type=content_type,
             url=final_url,
             content=body,
         )
-        text_chars, content_score, _ = estimate_text_quality(body, content_kind=content_kind)
+        text_chars, content_score, _ = estimate_text_quality(
+            body, content_kind=content_kind
+        )
+        blocked = bool(blocked_marker_hit(body))
+        quality_score = float(content_score - (0.3 if blocked else 0.0))
+
         span.set_attr("playwright_status", int(status))
         span.set_attr("playwright_elapsed_ms", int(elapsed_ms))
         span.set_attr("content_kind", content_kind)
         span.set_attr("content_score", float(content_score))
         span.set_attr("text_chars", int(text_chars))
+        if render_reason:
+            span.set_attr("render_reason", str(render_reason))
 
         return FetchAttempt(
             url=final_url,
@@ -197,9 +195,56 @@ class PlaywrightFetcher(FetcherBase):
             content_length_header=headers.get("content-length"),
             content_score=float(content_score),
             text_chars=int(text_chars),
-            blocked=False,
+            blocked=blocked,
             render_reason=render_reason,
+            attempt_chain=["playwright"],
+            quality_score=float(quality_score),
         )
+
+    async def _prepare_page(self, page: Page) -> None:
+        if not bool(PLAYWRIGHT_BLOCK_RESOURCES):
+            return
+
+        async def route_handler(route) -> None:  # noqa: ANN001
+            req = route.request
+            resource_type = str(req.resource_type or "").lower()
+            req_url = str(req.url or "").lower()
+            if resource_type in _BLOCK_RESOURCE_TYPES:
+                await route.abort()
+                return
+            if any(key in req_url for key in _BLOCK_TRACKING_RE):
+                await route.abort()
+                return
+            await route.continue_()
+
+        await page.route("**/*", route_handler)
+
+    async def _navigate(
+        self,
+        *,
+        page: Page,
+        url: str,
+        timeout_ms: int,
+        wait_idle_ms: int,
+    ) -> tuple[int, str, dict[str, str]]:
+        status = 0
+        final_url = url
+        headers: dict[str, str] = {}
+        resp = await page.goto(
+            url,
+            timeout=timeout_ms,
+            wait_until="domcontentloaded",
+        )
+        if wait_idle_ms > 0:
+            with contextlib.suppress(Exception):
+                await page.wait_for_load_state("networkidle", timeout=wait_idle_ms)
+        final_url = str(page.url or url)
+        if resp is None:
+            status = 200
+            return status, final_url, headers
+        status = int(resp.status or 0)
+        headers = {str(k): str(v) for k, v in resp.headers.items()}
+        return status, final_url, headers
 
 
 __all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightFetcher"]

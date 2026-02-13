@@ -16,6 +16,8 @@ class FetchResult(FrozenModel):
     rendered: bool = False
     content_kind: Literal["html", "pdf", "text", "binary", "unknown"] = "unknown"
     headers: dict[str, str] = Field(default_factory=dict)
+    attempt_chain: list[str] = Field(default_factory=list)
+    quality_score: float = 0.0
 
 
 class FetchAttempt(FetchResult):

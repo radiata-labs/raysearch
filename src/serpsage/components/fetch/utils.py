@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
-from serpsage.settings.models import FetchSettings
+from serpsage.core.tuning import DEFAULT_FETCH_USER_AGENT, FETCH_BLOCKED_MARKERS
 
 _BINARY_PREFIXES = (
     "application/octet-stream",
@@ -20,24 +21,23 @@ _TEXT_CT_HINTS = ("text/plain", "text/markdown")
 _PDF_CT_HINTS = ("application/pdf",)
 _SPA_RE = re.compile(
     r"(id=[\"'](?:app|root|__next|__nuxt)[\"']|window\.__INITIAL_STATE__|"
-    r"window\.__NUXT__|webpackJsonp|vite/client|reactroot|ng-version)",
+    r"window\.__NUXT__|webpackJsonp|vite/client|reactroot|ng-version|"
+    r"data-reactroot|hydration|astro-island|sveltekit|chunk-vendors)",
     re.IGNORECASE,
 )
 
 
-def browser_headers(
-    fetch_cfg: FetchSettings, *, profile: str | None = None
-) -> dict[str, str]:
-    ua = str(fetch_cfg.user_agent)
-
+def browser_headers(*, profile: str | None = None) -> dict[str, str]:
     headers: dict[str, str] = {
-        "User-Agent": ua,
+        "User-Agent": DEFAULT_FETCH_USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
         "Upgrade-Insecure-Requests": "1",
         "DNT": "1",
     }
-
     if profile == "browser":
         headers.update(
             {
@@ -47,32 +47,27 @@ def browser_headers(
                 "Sec-Fetch-User": "?1",
             }
         )
-
-    extra = fetch_cfg.extra_headers or {}
-    for k, v in extra.items():
-        if not k:
-            continue
-        headers[str(k)] = str(v)
-
     return headers
 
 
 def get_delay_s(base_ms: int) -> float:
-    return min(base_ms, 100) / 1000.0
+    return min(max(0, int(base_ms)), 250) / 1000.0
 
 
 def parse_retry_after_s(v: str | None) -> float | None:
     if not v:
         return None
-    v = v.strip()
-    if not v:
+    raw = v.strip()
+    if not raw:
         return None
-    if v.isdigit():
-        return float(int(v))
+    if raw.isdigit():
+        return float(int(raw))
     return None
 
 
-def classify_content_kind(*, content_type: str | None, url: str, content: bytes) -> str:
+def classify_content_kind(
+    *, content_type: str | None, url: str, content: bytes
+) -> Literal["html", "pdf", "text", "binary", "unknown"]:
     ct = (content_type or "").lower()
     path = (urlparse(url).path or "").lower()
     if path.endswith(".pdf") or any(h in ct for h in _PDF_CT_HINTS):
@@ -93,53 +88,69 @@ def classify_content_kind(*, content_type: str | None, url: str, content: bytes)
     return "unknown"
 
 
-def estimate_text_quality(content: bytes, *, content_kind: str) -> tuple[int, float, float]:
+def estimate_text_quality(
+    content: bytes, *, content_kind: str
+) -> tuple[int, float, float]:
     if not content:
         return 0, 0.0, 1.0
     if content_kind in {"pdf", "binary"}:
         size = len(content)
         return size, min(1.0, size / 4096.0), 0.0
 
-    sample = content[:300_000].decode("utf-8", errors="ignore")
+    sample = content[:450_000].decode("utf-8", errors="ignore")
     if content_kind == "text":
         txt = " ".join(sample.split())
         chars = len(txt)
-        score = min(1.0, chars / 2400.0)
+        score = min(1.0, chars / 2600.0)
         return chars, score, 0.0
 
-    # html
     try:
         soup = BeautifulSoup(sample, "html.parser")
+        script_tags = soup.find_all("script")
         for t in soup.find_all(["script", "style", "noscript", "svg"]):
             t.decompose()
         txt = " ".join(soup.get_text(" ", strip=True).split())
         chars = len(txt)
+        if chars <= 0:
+            return 0, 0.0, 1.0
         all_tags = max(1, len(soup.find_all(True)))
-        scripts = len(soup.find_all("script"))
-        script_ratio = float(scripts) / float(all_tags)
+        script_ratio = float(len(script_tags)) / float(max(1, all_tags))
         links = " ".join(a.get_text(" ", strip=True) for a in soup.find_all("a"))
         link_chars = len(links)
         link_density = float(link_chars) / float(max(1, chars))
+        punct = len(re.findall(r"[,.!?;:\u3002\uff01\uff1f\uff1b]", txt))
+        punct_density = float(punct) / float(max(1, chars))
         score = min(
             1.0,
-            (chars / 2200.0) * 0.75
-            + (1.0 - min(1.0, link_density)) * 0.15
-            + (1.0 - min(1.0, script_ratio)) * 0.10,
+            (chars / 2500.0) * 0.72
+            + (1.0 - min(1.0, link_density)) * 0.16
+            + min(1.0, punct_density * 90.0) * 0.07
+            + (1.0 - min(1.0, script_ratio)) * 0.05,
         )
         return chars, max(0.0, score), script_ratio
     except Exception:
         txt = " ".join(sample.split())
         chars = len(txt)
-        score = min(1.0, chars / 2000.0)
+        score = min(1.0, chars / 2200.0)
         return chars, score, 0.0
 
 
 def has_spa_signals(content: bytes) -> bool:
-    sample = content[:60_000].decode("utf-8", errors="ignore")
+    sample = content[:80_000].decode("utf-8", errors="ignore")
     return bool(_SPA_RE.search(sample))
 
 
+def blocked_marker_hit(
+    content: bytes, *, markers: tuple[str, ...] = FETCH_BLOCKED_MARKERS
+) -> bool:
+    if not content:
+        return False
+    sample = content[:20_000].decode("utf-8", errors="ignore").lower()
+    return any(marker in sample for marker in markers)
+
+
 __all__ = [
+    "blocked_marker_hit",
     "browser_headers",
     "classify_content_kind",
     "estimate_text_quality",

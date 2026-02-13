@@ -1,46 +1,52 @@
-import time
+from __future__ import annotations
+
 from pathlib import Path
 
-from marisa_trie import Trie
-
 STOPWORDS_PATH = Path(__file__).parent / "files"
-_stopwords: list[str] = []
-_time_start = time.process_time()
-print(f"Loading stopwords from {STOPWORDS_PATH.as_posix()}")
-for file_path in STOPWORDS_PATH.glob("*.txt"):
-    encodings = ["utf-8", "gbk", "gb2312", "gb18030", "big5"]
-    content = None
-    for enc in encodings:
-        try:
-            with file_path.open(encoding=enc) as f:
-                content = f.readlines()
-            break
-        except UnicodeDecodeError:
+
+try:
+    from marisa_trie import Trie  # type: ignore[import-not-found]
+
+    _TRIE_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    Trie = None  # type: ignore[assignment]
+    _TRIE_AVAILABLE = False
+
+
+def _load_stopwords() -> list[str]:
+    words: list[str] = []
+    for file_path in STOPWORDS_PATH.glob("*.txt"):
+        content: list[str] | None = None
+        for enc in ("utf-8", "gbk", "gb2312", "gb18030", "big5"):
+            try:
+                with file_path.open(encoding=enc) as f:
+                    content = f.readlines()
+                break
+            except UnicodeDecodeError:
+                continue
+        if content is None:
             continue
-    if content is None:
-        continue
+        for line in content:
+            word = line.strip()
+            if word:
+                words.append(word)
+    return words
 
-    for line in content:
-        word = line.strip()
-        if word:
-            _stopwords.append(word)
-_time_end = time.process_time()
-if _stopwords:
-    print(
-        f"Loading {_stopwords.__len__()} stopwords took {_time_end - _time_start:.3f} seconds"
-    )
+
+_stopwords = _load_stopwords()
+
+if _TRIE_AVAILABLE and Trie is not None:
+    stopwords = Trie(_stopwords)
 else:
-    print("No stopwords loaded")
-
-stopwords = Trie(_stopwords)
+    stopwords = set(_stopwords)
 
 
 def is_stopword(word: str) -> bool:
-    return word in stopwords
+    return bool(word and word in stopwords)
 
 
 def filter_stopwords(words: list[str]) -> list[str]:
     return [w for w in words if w and not is_stopword(w)]
 
 
-__all__ = ["stopwords", "is_stopword", "filter_stopwords"]
+__all__ = ["filter_stopwords", "is_stopword", "stopwords"]

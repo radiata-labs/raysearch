@@ -23,6 +23,8 @@ class PageEnrichment(BaseModel):
     markdown: str = ""
     content_kind: str | None = None
     fetch_mode: str | None = None
+    timing_ms: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
     error: str | None = None
 
 
