@@ -5,21 +5,22 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.core.workunit import WorkUnit
+from serpsage.contracts.services import HttpClientBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Overrides, Runtime
 
 
-class HttpClient(WorkUnit):
+class HttpClient(HttpClientBase):
     def __init__(
         self,
         *,
         rt: Runtime,
-        ov: Overrides,
+        overrides: Overrides | None = None,
     ) -> None:
         super().__init__(rt=rt)
-        if ov.http is not None:
+        ov = overrides
+        if ov is not None and ov.http is not None:
             self._client = ov.http
             self._owns_client = False
         else:
@@ -37,6 +38,7 @@ class HttpClient(WorkUnit):
             self._owns_client = True
 
     @property
+    @override
     def client(self) -> httpx.AsyncClient:
         return self._client
 

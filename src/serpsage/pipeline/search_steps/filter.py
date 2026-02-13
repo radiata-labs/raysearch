@@ -1,39 +1,59 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from typing_extensions import override
 from urllib.parse import urlparse
 
-from serpsage.core.workunit import WorkUnit
+from serpsage.models.pipeline import SearchStepContext
+from serpsage.pipeline.step import PipelineStep
 from serpsage.text.normalize import normalize_text
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
+    from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.core.runtime import Runtime
     from serpsage.settings.models import ProfileSettings
 
 
-class Filterer(WorkUnit):
-    def filter(
+class FilterStep(PipelineStep[SearchStepContext]):
+    span_name = "step.filter"
+
+    def __init__(self, *, rt: Runtime) -> None:
+        super().__init__(rt=rt)
+
+    @override
+    async def run_inner(
+        self, ctx: SearchStepContext, *, span: SpanBase
+    ) -> SearchStepContext:
+        span.set_attr("before_count", int(len(ctx.results or [])))
+        ctx.results = self._filter(
+            results=ctx.results,
+            query_tokens=ctx.query_tokens or [],
+            profile=ctx.profile,
+        )
+        span.set_attr("after_count", int(len(ctx.results or [])))
+        return ctx
+
+    def _filter(
         self,
-        results: list[ResultItem],
         *,
+        results: list[ResultItem],
         query_tokens: list[str],
-        profile: ProfileSettings,
+        profile: ProfileSettings | None,
     ) -> list[ResultItem]:
-
+        profile = profile or self.settings.get_profile(self.settings.search.default_profile)
         noise_exts = {e.lower().lstrip(".") for e in (profile.noise_extensions or [])}
-
-        kept: list[ResultItem] = [
+        return [
             r
             for r in results
-            if self._is_not_noise(r, profile, noise_exts)
-            and self._is_relevant(r, query_tokens)
+            if self._is_not_noise(r, profile=profile, noise_exts=noise_exts)
+            and self._is_relevant(r, query_tokens=query_tokens)
         ]
-
-        return kept
 
     def _is_not_noise(
         self,
         r: ResultItem,
+        *,
         profile: ProfileSettings,
         noise_exts: set[str],
     ) -> bool:
@@ -60,10 +80,10 @@ class Filterer(WorkUnit):
 
         return not (len(title) < 2 and len(snippet) < 40)
 
-    def _is_relevant(self, r: ResultItem, query_tokens: list[str]) -> bool:
+    def _is_relevant(self, r: ResultItem, *, query_tokens: list[str]) -> bool:
         t = (r.title or "").lower()
         s = (r.snippet or "").lower()
         return any(tok in t or tok in s for tok in query_tokens)
 
 
-__all__ = ["Filterer"]
+__all__ = ["FilterStep"]

@@ -15,10 +15,6 @@ from serpsage.components.fetch.utils import (
     parse_retry_after_s,
 )
 from serpsage.contracts.services import FetcherBase
-from serpsage.core.tuning import (
-    DEFAULT_FOLLOW_REDIRECTS,
-    fetch_profile_for_depth,
-)
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 CurlSessionFactory: type[AsyncSession] | None = None
@@ -57,7 +53,6 @@ class CurlCffiFetcher(FetcherBase):
         url: str,
         timeout_s: float | None = None,
         allow_render: bool = True,
-        depth: str | None = None,
         rank_index: int = 0,
     ) -> FetchResult:
         _ = allow_render, rank_index
@@ -66,7 +61,6 @@ class CurlCffiFetcher(FetcherBase):
                 url=url,
                 span=sp,
                 timeout_s=timeout_s,
-                depth=depth,
             )
             if int(res.status_code) <= 0:
                 raise RuntimeError("curl_cffi fetch failed")
@@ -101,28 +95,22 @@ class CurlCffiFetcher(FetcherBase):
         span: SpanBase,
         retry: RetrySettings | None = None,
         timeout_s: float | None = None,
-        depth: str | None = None,
     ) -> FetchAttempt:
         if self._session is None:
             await self.ainit()
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
-
-        tune = fetch_profile_for_depth(depth)
         started = time.time()
+        fetch_cfg = self.settings.fetch
         proxy = self.settings.http.proxy
-        req_timeout_s = (
-            max(0.35, float(timeout_s))
-            if timeout_s is not None
-            else max(0.35, tune.http_timeout_s)
-        )
+        req_timeout_s = timeout_s or fetch_cfg.timeout_s
         max_attempts = max(
             1,
             int(
-                getattr(retry, "max_attempts", 0) or int(tune.retry_attempts),
+                getattr(retry, "max_attempts", 0) or 2,
             ),
         )
-        delay_ms = int(getattr(retry, "delay_ms", 0) or int(tune.retry_delay_ms))
+        delay_ms = int(getattr(retry, "delay_ms", 0) or 90)
 
         last_status: int | None = None
         last_url = url
@@ -138,9 +126,12 @@ class CurlCffiFetcher(FetcherBase):
             try:
                 resp = await self._session.get(
                     url,
-                    headers=browser_headers(profile="browser"),
+                    headers=browser_headers(
+                        profile="browser",
+                        user_agent=str(fetch_cfg.user_agent),
+                    ),
                     timeout=req_timeout_s,
-                    allow_redirects=bool(DEFAULT_FOLLOW_REDIRECTS),
+                    allow_redirects=bool(fetch_cfg.follow_redirects),
                     proxy=proxy,
                     impersonate=cast("Any", "chrome124"),
                     http_version="v2",
@@ -160,7 +151,6 @@ class CurlCffiFetcher(FetcherBase):
                     body=body,
                     content_type=last_ct,
                     url=last_url,
-                    depth=depth,
                 )
 
                 if last_status == 429 or (500 <= last_status < 600):
@@ -197,7 +187,12 @@ class CurlCffiFetcher(FetcherBase):
             last_body,
             content_kind=content_kind,
         )
-        blocked = bool(blocked_marker_hit(last_body))
+        blocked = bool(
+            blocked_marker_hit(
+                last_body,
+                markers=tuple(self.settings.fetch.quality.blocked_markers),
+            )
+        )
         quality_score = float(content_score - (0.3 if blocked else 0.0))
         span.set_attr("content_kind", content_kind)
         span.set_attr("text_chars", int(text_chars))
@@ -228,20 +223,18 @@ class CurlCffiFetcher(FetcherBase):
         body: bytes,
         content_type: str | None,
         url: str,
-        depth: str | None,
     ) -> tuple[bytes, bool]:
-        tune = fetch_profile_for_depth(depth)
         kind = classify_content_kind(
             content_type=content_type, url=url, content=body[:128]
         )
         if kind == "pdf":
-            budget = int(tune.pdf_byte_budget)
+            budget = 16_000_000
         elif kind == "text":
-            budget = int(tune.text_byte_budget)
+            budget = 900_000
         elif kind in {"unknown", "binary"}:
-            budget = int(tune.binary_byte_budget)
+            budget = 3_000_000
         else:
-            budget = int(tune.html_byte_budget)
+            budget = 1_800_000
         if len(body) <= budget:
             return body, False
         return body[:budget], True

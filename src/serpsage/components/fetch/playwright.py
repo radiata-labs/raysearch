@@ -13,18 +13,10 @@ from serpsage.components.fetch.utils import (
     estimate_text_quality,
 )
 from serpsage.contracts.services import FetcherBase
-from serpsage.core.tuning import (
-    DEFAULT_FETCH_USER_AGENT,
-    PLAYWRIGHT_BLOCK_RESOURCES,
-    PLAYWRIGHT_HEADLESS,
-    PLAYWRIGHT_JS_CONCURRENCY,
-    PLAYWRIGHT_NAV_TIMEOUT_MS,
-    PLAYWRIGHT_WAIT_NETWORK_IDLE_MS,
-)
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, BrowserContext, Page, Playwright
+    from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route
 
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
@@ -59,7 +51,9 @@ class PlaywrightFetcher(FetcherBase):
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        self._sem = anyio.Semaphore(max(1, int(PLAYWRIGHT_JS_CONCURRENCY)))
+        self._sem = anyio.Semaphore(
+            max(1, int(self.settings.fetch.render.js_concurrency))
+        )
 
     @override
     async def on_init(self) -> None:
@@ -69,10 +63,10 @@ class PlaywrightFetcher(FetcherBase):
             raise RuntimeError("playwright is not available")
         self._pw = await _pw_factory().start()
         self._browser = await self._pw.chromium.launch(
-            headless=bool(PLAYWRIGHT_HEADLESS)
+            headless=True
         )
         self._context = await self._browser.new_context(
-            user_agent=str(DEFAULT_FETCH_USER_AGENT),
+            user_agent=str(self.settings.fetch.user_agent),
             ignore_https_errors=True,
             locale="en-US",
         )
@@ -99,7 +93,6 @@ class PlaywrightFetcher(FetcherBase):
         url: str,
         timeout_s: float | None = None,
         allow_render: bool = True,
-        depth: str | None = None,
         rank_index: int = 0,
     ) -> FetchResult:
         _ = allow_render, rank_index
@@ -108,7 +101,6 @@ class PlaywrightFetcher(FetcherBase):
                 url=url,
                 span=sp,
                 timeout_s=timeout_s,
-                depth=depth,
             )
             if int(attempt.status_code or 0) <= 0:
                 raise RuntimeError("playwright fetch failed")
@@ -132,17 +124,16 @@ class PlaywrightFetcher(FetcherBase):
         span: SpanBase,
         timeout_s: float | None = None,
         render_reason: str | None = None,
-        depth: str | None = None,
     ) -> FetchAttempt:
         if self._browser is None or self._context is None:
             await self.ainit()
         if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
 
-        timeout_ms = int(PLAYWRIGHT_NAV_TIMEOUT_MS)
+        timeout_ms = int(self.settings.fetch.render.nav_timeout_ms)
         if timeout_s is not None:
-            timeout_ms = max(350, min(timeout_ms, int(timeout_s * 1000)))
-        wait_idle_ms = max(0, int(PLAYWRIGHT_WAIT_NETWORK_IDLE_MS))
+            timeout_ms = min(timeout_ms, int(timeout_s * 1000))
+        wait_idle_ms = max(0, int(self.settings.fetch.render.wait_network_idle_ms))
 
         started = time.time()
         async with self._sem:
@@ -170,7 +161,12 @@ class PlaywrightFetcher(FetcherBase):
         text_chars, content_score, _ = estimate_text_quality(
             body, content_kind=content_kind
         )
-        blocked = bool(blocked_marker_hit(body))
+        blocked = bool(
+            blocked_marker_hit(
+                body,
+                markers=tuple(self.settings.fetch.quality.blocked_markers),
+            )
+        )
         quality_score = float(content_score - (0.3 if blocked else 0.0))
 
         span.set_attr("playwright_status", int(status))
@@ -202,10 +198,10 @@ class PlaywrightFetcher(FetcherBase):
         )
 
     async def _prepare_page(self, page: Page) -> None:
-        if not bool(PLAYWRIGHT_BLOCK_RESOURCES):
+        if not bool(self.settings.fetch.render.block_resources):
             return
 
-        async def route_handler(route) -> None:  # noqa: ANN001
+        async def route_handler(route: Route) -> None:
             req = route.request
             resource_type = str(req.resource_type or "").lower()
             req_url = str(req.url or "").lower()

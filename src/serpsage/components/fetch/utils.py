@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
-from serpsage.core.tuning import DEFAULT_FETCH_USER_AGENT, FETCH_BLOCKED_MARKERS
+DEFAULT_USER_AGENT = "serpsage-bot/4.0"
 
 _BINARY_PREFIXES = (
     "application/octet-stream",
@@ -27,9 +27,13 @@ _SPA_RE = re.compile(
 )
 
 
-def browser_headers(*, profile: str | None = None) -> dict[str, str]:
+def browser_headers(
+    *,
+    profile: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, str]:
     headers: dict[str, str] = {
-        "User-Agent": DEFAULT_FETCH_USER_AGENT,
+        "User-Agent": user_agent or DEFAULT_USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
@@ -141,12 +145,15 @@ def has_spa_signals(content: bytes) -> bool:
 
 
 def blocked_marker_hit(
-    content: bytes, *, markers: tuple[str, ...] = FETCH_BLOCKED_MARKERS
+    content: bytes, *, markers: tuple[str, ...] | list[str] | None = None
 ) -> bool:
     if not content:
         return False
+    use_markers = tuple(markers or ())
+    if not use_markers:
+        return False
     sample = content[:20_000].decode("utf-8", errors="ignore").lower()
-    return any(marker in sample for marker in markers)
+    return any(marker in sample for marker in use_markers)
 
 
 __all__ = [

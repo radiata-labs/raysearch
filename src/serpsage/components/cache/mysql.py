@@ -118,16 +118,16 @@ class MySQLCache(CacheBase):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """.strip()
             ),
-            select_one=f"SELECT expires_at_ms, value FROM {t} WHERE namespace=%s AND `key`=%s",
-            delete_one=f"DELETE FROM {t} WHERE namespace=%s AND `key`=%s",
+            select_one=f"SELECT expires_at_ms, value FROM {t} WHERE namespace=%s AND `key`=%s",  # noqa: S608
+            delete_one=f"DELETE FROM {t} WHERE namespace=%s AND `key`=%s",  # noqa: S608
             upsert_one=(
-                f"INSERT INTO {t} (`namespace`, `key`, `expires_at_ms`, `value`) "
+                f"INSERT INTO {t} (`namespace`, `key`, `expires_at_ms`, `value`) "  # noqa: S608
                 "VALUES (%s, %s, %s, %s) "
                 "ON DUPLICATE KEY UPDATE "
                 "`expires_at_ms` = VALUES(`expires_at_ms`), "
                 "`value` = VALUES(`value`)"
             ),
-            cleanup_expired=f"DELETE FROM {t} WHERE expires_at_ms <= %s",
+            cleanup_expired=f"DELETE FROM {t} WHERE expires_at_ms <= %s",  # noqa: S608
         )
 
     @override

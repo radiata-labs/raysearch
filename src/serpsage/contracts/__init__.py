@@ -3,10 +3,13 @@ from serpsage.contracts.services import (
     CacheBase,
     ExtractorBase,
     FetcherBase,
+    HttpClientBase,
     LLMClientBase,
+    PipelineRunnerBase,
     PipelineStepBase,
     RankerBase,
     SearchProviderBase,
+    TContext,
 )
 
 __all__ = [
@@ -14,10 +17,13 @@ __all__ = [
     "ClockBase",
     "ExtractorBase",
     "FetcherBase",
+    "HttpClientBase",
     "LLMClientBase",
+    "PipelineRunnerBase",
     "PipelineStepBase",
     "RankerBase",
     "SearchProviderBase",
     "SpanBase",
+    "TContext",
     "TelemetryBase",
 ]

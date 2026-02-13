@@ -67,33 +67,44 @@ class ProfileSettings(Model):
     title_tail_patterns: list[str] = Field(default_factory=list)
 
 
-class PipelineSettings(Model):
-    default_profile: str = "general"
-    profiles: dict[str, ProfileSettings] = Field(
-        default_factory=lambda: {"general": ProfileSettings()}
-    )
-    max_results: int = 16
-    min_score: float = 0.5
-    include_raw: bool = False
-
-
-class EnrichDepthPreset(Model):
+class SearchDepthProfile(Model):
     pages_ratio: float = 0.25
     min_pages: int = 1
     max_pages: int = 3
     top_chunks_per_page: int = 2
+    step_timeout_s: float = 2.0
+    page_timeout_s: float = 1.6
+    max_render_pages: int = 2
 
 
-def _default_depth_presets() -> dict[DepthKey, EnrichDepthPreset]:
+def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
     return {
-        "low": EnrichDepthPreset(
-            pages_ratio=0.25, min_pages=1, max_pages=3, top_chunks_per_page=2
+        "low": SearchDepthProfile(
+            pages_ratio=0.25,
+            min_pages=1,
+            max_pages=3,
+            top_chunks_per_page=2,
+            step_timeout_s=1.2,
+            page_timeout_s=0.9,
+            max_render_pages=0,
         ),
-        "medium": EnrichDepthPreset(
-            pages_ratio=0.50, min_pages=2, max_pages=6, top_chunks_per_page=3
+        "medium": SearchDepthProfile(
+            pages_ratio=0.50,
+            min_pages=2,
+            max_pages=6,
+            top_chunks_per_page=3,
+            step_timeout_s=2.0,
+            page_timeout_s=1.6,
+            max_render_pages=2,
         ),
-        "high": EnrichDepthPreset(
-            pages_ratio=0.75, min_pages=3, max_pages=10, top_chunks_per_page=5
+        "high": SearchDepthProfile(
+            pages_ratio=0.75,
+            min_pages=3,
+            max_pages=10,
+            top_chunks_per_page=5,
+            step_timeout_s=4.0,
+            page_timeout_s=2.5,
+            max_render_pages=6,
         ),
     }
 
@@ -102,20 +113,133 @@ def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
     return {"heuristic": 1.0}
 
 
+class OverviewProfileBase(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    use_model: str = "gpt-4.1-mini"
+    max_chunk_chars: int = 900
+    max_output_tokens: int = 600
+    max_prompt_chars: int = 32_000
+    cache_ttl_s: int = 0
+    self_heal_retries: int = 1
+    force_language: Literal["auto", "zh", "en"] = "auto"
+
+
+class SearchOverviewSettings(OverviewProfileBase):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    enabled_default: bool = True
+    max_sources: int = 8
+    max_chunks_per_source: int = 2
+
+
+class FetchOverviewSettings(OverviewProfileBase):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    enabled_default: bool = False
+    max_chunks: int = 6
+
+
+class SearchSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    max_results: int = 16
+    min_score: float = 0.3
+    default_profile: str = "general"
+    profiles: dict[str, ProfileSettings] = Field(
+        default_factory=lambda: {"general": ProfileSettings()}
+    )
+    include_raw: bool = False
+    depth_profiles: dict[DepthKey, SearchDepthProfile] = Field(
+        default_factory=_default_search_depth_profiles
+    )
+    overview: SearchOverviewSettings = Field(default_factory=SearchOverviewSettings)
+
+
+def _default_blocked_markers() -> list[str]:
+    return [
+        "cloudflare",
+        "just a moment",
+        "verify you are human",
+        "captcha",
+        "access denied",
+        "blocked",
+        "please enable javascript",
+        "security check",
+        "checking your browser",
+    ]
+
+
+class FetchConcurrencySettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    global_limit: int = 24
+    per_host: int = 4
+    politeness_delay_ms: int = 0
+
+
+class FetchRenderSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    enabled: bool = True
+    js_concurrency: int = 4
+    nav_timeout_ms: int = 2_500
+    wait_network_idle_ms: int = 220
+    block_resources: bool = True
+
+
+class FetchQualitySettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    min_text_chars: int = 220
+    min_content_score: float = 0.42
+    script_ratio_threshold: float = 0.35
+    blocked_markers: list[str] = Field(default_factory=_default_blocked_markers)
+    max_render_pages_search: int = 2
+
+
+class FetchExtractSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    engines: list[str] = Field(
+        default_factory=lambda: ["fastdom", "readability", "trafilatura"]
+    )
+    max_markdown_chars: int = 160_000
+    min_plain_chars: int = 220
+
+
+class FetchChunkSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    target_chars: int = 1_050
+    overlap_segments: int = 1
+    max_chunks: int = 42
+    min_chunk_score: float = 0.20
+    min_query_token_hits: int = 2
+    default_top_k: int = 3
+    max_markdown_chars: int = 140_000
+    max_segments: int = 420
+    max_sentence_chars: int = 600
+    min_chunk_chars: int = 160
+    query_prefilter_window: int = 320
+    early_bonus: float = 1.15
+
+
 class FetchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     backend: FetchBackendKey = "auto"
-
-
-class EnrichSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    enabled: bool = True
-    fetch: FetchSettings = Field(default_factory=FetchSettings)
-    depth_presets: dict[DepthKey, EnrichDepthPreset] = Field(
-        default_factory=_default_depth_presets
+    timeout_s: float = 2.0
+    follow_redirects: bool = True
+    user_agent: str = "serpsage-bot/4.0"
+    concurrency: FetchConcurrencySettings = Field(
+        default_factory=FetchConcurrencySettings
     )
+    render: FetchRenderSettings = Field(default_factory=FetchRenderSettings)
+    quality: FetchQualitySettings = Field(default_factory=FetchQualitySettings)
+    extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
+    chunk: FetchChunkSettings = Field(default_factory=FetchChunkSettings)
+    overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
 
 
 class HeuristicRankSettings(Model):
@@ -206,51 +330,34 @@ def _default_overview_models() -> list[OverviewModelSettings]:
     return [OverviewModelSettings()]
 
 
-class OverviewSettings(Model):
+class LLMSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    enabled: bool = True
-    use_model: str = "gpt-4.1-mini"
     models: list[OverviewModelSettings] = Field(
         default_factory=_default_overview_models
     )
-    max_sources: int = 8
-    max_chunks_per_source: int = 2
-    max_chunk_chars: int = 900
-    max_output_tokens: int = 600
-    max_prompt_chars: int = 32_000
-    cache_ttl_s: int = 0
-    self_heal_retries: int = 1
-    force_language: Literal["auto", "zh", "en"] = "auto"
 
     @model_validator(mode="after")
-    def _validate_models(self) -> OverviewSettings:
+    def _validate_models(self) -> LLMSettings:
         if not self.models:
-            raise ValueError("overview.models must contain at least one model")
+            raise ValueError("llm.models must contain at least one model")
 
         names: set[str] = set()
         for idx, item in enumerate(self.models):
             if not item.name:
-                raise ValueError(f"overview.models[{idx}].name must be non-empty")
+                raise ValueError(f"llm.models[{idx}].name must be non-empty")
             if item.name in names:
                 raise ValueError(
-                    f"duplicate overview model name `{item.name}` in overview.models"
+                    f"duplicate llm model name `{item.name}` in llm.models"
                 )
             names.add(item.name)
-
-        if self.use_model not in names:
-            raise ValueError(
-                "overview.use_model must match one of overview.models[].name"
-            )
         return self
 
-    def resolve_model(self) -> OverviewModelSettings:
+    def resolve_model(self, name: str) -> OverviewModelSettings:
         for item in self.models:
-            if item.name == self.use_model:
+            if item.name == name:
                 return item
-        raise ValueError(
-            f"overview.use_model `{self.use_model}` does not exist in overview.models"
-        )
+        raise ValueError(f"llm model `{name}` does not exist in llm.models")
 
 
 class TelemetrySettings(Model):
@@ -259,20 +366,35 @@ class TelemetrySettings(Model):
 
 
 class AppSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     http: HttpSettings = Field(default_factory=HttpSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
-    pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
-    enrich: EnrichSettings = Field(default_factory=EnrichSettings)
+    search: SearchSettings = Field(default_factory=SearchSettings)
+    fetch: FetchSettings = Field(default_factory=FetchSettings)
     rank: RankSettings = Field(default_factory=RankSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
-    overview: OverviewSettings = Field(default_factory=OverviewSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
 
+    @model_validator(mode="after")
+    def _validate_model_links(self) -> AppSettings:
+        names = {m.name for m in self.llm.models}
+        if self.search.overview.use_model not in names:
+            raise ValueError(
+                "search.overview.use_model must match one of llm.models[].name"
+            )
+        if self.fetch.overview.use_model not in names:
+            raise ValueError(
+                "fetch.overview.use_model must match one of llm.models[].name"
+            )
+        return self
+
     def get_profile(self, name: str) -> ProfileSettings:
-        if name in self.pipeline.profiles:
-            return self.pipeline.profiles[name]
-        if self.pipeline.default_profile in self.pipeline.profiles:
-            return self.pipeline.profiles[self.pipeline.default_profile]
+        if name in self.search.profiles:
+            return self.search.profiles[name]
+        if self.search.default_profile in self.search.profiles:
+            return self.search.profiles[self.search.default_profile]
         return ProfileSettings()
 
     def select_profile(
@@ -284,7 +406,7 @@ class AppSettings(Model):
         q = (query or "").lower()
         best_name: str | None = None
         best_score = -(10**9)
-        for name, prof in self.pipeline.profiles.items():
+        for name, prof in self.search.profiles.items():
             am = prof.auto_match
             if not am.enabled:
                 continue
@@ -305,7 +427,7 @@ class AppSettings(Model):
                 best_score = score
                 best_name = name
 
-        chosen = best_name or self.pipeline.default_profile
+        chosen = best_name or self.search.default_profile
         return chosen, self.get_profile(chosen)
 
 
@@ -315,17 +437,25 @@ __all__ = [
     "CacheRedisSettings",
     "CacheSQLAlchemySettings",
     "CacheSettings",
-    "EnrichDepthPreset",
-    "EnrichSettings",
+    "DepthKey",
+    "FetchBackendKey",
+    "FetchChunkSettings",
+    "FetchConcurrencySettings",
+    "FetchExtractSettings",
+    "FetchOverviewSettings",
+    "FetchQualitySettings",
+    "FetchRenderSettings",
     "FetchSettings",
     "HttpSettings",
     "HeuristicRankSettings",
+    "LLMSettings",
     "OverviewModelBackendKey",
     "OverviewModelSettings",
-    "OverviewSettings",
-    "PipelineSettings",
     "ProfileSettings",
     "ProviderSettings",
+    "SearchDepthProfile",
+    "SearchOverviewSettings",
+    "SearchSettings",
     "RankBlendSettings",
     "RankSettings",
     "RetrySettings",

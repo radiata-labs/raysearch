@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from anyio import to_thread
@@ -15,9 +16,12 @@ except Exception:  # noqa: BLE001
 from serpsage.contracts.services import RankerBase
 from serpsage.text.tokenize import tokenize
 
+if TYPE_CHECKING:
+    from serpsage.core.runtime import Runtime
+
 
 class Bm25Ranker(RankerBase):
-    def __init__(self, *, rt):  # noqa: ANN001
+    def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override

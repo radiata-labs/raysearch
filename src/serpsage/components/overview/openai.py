@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
+    from serpsage.contracts.services import HttpClientBase
     from serpsage.core.runtime import Runtime
-    from serpsage.domain.http import HttpClient
     from serpsage.settings.models import OverviewModelSettings
 
 
@@ -29,7 +29,7 @@ class OpenAIClient(LLMClientBase):
     """
 
     def __init__(
-        self, *, rt: Runtime, http: HttpClient, model_cfg: OverviewModelSettings
+        self, *, rt: Runtime, http: HttpClientBase, model_cfg: OverviewModelSettings
     ) -> None:
         super().__init__(rt=rt)
         self.bind_deps(http)

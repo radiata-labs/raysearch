@@ -25,7 +25,7 @@ async def main(
     )
 
     async with Engine.from_settings(settings) as engine:
-        resp = await engine.run(req)
+        resp = await engine.search(req)
 
     return {
         "search_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2),

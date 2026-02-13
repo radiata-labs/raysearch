@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    import httpx
+
     from serpsage.models.extract import ExtractedDocument
     from serpsage.models.fetch import FetchResult
     from serpsage.models.llm import ChatJSONResult
-    from serpsage.models.pipeline import SearchStepContext
+    from serpsage.models.pipeline import BaseStepContext
+
+    TContext = TypeVar("TContext", bound=BaseStepContext)
+else:
+    TContext = TypeVar("TContext")
 
 
 class CacheBase(WorkUnit, ABC):
@@ -40,7 +46,6 @@ class FetcherBase(WorkUnit, ABC):
         url: str,
         timeout_s: float | None = None,
         allow_render: bool = True,
-        depth: str | None = None,
         rank_index: int = 0,
     ) -> FetchResult:
         raise NotImplementedError
@@ -90,9 +95,22 @@ class LLMClientBase(WorkUnit, ABC):
         raise NotImplementedError
 
 
-class PipelineStepBase(WorkUnit, ABC):
+class HttpClientBase(WorkUnit, ABC):
+    @property
     @abstractmethod
-    async def run(self, ctx: SearchStepContext) -> SearchStepContext:
+    def client(self) -> httpx.AsyncClient:
+        raise NotImplementedError
+
+
+class PipelineStepBase(WorkUnit, ABC, Generic[TContext]):
+    @abstractmethod
+    async def run(self, ctx: TContext) -> TContext:
+        raise NotImplementedError
+
+
+class PipelineRunnerBase(WorkUnit, ABC, Generic[TContext]):
+    @abstractmethod
+    async def run(self, ctx: TContext) -> TContext:
         raise NotImplementedError
 
 
@@ -100,8 +118,11 @@ __all__ = [
     "CacheBase",
     "ExtractorBase",
     "FetcherBase",
+    "HttpClientBase",
     "LLMClientBase",
+    "PipelineRunnerBase",
     "PipelineStepBase",
     "RankerBase",
     "SearchProviderBase",
+    "TContext",
 ]

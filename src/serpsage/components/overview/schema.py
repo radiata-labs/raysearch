@@ -30,7 +30,7 @@ def overview_json_schema() -> dict[str, Any]:
     base: dict[str, Any] = {"$defs": defs_map, **root}
     out: dict[str, Any] = deepcopy(base)
 
-    def walk(node: Any) -> None:  # noqa: ANN401
+    def walk(node: object) -> None:
         if isinstance(node, list):
             for x in node:
                 walk(x)

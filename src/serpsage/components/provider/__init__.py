@@ -3,12 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from serpsage.contracts.services import SearchProviderBase
+    from serpsage.contracts.services import HttpClientBase, SearchProviderBase
     from serpsage.core.runtime import Runtime
-    from serpsage.domain.http import HttpClient
 
 
-def build_provider(*, rt: Runtime, http: HttpClient) -> SearchProviderBase:
+def build_provider(*, rt: Runtime, http: HttpClientBase) -> SearchProviderBase:
     backend = str(rt.settings.provider.backend or "searxng").lower()
     if backend == "searxng":
         from serpsage.components.provider.searxng import SearxngProvider

@@ -84,8 +84,20 @@ class SearchResponse(BaseModel):
     telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
+class FetchResponse(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    url: str
+    query: str | None = None
+    page: PageEnrichment = Field(default_factory=PageEnrichment)
+    overview: OverviewResult | None = None
+    errors: list[AppError] = Field(default_factory=list)
+    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
+
+
 __all__ = [
     "Citation",
+    "FetchResponse",
     "OverviewLLMOutput",
     "OverviewResult",
     "PageChunk",
@@ -96,3 +108,4 @@ __all__ = [
 
 # Ensure forward references are resolved (Pydantic v2 + postponed annotations).
 SearchResponse.model_rebuild()
+FetchResponse.model_rebuild()

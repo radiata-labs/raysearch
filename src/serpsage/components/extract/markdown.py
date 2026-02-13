@@ -17,7 +17,6 @@ from serpsage.components.extract.utils import (
 )
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.contracts.services import ExtractorBase
-from serpsage.core.tuning import extract_profile_for_depth
 from serpsage.models.extract import ExtractedDocument
 from serpsage.text.normalize import clean_whitespace
 
@@ -103,10 +102,35 @@ class _Candidate:
     stats: dict[str, int | float | str]
 
 
+@dataclass(slots=True)
+class _ExtractProfile:
+    min_plain_chars: int
+    quality_threshold: float
+    max_html_chars: int
+    max_markdown_chars: int
+    fallback_parallel: bool
+    readability_enabled: bool
+    trafilatura_enabled: bool
+
+
 class MarkdownExtractor(ExtractorBase):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
-        self._profile = extract_profile_for_depth("medium")
+        self._profile = self._load_profile()
+
+    def _load_profile(self) -> _ExtractProfile:
+        cfg = self.settings.fetch.extract
+        engines = {e.strip().lower() for e in (cfg.engines or []) if e and e.strip()}
+        max_markdown = int(max(8_000, cfg.max_markdown_chars))
+        return _ExtractProfile(
+            min_plain_chars=int(max(120, cfg.min_plain_chars)),
+            quality_threshold=0.48,
+            max_html_chars=max_markdown * 2,
+            max_markdown_chars=max_markdown,
+            fallback_parallel=True,
+            readability_enabled="readability" in engines,
+            trafilatura_enabled="trafilatura" in engines,
+        )
 
     @override
     def extract(

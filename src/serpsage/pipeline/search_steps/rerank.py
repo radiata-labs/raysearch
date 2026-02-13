@@ -1,25 +1,37 @@
 from __future__ import annotations
 
 import math
-import statistics
 from typing import TYPE_CHECKING
+from typing_extensions import override
 
-from serpsage.core.workunit import WorkUnit
+from serpsage.models.pipeline import SearchStepContext
+from serpsage.pipeline.step import PipelineStep
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
+    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
 
 
-class Reranker(WorkUnit):
+class RerankStep(PipelineStep[SearchStepContext]):
+    span_name = "step.rerank"
+
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
-    async def rerank(
-        self,
-        *,
-        results: list[ResultItem],
-    ) -> list[ResultItem]:
+    @override
+    async def run_inner(
+        self, ctx: SearchStepContext, *, span: SpanBase
+    ) -> SearchStepContext:
+        if not ctx.results:
+            span.set_attr("items_count", 0)
+            return ctx
+
+        ctx.results = self._rerank(results=ctx.results)
+        span.set_attr("items_count", int(len(ctx.results or [])))
+        return ctx
+
+    def _rerank(self, *, results: list[ResultItem]) -> list[ResultItem]:
         if not results:
             return []
 
@@ -31,15 +43,14 @@ class Reranker(WorkUnit):
                 page_scores.append(max(scores) if scores else 0.0)
                 has_any_page = True
             else:
-                page_scores.append(0)
+                page_scores.append(0.0)
 
         result_scores = [float(r.score) if r.score else 0.0 for r in results]
 
         if not has_any_page or max(page_scores) <= min(result_scores):
             return results
 
-        combined: list[float] = self._blend_scores(result_scores, page_scores, k=0.5)
-
+        combined = self._blend_scores(result_scores, page_scores, k=0.5)
         combine_calibration = (
             max(result_scores) / max(combined) if max(combined) > 0 else 1.0
         )
@@ -47,7 +58,6 @@ class Reranker(WorkUnit):
 
         for i, r in enumerate(results):
             r.score = float(combined[i]) if i < len(combined) else r.score
-
         return sorted(results, key=lambda r: float(r.score), reverse=True)
 
     def _blend_scores(
@@ -66,18 +76,5 @@ class Reranker(WorkUnit):
             out.append(1.0 / (1.0 + math.exp(-t)))
         return out
 
-    def _get_calibration(
-        self, result_scores: list[float], page_scores: list[float]
-    ) -> float:
-        result_scores = [float(s) for s in result_scores if s > 0.01]
-        page_scores = [float(s) for s in page_scores if s > 0.01]
-        if not result_scores or not page_scores:
-            return 1.0
-        return (
-            statistics.median(result_scores) / statistics.median(page_scores)
-            if statistics.median(page_scores) > 0
-            else 1.0
-        )
 
-
-__all__ = ["Reranker"]
+__all__ = ["RerankStep"]

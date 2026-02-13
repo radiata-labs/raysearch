@@ -140,7 +140,10 @@ def tokenize_for_query(query: str) -> list[str]:
     def to_zh_tw(s: str) -> str:
         if OPENCC_AVAILABLE and opencc is not None:
             return opencc.OpenCC("s2t").convert(s)
-        import zhconv  # type: ignore[import-not-found]
+        try:
+            import zhconv  # type: ignore[import-not-found]
+        except Exception:
+            return s
 
         return zhconv.convert(s, "zh-tw")
 

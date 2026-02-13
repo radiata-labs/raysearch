@@ -4,9 +4,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase
-    from serpsage.contracts.services import FetcherBase, RateLimiterBase
+    from serpsage.contracts.services import FetcherBase, HttpClientBase, RateLimiterBase
     from serpsage.core.runtime import Runtime
-    from serpsage.domain.http import HttpClient
 
 
 def build_fetcher(
@@ -14,9 +13,9 @@ def build_fetcher(
     rt: Runtime,
     cache: CacheBase,
     rate_limiter: RateLimiterBase,
-    http: HttpClient,
+    http: HttpClientBase,
 ) -> FetcherBase:
-    fetch_cfg = rt.settings.enrich.fetch
+    fetch_cfg = rt.settings.fetch
     backend = str(fetch_cfg.backend or "auto").lower()
 
     httpx_fetcher = None
@@ -70,9 +69,7 @@ def build_fetcher(
         return playwright_fetcher
 
     if backend == "auto":
-        from serpsage.core.tuning import PLAYWRIGHT_ENABLED
-
-        if bool(PLAYWRIGHT_ENABLED) and playwright_fetcher is None:
+        if bool(fetch_cfg.render.enabled) and playwright_fetcher is None:
             raise RuntimeError(
                 "fetch backend `auto` requires playwright runtime dependencies"
             )

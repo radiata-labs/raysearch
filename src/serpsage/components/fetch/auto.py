@@ -16,13 +16,6 @@ from serpsage.components.fetch.utils import (
     has_spa_signals,
 )
 from serpsage.contracts.services import CacheBase, FetcherBase, RateLimiterBase
-from serpsage.core.tuning import (
-    DEFAULT_FETCH_VERSION,
-    FETCH_BLOCKED_MARKERS,
-    PLAYWRIGHT_ENABLED,
-    fetch_profile_for_depth,
-    normalize_depth,
-)
 from serpsage.models.fetch import FetchAttempt, FetchResult
 from serpsage.settings.models import RetrySettings
 from serpsage.util.json import stable_json
@@ -34,14 +27,11 @@ if TYPE_CHECKING:
     from serpsage.components.fetch.http import HttpxFetcher
     from serpsage.components.fetch.playwright import PlaywrightFetcher
     from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.core.runtime import Runtime
 
 _MIN_BYTES = 96
 _FETCH_MODES = {"httpx", "curl_cffi", "playwright"}
 _CONTENT_KINDS = {"html", "pdf", "text", "binary", "unknown"}
-_CHALLENGE_RE = re.compile(
-    "|".join(re.escape(x) for x in FETCH_BLOCKED_MARKERS),
-    re.IGNORECASE,
-)
 
 
 def _hash_key(obj: Any) -> str:
@@ -72,7 +62,7 @@ class AutoFetcher(FetcherBase):
     def __init__(
         self,
         *,
-        rt,
+        rt: Runtime,
         cache: CacheBase,
         rate_limiter: RateLimiterBase,
         httpx_fetcher: HttpxFetcher,
@@ -102,48 +92,43 @@ class AutoFetcher(FetcherBase):
         url: str,
         timeout_s: float | None = None,
         allow_render: bool = True,
-        depth: str | None = None,
         rank_index: int = 0,
     ) -> FetchResult:
-        depth_key = normalize_depth(depth)
-        backend = str(self.settings.enrich.fetch.backend or "auto").lower()
+        backend = str(self.settings.fetch.backend or "auto").lower()
         cache_key = _hash_key(
             {
                 "url": url,
                 "kind": "fetch",
                 "strategy": backend,
-                "depth": depth_key,
                 "allow_render": bool(allow_render),
                 "rank_band": int(rank_index),
-                "version": str(DEFAULT_FETCH_VERSION),
             }
         )
         inflight_key = _hash_key(
             {
                 "url": url,
-                "depth": depth_key,
                 "allow_render": bool(allow_render),
                 "backend": backend,
                 "timeout_s": timeout_s,
             }
         )
         with self.span("fetch.auto", url=url, strategy=backend) as sp:
-            sp.set_attr("depth", depth_key)
             sp.set_attr("rank_index", int(rank_index))
             sp.set_attr("allow_render", bool(allow_render))
+
             cached = await self._cache.aget(namespace="fetch", key=cache_key)
             if cached:
                 sp.set_attr("cache_hit", True)
                 payload = _decode_fetch_cache(cached)
                 return self._payload_to_result(url=url, payload=payload)
             sp.set_attr("cache_hit", False)
+
             result, is_leader = await self._run_inflight(
                 key=inflight_key,
                 runner=lambda: self._afetch_uncached(
                     url=url,
                     timeout_s=timeout_s,
                     allow_render=allow_render,
-                    depth=depth_key,
                     rank_index=rank_index,
                     span=sp,
                 ),
@@ -174,7 +159,7 @@ class AutoFetcher(FetcherBase):
         self,
         *,
         key: str,
-        runner,  # noqa: ANN001
+        runner: Callable[[], Awaitable[FetchResult]],
     ) -> tuple[FetchResult, bool]:
         async with self._inflight_lock:
             existing = self._inflight.get(key)
@@ -210,7 +195,6 @@ class AutoFetcher(FetcherBase):
         url: str,
         timeout_s: float | None,
         allow_render: bool,
-        depth: str,
         rank_index: int,
         span: SpanBase,
     ) -> FetchResult:
@@ -219,11 +203,10 @@ class AutoFetcher(FetcherBase):
         try:
             attempt = await self._fetch_useful(
                 url=url,
-                strategy=str(self.settings.enrich.fetch.backend or "auto").lower(),
+                strategy=str(self.settings.fetch.backend or "auto").lower(),
                 span=span,
                 timeout_s=timeout_s,
                 allow_render=allow_render,
-                depth=depth,
                 rank_index=rank_index,
             )
         finally:
@@ -271,7 +254,6 @@ class AutoFetcher(FetcherBase):
         span: SpanBase,
         timeout_s: float | None,
         allow_render: bool,
-        depth: str,
         rank_index: int,
     ) -> FetchAttempt:
         if strategy == "httpx":
@@ -280,9 +262,8 @@ class AutoFetcher(FetcherBase):
                 profile="browser",
                 span=span,
                 timeout_s=timeout_s,
-                depth=depth,
             )
-            if self._is_useful(res, depth=depth):
+            if self._is_useful(res):
                 return res
             raise RuntimeError("fetch_unusable:httpx")
         if strategy == "curl_cffi":
@@ -294,9 +275,8 @@ class AutoFetcher(FetcherBase):
                 url=url,
                 span=span,
                 timeout_s=timeout_s,
-                depth=depth,
             )
-            if self._is_useful(res, depth=depth):
+            if self._is_useful(res):
                 return res
             raise RuntimeError("fetch_unusable:curl_cffi")
         if strategy == "playwright":
@@ -309,9 +289,8 @@ class AutoFetcher(FetcherBase):
                 span=span,
                 timeout_s=timeout_s,
                 render_reason="backend_playwright",
-                depth=depth,
             )
-            if self._is_useful(res, depth=depth):
+            if self._is_useful(res):
                 return res
             raise RuntimeError("fetch_unusable:playwright")
         return await self._fetch_auto(
@@ -319,7 +298,6 @@ class AutoFetcher(FetcherBase):
             span=span,
             timeout_s=timeout_s,
             allow_render=allow_render,
-            depth=depth,
             rank_index=rank_index,
         )
 
@@ -330,16 +308,20 @@ class AutoFetcher(FetcherBase):
         span: SpanBase,
         timeout_s: float | None,
         allow_render: bool,
-        depth: str,
         rank_index: int,
     ) -> FetchAttempt:
-        tune = fetch_profile_for_depth(depth)
         base_candidates: list[FetchAttempt] = []
         winner: FetchAttempt | None = None
         render_launched = False
 
-        def make_runner(func: Callable[..., Awaitable[Any]], *args, **kwargs):
-            async def runner():
+        hedge_compat_s = 0.08
+        hedge_curl_s = 0.11
+        retry = RetrySettings(max_attempts=1, delay_ms=90)
+
+        def make_runner(
+            func: Callable[..., Awaitable[Any]], *args: object, **kwargs: object
+        ) -> Callable[[], Awaitable[Any]]:
+            async def runner() -> Any:
                 return await func(*args, **kwargs)
 
             return runner
@@ -351,7 +333,7 @@ class AutoFetcher(FetcherBase):
                 delay_s: float,
                 runner: Callable[..., Awaitable[Any]],
                 can_trigger_render: bool = True,
-            ) -> None:  # noqa: ANN001
+            ) -> None:
                 nonlocal winner, render_launched
                 if delay_s > 0:
                     await anyio.sleep(delay_s)
@@ -365,16 +347,16 @@ class AutoFetcher(FetcherBase):
                         mode=label,
                         error=type(exc).__name__,
                     )
+
                 base_candidates.append(attempt)
                 if can_trigger_render and self._should_render(
                     attempt,
                     allow_render=allow_render,
-                    depth=depth,
                     rank_index=rank_index,
                     render_launched=render_launched,
                 ):
                     render_launched = True
-                    reason = self._render_reason(attempt, depth=depth)
+                    reason = self._render_reason(attempt)
                     span.set_attr("render_triggered", True)
                     span.set_attr("render_reason", reason)
                     if self._playwright is not None:
@@ -388,11 +370,10 @@ class AutoFetcher(FetcherBase):
                                 span=span,
                                 timeout_s=timeout_s,
                                 render_reason=reason,
-                                depth=depth,
                             ),
                             False,
                         )
-                if self._is_useful(attempt, depth=depth):
+                if self._is_useful(attempt):
                     winner = attempt
                     tg.cancel_scope.cancel()
 
@@ -404,43 +385,33 @@ class AutoFetcher(FetcherBase):
                     url=url,
                     profile="browser",
                     span=span,
-                    retry=RetrySettings(
-                        max_attempts=1, delay_ms=int(tune.retry_delay_ms)
-                    ),
+                    retry=retry,
                     timeout_s=timeout_s,
-                    depth=depth,
                 ),
             )
             tg.start_soon(
                 worker,
                 "httpx:compat",
-                float(tune.hedge_delay_ms) / 2000.0,
+                hedge_compat_s,
                 lambda: self._httpx.fetch_attempt(
                     url=url,
                     profile="compat",
                     span=span,
-                    retry=RetrySettings(
-                        max_attempts=1, delay_ms=int(tune.retry_delay_ms)
-                    ),
+                    retry=retry,
                     timeout_s=timeout_s,
-                    depth=depth,
                 ),
             )
             if self._curl is not None:
                 tg.start_soon(
                     worker,
                     "curl_cffi",
-                    float(tune.hedge_delay_ms) / 1000.0,
+                    hedge_curl_s,
                     make_runner(
                         self._curl.fetch_attempt,
                         url=url,
                         span=span,
-                        retry=RetrySettings(
-                            max_attempts=1,
-                            delay_ms=int(tune.retry_delay_ms),
-                        ),
+                        retry=retry,
                         timeout_s=timeout_s,
-                        depth=depth,
                     ),
                 )
 
@@ -453,11 +424,10 @@ class AutoFetcher(FetcherBase):
             if best_http is not None and self._should_render(
                 best_http,
                 allow_render=allow_render,
-                depth=depth,
                 rank_index=rank_index,
                 render_launched=False,
             ):
-                reason = self._render_reason(best_http, depth=depth)
+                reason = self._render_reason(best_http)
                 span.set_attr("render_triggered", True)
                 span.set_attr("render_reason", reason)
                 try:
@@ -466,10 +436,9 @@ class AutoFetcher(FetcherBase):
                         span=span,
                         timeout_s=timeout_s,
                         render_reason=reason,
-                        depth=depth,
                     )
                     base_candidates.append(render_attempt)
-                    if self._is_useful(render_attempt, depth=depth):
+                    if self._is_useful(render_attempt):
                         winner = render_attempt
                 except Exception as exc:  # noqa: BLE001
                     span.set_attr("playwright_error", type(exc).__name__)
@@ -481,7 +450,7 @@ class AutoFetcher(FetcherBase):
 
         if base_candidates:
             best = max(base_candidates, key=self._candidate_score)
-            if self._is_useful(best, depth=depth):
+            if self._is_useful(best):
                 return self._attach_attempt_chain(best, base_candidates)
             best = self._attach_attempt_chain(best, base_candidates)
             raise RuntimeError(
@@ -490,19 +459,25 @@ class AutoFetcher(FetcherBase):
         raise RuntimeError("fetch_unusable:auto:no_candidates")
 
     def _is_blocked(self, res: FetchAttempt) -> bool:
+        markers = tuple(self.settings.fetch.quality.blocked_markers or [])
         status = int(res.status_code or 0)
         if status in {401, 403}:
             return True
-        if blocked_marker_hit(res.content):
+        if blocked_marker_hit(res.content, markers=markers):
             return True
-        if res.content and _CHALLENGE_RE.search(
-            res.content[:18_000].decode("utf-8", errors="ignore")
-        ):
-            return True
+        if res.content:
+            sample = res.content[:18_000].decode("utf-8", errors="ignore")
+            if markers:
+                pat = re.compile(
+                    "|".join(re.escape(x) for x in markers if x),
+                    re.IGNORECASE,
+                )
+                if pat.search(sample):
+                    return True
         return bool(res.blocked)
 
-    def _is_useful(self, res: FetchAttempt, *, depth: str) -> bool:
-        tune = fetch_profile_for_depth(depth)
+    def _is_useful(self, res: FetchAttempt) -> bool:
+        quality = self.settings.fetch.quality
         status = int(res.status_code or 0)
         if status < 200 or status >= 400:
             return False
@@ -513,9 +488,9 @@ class AutoFetcher(FetcherBase):
         if res.content_kind in {"binary", "unknown"}:
             return False
         if res.content_kind == "html":
-            if int(res.text_chars or 0) < int(tune.min_text_chars):
+            if int(res.text_chars or 0) < int(quality.min_text_chars):
                 return False
-            if float(res.content_score or 0.0) < float(tune.min_content_score):
+            if float(res.content_score or 0.0) < float(quality.min_content_score):
                 return False
         return True
 
@@ -542,47 +517,47 @@ class AutoFetcher(FetcherBase):
         res: FetchAttempt,
         *,
         allow_render: bool,
-        depth: str,
         rank_index: int,
         render_launched: bool,
     ) -> bool:
         if not allow_render or render_launched:
             return False
-        if not bool(PLAYWRIGHT_ENABLED) or self._playwright is None:
+        if not bool(self.settings.fetch.render.enabled) or self._playwright is None:
             return False
-        tune = fetch_profile_for_depth(depth)
-        if rank_index >= int(tune.max_render_pages):
+
+        max_pages = int(self.settings.fetch.quality.max_render_pages_search)
+        if rank_index >= max_pages:
             return False
         if self._is_blocked(res):
             return True
-        status = int(res.status_code or 0)
-        if status in {401, 403}:
+        if int(res.status_code or 0) in {401, 403}:
             return True
         if res.content_kind != "html":
             return False
-        if int(res.text_chars or 0) < int(tune.min_text_chars):
+
+        quality = self.settings.fetch.quality
+        if int(res.text_chars or 0) < int(quality.min_text_chars):
             return True
-        if float(res.content_score or 0.0) < float(tune.min_content_score):
+        if float(res.content_score or 0.0) < float(quality.min_content_score):
             return True
         _, _, script_ratio = estimate_text_quality(res.content, content_kind="html")
         return bool(
-            script_ratio >= float(tune.script_ratio_threshold)
+            script_ratio >= float(quality.script_ratio_threshold)
             and has_spa_signals(res.content)
-            and bool(tune.allow_speculative_render)
         )
 
-    def _render_reason(self, res: FetchAttempt, *, depth: str) -> str:
-        tune = fetch_profile_for_depth(depth)
+    def _render_reason(self, res: FetchAttempt) -> str:
+        quality = self.settings.fetch.quality
         if self._is_blocked(res):
             return "challenge_page"
         if int(res.status_code or 0) in {401, 403}:
             return "status_forbidden"
-        if int(res.text_chars or 0) < int(tune.min_text_chars):
+        if int(res.text_chars or 0) < int(quality.min_text_chars):
             return "low_text_chars"
-        if float(res.content_score or 0.0) < float(tune.min_content_score):
+        if float(res.content_score or 0.0) < float(quality.min_content_score):
             return "low_content_score"
         _, _, script_ratio = estimate_text_quality(res.content, content_kind="html")
-        if script_ratio >= float(tune.script_ratio_threshold) and has_spa_signals(
+        if script_ratio >= float(quality.script_ratio_threshold) and has_spa_signals(
             res.content
         ):
             return "spa_script_heavy"

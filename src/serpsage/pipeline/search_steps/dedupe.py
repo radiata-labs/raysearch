@@ -2,22 +2,49 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
+from typing_extensions import override
 
-from serpsage.core.workunit import WorkUnit
+from serpsage.models.pipeline import SearchStepContext
+from serpsage.pipeline.step import PipelineStep
 from serpsage.text.normalize import clean_whitespace
 from serpsage.text.similarity import hybrid_similarity, simhash64
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
+    from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.core.runtime import Runtime
     from serpsage.settings.models import ProfileSettings
 
 _WS_RE = re.compile(r"\s+")
 
 
-class Deduper(WorkUnit):
-    def dedupe(
-        self, *, results: list[ResultItem], profile: ProfileSettings
+class DedupeStep(PipelineStep[SearchStepContext]):
+    span_name = "step.dedupe"
+
+    def __init__(self, *, rt: Runtime) -> None:
+        super().__init__(rt=rt)
+
+    @override
+    async def run_inner(
+        self, ctx: SearchStepContext, *, span: SpanBase
+    ) -> SearchStepContext:
+        span.set_attr("before_count", int(len(ctx.results or [])))
+        kept, comparisons = self._dedupe(
+            results=ctx.results,
+            profile=ctx.profile,
+        )
+        ctx.results = kept
+        span.set_attr("after_count", int(len(ctx.results or [])))
+        span.set_attr("comparisons", int(comparisons))
+        return ctx
+
+    def _dedupe(
+        self,
+        *,
+        results: list[ResultItem],
+        profile: ProfileSettings | None,
     ) -> tuple[list[ResultItem], int]:
+        profile = profile or self.settings.get_profile(self.settings.search.default_profile)
         results = self._dedupe_exact(results)
 
         title_tail_patterns = self._compile_patterns(profile.title_tail_patterns or [])
@@ -66,9 +93,7 @@ class Deduper(WorkUnit):
     ) -> str:
         title = (r.title or "").strip()
         snippet = (r.snippet or "").strip()
-        base = self._fuzzy_normalize(
-            self._strip_title_tails(title, title_tail_patterns)
-        )
+        base = self._fuzzy_normalize(self._strip_title_tails(title, title_tail_patterns))
         if len(base) < 8 and snippet:
             base = f"{base} {self._fuzzy_normalize(snippet[:240])}".strip()
         return base
@@ -148,4 +173,4 @@ class Deduper(WorkUnit):
         return ordered, comparisons
 
 
-__all__ = ["Deduper"]
+__all__ = ["DedupeStep"]

@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.errors import AppError
-from serpsage.pipeline.base import StepBase
-from serpsage.pipeline.context import SearchStepContext
+from serpsage.models.pipeline import SearchStepContext
+from serpsage.pipeline.step import PipelineStep
 from serpsage.util.json import stable_json
 
 if TYPE_CHECKING:
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
 
-class SearchStep(StepBase):
+class SearchStep(PipelineStep[SearchStepContext]):
     span_name = "step.search"
 
     def __init__(

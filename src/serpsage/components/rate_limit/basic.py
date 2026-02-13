@@ -6,11 +6,6 @@ from typing_extensions import override
 import anyio
 
 from serpsage.contracts.services import RateLimiterBase
-from serpsage.core.tuning import (
-    RATE_LIMIT_GLOBAL_CONCURRENCY,
-    RATE_LIMIT_PER_HOST_CONCURRENCY,
-    RATE_LIMIT_POLITENESS_DELAY_MS,
-)
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -19,9 +14,10 @@ if TYPE_CHECKING:
 class BasicRateLimiter(RateLimiterBase):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
-        self._global = anyio.Semaphore(max(1, int(RATE_LIMIT_GLOBAL_CONCURRENCY)))
-        self._per_host_limit = max(1, int(RATE_LIMIT_PER_HOST_CONCURRENCY))
-        self._politeness_delay_ms = max(0, int(RATE_LIMIT_POLITENESS_DELAY_MS))
+        cfg = self.settings.fetch.concurrency
+        self._global = anyio.Semaphore(max(1, int(cfg.global_limit)))
+        self._per_host_limit = max(1, int(cfg.per_host))
+        self._politeness_delay_ms = max(0, int(cfg.politeness_delay_ms))
         self._host_sems: dict[str, anyio.Semaphore] = {}
         self._host_lock = anyio.Lock()
         self._last_host_ms: dict[str, int] = {}

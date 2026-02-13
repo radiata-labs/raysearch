@@ -8,16 +8,16 @@ provider:
     headers: {}
 
 http:
-  proxy: null
+  proxy: http://127.0.0.1:7890
   trust_env: false
   max_connections: 100
   max_keepalive_connections: 20
   keepalive_expiry_s: 5.0
 
-pipeline:
-  default_profile: general
+search:
   max_results: 16
   min_score: 0.3
+  default_profile: general
   include_raw: false
   profiles:
     general: {}
@@ -38,6 +38,100 @@ pipeline:
         youtube: ["youtube"]
       title_tail_patterns:
         - "(?:-?\\s*)?(wikipedia.*)$"
+  depth_profiles:
+    low:
+      pages_ratio: 0.25
+      min_pages: 1
+      max_pages: 3
+      top_chunks_per_page: 2
+      step_timeout_s: 1.2
+      page_timeout_s: 0.9
+      max_render_pages: 0
+    medium:
+      pages_ratio: 0.50
+      min_pages: 2
+      max_pages: 6
+      top_chunks_per_page: 3
+      step_timeout_s: 2.0
+      page_timeout_s: 1.6
+      max_render_pages: 2
+    high:
+      pages_ratio: 0.75
+      min_pages: 3
+      max_pages: 10
+      top_chunks_per_page: 5
+      step_timeout_s: 4.0
+      page_timeout_s: 2.5
+      max_render_pages: 6
+  overview:
+    enabled_default: true
+    use_model: gpt-4.1-mini
+    max_sources: 8
+    max_chunks_per_source: 2
+    max_chunk_chars: 900
+    max_output_tokens: 600
+    max_prompt_chars: 32000
+    cache_ttl_s: 0
+    self_heal_retries: 1
+    force_language: auto
+
+fetch:
+  backend: auto # auto|httpx|curl_cffi|playwright
+  timeout_s: 20
+  follow_redirects: true
+  user_agent: serpsage-bot/4.0
+  concurrency:
+    global_limit: 24
+    per_host: 4
+    politeness_delay_ms: 0
+  render:
+    enabled: true
+    js_concurrency: 4
+    nav_timeout_ms: 25000
+    wait_network_idle_ms: 220
+    block_resources: true
+  quality:
+    min_text_chars: 220
+    min_content_score: 0.42
+    script_ratio_threshold: 0.35
+    blocked_markers:
+      - cloudflare
+      - just a moment
+      - verify you are human
+      - captcha
+      - access denied
+      - blocked
+      - please enable javascript
+      - security check
+      - checking your browser
+    max_render_pages_search: 2
+  extract:
+    engines: [fastdom, readability, trafilatura]
+    max_markdown_chars: 160000
+    min_plain_chars: 220
+  chunk:
+    target_chars: 1050
+    overlap_segments: 1
+    max_chunks: 42
+    min_chunk_score: 0.2
+    min_query_token_hits: 2
+    default_top_k: 3
+    max_markdown_chars: 140000
+    max_segments: 420
+    max_sentence_chars: 600
+    min_chunk_chars: 160
+    query_prefilter_window: 320
+    early_bonus: 1.15
+  overview:
+    enabled_default: false
+    use_model: gpt-4.1-mini
+    max_chunks: 6
+    max_chunk_chars: 900
+    max_output_tokens: 600
+    max_prompt_chars: 32000
+    cache_ttl_s: 0
+    self_heal_retries: 1
+    force_language: auto
 
 rank:
   backend: blend
@@ -56,14 +150,28 @@ rank:
     flat_spread_eps: 1e-9
     z_clip: 8.0
 
-enrich:
-  enabled: true
-  fetch:
-    backend: auto # auto|httpx|curl_cffi|playwright
-  depth_presets:
-    low: {pages_ratio: 0.25, min_pages: 1, max_pages: 3, top_chunks_per_page: 2}
-    medium: {pages_ratio: 0.50, min_pages: 2, max_pages: 6, top_chunks_per_page: 3}
-    high: {pages_ratio: 0.75, min_pages: 3, max_pages: 10, top_chunks_per_page: 5}
+llm:
+  models:
+    - name: gpt-4.1-mini
+      backend: openai
+      base_url: null
+      api_key: null
+      model: gpt-4.1-mini
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      schema_strict: true
+    - name: gemini-3-flash
+      backend: gemini
+      base_url: null
+      api_key: null
+      model: gemini-3-flash-preview
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      schema_strict: true
 
 cache:
   enabled: false
@@ -91,39 +199,6 @@ cache:
   sqlalchemy:
     url: sqlite+aiosqlite:///./.serpsage_cache.sqlite3
     table: cache
-
-overview:
-  enabled: true
-  use_model: gpt-4.1-mini
-  models:
-    - name: gpt-4.1-mini
-      backend: openai
-      base_url: null
-      api_key: null
-      model: gpt-4.1-mini
-      timeout_s: 60.0
-      max_retries: 2
-      temperature: 0.0
-      headers: {}
-      schema_strict: true
-    - name: gemini-3-flash
-      backend: gemini
-      base_url: null
-      api_key: null
-      model: gemini-3-flash-preview
-      timeout_s: 60.0
-      max_retries: 2
-      temperature: 0.0
-      headers: {}
-      schema_strict: true
-  max_sources: 8
-  max_chunks_per_source: 2
-  max_chunk_chars: 900
-  max_output_tokens: 600
-  max_prompt_chars: 32000
-  cache_ttl_s: 0
-  self_heal_retries: 1
-  force_language: auto
 
 telemetry:
   enabled: true

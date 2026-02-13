@@ -6,13 +6,12 @@ from typing_extensions import override
 import httpx
 
 from serpsage.contracts.services import SearchProviderBase
-from serpsage.core.tuning import DEFAULT_FETCH_USER_AGENT
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from serpsage.contracts.services import HttpClientBase
     from serpsage.core.runtime import Runtime
-    from serpsage.domain.http import HttpClient
 
 
 class SearxngProvider(SearchProviderBase):
@@ -20,7 +19,7 @@ class SearxngProvider(SearchProviderBase):
         self,
         *,
         rt: Runtime,
-        http: HttpClient,
+        http: HttpClientBase,
     ) -> None:
         super().__init__(rt=rt)
         self.bind_deps(http)
@@ -40,7 +39,7 @@ class SearxngProvider(SearchProviderBase):
             payload.update({k: str(v) for k, v in dict(params).items()})
 
         headers = dict(se.headers or {})
-        headers.setdefault("User-Agent", DEFAULT_FETCH_USER_AGENT)
+        headers.setdefault("User-Agent", str(self.settings.fetch.user_agent))
         if se.api_key:
             headers.setdefault("Authorization", f"Bearer {se.api_key}")
 

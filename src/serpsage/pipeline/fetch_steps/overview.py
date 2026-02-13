@@ -1,50 +1,154 @@
 from __future__ import annotations
 
+import hashlib
 import re
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any
+from typing_extensions import override
 
 from pydantic import ValidationError
 
 from serpsage.app.response import (
     OverviewLLMOutput,
     OverviewResult,
+    PageChunk,
     ResultItem,
 )
 from serpsage.components.overview.schema import overview_json_schema
-from serpsage.core.workunit import WorkUnit
+from serpsage.models.errors import AppError
 from serpsage.models.llm import LLMUsage
+from serpsage.models.pipeline import FetchStepContext
+from serpsage.pipeline.step import PipelineStep
+from serpsage.util.json import stable_json
 
 if TYPE_CHECKING:
-    from serpsage.contracts.services import LLMClientBase
+    from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.contracts.services import CacheBase, LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.models.llm import ChatJSONResult
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff]")
 
 
-class OverviewBuilder(WorkUnit):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+class FetchOverviewStep(PipelineStep[FetchStepContext]):
+    span_name = "step.fetch_overview"
+
+    def __init__(
+        self,
+        *,
+        rt: Runtime,
+        llm: LLMClientBase,
+        cache: CacheBase,
+    ) -> None:
         super().__init__(rt=rt)
         self._llm = llm
-        self.bind_deps(llm)
+        self._cache = cache
+        self.bind_deps(llm, cache)
 
-    def schema(self) -> dict:
+    @override
+    async def run_inner(
+        self, ctx: FetchStepContext, *, span: SpanBase
+    ) -> FetchStepContext:
+        profile = self.settings.fetch.overview
+        enabled = profile.enabled_default
+        if ctx.request.overview is not None:
+            enabled = bool(ctx.request.overview)
+        if not enabled:
+            return ctx
+
+        source = self._build_source(ctx)
+        if source is None:
+            return ctx
+        query = (ctx.request.query or "").strip() or ctx.request.url
+        llm_cfg = self.settings.llm.resolve_model(profile.use_model)
+
+        messages = self._build_messages(
+            query=query,
+            results=[source],
+            max_sources=1,
+            max_chunks_per_source=max(1, int(profile.max_chunks)),
+            max_chunk_chars=int(profile.max_chunk_chars),
+            max_prompt_chars=int(profile.max_prompt_chars),
+            force_language=str(profile.force_language),
+        )
+        schema = self._schema()
+        cache_ttl_s = int(profile.cache_ttl_s)
+        cache_key: str | None = None
+        if cache_ttl_s > 0:
+            cache_key = hashlib.sha256(
+                stable_json(
+                    {
+                        "use_model": str(profile.use_model),
+                        "messages": messages,
+                        "schema": schema,
+                        "schema_strict": bool(llm_cfg.schema_strict),
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+            cached = await self._cache.aget(namespace="overview:fetch", key=cache_key)
+            if cached:
+                span.set_attr("cache_hit", True)
+                try:
+                    ctx.overview = OverviewResult.model_validate_json(cached)
+                except Exception:
+                    span.add_event("overview.cache_corrupt")
+                else:
+                    return ctx
+        span.set_attr("cache_hit", False)
+
+        try:
+            t0 = time.monotonic()
+            overview = await self._build_overview(
+                query=query,
+                results=[source],
+                use_model=str(profile.use_model),
+                max_sources=1,
+                max_chunks_per_source=max(1, int(profile.max_chunks)),
+                max_chunk_chars=int(profile.max_chunk_chars),
+                max_prompt_chars=int(profile.max_prompt_chars),
+                max_output_tokens=int(profile.max_output_tokens),
+                self_heal_retries=int(profile.self_heal_retries),
+                force_language=str(profile.force_language),
+            )
+            ctx.page.timing_ms["overview_ms"] = int((time.monotonic() - t0) * 1000)
+            ctx.overview = overview
+            if cache_ttl_s > 0 and cache_key:
+                await self._cache.aset(
+                    namespace="overview:fetch",
+                    key=cache_key,
+                    value=overview.model_dump_json().encode("utf-8"),
+                    ttl_s=cache_ttl_s,
+                )
+        except Exception as exc:  # noqa: BLE001
+            ctx.errors.append(
+                AppError(
+                    code="fetch_overview_failed",
+                    message=str(exc),
+                    details={"type": type(exc).__name__},
+                )
+            )
+        return ctx
+
+    def _schema(self) -> dict[str, Any]:
         return overview_json_schema()
 
-    def build_messages(
-        self, *, query: str, results: list[ResultItem]
+    def _build_messages(
+        self,
+        *,
+        query: str,
+        results: list[ResultItem],
+        max_sources: int,
+        max_chunks_per_source: int,
+        max_chunk_chars: int,
+        max_prompt_chars: int,
+        force_language: str,
     ) -> list[dict[str, str]]:
-        max_sources = int(self.settings.overview.max_sources)
-        max_chunks = int(self.settings.overview.max_chunks_per_source)
-        max_chunk_chars = int(self.settings.overview.max_chunk_chars)
-        max_prompt_chars = int(self.settings.overview.max_prompt_chars)
-
-        lang = self.settings.overview.force_language
+        lang = force_language
         if lang == "auto":
             lang = "zh" if _CJK_RE.search(query or "") else "en"
 
         sources: list[str] = []
-        for r in results[:max_sources]:
+        for r in results[: max(1, int(max_sources))]:
             sid = r.source_id or "S?"
             parts: list[str] = []
             if r.title:
@@ -54,7 +158,9 @@ class OverviewBuilder(WorkUnit):
             if r.snippet:
                 parts.append(f"SNIPPET: {r.snippet}")
             if r.page and r.page.chunks:
-                for i, ch in enumerate(r.page.chunks[:max_chunks], 1):
+                for i, ch in enumerate(
+                    r.page.chunks[: max(1, int(max_chunks_per_source))], 1
+                ):
                     t = ch.text
                     if max_chunk_chars and len(t) > max_chunk_chars:
                         t = t[:max_chunk_chars].rstrip() + "..."
@@ -85,8 +191,6 @@ class OverviewBuilder(WorkUnit):
             "- citations[].url must match the referenced source_id"
         )
 
-        # Budget: cap total prompt characters to avoid runaway token usage.
-        # With small max_sources (default 8), a simple O(n^2) check is fine.
         kept: list[str] = []
         for s in sources:
             cand = kept + [s]
@@ -118,24 +222,40 @@ class OverviewBuilder(WorkUnit):
             {"role": "user", "content": user},
         ]
 
-    async def build_overview(
-        self, *, query: str, results: list[ResultItem]
+    async def _build_overview(
+        self,
+        *,
+        query: str,
+        results: list[ResultItem],
+        use_model: str,
+        max_sources: int,
+        max_chunks_per_source: int,
+        max_chunk_chars: int,
+        max_prompt_chars: int,
+        max_output_tokens: int,
+        self_heal_retries: int,
+        force_language: str,
     ) -> OverviewResult:
-        active_model = self.settings.overview.resolve_model()
-        model = active_model.model
+        active_model = self.settings.llm.resolve_model(use_model)
+        model_alias = active_model.name
 
-        messages = self.build_messages(query=query, results=results)
-        schema = self.schema()
-
-        prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
-        retries = max(0, int(self.settings.overview.self_heal_retries))
+        messages = self._build_messages(
+            query=query,
+            results=results,
+            max_sources=max_sources,
+            max_chunks_per_source=max_chunks_per_source,
+            max_chunk_chars=max_chunk_chars,
+            max_prompt_chars=max_prompt_chars,
+            force_language=force_language,
+        )
+        schema = self._schema()
+        retries = max(0, int(self_heal_retries))
         cur_messages = list(messages)
 
-        with self.span("overview.build", model=model) as sp:
+        with self.span("overview.build", model=model_alias) as sp:
             sp.set_attr("backend", str(active_model.backend))
             sp.set_attr("model_name", str(active_model.name))
             sp.set_attr("schema_strict", bool(active_model.schema_strict))
-            sp.set_attr("prompt_chars", int(prompt_chars))
             sp.set_attr("self_heal_retries", int(retries))
 
             last_exc: Exception | None = None
@@ -145,15 +265,17 @@ class OverviewBuilder(WorkUnit):
                 sp.set_attr("attempt", int(attempt))
                 try:
                     last_res = await self._llm.chat_json(
-                        model=model,
+                        model=model_alias,
                         messages=cur_messages,
                         schema=schema,
                         timeout_s=float(active_model.timeout_s),
                     )
                     out = OverviewLLMOutput.model_validate(last_res.data)
                     out = self._sanitize_overview(out, results)
-                    summary = self._truncate_summary(out.summary)
-
+                    summary = self._truncate_summary(
+                        out.summary,
+                        max_output_tokens=max_output_tokens,
+                    )
                     return OverviewResult(
                         summary=summary,
                         key_points=list(out.key_points or []),
@@ -190,11 +312,12 @@ class OverviewBuilder(WorkUnit):
             assert last_exc is not None
             raise last_exc
 
-    def _truncate_summary(self, summary: str) -> str:
-        max_tokens = int(self.settings.overview.max_output_tokens or 0)
-        if max_tokens <= 0:
+    def _truncate_summary(self, summary: str, *, max_output_tokens: int) -> str:
+        if max_output_tokens <= 0:
             return summary or ""
-        return _truncate_to_token_budget(summary or "", max_tokens=max_tokens)
+        return _truncate_to_token_budget(
+            summary or "", max_tokens=int(max_output_tokens)
+        )
 
     def _sanitize_overview(
         self, overview: OverviewLLMOutput, results: list[ResultItem]
@@ -243,6 +366,29 @@ class OverviewBuilder(WorkUnit):
             c.model_copy(update={"cite_id": f"C{i}"}) for i, c in enumerate(kept, 1)
         ]
         return overview.model_copy(update={"citations": renum})
+
+    def _build_source(self, ctx: FetchStepContext) -> ResultItem | None:
+        if not (ctx.page.markdown or "").strip():
+            return None
+        chunks = list(ctx.page.chunks or [])
+        if not chunks:
+            excerpt = (ctx.extracted.plain_text if ctx.extracted else "").strip()
+            if not excerpt:
+                excerpt = (ctx.page.markdown or "").replace("\n", " ").strip()
+            if excerpt:
+                chunks = [PageChunk(chunk_id="S1:C1", text=excerpt[:1000], score=1.0)]
+
+        source = ResultItem(
+            source_id="S1",
+            url=ctx.request.url,
+            title=(ctx.extracted.title if ctx.extracted else "") or "",
+            snippet=((ctx.extracted.plain_text if ctx.extracted else "") or "")[:260],
+            score=1.0,
+            page=ctx.page.model_copy(update={"chunks": chunks}),
+        )
+        for idx, ch in enumerate(source.page.chunks, 1):
+            ch.chunk_id = ch.chunk_id or f"S1:C{idx}"
+        return source
 
 
 def _healable(exc: Exception) -> bool:
@@ -301,10 +447,9 @@ def _truncate_to_token_budget(text: str, *, max_tokens: int) -> str:
     out = "".join(out_chars)
     if out == text:
         return out
-
     if out and tokens + 1 <= max_tokens:
         out = out + "..."
     return out
 
 
-__all__ = ["OverviewBuilder"]
+__all__ = ["FetchOverviewStep"]

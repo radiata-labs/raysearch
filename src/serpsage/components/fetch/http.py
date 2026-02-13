@@ -16,17 +16,17 @@ from serpsage.components.fetch.utils import (
     parse_retry_after_s,
 )
 from serpsage.contracts.services import FetcherBase
-from serpsage.core.tuning import DEFAULT_FOLLOW_REDIRECTS, fetch_profile_for_depth
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.domain.http import HttpClient
+    from serpsage.contracts.services import HttpClientBase
+    from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
 
 
 class HttpxFetcher(FetcherBase):
-    def __init__(self, *, rt, http: HttpClient) -> None:  # noqa: ANN001
+    def __init__(self, *, rt: Runtime, http: HttpClientBase) -> None:
         super().__init__(rt=rt)
         self.bind_deps(http)
         self._http = http.client
@@ -38,7 +38,6 @@ class HttpxFetcher(FetcherBase):
         url: str,
         timeout_s: float | None = None,
         allow_render: bool = True,
-        depth: str | None = None,
         rank_index: int = 0,
     ) -> FetchResult:
         _ = allow_render, rank_index
@@ -48,7 +47,6 @@ class HttpxFetcher(FetcherBase):
                 profile="browser",
                 span=sp,
                 timeout_s=timeout_s,
-                depth=depth,
             )
             if int(res.status_code) <= 0:
                 raise RuntimeError("httpx fetch failed")
@@ -73,24 +71,20 @@ class HttpxFetcher(FetcherBase):
         span: SpanBase,
         retry: RetrySettings | None = None,
         timeout_s: float | None = None,
-        depth: str | None = None,
     ) -> FetchAttempt:
-        tune = fetch_profile_for_depth(depth)
         started = time.time()
+        fetch_cfg = self.settings.fetch
+        quality = fetch_cfg.quality
 
-        req_timeout_s = (
-            max(0.35, float(timeout_s))
-            if timeout_s is not None
-            else max(0.35, float(tune.http_timeout_s))
-        )
+        req_timeout_s = timeout_s or fetch_cfg.timeout_s
         timeout = httpx.Timeout(req_timeout_s)
         max_attempts = max(
             1,
             int(
-                getattr(retry, "max_attempts", 0) or int(tune.retry_attempts),
+                getattr(retry, "max_attempts", 0) or 2,
             ),
         )
-        delay_ms = int(getattr(retry, "delay_ms", 0) or int(tune.retry_delay_ms))
+        delay_ms = int(getattr(retry, "delay_ms", 0) or 90)
 
         last_status: int | None = None
         last_url = url
@@ -108,9 +102,12 @@ class HttpxFetcher(FetcherBase):
                 async with self._http.stream(
                     "GET",
                     url,
-                    headers=browser_headers(profile=profile),
+                    headers=browser_headers(
+                        profile=profile,
+                        user_agent=str(fetch_cfg.user_agent),
+                    ),
                     timeout=timeout,
-                    follow_redirects=bool(DEFAULT_FOLLOW_REDIRECTS),
+                    follow_redirects=bool(fetch_cfg.follow_redirects),
                 ) as resp:
                     last_status = int(resp.status_code)
                     last_url = str(resp.url)
@@ -126,7 +123,8 @@ class HttpxFetcher(FetcherBase):
                     last_body, last_truncated = await self._read_stream_body(
                         resp=resp,
                         kind_hint=kind_hint,
-                        depth=depth,
+                        min_text_chars=int(quality.min_text_chars),
+                        min_content_score=float(quality.min_content_score),
                     )
 
                     if last_status == 429 or (500 <= last_status < 600):
@@ -167,7 +165,12 @@ class HttpxFetcher(FetcherBase):
             last_body,
             content_kind=content_kind,
         )
-        blocked = bool(blocked_marker_hit(last_body))
+        blocked = bool(
+            blocked_marker_hit(
+                last_body,
+                markers=tuple(self.settings.fetch.quality.blocked_markers),
+            )
+        )
         quality_score = float(content_score - (0.3 if blocked else 0.0))
         span.set_attr("content_kind", content_kind)
         span.set_attr("text_chars", int(text_chars))
@@ -197,17 +200,17 @@ class HttpxFetcher(FetcherBase):
         *,
         resp: httpx.Response,
         kind_hint: str,
-        depth: str | None,
+        min_text_chars: int,
+        min_content_score: float,
     ) -> tuple[bytes, bool]:
-        tune = fetch_profile_for_depth(depth)
         if kind_hint == "pdf":
-            budget = int(tune.pdf_byte_budget)
+            budget = 16_000_000
         elif kind_hint == "text":
-            budget = int(tune.text_byte_budget)
+            budget = 900_000
         elif kind_hint in {"binary", "unknown"}:
-            budget = int(tune.binary_byte_budget)
+            budget = 3_000_000
         else:
-            budget = int(tune.html_byte_budget)
+            budget = 1_800_000
 
         total = 0
         truncated = False
@@ -233,9 +236,9 @@ class HttpxFetcher(FetcherBase):
                     body,
                     content_kind="html",
                 )
-                if text_chars >= int(
-                    tune.html_early_accept_chars
-                ) and content_score >= float(tune.html_early_accept_score):
+                if text_chars >= max(300, int(min_text_chars)) and content_score >= max(
+                    0.35, float(min_content_score)
+                ):
                     break
         return b"".join(parts), truncated
 

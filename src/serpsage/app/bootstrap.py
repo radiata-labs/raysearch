@@ -9,6 +9,7 @@ from serpsage.components import (
     build_cache,
     build_extractor,
     build_fetcher,
+    build_http_client,
     build_overview_client,
     build_provider,
     build_ranker,
@@ -17,29 +18,29 @@ from serpsage.components import (
 from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
-from serpsage.domain import (
-    Deduper,
-    Enricher,
-    Filterer,
-    HttpClient,
-    Normalizer,
-    OverviewBuilder,
-    Reranker,
+from serpsage.models.pipeline import FetchStepContext, SearchStepContext
+from serpsage.pipeline.fetch_steps import (
+    FetchExtractStep,
+    FetchFinalizeStep,
+    FetchLoadStep,
+    FetchOverviewStep,
+    FetchPrepareStep,
+    FetchRankStep,
 )
-from serpsage.pipeline.steps import (
+from serpsage.pipeline.runner import PipelineRunner
+from serpsage.pipeline.search_steps import (
     DedupeStep,
-    EnrichStep,
     FilterStep,
     NormalizeStep,
-    OverviewStep,
     RankStep,
     RerankStep,
+    SearchFetchStep,
+    SearchFinalizeStep,
+    SearchOverviewStep,
+    SearchPrepareStep,
     SearchStep,
 )
-from serpsage.telemetry.trace import (
-    NoopTelemetry,
-    TraceTelemetry,
-)
+from serpsage.telemetry.trace import NoopTelemetry, TraceTelemetry
 
 if TYPE_CHECKING:
     from serpsage.contracts.services import (
@@ -79,59 +80,52 @@ def build_engine(
 ) -> Engine:
     ov = overrides or Overrides()
     rt = build_runtime(settings=settings, overrides=ov)
-
     _validate_override_workunits(ov)
 
-    shared_http_unit: HttpClient | None = None
-
-    def get_shared_http_unit() -> HttpClient:
-        nonlocal shared_http_unit
-        if shared_http_unit is None:
-            shared_http_unit = HttpClient(rt=rt, ov=ov)
-        return shared_http_unit
+    shared_http_unit = build_http_client(rt=rt, overrides=ov)
 
     cache: CacheBase = ov.cache or build_cache(rt=rt)
     rate_limiter: RateLimiterBase = ov.rate_limiter or build_rate_limiter(rt=rt)
     provider: SearchProviderBase = ov.provider or build_provider(
-        rt=rt, http=get_shared_http_unit()
+        rt=rt, http=shared_http_unit
     )
     extractor: ExtractorBase = ov.extractor or build_extractor(rt=rt)
-
     fetcher: FetcherBase = ov.fetcher or build_fetcher(
         rt=rt,
         cache=cache,
         rate_limiter=rate_limiter,
-        http=get_shared_http_unit(),
+        http=shared_http_unit,
     )
     ranker: RankerBase = ov.ranker or build_ranker(rt=rt)
-    llm: LLMClientBase = ov.llm or build_overview_client(
-        rt=rt, http=get_shared_http_unit()
-    )
+    llm: LLMClientBase = ov.llm or build_overview_client(rt=rt, http=shared_http_unit)
 
-    normalizer = Normalizer(rt=rt)
-    filterer = Filterer(rt=rt)
-    deduper = Deduper(rt=rt)
-    enricher = Enricher(rt=rt, fetcher=fetcher, extractor=extractor, ranker=ranker)
-    reranker = Reranker(rt=rt)
-    overview_builder = OverviewBuilder(rt=rt, llm=llm)
-
-    steps: list[PipelineStepBase] = [
-        SearchStep(rt=rt, provider=provider, cache=cache),
-        NormalizeStep(rt=rt, normalizer=normalizer),
-        FilterStep(rt=rt, filterer=filterer),
-        DedupeStep(rt=rt, deduper=deduper),
-        RankStep(rt=rt, ranker=ranker),
-        EnrichStep(rt=rt, enricher=enricher),
-        RerankStep(rt=rt, reranker=reranker),
+    fetch_steps: list[PipelineStepBase[FetchStepContext]] = [
+        FetchPrepareStep(rt=rt),
+        FetchLoadStep(rt=rt, fetcher=fetcher),
+        FetchExtractStep(rt=rt, extractor=extractor),
+        FetchRankStep(rt=rt, ranker=ranker),
+        FetchOverviewStep(rt=rt, llm=llm, cache=cache),
+        FetchFinalizeStep(rt=rt),
     ]
-    overview_step: PipelineStepBase = OverviewStep(
-        rt=rt, builder=overview_builder, cache=cache
-    )
+    fetch_runner = PipelineRunner[FetchStepContext](rt=rt, steps=fetch_steps)
+    search_steps: list[PipelineStepBase[SearchStepContext]] = [
+        SearchPrepareStep(rt=rt),
+        SearchStep(rt=rt, provider=provider, cache=cache),
+        NormalizeStep(rt=rt),
+        FilterStep(rt=rt),
+        DedupeStep(rt=rt),
+        RankStep(rt=rt, ranker=ranker),
+        SearchFetchStep(rt=rt, fetch_runner=fetch_runner),
+        RerankStep(rt=rt),
+        SearchFinalizeStep(rt=rt),
+        SearchOverviewStep(rt=rt, llm=llm, cache=cache),
+    ]
+    search_runner = PipelineRunner[SearchStepContext](rt=rt, steps=search_steps)
 
     return Engine(
         rt=rt,
-        steps=steps,
-        overview_step=overview_step,
+        search_runner=search_runner,
+        fetch_runner=fetch_runner,
     )
 
 
