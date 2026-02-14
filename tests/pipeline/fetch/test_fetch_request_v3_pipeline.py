@@ -30,6 +30,8 @@ _HTML = (
     "and validation details for overview generation.</p>"
     "</article></main>"
     "<aside><p>Secondary alpha references and related links.</p></aside>"
+    "<a href='https://example.com/r1'>r1</a>"
+    "<a href='https://example.com/r2'>r2</a>"
     "</body></html>"
 ).encode("utf-8")
 
@@ -123,6 +125,7 @@ def _build_settings() -> AppSettings:
     settings = AppSettings()
     settings.fetch.chunk.min_query_token_hits = 1
     settings.fetch.render.enabled = False
+    settings.fetch.extract.collect_links_default = True
     return settings
 
 
@@ -141,42 +144,48 @@ async def _run_fetch(req: FetchRequest) -> object:
 
 def test_content_false_still_computes_chunks_and_overview() -> None:
     req = FetchRequest(
-        url=_URL,
+        urls=[_URL],
         content=False,
         chunks=FetchChunksRequest(query="alpha", top_k_chunks=2),
         overview=FetchOverviewRequest(query="alpha"),
     )
     resp = anyio.run(_run_fetch, req)
-    assert resp.page.markdown == ""
-    assert resp.page.chunks
-    assert resp.overview is not None
+    assert len(resp.results) == 1
+    item = resp.results[0]
+    assert item.content == ""
+    assert item.chunks
+    assert item.overview is not None
 
 
 def test_without_chunks_and_overview_only_returns_content() -> None:
     req = FetchRequest(
-        url=_URL,
+        urls=[_URL],
         content=True,
         chunks=None,
         overview=None,
     )
     resp = anyio.run(_run_fetch, req)
-    assert resp.page.markdown
-    assert resp.page.chunks == []
-    assert resp.overview is None
+    assert len(resp.results) == 1
+    item = resp.results[0]
+    assert item.content
+    assert item.chunks == []
+    assert item.overview is None
 
 
 def test_max_chars_only_limits_output_fields() -> None:
     req = FetchRequest(
-        url=_URL,
+        urls=[_URL],
         content=FetchContentRequest(max_chars=120, depth="low"),
         chunks=FetchChunksRequest(query="alpha", top_k_chunks=2, max_chars=40),
         overview=FetchOverviewRequest(query="alpha", max_chars=30),
     )
     resp = anyio.run(_run_fetch, req)
 
-    assert len(resp.page.markdown) <= 120
-    assert resp.page.chunks
-    assert all(len(ch.text) <= 43 for ch in resp.page.chunks)
-    assert resp.overview is not None
-    assert len(resp.overview.summary) <= 33
-    assert all(len(item) <= 33 for item in resp.overview.key_points)
+    assert len(resp.results) == 1
+    item = resp.results[0]
+    assert len(item.content) <= 120
+    assert item.chunks
+    assert all(len(ch) <= 43 for ch in item.chunks)
+    assert item.overview is not None
+    assert len(item.overview.summary) <= 33
+    assert all(len(text) <= 33 for text in item.overview.key_points)

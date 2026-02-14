@@ -6,7 +6,7 @@ from typing_extensions import override
 
 from anyio import to_thread
 
-from serpsage.components.extract.markdown.postprocess import finalize_markdown
+from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.pipeline.step import PipelineStep
 
@@ -29,11 +29,26 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
+        if ctx.fatal:
+            return ctx
         if ctx.fetch_result is None:
-            ctx.page.error = ctx.page.error or "missing fetch result"
+            ctx.fatal = True
+            ctx.errors.append(
+                AppError(
+                    code="fetch_load_failed",
+                    message="missing fetch result",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "extract",
+                        "fatal": True,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
             return ctx
 
-        collect_links = bool(self.settings.fetch.extract.collect_links_default)
+        collect_links = bool(ctx.runtime.max_links is not None)
         t0 = time.monotonic()
 
         def extract() -> ExtractedDocument:
@@ -46,19 +61,31 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                 collect_links=collect_links,
             )
 
-        extracted = await to_thread.run_sync(extract)
+        try:
+            extracted = await to_thread.run_sync(extract)
+        except Exception as exc:  # noqa: BLE001
+            ctx.fatal = True
+            ctx.errors.append(
+                AppError(
+                    code="fetch_extract_failed",
+                    message=str(exc),
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "extract",
+                        "fatal": True,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
+            return ctx
         extract_ms = int((time.monotonic() - t0) * 1000)
 
-        markdown_out = extracted.markdown
-        max_chars = ctx.content_request.max_chars
-        if max_chars is not None and max_chars > 0:
-            markdown_out = finalize_markdown(markdown=markdown_out, max_chars=max_chars)
-
         ctx.extracted = extracted
-        ctx.page.markdown = markdown_out
-        ctx.page.content_kind = extracted.content_kind
-        ctx.page.warnings.extend(extracted.warnings or [])
-        ctx.page.timing_ms["extract_ms"] = extract_ms
+        ctx.links = _prepare_links(
+            extracted=extracted,
+            max_links=ctx.runtime.max_links,
+        )
         span.set_attr("extractor_used", str(extracted.extractor_used))
         span.set_attr("quality_score", float(extracted.quality_score))
         span.set_attr("extract_ms", int(extract_ms))
@@ -73,8 +100,37 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
         span.set_attr("links_count", int(len(extracted.links or [])))
         span.set_attr("engine_chain", str(extracted.stats.get("engine_chain", "")))
         if not (extracted.plain_text or "").strip():
-            ctx.page.error = ctx.page.error or "no content extracted"
+            ctx.fatal = True
+            ctx.errors.append(
+                AppError(
+                    code="fetch_extract_failed",
+                    message="no content extracted",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "extract",
+                        "fatal": True,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
         return ctx
+
+
+def _prepare_links(*, extracted: ExtractedDocument, max_links: int | None) -> list[str]:
+    if max_links is None:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in list(extracted.links or []):
+        url = str(item.url or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append(url)
+        if len(out) >= int(max_links):
+            break
+    return out
 
 
 __all__ = ["FetchExtractStep"]

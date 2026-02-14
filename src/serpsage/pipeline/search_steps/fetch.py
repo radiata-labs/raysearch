@@ -8,8 +8,12 @@ from typing_extensions import override
 import anyio
 
 from serpsage.app.request import FetchChunksRequest, FetchRequest
-from serpsage.app.response import PageEnrichment
-from serpsage.models.pipeline import FetchStepContext, SearchStepContext
+from serpsage.app.response import PageChunk, PageEnrichment
+from serpsage.models.pipeline import (
+    FetchStepContext,
+    FetchStepRuntime,
+    SearchStepContext,
+)
 from serpsage.pipeline.step import PipelineStep
 
 if TYPE_CHECKING:
@@ -99,29 +103,60 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                     FetchStepContext(
                         settings=self.settings,
                         request=FetchRequest(
-                            url=r.url,
+                            urls=[r.url],
+                            crawl_mode="fallback",
+                            crawl_timeout=timeout_s,
                             content=True,
-                            profile=ctx.profile_name or None,
                             chunks=FetchChunksRequest(
                                 query=query,
                                 top_k_chunks=top_k,
                             ),
                             overview=None,
-                            params={
-                                "timeout_s": timeout_s,
-                                "allow_render": bool(
-                                    rank_index < int(preset.max_render_pages)
-                                ),
-                                "rank_index": rank_index,
-                            },
+                        ),
+                        url=r.url,
+                        url_index=0,
+                        runtime=FetchStepRuntime(
+                            crawl_mode="fallback",
+                            crawl_timeout_s=timeout_s,
+                            allow_render=bool(
+                                rank_index < int(preset.max_render_pages)
+                            ),
+                            rank_index=rank_index,
+                            max_links=None,
                         ),
                     )
                 )
-                r.page = fetch_ctx.page
-                if fetch_ctx.errors and not r.page.error:
-                    r.page.error = str(fetch_ctx.errors[0].message)
+                if fetch_ctx.result is not None:
+                    r.page = PageEnrichment(
+                        chunks=[
+                            PageChunk(
+                                chunk_id=f"S1:C{i + 1}",
+                                text=txt,
+                                score=float(fetch_ctx.result.chunk_scores[i]),
+                            )
+                            for i, txt in enumerate(fetch_ctx.result.chunks)
+                        ],
+                        markdown=fetch_ctx.result.content,
+                    )
+                    if fetch_ctx.errors:
+                        r.page.error = str(fetch_ctx.errors[0].message)
+                else:
+                    err_msg = (
+                        str(fetch_ctx.errors[0].message)
+                        if fetch_ctx.errors
+                        else "fetch failed"
+                    )
+                    r.page = PageEnrichment(
+                        chunks=[],
+                        markdown="",
+                        timing_ms={"total_ms": 0},
+                        warnings=["fetch failed"],
+                        error=err_msg,
+                    )
                 completed_count += 1
-                if (r.page.fetch_mode or "") == "playwright":
+                if (
+                    fetch_ctx.fetch_result and fetch_ctx.fetch_result.fetch_mode
+                ) == "playwright":
                     rendered_count += 1
                 if (r.page.error or "") in {"timeout", "deadline exceeded"}:
                     timeout_count += 1

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from serpsage.components.cache import CacheBase
     from serpsage.contracts.services import FetcherBase, HttpClientBase, RateLimiterBase
     from serpsage.core.runtime import Runtime
 
@@ -11,7 +10,6 @@ if TYPE_CHECKING:
 def build_fetcher(
     *,
     rt: Runtime,
-    cache: CacheBase,
     rate_limiter: RateLimiterBase,
     http: HttpClientBase,
 ) -> FetcherBase:
@@ -78,7 +76,6 @@ def build_fetcher(
         assert httpx_fetcher is not None
         return AutoFetcher(
             rt=rt,
-            cache=cache,
             rate_limiter=rate_limiter,
             httpx_fetcher=httpx_fetcher,
             curl_fetcher=curl_fetcher,

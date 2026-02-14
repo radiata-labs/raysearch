@@ -4,8 +4,8 @@ import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.response import PageChunk
-from serpsage.models.pipeline import FetchStepContext
+from serpsage.models.errors import AppError
+from serpsage.models.pipeline import FetchStepContext, ScoredChunk
 from serpsage.pipeline.step import PipelineStep
 from serpsage.text.chunking import (
     chunk_segments,
@@ -34,6 +34,8 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
+        if ctx.fatal:
+            return ctx
         chunks_request = ctx.chunks_request
         span.set_attr("has_chunks", bool(chunks_request is not None))
         if chunks_request is None:
@@ -41,10 +43,34 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
         query = chunks_request.query
 
         if ctx.extracted is None:
-            ctx.page.error = ctx.page.error or "missing extracted content"
+            ctx.errors.append(
+                AppError(
+                    code="fetch_rank_failed",
+                    message="missing extracted content",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "rank",
+                        "fatal": False,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
             return ctx
         if not (ctx.extracted.plain_text or "").strip():
-            ctx.page.error = ctx.page.error or "no content extracted"
+            ctx.errors.append(
+                AppError(
+                    code="fetch_rank_failed",
+                    message="no content extracted",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "rank",
+                        "fatal": False,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
             return ctx
 
         top_k = int(
@@ -66,11 +92,23 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
             for chunk in chunks:
                 if len(chunk.text) > max_chars:
                     chunk.text = chunk.text[:max_chars].rstrip() + "..."
-        ctx.chunks = chunks
-        ctx.page.chunks = chunks
-        ctx.page.timing_ms.update(timing_ms)
+        ctx.scored_chunks = chunks
+        span.set_attr("chunk_ms", int(timing_ms.get("chunk_ms", 0)))
+        span.set_attr("score_ms", int(timing_ms.get("score_ms", 0)))
         if error:
-            ctx.page.error = error
+            ctx.errors.append(
+                AppError(
+                    code="fetch_rank_failed",
+                    message=error,
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "rank",
+                        "fatal": False,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
         span.set_attr("top_k_chunks", int(top_k))
         span.set_attr("chunks_kept", int(len(chunks)))
         return ctx
@@ -85,7 +123,7 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
         intent_tokens: list[str],
         profile: ProfileSettings | None,
         top_k: int | None = None,
-    ) -> tuple[list[PageChunk], dict[str, int], str | None]:
+    ) -> tuple[list[ScoredChunk], dict[str, int], str | None]:
         chunk_cfg = self.settings.fetch.chunk
         profile = profile or self.settings.get_profile(
             self.settings.search.default_profile
@@ -152,8 +190,11 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
 
         limit = int(top_k or int(chunk_cfg.default_top_k))
         top = scored[: max(1, limit)]
-        page_chunks = [PageChunk(text=txt, score=float(score)) for score, txt in top]
-        return page_chunks, {"chunk_ms": chunk_ms, "score_ms": score_ms}, None
+        scored_chunks = [
+            ScoredChunk(chunk_id=f"S1:C{i + 1}", text=txt, score=float(score))
+            for i, (score, txt) in enumerate(top)
+        ]
+        return scored_chunks, {"chunk_ms": chunk_ms, "score_ms": score_ms}, None
 
     def _filter_noise_chunks(
         self,

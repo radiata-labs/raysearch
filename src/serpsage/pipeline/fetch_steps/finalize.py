@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.app.response import FetchResultItem
+from serpsage.components.extract.markdown.postprocess import finalize_markdown
+from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.pipeline.step import PipelineStep
 
@@ -21,22 +24,47 @@ class FetchFinalizeStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
-        if not ctx.return_content:
-            ctx.page.markdown = ""
-        for idx, ch in enumerate(ctx.page.chunks, 1):
-            ch.chunk_id = ch.chunk_id or f"S1:C{idx}"
-        if "total_ms" not in ctx.page.timing_ms:
-            total = 0
-            for key in (
-                "fetch_ms",
-                "extract_ms",
-                "chunk_ms",
-                "score_ms",
-                "overview_ms",
-            ):
-                total += int(ctx.page.timing_ms.get(key, 0))
-            ctx.page.timing_ms["total_ms"] = total
-        span.set_attr("chunks_count", int(len(ctx.page.chunks)))
+        if ctx.fatal:
+            return ctx
+        if ctx.extracted is None:
+            ctx.fatal = True
+            ctx.errors.append(
+                AppError(
+                    code="fetch_extract_failed",
+                    message="missing extracted content",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "finalize",
+                        "fatal": True,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
+            return ctx
+
+        markdown = ctx.extracted.markdown
+        max_chars = ctx.content_request.max_chars
+        if max_chars is not None and max_chars > 0:
+            markdown = finalize_markdown(markdown=markdown, max_chars=max_chars)
+        content = markdown if ctx.return_content else ""
+
+        chunks = [str(item.text) for item in list(ctx.scored_chunks or [])]
+        chunk_scores = [float(item.score) for item in list(ctx.scored_chunks or [])]
+        result = FetchResultItem(
+            url=ctx.url,
+            title=str(ctx.extracted.title or ""),
+            content=content,
+            chunks=chunks,
+            chunk_scores=chunk_scores,
+            links=list(ctx.links or []),
+            overview=ctx.overview,
+        )
+        ctx.result = result
+
+        span.set_attr("has_result", True)
+        span.set_attr("chunks_count", int(len(chunks)))
+        span.set_attr("links_count", int(len(ctx.links or [])))
         span.set_attr("has_overview", bool(ctx.overview is not None))
         span.set_attr("has_content_output", bool(ctx.return_content))
         return ctx

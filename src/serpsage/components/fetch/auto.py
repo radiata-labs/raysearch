@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 from urllib.parse import urlparse
@@ -14,10 +11,9 @@ from serpsage.components.fetch.utils import (
     estimate_text_quality,
     has_spa_signals,
 )
-from serpsage.contracts.services import CacheBase, FetcherBase, RateLimiterBase
+from serpsage.contracts.services import FetcherBase, RateLimiterBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
 from serpsage.settings.models import RetrySettings
-from serpsage.util.json import stable_json
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -29,32 +25,6 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
 _MIN_BYTES = 96
-_FETCH_MODES = {"httpx", "curl_cffi", "playwright"}
-_CONTENT_KINDS = {"html", "pdf", "text", "binary", "unknown"}
-
-
-def _hash_key(obj: Any) -> str:
-    return hashlib.sha256(stable_json(obj).encode("utf-8")).hexdigest()
-
-
-def _encode_fetch_cache(payload: dict[str, Any]) -> bytes:
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-
-
-def _decode_fetch_cache(blob: bytes) -> dict[str, Any]:
-    return json.loads(blob.decode("utf-8"))
-
-
-@dataclass(slots=True)
-class _Inflight:
-    event: anyio.Event
-    result: FetchResult | None = None
-    error: Exception | None = None
 
 
 class AutoFetcher(FetcherBase):
@@ -62,22 +32,17 @@ class AutoFetcher(FetcherBase):
         self,
         *,
         rt: Runtime,
-        cache: CacheBase,
         rate_limiter: RateLimiterBase,
         httpx_fetcher: HttpxFetcher,
         curl_fetcher: CurlCffiFetcher | None,
         playwright_fetcher: PlaywrightFetcher | None,
     ) -> None:
         super().__init__(rt=rt)
-        self._cache = cache
         self._rl = rate_limiter
         self._httpx = httpx_fetcher
         self._curl = curl_fetcher
         self._playwright = playwright_fetcher
-        self._inflight: dict[str, _Inflight] = {}
-        self._inflight_lock = anyio.Lock()
         self.bind_deps(
-            cache,
             rate_limiter,
             httpx_fetcher,
             curl_fetcher,
@@ -94,99 +59,16 @@ class AutoFetcher(FetcherBase):
         rank_index: int = 0,
     ) -> FetchResult:
         backend = str(self.settings.fetch.backend or "auto").lower()
-        cache_key = _hash_key(
-            {
-                "url": url,
-                "kind": "fetch",
-                "strategy": backend,
-                "allow_render": bool(allow_render),
-                "rank_band": int(rank_index),
-            }
-        )
-        inflight_key = _hash_key(
-            {
-                "url": url,
-                "allow_render": bool(allow_render),
-                "backend": backend,
-                "timeout_s": timeout_s,
-            }
-        )
         with self.span("fetch.auto", url=url, strategy=backend) as sp:
             sp.set_attr("rank_index", int(rank_index))
             sp.set_attr("allow_render", bool(allow_render))
-
-            cached = await self._cache.aget(namespace="fetch", key=cache_key)
-            if cached:
-                sp.set_attr("cache_hit", True)
-                payload = _decode_fetch_cache(cached)
-                return self._payload_to_result(url=url, payload=payload)
-            sp.set_attr("cache_hit", False)
-
-            result, is_leader = await self._run_inflight(
-                key=inflight_key,
-                runner=lambda: self._afetch_uncached(
-                    url=url,
-                    timeout_s=timeout_s,
-                    allow_render=allow_render,
-                    rank_index=rank_index,
-                    span=sp,
-                ),
+            return await self._afetch_uncached(
+                url=url,
+                timeout_s=timeout_s,
+                allow_render=allow_render,
+                rank_index=rank_index,
+                span=sp,
             )
-            if is_leader:
-                await self._cache.aset(
-                    namespace="fetch",
-                    key=cache_key,
-                    value=_encode_fetch_cache(
-                        {
-                            "status_code": int(result.status_code),
-                            "content_type": result.content_type,
-                            "content_hex": result.content.hex(),
-                            "url": result.url,
-                            "fetch_mode": result.fetch_mode,
-                            "rendered": bool(result.rendered),
-                            "content_kind": result.content_kind,
-                            "headers": dict(result.headers or {}),
-                            "attempt_chain": list(result.attempt_chain or []),
-                            "quality_score": float(result.quality_score or 0.0),
-                        }
-                    ),
-                    ttl_s=int(self.settings.cache.fetch_ttl_s),
-                )
-            return result
-
-    async def _run_inflight(
-        self,
-        *,
-        key: str,
-        runner: Callable[[], Awaitable[FetchResult]],
-    ) -> tuple[FetchResult, bool]:
-        async with self._inflight_lock:
-            existing = self._inflight.get(key)
-            if existing is None:
-                existing = _Inflight(event=anyio.Event())
-                self._inflight[key] = existing
-                leader = True
-            else:
-                leader = False
-        if not leader:
-            await existing.event.wait()
-            if existing.error is not None:
-                raise existing.error
-            if existing.result is None:
-                raise RuntimeError("fetch inflight failed without result")
-            return existing.result, False
-
-        try:
-            result = await runner()
-            existing.result = result
-            return result, True
-        except Exception as exc:  # noqa: BLE001
-            existing.error = exc
-            raise
-        finally:
-            existing.event.set()
-            async with self._inflight_lock:
-                self._inflight.pop(key, None)
 
     async def _afetch_uncached(
         self,
@@ -221,28 +103,6 @@ class AutoFetcher(FetcherBase):
             headers=dict(attempt.headers or {}),
             attempt_chain=list(attempt.attempt_chain or []),
             quality_score=float(attempt.quality_score or attempt.content_score),
-        )
-
-    def _payload_to_result(self, *, url: str, payload: dict[str, Any]) -> FetchResult:
-        fetch_mode = str(payload.get("fetch_mode") or "httpx")
-        if fetch_mode not in _FETCH_MODES:
-            fetch_mode = "httpx"
-        content_kind = str(payload.get("content_kind") or "unknown")
-        if content_kind not in _CONTENT_KINDS:
-            content_kind = "unknown"
-        return FetchResult(
-            url=str(payload.get("url") or url),
-            status_code=int(payload["status_code"]),
-            content_type=payload.get("content_type"),
-            content=bytes.fromhex(payload["content_hex"]),
-            fetch_mode=fetch_mode,  # type: ignore[arg-type]
-            rendered=bool(payload.get("rendered", False)),
-            content_kind=content_kind,  # type: ignore[arg-type]
-            headers={str(k): str(v) for k, v in (payload.get("headers") or {}).items()},
-            attempt_chain=[
-                str(x) for x in (payload.get("attempt_chain") or []) if str(x).strip()
-            ],
-            quality_score=float(payload.get("quality_score") or 0.0),
         )
 
     async def _fetch_useful(

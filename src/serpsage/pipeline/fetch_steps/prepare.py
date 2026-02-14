@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.app.request import FetchContentRequest
+from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractContentOptions
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.pipeline.step import PipelineStep
@@ -26,19 +27,64 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
-        url = clean_whitespace(ctx.request.url or "")
+        url = clean_whitespace(ctx.url or "")
+        if not url:
+            ctx.fatal = True
+            ctx.errors.append(
+                AppError(
+                    code="fetch_load_failed",
+                    message="empty url",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "prepare",
+                        "fatal": True,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
+            return ctx
+
         chunks_request = ctx.request.chunks
         if chunks_request is not None:
             query = clean_whitespace(chunks_request.query or "")
             if not query:
-                raise ValueError("chunks.query must not be empty")
+                ctx.fatal = True
+                ctx.errors.append(
+                    AppError(
+                        code="fetch_rank_failed",
+                        message="chunks.query must not be empty",
+                        details={
+                            "url": url,
+                            "url_index": ctx.url_index,
+                            "stage": "prepare",
+                            "fatal": True,
+                            "crawl_mode": ctx.runtime.crawl_mode,
+                        },
+                    )
+                )
+                return ctx
             chunks_request = chunks_request.model_copy(update={"query": query})
 
         overview_request = ctx.request.overview
         if overview_request is not None:
             query = clean_whitespace(overview_request.query or "")
             if not query:
-                raise ValueError("overview.query must not be empty")
+                ctx.fatal = True
+                ctx.errors.append(
+                    AppError(
+                        code="fetch_overview_failed",
+                        message="overview.query must not be empty",
+                        details={
+                            "url": url,
+                            "url_index": ctx.url_index,
+                            "stage": "prepare",
+                            "fatal": True,
+                            "crawl_mode": ctx.runtime.crawl_mode,
+                        },
+                    )
+                )
+                return ctx
             overview_request = overview_request.model_copy(update={"query": query})
 
         raw_content = ctx.request.content
@@ -57,23 +103,15 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
             include_tags=list(content_request.include_tags),
             exclude_tags=list(content_request.exclude_tags),
         )
-        ctx.request = ctx.request.model_copy(
-            update={
-                "url": url,
-                "chunks": chunks_request,
-                "overview": overview_request,
-            }
-        )
+        ctx.url = url
         profile_query = (
             chunks_request.query
             if chunks_request is not None
-            else (
-                overview_request.query if overview_request is not None else url
-            )
+            else (overview_request.query if overview_request is not None else ctx.url)
         )
         profile_name, profile = self.settings.select_profile(
             query=profile_query,
-            explicit=ctx.request.profile,
+            explicit=None,
         )
         ctx.profile_name = profile_name
         ctx.profile = profile
@@ -101,6 +139,9 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
         span.set_attr("has_overview", bool(overview_request is not None))
         span.set_attr("content_depth", str(content_request.depth))
         span.set_attr("profile_name", str(profile_name))
+        span.set_attr("crawl_mode", str(ctx.runtime.crawl_mode))
+        span.set_attr("crawl_timeout_s", float(ctx.runtime.crawl_timeout_s))
+        span.set_attr("url_index", int(ctx.url_index))
         return ctx
 
 

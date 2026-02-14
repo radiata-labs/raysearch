@@ -4,7 +4,7 @@ import time
 
 from serpsage.components.fetch.auto import AutoFetcher
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.contracts.services import CacheBase, RateLimiterBase
+from serpsage.contracts.services import RateLimiterBase
 from serpsage.core.runtime import Runtime
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.fetch import FetchAttempt
@@ -15,16 +15,6 @@ from serpsage.telemetry.trace import NoopTelemetry
 class _Clock(ClockBase):
     def now_ms(self) -> int:
         return int(time.time() * 1000)
-
-
-class _NoopCache(CacheBase):
-    async def aget(self, *, namespace: str, key: str) -> bytes | None:
-        _ = namespace, key
-        return None
-
-    async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
-        _ = namespace, key, value, ttl_s
-        return
 
 
 class _NoopRateLimiter(RateLimiterBase):
@@ -48,7 +38,6 @@ def _build_auto_fetcher(settings: AppSettings) -> AutoFetcher:
     rt = Runtime(settings=settings, telemetry=NoopTelemetry(), clock=_Clock())
     return AutoFetcher(
         rt=rt,
-        cache=_NoopCache(rt=rt),
         rate_limiter=_NoopRateLimiter(rt=rt),
         httpx_fetcher=_NoopHttpxFetcher(rt=rt),  # type: ignore[arg-type]
         curl_fetcher=None,

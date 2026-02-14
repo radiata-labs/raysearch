@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import anyio
+
 from serpsage.app.response import FetchResponse, SearchResponse
 from serpsage.contracts.services import PipelineRunnerBase
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
-from serpsage.models.pipeline import FetchStepContext, SearchStepContext
+from serpsage.models.pipeline import (
+    FetchStepContext,
+    FetchStepRuntime,
+    SearchStepContext,
+)
 
 if TYPE_CHECKING:
     from serpsage.app.request import FetchRequest, SearchRequest
@@ -55,14 +61,46 @@ class Engine(WorkUnit):
     async def fetch(self, req: FetchRequest) -> FetchResponse:
         await self.ainit()
         with self.span("engine.fetch"):
-            ctx = FetchStepContext(settings=self.settings, request=req)
-            ctx = await self._fetch_runner.run(ctx)
+            contexts: list[FetchStepContext] = [
+                FetchStepContext(
+                    settings=self.settings,
+                    request=req,
+                    url=url,
+                    url_index=idx,
+                    runtime=FetchStepRuntime(
+                        crawl_mode=req.crawl_mode,
+                        crawl_timeout_s=float(req.crawl_timeout or 0.0),
+                        allow_render=True,
+                        rank_index=idx,
+                        max_links=req.runtime.max_links,
+                    ),
+                )
+                for idx, url in enumerate(req.urls)
+            ]
+            if contexts:
+                max_parallel = min(
+                    max(1, int(self.settings.fetch.concurrency.global_limit)),
+                    max(1, len(contexts)),
+                )
+                sem = anyio.Semaphore(max_parallel)
 
+                async def run_one(index: int, item: FetchStepContext) -> None:
+                    async with sem:
+                        contexts[index] = await self._fetch_runner.run(item)
+
+                async with anyio.create_task_group() as tg:
+                    for i, item in enumerate(contexts):
+                        tg.start_soon(run_one, i, item)
+
+            results = [
+                ctx.result
+                for ctx in contexts
+                if not ctx.fatal and ctx.result is not None
+            ]
+            errors = [err for ctx in contexts for err in ctx.errors]
             return FetchResponse(
-                url=ctx.request.url,
-                page=ctx.page,
-                overview=ctx.overview,
-                errors=ctx.errors,
+                results=results,
+                errors=errors,
                 telemetry=self.telemetry.summary(),
             )
 

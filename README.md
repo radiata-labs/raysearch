@@ -3,9 +3,9 @@
 SerpSage is an async-only SERP + page intelligence engine with two first-class paths:
 
 - `Engine.search(req)`: query search pipeline (`search -> normalize -> filter -> dedupe -> rank -> fetch-enhance -> rerank -> optional overview`)
-- `Engine.fetch(req)`: single URL pipeline (`load -> extract markdown -> optional chunk rank -> optional overview`)
+- `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional chunk rank -> optional overview -> finalize`)
 
-The `fetch` path is Markdown-first: output is centered on clean main-content markdown (`response.page.markdown`).
+The `fetch` path is Markdown-first: output is centered on clean main-content markdown (`response.results[].content`).
 
 ## Public API
 
@@ -65,7 +65,9 @@ async with Engine.from_settings(settings) as engine:
     )
     fetch_resp = await engine.fetch(
         FetchRequest(
-            url="https://example.com/article",
+            urls=["https://example.com/article"],
+            crawl_mode="fallback",
+            crawl_timeout=2.5,
             content=FetchContentRequest(depth="medium"),
             chunks=FetchChunksRequest(query="benchmark results", top_k_chunks=3),
             overview=FetchOverviewRequest(query="benchmark results"),
@@ -77,10 +79,14 @@ async with Engine.from_settings(settings) as engine:
 
 - `search.depth`: `simple|low|medium|high` (kept semantics)
 - `fetch`: no depth tiers, single strategy profile
-- `FetchRequest` V2 fields:
+- `FetchRequest` V3 fields:
+  - `urls`: list of URLs, processed concurrently with stable output order
+  - `crawl_mode`: `never|fallback|preferred|always`
+  - `crawl_timeout`: per-URL crawler timeout in seconds
   - `content`: `bool | FetchContentRequest` (`false` hides output markdown only; internal extraction still runs)
   - `chunks`: `FetchChunksRequest | None` (controls chunking query / limits)
   - `overview`: `FetchOverviewRequest | None` (controls overview query / limits)
-  - old fetch fields (`query/include_chunks/top_k_chunks/include_secondary_content`) are removed
+  - `runtime.max_links`: optional link collection cap; omitted means no links output
+  - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content`) are removed
 - both `search` and `fetch` support optional overview
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering

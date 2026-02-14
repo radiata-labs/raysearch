@@ -14,10 +14,12 @@ if TYPE_CHECKING:
 
 
 from serpsage.app.request import (
+    CrawlMode,
     FetchChunksRequest,
     FetchContentRequest,
     FetchOverviewRequest,
     FetchRequest,
+    FetchRuntimeRequest,
     SearchRequest,
 )
 from serpsage.app.response import FetchResponse, SearchResponse
@@ -35,7 +37,9 @@ def __getattr__(name: str):
 
 __all__ = [
     "AppSettings",
+    "CrawlMode",
     "Engine",
+    "FetchRuntimeRequest",
     "FetchChunksRequest",
     "FetchContentRequest",
     "FetchOverviewRequest",

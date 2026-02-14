@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from serpsage.models.errors import AppError  # noqa: TC001
 from serpsage.models.llm import LLMUsage  # noqa: TC001
@@ -87,16 +87,33 @@ class SearchResponse(BaseModel):
 class FetchResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
-    url: str
-    page: PageEnrichment = Field(default_factory=PageEnrichment)
-    overview: OverviewResult | None = None
+    results: list[FetchResultItem] = Field(default_factory=list)
     errors: list[AppError] = Field(default_factory=list)
     telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
+
+
+class FetchResultItem(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    url: str
+    title: str
+    content: str
+    chunks: list[str]
+    chunk_scores: list[float]
+    links: list[str]
+    overview: OverviewResult | None = None
+
+    @model_validator(mode="after")
+    def _validate_chunk_alignment(self) -> FetchResultItem:
+        if len(self.chunks) != len(self.chunk_scores):
+            raise ValueError("chunks and chunk_scores length mismatch")
+        return self
 
 
 __all__ = [
     "Citation",
     "FetchResponse",
+    "FetchResultItem",
     "OverviewLLMOutput",
     "OverviewResult",
     "PageChunk",
@@ -107,4 +124,5 @@ __all__ = [
 
 # Ensure forward references are resolved (Pydantic v2 + postponed annotations).
 SearchResponse.model_rebuild()
+FetchResultItem.model_rebuild()
 FetchResponse.model_rebuild()

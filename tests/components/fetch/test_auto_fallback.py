@@ -7,7 +7,7 @@ import httpx
 
 from serpsage.components.fetch.auto import AutoFetcher
 from serpsage.contracts.lifecycle import ClockBase
-from serpsage.contracts.services import CacheBase, RateLimiterBase
+from serpsage.contracts.services import RateLimiterBase
 from serpsage.core.runtime import Runtime
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.fetch import FetchAttempt, FetchResult
@@ -20,16 +20,6 @@ URL = "https://en.wikipedia.org/wiki/Large_language_model"
 class _Clock(ClockBase):
     def now_ms(self) -> int:
         return int(time.time() * 1000)
-
-
-class _NoopCache(CacheBase):
-    async def aget(self, *, namespace: str, key: str) -> bytes | None:
-        _ = namespace, key
-        return None
-
-    async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
-        _ = namespace, key, value, ttl_s
-        return
 
 
 class _NoopRateLimiter(RateLimiterBase):
@@ -136,7 +126,6 @@ def _build_auto_fetcher(*, telemetry_enabled: bool) -> AutoFetcher:
 
     return AutoFetcher(
         rt=rt,
-        cache=_NoopCache(rt=rt),
         rate_limiter=_NoopRateLimiter(rt=rt),
         httpx_fetcher=_StubHttpxFetcher(
             rt=rt,

@@ -92,7 +92,6 @@ def build_engine(
     extractor: ExtractorBase = ov.extractor or build_extractor(rt=rt)
     fetcher: FetcherBase = ov.fetcher or build_fetcher(
         rt=rt,
-        cache=cache,
         rate_limiter=rate_limiter,
         http=shared_http_unit,
     )
@@ -101,7 +100,7 @@ def build_engine(
 
     fetch_steps: list[PipelineStepBase[FetchStepContext]] = [
         FetchPrepareStep(rt=rt),
-        FetchLoadStep(rt=rt, fetcher=fetcher),
+        FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
         FetchExtractStep(rt=rt, extractor=extractor),
         FetchRankStep(rt=rt, ranker=ranker),
         FetchOverviewStep(rt=rt, llm=llm, cache=cache),

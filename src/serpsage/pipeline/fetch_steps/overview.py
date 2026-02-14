@@ -12,6 +12,7 @@ from serpsage.app.response import (
     OverviewLLMOutput,
     OverviewResult,
     PageChunk,
+    PageEnrichment,
     ResultItem,
 )
 from serpsage.components.overview.schema import overview_json_schema
@@ -49,6 +50,8 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
+        if ctx.fatal:
+            return ctx
         overview_request = ctx.overview_request
         if overview_request is None:
             return ctx
@@ -57,6 +60,19 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
 
         source = self._build_source(ctx)
         if source is None:
+            ctx.errors.append(
+                AppError(
+                    code="fetch_overview_failed",
+                    message="no overview source content",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "overview",
+                        "fatal": False,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
+                )
+            )
             return ctx
         query = overview_request.query
         llm_cfg = self.settings.llm.resolve_model(profile.use_model)
@@ -109,12 +125,15 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                 self_heal_retries=int(profile.self_heal_retries),
                 force_language=str(profile.force_language),
             )
-            if overview_request.max_chars is not None and overview_request.max_chars > 0:
+            if (
+                overview_request.max_chars is not None
+                and overview_request.max_chars > 0
+            ):
                 overview = self._clip_overview_output(
                     overview=overview,
                     max_chars=int(overview_request.max_chars),
                 )
-            ctx.page.timing_ms["overview_ms"] = int((time.monotonic() - t0) * 1000)
+            span.set_attr("overview_ms", int((time.monotonic() - t0) * 1000))
             ctx.overview = overview
             if cache_ttl_s > 0 and cache_key:
                 await self._cache.aset(
@@ -128,7 +147,14 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                 AppError(
                     code="fetch_overview_failed",
                     message=str(exc),
-                    details={"type": type(exc).__name__},
+                    details={
+                        "type": type(exc).__name__,
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "overview",
+                        "fatal": False,
+                        "crawl_mode": ctx.runtime.crawl_mode,
+                    },
                 )
             )
         return ctx
@@ -372,23 +398,36 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
         return overview.model_copy(update={"citations": renum})
 
     def _build_source(self, ctx: FetchStepContext) -> ResultItem | None:
-        chunks = list(ctx.page.chunks or [])
+        chunks = [
+            PageChunk(chunk_id=ch.chunk_id, text=ch.text, score=float(ch.score))
+            for ch in list(ctx.scored_chunks or [])
+        ]
         if not chunks:
             excerpt = (ctx.extracted.plain_text if ctx.extracted else "").strip()
             if not excerpt:
-                excerpt = (ctx.page.markdown or "").replace("\n", " ").strip()
+                excerpt = (
+                    ((ctx.extracted.markdown if ctx.extracted else "") or "")
+                    .replace(
+                        "\n",
+                        " ",
+                    )
+                    .strip()
+                )
             if excerpt:
                 chunks = [PageChunk(chunk_id="S1:C1", text=excerpt[:1000], score=1.0)]
         if not chunks:
             return None
 
+        page = PageEnrichment(
+            chunks=chunks, markdown=(ctx.extracted.markdown if ctx.extracted else "")
+        )
         source = ResultItem(
             source_id="S1",
-            url=ctx.request.url,
+            url=ctx.url,
             title=(ctx.extracted.title if ctx.extracted else "") or "",
             snippet=((ctx.extracted.plain_text if ctx.extracted else "") or "")[:260],
             score=1.0,
-            page=ctx.page.model_copy(update={"chunks": chunks}),
+            page=page,
         )
         for idx, ch in enumerate(source.page.chunks, 1):
             ch.chunk_id = ch.chunk_id or f"S1:C{idx}"
