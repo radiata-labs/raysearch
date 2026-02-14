@@ -67,5 +67,6 @@ async with Engine.from_settings(settings) as engine:
 - `fetch` default:
   - no `query` => markdown extraction only
   - with `query` => auto chunk/rank
+  - `include_secondary_content`: `false` keeps primary content only; `true` includes secondary sections (related/comments/sidebar)
 - both `search` and `fetch` support optional overview
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering

@@ -76,7 +76,7 @@ search:
     force_language: auto
 
 fetch:
-  backend: auto # auto|httpx|curl_cffi|playwright
+  backend: playwright # auto|httpx|curl_cffi|playwright
   timeout_s: 20
   follow_redirects: true
   user_agent: serpsage-bot/4.0
@@ -98,17 +98,23 @@ fetch:
       - cloudflare
       - just a moment
       - verify you are human
-      - captcha
       - access denied
-      - blocked
       - please enable javascript
       - security check
       - checking your browser
     max_render_pages_search: 2
   extract:
-    engines: [fastdom, readability, trafilatura]
+    engines: [fastdom, readability, trafilatura, justext, boilerpy3]
+    engine_order: [fastdom, readability, trafilatura, justext, boilerpy3]
+    engine_timeout_ms: 1800
     max_markdown_chars: 160000
     min_plain_chars: 220
+    min_primary_chars: 220
+    min_total_chars_with_secondary: 220
+    include_secondary_content_default: false
+    collect_links_default: false
+    link_max_count: 800
+    link_keep_hash: false
   chunk:
     target_chars: 1050
     overlap_segments: 1

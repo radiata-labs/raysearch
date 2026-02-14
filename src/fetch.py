@@ -25,10 +25,10 @@ async def main(
     async with Engine.from_settings(settings) as engine:
         resp = await engine.fetch(req)
     return {
-        "fetch_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2),
+        "fetch_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2) + "\n\n" + resp.page.markdown,
     }
 
 
 if __name__ == "__main__":
-    out = anyio.run(main, "https://en.wikipedia.org/wiki/Large_language_model", None, False)
+    out = anyio.run(main, "https://exa.ai/docs/reference/search-best-practices", None, False)
     print(out["fetch_result"])

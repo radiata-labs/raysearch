@@ -64,7 +64,13 @@ class RateLimiterBase(WorkUnit, ABC):
 class ExtractorBase(WorkUnit, ABC):
     @abstractmethod
     def extract(
-        self, *, url: str, content: bytes, content_type: str | None
+        self,
+        *,
+        url: str,
+        content: bytes,
+        content_type: str | None,
+        include_secondary_content: bool = False,
+        collect_links: bool = False,
     ) -> ExtractedDocument:
         raise NotImplementedError
 

@@ -39,6 +39,14 @@ dependencies = [
 [project.optional-dependencies]
 # Not required by the core SERP pipeline; kept as extras to avoid heavy/compiled
 # dependencies for headless Docker/API deployments.
+extract_plus = [
+    "trafilatura>=1.10.0",
+    "justext>=3.0.1",
+    "boilerpy3>=1.0.7",
+    "selectolax>=0.3.26",
+    "inscriptis>=2.5.0",
+    "markdownify>=0.13.1",
+]
 cache = [
     "aiosqlite>=0.22.1",
     "aioredis>=2.0.1",
@@ -162,3 +170,17 @@ reportInvalidTypeVarUse = false
 reportShadowedImports = true
 reportUninitializedInstanceVariable = false
 reportPrivateUsage = false
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+namespace_packages = true
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["serpsage.components.extract.markdown.*"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["readability", "trafilatura", "justext", "boilerpy3", "boilerpy3.*"]
+ignore_missing_imports = true

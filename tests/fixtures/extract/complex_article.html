@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Complex Article Fixture</title>
+  </head>
+  <body>
+    <header>Top header nav should be removed</header>
+    <main id="content-main">
+      <article class="article-body">
+        <h1>Main Story Title</h1>
+        <p>
+          Main body phrase Alpha. This is the primary article content with
+          meaningful punctuation and context for extraction quality.
+        </p>
+        <p>
+          The core topic includes implementation details, examples, and
+          discussion. It should stay in markdown output when secondary content
+          is disabled. See
+          <a href="/docs/start?utm_medium=fixture">setup docs</a>
+          for primary navigation.
+        </p>
+      </article>
+    </main>
+    <aside id="related-block" class="related sidebar">
+      <h2>Related Reads</h2>
+      <p>Related recommendation block Omega.</p>
+      <a href="/related/post?utm_source=test&utm_campaign=fixture">Read more</a>
+    </aside>
+    <section id="comments-panel" class="comments thread">
+      <h2>Comments</h2>
+      <p>Comments thread Sigma. This should be considered secondary content.</p>
+      <a href="#comment-1">Jump to comment</a>
+    </section>
+    <footer>Footer boilerplate</footer>
+  </body>
+</html>

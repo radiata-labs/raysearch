@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -313,6 +312,7 @@ class AutoFetcher(FetcherBase):
         base_candidates: list[FetchAttempt] = []
         winner: FetchAttempt | None = None
         render_launched = False
+        span.set_attr("render_triggered", False)
 
         hedge_compat_s = 0.08
         hedge_curl_s = 0.11
@@ -320,9 +320,9 @@ class AutoFetcher(FetcherBase):
 
         def make_runner(
             func: Callable[..., Awaitable[Any]], *args: object, **kwargs: object
-        ) -> Callable[[], Awaitable[Any]]:
-            async def runner() -> Any:
-                return await func(*args, **kwargs)
+        ) -> Callable[[SpanBase], Awaitable[FetchAttempt]]:
+            async def runner(candidate_span: SpanBase) -> FetchAttempt:
+                return await func(*args, span=candidate_span, **kwargs)
 
             return runner
 
@@ -331,7 +331,7 @@ class AutoFetcher(FetcherBase):
             async def worker(
                 label: str,
                 delay_s: float,
-                runner: Callable[..., Awaitable[Any]],
+                runner: Callable[[SpanBase], Awaitable[FetchAttempt]],
                 can_trigger_render: bool = True,
             ) -> None:
                 nonlocal winner, render_launched
@@ -339,52 +339,64 @@ class AutoFetcher(FetcherBase):
                     await anyio.sleep(delay_s)
                 if winner is not None:
                     return
-                try:
-                    attempt = await runner()
-                except Exception as exc:  # noqa: BLE001
-                    attempt = self._failed_attempt(
-                        url=url,
-                        mode=label,
-                        error=type(exc).__name__,
-                    )
-
-                base_candidates.append(attempt)
-                if can_trigger_render and self._should_render(
-                    attempt,
-                    allow_render=allow_render,
-                    rank_index=rank_index,
-                    render_launched=render_launched,
-                ):
-                    render_launched = True
-                    reason = self._render_reason(attempt)
-                    span.set_attr("render_triggered", True)
-                    span.set_attr("render_reason", reason)
-                    if self._playwright is not None:
-                        tg.start_soon(
-                            worker,
-                            "playwright",
-                            0.0,
-                            make_runner(
-                                self._playwright.fetch_attempt,
-                                url=url,
-                                span=span,
-                                timeout_s=timeout_s,
-                                render_reason=reason,
-                            ),
-                            False,
+                with self.span("fetch.auto.candidate", url=url, mode=label) as csp:
+                    try:
+                        attempt = await runner(csp)
+                    except Exception as exc:  # noqa: BLE001
+                        attempt = self._failed_attempt(
+                            url=url,
+                            mode=label,
+                            error=type(exc).__name__,
                         )
-                if self._is_useful(attempt):
-                    winner = attempt
-                    tg.cancel_scope.cancel()
+                        csp.set_attr("candidate_error_type", type(exc).__name__)
+
+                    blocked = self._is_blocked(attempt)
+                    useful = self._is_useful(attempt)
+                    self._set_candidate_span_attrs(
+                        span=csp,
+                        attempt=attempt,
+                        blocked=blocked,
+                        useful=useful,
+                    )
+                    base_candidates.append(attempt)
+                    span.set_attr("candidate_count", int(len(base_candidates)))
+
+                    if can_trigger_render and self._should_render(
+                        attempt,
+                        allow_render=allow_render,
+                        rank_index=rank_index,
+                        render_launched=render_launched,
+                    ):
+                        render_launched = True
+                        reason = self._render_reason(attempt)
+                        span.set_attr("render_triggered", True)
+                        span.set_attr("render_reason", reason)
+                        if self._playwright is not None:
+                            tg.start_soon(
+                                worker,
+                                "playwright",
+                                0.0,
+                                make_runner(
+                                    self._playwright.fetch_attempt,
+                                    url=url,
+                                    timeout_s=timeout_s,
+                                    render_reason=reason,
+                                ),
+                                False,
+                            )
+                    if useful:
+                        winner = attempt
+                        self._set_winner_attrs(span=span, winner=attempt)
+                        tg.cancel_scope.cancel()
 
             tg.start_soon(
                 worker,
                 "httpx:browser",
                 0.0,
-                lambda: self._httpx.fetch_attempt(
+                make_runner(
+                    self._httpx.fetch_attempt,
                     url=url,
                     profile="browser",
-                    span=span,
                     retry=retry,
                     timeout_s=timeout_s,
                 ),
@@ -393,10 +405,10 @@ class AutoFetcher(FetcherBase):
                 worker,
                 "httpx:compat",
                 hedge_compat_s,
-                lambda: self._httpx.fetch_attempt(
+                make_runner(
+                    self._httpx.fetch_attempt,
                     url=url,
                     profile="compat",
-                    span=span,
                     retry=retry,
                     timeout_s=timeout_s,
                 ),
@@ -409,7 +421,6 @@ class AutoFetcher(FetcherBase):
                     make_runner(
                         self._curl.fetch_attempt,
                         url=url,
-                        span=span,
                         retry=retry,
                         timeout_s=timeout_s,
                     ),
@@ -431,19 +442,32 @@ class AutoFetcher(FetcherBase):
                 span.set_attr("render_triggered", True)
                 span.set_attr("render_reason", reason)
                 try:
-                    render_attempt = await self._playwright.fetch_attempt(
+                    with self.span(
+                        "fetch.auto.candidate",
                         url=url,
-                        span=span,
-                        timeout_s=timeout_s,
-                        render_reason=reason,
-                    )
-                    base_candidates.append(render_attempt)
-                    if self._is_useful(render_attempt):
-                        winner = render_attempt
+                        mode="playwright",
+                    ) as csp:
+                        render_attempt = await self._playwright.fetch_attempt(
+                            url=url,
+                            span=csp,
+                            timeout_s=timeout_s,
+                            render_reason=reason,
+                        )
+                        blocked = self._is_blocked(render_attempt)
+                        useful = self._is_useful(render_attempt)
+                        self._set_candidate_span_attrs(
+                            span=csp,
+                            attempt=render_attempt,
+                            blocked=blocked,
+                            useful=useful,
+                        )
+                        base_candidates.append(render_attempt)
+                        span.set_attr("candidate_count", int(len(base_candidates)))
+                        if useful:
+                            winner = render_attempt
+                            self._set_winner_attrs(span=span, winner=render_attempt)
                 except Exception as exc:  # noqa: BLE001
                     span.set_attr("playwright_error", type(exc).__name__)
-            else:
-                span.set_attr("render_triggered", False)
 
         if winner is not None:
             return self._attach_attempt_chain(winner, base_candidates)
@@ -451,6 +475,7 @@ class AutoFetcher(FetcherBase):
         if base_candidates:
             best = max(base_candidates, key=self._candidate_score)
             if self._is_useful(best):
+                self._set_winner_attrs(span=span, winner=best)
                 return self._attach_attempt_chain(best, base_candidates)
             best = self._attach_attempt_chain(best, base_candidates)
             raise RuntimeError(
@@ -459,22 +484,34 @@ class AutoFetcher(FetcherBase):
         raise RuntimeError("fetch_unusable:auto:no_candidates")
 
     def _is_blocked(self, res: FetchAttempt) -> bool:
-        markers = tuple(self.settings.fetch.quality.blocked_markers or [])
         status = int(res.status_code or 0)
         if status in {401, 403}:
             return True
+        marker_hit = self._has_block_marker(res=res)
+        if not marker_hit:
+            return False
+        return self._is_low_quality_for_block(res)
+
+    def _has_block_marker(self, *, res: FetchAttempt) -> bool:
+        markers = tuple(self.settings.fetch.quality.blocked_markers or [])
+        if not markers:
+            return bool(res.blocked)
         if blocked_marker_hit(res.content, markers=markers):
             return True
-        if res.content:
-            sample = res.content[:18_000].decode("utf-8", errors="ignore")
-            if markers:
-                pat = re.compile(
-                    "|".join(re.escape(x) for x in markers if x),
-                    re.IGNORECASE,
-                )
-                if pat.search(sample):
-                    return True
         return bool(res.blocked)
+
+    def _is_low_quality_for_block(self, res: FetchAttempt) -> bool:
+        quality = self.settings.fetch.quality
+        if len(res.content or b"") < _MIN_BYTES:
+            return True
+        if res.content_kind in {"binary", "unknown"}:
+            return True
+        if res.content_kind == "html":
+            if int(res.text_chars or 0) < int(quality.min_text_chars):
+                return True
+            if float(res.content_score or 0.0) < float(quality.min_content_score):
+                return True
+        return False
 
     def _is_useful(self, res: FetchAttempt) -> bool:
         quality = self.settings.fetch.quality
@@ -607,6 +644,32 @@ class AutoFetcher(FetcherBase):
                 "quality_score": float(max(0.0, self._candidate_score(winner))),
             }
         )
+
+    def _set_candidate_span_attrs(
+        self,
+        *,
+        span: SpanBase,
+        attempt: FetchAttempt,
+        blocked: bool,
+        useful: bool,
+    ) -> None:
+        span.set_attr("status", int(attempt.status_code or 0))
+        span.set_attr("fetch_mode", str(attempt.fetch_mode))
+        span.set_attr("content_kind", str(attempt.content_kind))
+        span.set_attr("content_bytes", int(len(attempt.content or b"")))
+        span.set_attr("text_chars", int(attempt.text_chars or 0))
+        span.set_attr("content_score", float(attempt.content_score or 0.0))
+        span.set_attr("blocked", bool(blocked))
+        span.set_attr("useful", bool(useful))
+        if attempt.render_reason:
+            span.set_attr("render_reason", str(attempt.render_reason))
+
+    def _set_winner_attrs(self, *, span: SpanBase, winner: FetchAttempt) -> None:
+        span.set_attr("winner_mode", str(winner.fetch_mode))
+        span.set_attr("winner_status", int(winner.status_code or 0))
+        span.set_attr("winner_content_kind", str(winner.content_kind))
+        span.set_attr("winner_text_chars", int(winner.text_chars or 0))
+        span.set_attr("winner_content_score", float(winner.content_score or 0.0))
 
 
 __all__ = ["AutoFetcher"]

@@ -149,11 +149,33 @@ def blocked_marker_hit(
 ) -> bool:
     if not content:
         return False
-    use_markers = tuple(markers or ())
+    use_markers = tuple(
+        marker.strip().lower() for marker in (markers or ()) if marker and marker.strip()
+    )
     if not use_markers:
         return False
-    sample = content[:20_000].decode("utf-8", errors="ignore").lower()
-    return any(marker in sample for marker in use_markers)
+
+    raw_sample = content[:30_000].decode("utf-8", errors="ignore")
+    lowered = raw_sample.lower()
+    looks_like_html = bool(
+        "<html" in lowered
+        or "<!doctype" in lowered
+        or "<body" in lowered
+        or "<head" in lowered
+    )
+
+    if looks_like_html:
+        try:
+            soup = BeautifulSoup(raw_sample, "html.parser")
+            for t in soup.find_all(["script", "style", "noscript"]):
+                t.decompose()
+            visible = " ".join(soup.get_text(" ", strip=True).split()).lower()
+            if visible:
+                return any(marker in visible for marker in use_markers)
+        except Exception:
+            pass
+
+    return any(marker in lowered for marker in use_markers)
 
 
 __all__ = [

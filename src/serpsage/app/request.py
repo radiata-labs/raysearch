@@ -26,6 +26,7 @@ class FetchRequest(BaseModel):
     profile: str | None = None
     include_chunks: bool | None = None
     top_k_chunks: int | None = None
+    include_secondary_content: bool | None = None
     overview: bool | None = None
     params: dict[str, object] = Field(default_factory=dict)
 
