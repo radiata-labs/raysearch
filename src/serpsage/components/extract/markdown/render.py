@@ -52,6 +52,7 @@ def render_markdown(
     root: Tag | SoupType,
     base_url: str,
     skip_roots: list[Tag] | None = None,
+    preserve_html_tags: bool = False,
 ) -> tuple[str, dict[str, int]]:
     lines: list[str] = []
     stats = {
@@ -69,7 +70,12 @@ def render_markdown(
     for el in _iter_renderable_blocks(root=root):
         if _should_skip(el, root=root, skip_roots=skip_roots):
             continue
-        rendered = _render_block(tag=el, base_url=base_url, stats=stats)
+        rendered = _render_block(
+            tag=el,
+            base_url=base_url,
+            stats=stats,
+            preserve_html_tags=preserve_html_tags,
+        )
         if not rendered:
             continue
         lines.append(rendered)
@@ -81,6 +87,7 @@ def render_secondary_markdown(
     *,
     secondary_roots: list[Tag],
     base_url: str,
+    preserve_html_tags: bool = False,
 ) -> tuple[str, dict[str, int]]:
     blocks: list[str] = []
     merged = {
@@ -95,7 +102,11 @@ def render_secondary_markdown(
         "block_count": 0,
     }
     for root in secondary_roots:
-        md, stats = render_markdown(root=root, base_url=base_url)
+        md, stats = render_markdown(
+            root=root,
+            base_url=base_url,
+            preserve_html_tags=preserve_html_tags,
+        )
         if md:
             blocks.append(md)
         for key, value in stats.items():
@@ -135,33 +146,73 @@ def _has_block_ancestor(tag: Tag, root: Tag | SoupType) -> bool:
     return False
 
 
-def _render_block(*, tag: Tag, base_url: str, stats: dict[str, int]) -> str:
+def _render_block(
+    *,
+    tag: Tag,
+    base_url: str,
+    stats: dict[str, int],
+    preserve_html_tags: bool,
+) -> str:
     name = (tag.name or "").lower()
     if name == "pre":
-        return _render_preformatted(tag=tag, stats=stats)
+        return _render_preformatted(
+            tag=tag,
+            stats=stats,
+            preserve_html_tags=preserve_html_tags,
+        )
 
     if name in {"ul", "ol"}:
-        return _render_list(list_tag=tag, base_url=base_url, stats=stats, depth=0)
+        return _render_list(
+            list_tag=tag,
+            base_url=base_url,
+            stats=stats,
+            depth=0,
+            preserve_html_tags=preserve_html_tags,
+        )
 
     if name == "table":
-        table_md = _render_table(table=tag, base_url=base_url, stats=stats)
+        table_md = _render_table(
+            table=tag,
+            base_url=base_url,
+            stats=stats,
+            preserve_html_tags=preserve_html_tags,
+        )
         if table_md:
             stats["table_count"] += 1
         return table_md
 
     if name == "blockquote":
-        text = _render_inline_text(tag=tag, base_url=base_url, stats=stats)
+        text = _render_inline_text(
+            tag=tag,
+            base_url=base_url,
+            stats=stats,
+            preserve_html_tags=preserve_html_tags,
+        )
         if not text:
             return ""
+        if preserve_html_tags:
+            return f"<blockquote>{text}</blockquote>"
         return "\n".join(f"> {line}" if line else ">" for line in text.split("\n"))
 
     if name == "hr":
+        if preserve_html_tags:
+            return "<hr />"
         return "---"
 
     if name == "dl":
-        return _render_description_list(dl=tag, base_url=base_url, stats=stats)
+        return _render_description_list(
+            dl=tag,
+            base_url=base_url,
+            stats=stats,
+            preserve_html_tags=preserve_html_tags,
+        )
 
-    text = _render_inline_text(tag=tag, base_url=base_url, stats=stats)
+    text = _render_inline_text(
+        tag=tag,
+        base_url=base_url,
+        stats=stats,
+        preserve_html_tags=preserve_html_tags,
+    )
     if not text:
         return ""
     if _NOISE_LINE_RE.search(_WS_RE.sub(" ", text).strip()):
@@ -170,12 +221,21 @@ def _render_block(*, tag: Tag, base_url: str, stats: dict[str, int]) -> str:
     if name.startswith("h") and len(name) == 2 and name[1].isdigit():
         level = min(6, max(1, int(name[1])))
         stats["heading_count"] += 1
+        if preserve_html_tags:
+            return f"<h{level}>{text}</h{level}>"
         return f"{'#' * level} {text}"
 
+    if preserve_html_tags and name == "p":
+        return f"<p>{text}</p>"
     return text
 
 
-def _render_preformatted(*, tag: Tag, stats: dict[str, int]) -> str:
+def _render_preformatted(
+    *,
+    tag: Tag,
+    stats: dict[str, int],
+    preserve_html_tags: bool,
+) -> str:
     code_tag = tag.find("code")
     source = code_tag if isinstance(code_tag, Tag) else tag
     code = source.get_text("", strip=False)
@@ -188,18 +248,34 @@ def _render_preformatted(*, tag: Tag, stats: dict[str, int]) -> str:
     info = lang or ""
     stats["code_block_count"] += 1
 
+    if preserve_html_tags:
+        info_attr = f' class="language-{html.escape(info)}"' if info else ""
+        payload = html.escape(code)
+        return f"<pre><code{info_attr}>{payload}</code></pre>"
+
     if code.endswith("\n"):
         return f"{fence}{info}\n{code}{fence}"
     return f"{fence}{info}\n{code}\n{fence}"
 
 
-def _render_description_list(*, dl: Tag, base_url: str, stats: dict[str, int]) -> str:
+def _render_description_list(
+    *,
+    dl: Tag,
+    base_url: str,
+    stats: dict[str, int],
+    preserve_html_tags: bool,
+) -> str:
     out: list[str] = []
     terms = dl.find_all(["dt", "dd"], recursive=False)
     current_term = ""
     for item in terms:
         name = (item.name or "").lower()
-        text = _render_inline_text(tag=item, base_url=base_url, stats=stats)
+        text = _render_inline_text(
+            tag=item,
+            base_url=base_url,
+            stats=stats,
+            preserve_html_tags=preserve_html_tags,
+        )
         if not text:
             continue
         if name == "dt":
@@ -219,6 +295,7 @@ def _render_list(
     base_url: str,
     stats: dict[str, int],
     depth: int,
+    preserve_html_tags: bool,
 ) -> str:
     ordered = (list_tag.name or "").lower() == "ol"
     items = list_tag.find_all("li", recursive=False)
@@ -229,7 +306,12 @@ def _render_list(
     for idx, li in enumerate(items, start=1):
         marker = f"{idx}. " if ordered else "- "
         prefix = f"{'  ' * depth}{marker}"
-        body = _render_list_item_text(li=li, base_url=base_url, stats=stats)
+        body = _render_list_item_text(
+            li=li,
+            base_url=base_url,
+            stats=stats,
+            preserve_html_tags=preserve_html_tags,
+        )
         if body:
             lines.append(f"{prefix}{body}")
         else:
@@ -242,6 +324,7 @@ def _render_list(
                 base_url=base_url,
                 stats=stats,
                 depth=depth + 1,
+                preserve_html_tags=preserve_html_tags,
             )
             if nested_md:
                 lines.append(nested_md)
@@ -253,23 +336,43 @@ def _render_list(
     return "\n".join(lines).rstrip()
 
 
-def _render_list_item_text(*, li: Tag, base_url: str, stats: dict[str, int]) -> str:
+def _render_list_item_text(
+    *,
+    li: Tag,
+    base_url: str,
+    stats: dict[str, int],
+    preserve_html_tags: bool,
+) -> str:
     clone_soup = BeautifulSoup(str(li), "html.parser")
     clone_li = clone_soup.find("li")
     if not isinstance(clone_li, Tag):
         return ""
     for nested in clone_li.find_all(["ul", "ol"]):
         nested.decompose()
-    return _render_inline_text(tag=clone_li, base_url=base_url, stats=stats)
+    return _render_inline_text(
+        tag=clone_li,
+        base_url=base_url,
+        stats=stats,
+        preserve_html_tags=preserve_html_tags,
+    )
 
 
-def _render_inline_text(*, tag: Tag, base_url: str, stats: dict[str, int]) -> str:
+def _render_inline_text(
+    *,
+    tag: Tag,
+    base_url: str,
+    stats: dict[str, int],
+    preserve_html_tags: bool,
+) -> str:
     tokens: list[InlineToken] = []
     for child in tag.children:
         tokens.extend(_collect_inline_tokens(node=child, base_url=base_url, stats=stats))
     if not tokens:
         tokens = _collect_inline_tokens(node=tag, base_url=base_url, stats=stats)
-    return _serialize_inline_tokens(tokens=tokens).strip()
+    return _serialize_inline_tokens(
+        tokens=tokens,
+        preserve_html_tags=preserve_html_tags,
+    ).strip()
 
 
 def _collect_inline_tokens(
@@ -328,17 +431,24 @@ def _collect_inline_tokens(
     return out
 
 
-def _serialize_inline_tokens(*, tokens: list[InlineToken]) -> str:
+def _serialize_inline_tokens(
+    *,
+    tokens: list[InlineToken],
+    preserve_html_tags: bool,
+) -> str:
     out_parts: list[str] = []
     for token in tokens:
-        rendered = _render_inline_token(token=token)
+        rendered = _render_inline_token(
+            token=token,
+            preserve_html_tags=preserve_html_tags,
+        )
         if not rendered:
             continue
         _append_chunk(out_parts, rendered)
     return "".join(out_parts).replace(" \n", "\n").replace("\n ", "\n")
 
 
-def _render_inline_token(*, token: InlineToken) -> str:
+def _render_inline_token(*, token: InlineToken, preserve_html_tags: bool) -> str:
     if token.kind == "text":
         return _normalize_text_fragment(token.text)
 
@@ -346,22 +456,40 @@ def _render_inline_token(*, token: InlineToken) -> str:
         return "\n"
 
     if token.kind == "code":
+        if preserve_html_tags:
+            escaped = html.escape(token.text.replace("\n", " "))
+            return f"<code>{escaped}</code>"
         return _render_inline_code(text=token.text)
 
     if token.kind == "link":
-        label = _serialize_inline_tokens(tokens=token.children).strip()
+        label = _serialize_inline_tokens(
+            tokens=token.children,
+            preserve_html_tags=preserve_html_tags,
+        ).strip()
         if not label:
             return ""
         if token.href:
+            if preserve_html_tags:
+                return f'<a href="{html.escape(token.href, quote=True)}">{label}</a>'
             return f"[{label}]({token.href})"
         return label
 
     if token.kind == "em":
-        inner = _serialize_inline_tokens(tokens=token.children).strip()
+        inner = _serialize_inline_tokens(
+            tokens=token.children,
+            preserve_html_tags=preserve_html_tags,
+        ).strip()
+        if preserve_html_tags:
+            return f"<em>{inner}</em>" if inner else ""
         return f"*{inner}*" if inner else ""
 
     if token.kind == "strong":
-        inner = _serialize_inline_tokens(tokens=token.children).strip()
+        inner = _serialize_inline_tokens(
+            tokens=token.children,
+            preserve_html_tags=preserve_html_tags,
+        ).strip()
+        if preserve_html_tags:
+            return f"<strong>{inner}</strong>" if inner else ""
         return f"**{inner}**" if inner else ""
 
     return ""
@@ -402,7 +530,13 @@ def _render_inline_code(*, text: str) -> str:
     return f"{fence}{content}{fence}"
 
 
-def _render_table(*, table: Tag, base_url: str, stats: dict[str, int]) -> str:
+def _render_table(
+    *,
+    table: Tag,
+    base_url: str,
+    stats: dict[str, int],
+    preserve_html_tags: bool,
+) -> str:
     rows: list[list[str]] = []
     for tr in table.find_all("tr"):
         cells = tr.find_all(["th", "td"], recursive=False)
@@ -413,7 +547,12 @@ def _render_table(*, table: Tag, base_url: str, stats: dict[str, int]) -> str:
 
         row: list[str] = []
         for cell in cells:
-            text = _render_inline_text(tag=cell, base_url=base_url, stats=stats)
+            text = _render_inline_text(
+                tag=cell,
+                base_url=base_url,
+                stats=stats,
+                preserve_html_tags=preserve_html_tags,
+            )
             row.append(_escape_table_cell(text))
         rows.append(row)
 

@@ -50,7 +50,12 @@ def parse_html_document(html_doc: str) -> BeautifulSoup:
     return BeautifulSoup(html_doc, "html.parser")
 
 
-def cleanup_dom(soup: BeautifulSoup) -> None:
+def cleanup_dom(
+    soup: BeautifulSoup,
+    *,
+    keep_semantic_tags: set[str] | None = None,
+) -> None:
+    keep_semantic = {str(tag).strip().lower() for tag in (keep_semantic_tags or set())}
     for tag in list(soup.find_all(_DROP_TAGS)):
         with contextlib.suppress(Exception):
             tag.decompose()
@@ -58,7 +63,13 @@ def cleanup_dom(soup: BeautifulSoup) -> None:
         with contextlib.suppress(Exception):
             name = (tag.name or "").lower()
             role = str(tag.get("role") or "").lower()
-            if name in _HARD_NOISE_TAGS or role in _HARD_NOISE_ROLE:
+            name_sem = _semantic_tag_for_name(name)
+            role_sem = _semantic_tag_for_role(role)
+            sem = name_sem or role_sem
+            if name in _HARD_NOISE_TAGS and sem not in keep_semantic:
+                tag.decompose()
+                continue
+            if role in _HARD_NOISE_ROLE and sem not in keep_semantic:
                 tag.decompose()
                 continue
 
@@ -70,8 +81,12 @@ def cleanup_dom(soup: BeautifulSoup) -> None:
                 ]
             ).strip()
             if ident and _NOISE_PATTERNS.search(ident):
-                tag.decompose()
-                continue
+                ident_sem = sem
+                if ident_sem is None and "banner" in ident.lower():
+                    ident_sem = "banner"
+                if ident_sem not in keep_semantic:
+                    tag.decompose()
+                    continue
 
             hidden = str(tag.get("aria-hidden") or "").lower() == "true"
             style = str(tag.get("style") or "").lower()
@@ -141,3 +156,23 @@ def score_primary_candidate(tag: Tag) -> float:
         + hint_bonus * 180
         - noise_penalty * 240
     )
+
+
+def _semantic_tag_for_name(name: str) -> str | None:
+    if name == "header":
+        return "header"
+    if name == "nav":
+        return "navigation"
+    if name == "footer":
+        return "footer"
+    return None
+
+
+def _semantic_tag_for_role(role: str) -> str | None:
+    if role == "navigation":
+        return "navigation"
+    if role == "banner":
+        return "banner"
+    if role == "contentinfo":
+        return "footer"
+    return None

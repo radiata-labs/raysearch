@@ -88,7 +88,6 @@ class FetchResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     url: str
-    query: str | None = None
     page: PageEnrichment = Field(default_factory=PageEnrichment)
     overview: OverviewResult | None = None
     errors: list[AppError] = Field(default_factory=list)

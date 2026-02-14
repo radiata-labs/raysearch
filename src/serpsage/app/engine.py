@@ -60,7 +60,6 @@ class Engine(WorkUnit):
 
             return FetchResponse(
                 url=ctx.request.url,
-                query=ctx.request.query,
                 page=ctx.page,
                 overview=ctx.overview,
                 errors=ctx.errors,

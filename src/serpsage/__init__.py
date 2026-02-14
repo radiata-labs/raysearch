@@ -13,7 +13,13 @@ if TYPE_CHECKING:
     from serpsage.app.engine import Engine
 
 
-from serpsage.app.request import FetchRequest, SearchRequest
+from serpsage.app.request import (
+    FetchChunksRequest,
+    FetchContentRequest,
+    FetchOverviewRequest,
+    FetchRequest,
+    SearchRequest,
+)
 from serpsage.app.response import FetchResponse, SearchResponse
 from serpsage.settings.load import load_settings
 from serpsage.settings.models import AppSettings
@@ -30,6 +36,9 @@ def __getattr__(name: str):
 __all__ = [
     "AppSettings",
     "Engine",
+    "FetchChunksRequest",
+    "FetchContentRequest",
+    "FetchOverviewRequest",
     "FetchRequest",
     "FetchResponse",
     "SearchRequest",

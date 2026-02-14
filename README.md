@@ -47,7 +47,15 @@ Runtime prerequisites:
 ## Usage
 
 ```python
-from serpsage import Engine, SearchRequest, FetchRequest, load_settings
+from serpsage import (
+    Engine,
+    FetchChunksRequest,
+    FetchContentRequest,
+    FetchOverviewRequest,
+    FetchRequest,
+    SearchRequest,
+    load_settings,
+)
 
 settings = load_settings()
 
@@ -56,7 +64,12 @@ async with Engine.from_settings(settings) as engine:
         SearchRequest(query="latest ai papers", depth="medium", max_results=8)
     )
     fetch_resp = await engine.fetch(
-        FetchRequest(url="https://example.com/article", query="benchmark results")
+        FetchRequest(
+            url="https://example.com/article",
+            content=FetchContentRequest(depth="medium"),
+            chunks=FetchChunksRequest(query="benchmark results", top_k_chunks=3),
+            overview=FetchOverviewRequest(query="benchmark results"),
+        )
     )
 ```
 
@@ -64,9 +77,10 @@ async with Engine.from_settings(settings) as engine:
 
 - `search.depth`: `simple|low|medium|high` (kept semantics)
 - `fetch`: no depth tiers, single strategy profile
-- `fetch` default:
-  - no `query` => markdown extraction only
-  - with `query` => auto chunk/rank
-  - `include_secondary_content`: `false` keeps primary content only; `true` includes secondary sections (related/comments/sidebar)
+- `FetchRequest` V2 fields:
+  - `content`: `bool | FetchContentRequest` (`false` hides output markdown only; internal extraction still runs)
+  - `chunks`: `FetchChunksRequest | None` (controls chunking query / limits)
+  - `overview`: `FetchOverviewRequest | None` (controls overview query / limits)
+  - old fetch fields (`query/include_chunks/top_k_chunks/include_secondary_content`) are removed
 - both `search` and `fetch` support optional overview
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering

@@ -21,6 +21,8 @@ class FetchFinalizeStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
+        if not ctx.return_content:
+            ctx.page.markdown = ""
         for idx, ch in enumerate(ctx.page.chunks, 1):
             ch.chunk_id = ch.chunk_id or f"S1:C{idx}"
         if "total_ms" not in ctx.page.timing_ms:
@@ -36,6 +38,7 @@ class FetchFinalizeStep(PipelineStep[FetchStepContext]):
             ctx.page.timing_ms["total_ms"] = total
         span.set_attr("chunks_count", int(len(ctx.page.chunks)))
         span.set_attr("has_overview", bool(ctx.overview is not None))
+        span.set_attr("has_content_output", bool(ctx.return_content))
         return ctx
 
 

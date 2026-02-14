@@ -34,11 +34,11 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
-        query = (ctx.request.query or "").strip()
-        include_chunks = bool(ctx.request.include_chunks)
-        span.set_attr("include_chunks", bool(include_chunks))
-        if not include_chunks:
+        chunks_request = ctx.chunks_request
+        span.set_attr("has_chunks", bool(chunks_request is not None))
+        if chunks_request is None:
             return ctx
+        query = chunks_request.query
 
         if ctx.extracted is None:
             ctx.page.error = ctx.page.error or "missing extracted content"
@@ -48,24 +48,30 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
             return ctx
 
         top_k = int(
-            ctx.request.top_k_chunks
-            if ctx.request.top_k_chunks is not None
+            chunks_request.top_k_chunks
+            if chunks_request.top_k_chunks is not None
             else self.settings.fetch.chunk.default_top_k
         )
         chunks, timing_ms, error = await self._chunk_and_score(
             markdown=ctx.extracted.markdown,
             plain_text=ctx.extracted.plain_text,
             query=query,
-            query_tokens=ctx.query_tokens or [],
-            intent_tokens=ctx.intent_tokens or [],
+            query_tokens=ctx.chunk_query_tokens or [],
+            intent_tokens=ctx.chunk_intent_tokens or [],
             profile=ctx.profile,
             top_k=top_k,
         )
+        max_chars = chunks_request.max_chars
+        if max_chars is not None and max_chars > 0:
+            for chunk in chunks:
+                if len(chunk.text) > max_chars:
+                    chunk.text = chunk.text[:max_chars].rstrip() + "..."
         ctx.chunks = chunks
         ctx.page.chunks = chunks
         ctx.page.timing_ms.update(timing_ms)
         if error:
             ctx.page.error = error
+        span.set_attr("top_k_chunks", int(top_k))
         span.set_attr("chunks_kept", int(len(chunks)))
         return ctx
 

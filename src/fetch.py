@@ -6,7 +6,13 @@ from typing import Any
 import anyio
 from dotenv import load_dotenv
 
-from serpsage import Engine, FetchRequest, load_settings
+from serpsage import (
+    Engine,
+    FetchChunksRequest,
+    FetchOverviewRequest,
+    FetchRequest,
+    load_settings,
+)
 
 load_dotenv()
 
@@ -19,13 +25,16 @@ async def main(
     settings = load_settings("src/search_config_example.yaml")
     req = FetchRequest(
         url=url,
-        query=query,
-        overview=overview,
+        content=True,
+        chunks=FetchChunksRequest(query=query) if query else None,
+        overview=FetchOverviewRequest(query=(query or url)) if overview else None,
     )
     async with Engine.from_settings(settings) as engine:
         resp = await engine.fetch(req)
     return {
-        "fetch_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2) + "\n\n" + resp.page.markdown,
+        "fetch_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2)
+        + "\n\n"
+        + resp.page.markdown,
     }
 
 

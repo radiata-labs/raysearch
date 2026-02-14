@@ -7,7 +7,7 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.app.request import FetchRequest
+from serpsage.app.request import FetchChunksRequest, FetchRequest
 from serpsage.app.response import PageEnrichment
 from serpsage.models.pipeline import FetchStepContext, SearchStepContext
 from serpsage.pipeline.step import PipelineStep
@@ -100,11 +100,13 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                         settings=self.settings,
                         request=FetchRequest(
                             url=r.url,
-                            query=query,
+                            content=True,
                             profile=ctx.profile_name or None,
-                            include_chunks=True,
-                            top_k_chunks=top_k,
-                            overview=False,
+                            chunks=FetchChunksRequest(
+                                query=query,
+                                top_k_chunks=top_k,
+                            ),
+                            overview=None,
                             params={
                                 "timeout_s": timeout_s,
                                 "allow_render": bool(

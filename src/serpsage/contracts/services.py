@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from serpsage.models.extract import ExtractedDocument
+    from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
     from serpsage.models.fetch import FetchResult
     from serpsage.models.llm import ChatJSONResult
     from serpsage.models.pipeline import BaseStepContext
@@ -69,6 +69,7 @@ class ExtractorBase(WorkUnit, ABC):
         url: str,
         content: bytes,
         content_type: str | None,
+        content_options: ExtractContentOptions | None = None,
         include_secondary_content: bool = False,
         collect_links: bool = False,
     ) -> ExtractedDocument:

@@ -49,17 +49,16 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
     async def run_inner(
         self, ctx: FetchStepContext, *, span: SpanBase
     ) -> FetchStepContext:
-        profile = self.settings.fetch.overview
-        enabled = profile.enabled_default
-        if ctx.request.overview is not None:
-            enabled = bool(ctx.request.overview)
-        if not enabled:
+        overview_request = ctx.overview_request
+        if overview_request is None:
             return ctx
+
+        profile = self.settings.fetch.overview
 
         source = self._build_source(ctx)
         if source is None:
             return ctx
-        query = (ctx.request.query or "").strip() or ctx.request.url
+        query = overview_request.query
         llm_cfg = self.settings.llm.resolve_model(profile.use_model)
 
         messages = self._build_messages(
@@ -110,6 +109,11 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                 self_heal_retries=int(profile.self_heal_retries),
                 force_language=str(profile.force_language),
             )
+            if overview_request.max_chars is not None and overview_request.max_chars > 0:
+                overview = self._clip_overview_output(
+                    overview=overview,
+                    max_chars=int(overview_request.max_chars),
+                )
             ctx.page.timing_ms["overview_ms"] = int((time.monotonic() - t0) * 1000)
             ctx.overview = overview
             if cache_ttl_s > 0 and cache_key:
@@ -368,8 +372,6 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
         return overview.model_copy(update={"citations": renum})
 
     def _build_source(self, ctx: FetchStepContext) -> ResultItem | None:
-        if not (ctx.page.markdown or "").strip():
-            return None
         chunks = list(ctx.page.chunks or [])
         if not chunks:
             excerpt = (ctx.extracted.plain_text if ctx.extracted else "").strip()
@@ -377,6 +379,8 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                 excerpt = (ctx.page.markdown or "").replace("\n", " ").strip()
             if excerpt:
                 chunks = [PageChunk(chunk_id="S1:C1", text=excerpt[:1000], score=1.0)]
+        if not chunks:
+            return None
 
         source = ResultItem(
             source_id="S1",
@@ -389,6 +393,23 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
         for idx, ch in enumerate(source.page.chunks, 1):
             ch.chunk_id = ch.chunk_id or f"S1:C{idx}"
         return source
+
+    def _clip_overview_output(
+        self,
+        *,
+        overview: OverviewResult,
+        max_chars: int,
+    ) -> OverviewResult:
+        summary = _clip_chars(overview.summary, max_chars=max_chars)
+        key_points = [
+            _clip_chars(item, max_chars=max_chars) for item in list(overview.key_points)
+        ]
+        return overview.model_copy(
+            update={
+                "summary": summary,
+                "key_points": key_points,
+            }
+        )
 
 
 def _healable(exc: Exception) -> bool:
@@ -450,6 +471,16 @@ def _truncate_to_token_budget(text: str, *, max_tokens: int) -> str:
     if out and tokens + 1 <= max_tokens:
         out = out + "..."
     return out
+
+
+def _clip_chars(text: str, *, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return text[:max_chars]
+    return text[:max_chars].rstrip() + "..."
 
 
 __all__ = ["FetchOverviewStep"]
