@@ -15,7 +15,7 @@ from serpsage.components.extract.markdown.scoring import (
     score_candidate,
 )
 from serpsage.components.extract.markdown.types import CandidateDoc, StatsMap
-from serpsage.text.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.extract.markdown.types import ExtractProfile

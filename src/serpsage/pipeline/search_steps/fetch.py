@@ -128,15 +128,16 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                     )
                 )
                 if fetch_ctx.result is not None:
+                    abstracts = [
+                        PageAbstract(text=text, score=float(score))
+                        for text, score in zip(
+                            fetch_ctx.result.abstracts,
+                            fetch_ctx.result.abstract_scores,
+                            strict=False,
+                        )
+                    ]
                     r.page = PageEnrichment(
-                        abstracts=[
-                            PageAbstract(
-                                abstract_id=f"S1:A{i + 1}",
-                                text=txt,
-                                score=float(fetch_ctx.result.abstract_scores[i]),
-                            )
-                            for i, txt in enumerate(fetch_ctx.result.abstracts)
-                        ],
+                        abstracts=abstracts,
                         markdown=fetch_ctx.result.content,
                     )
                     if fetch_ctx.errors:

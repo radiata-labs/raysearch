@@ -8,7 +8,7 @@ from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
 from serpsage.pipeline.step import PipelineStep
-from serpsage.text.normalize import clean_whitespace, normalize_text
+from serpsage.utils import clean_whitespace, normalize_text
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from serpsage.text.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 _MD_PREFIX_RE = re.compile(r"^(\s*[-*+]\s+|\s*\d+[.)]\s+|#{1,6}\s+|>\s+)")
 _NOISE_LINE_RE = re.compile(

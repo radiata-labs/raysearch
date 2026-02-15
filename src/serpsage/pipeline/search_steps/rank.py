@@ -5,7 +5,7 @@ from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
 from serpsage.pipeline.step import PipelineStep
-from serpsage.util.collections import uniq_preserve_order
+from serpsage.utils import uniq_preserve_order
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase

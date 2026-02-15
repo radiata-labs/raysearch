@@ -6,8 +6,7 @@ from urllib.parse import urlparse
 
 from serpsage.models.pipeline import SearchStepContext
 from serpsage.pipeline.step import PipelineStep
-from serpsage.text.normalize import clean_whitespace, strip_html
-from serpsage.text.tokenize import tokenize_for_query
+from serpsage.utils import clean_whitespace, strip_html, tokenize_for_query
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem

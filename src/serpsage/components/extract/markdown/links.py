@@ -8,7 +8,7 @@ from bs4.element import Tag
 from serpsage.components.extract.markdown.dom import is_descendant_of
 from serpsage.components.extract.markdown.types import SectionName
 from serpsage.models.extract import ExtractedImageLink, ExtractedLink
-from serpsage.text.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from bs4 import BeautifulSoup

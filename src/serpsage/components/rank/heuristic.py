@@ -7,7 +7,7 @@ from typing_extensions import override
 
 from serpsage.components.rank.utils import normalize_scores
 from serpsage.contracts.services import RankerBase
-from serpsage.text.normalize import normalize_text
+from serpsage.utils import normalize_text
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

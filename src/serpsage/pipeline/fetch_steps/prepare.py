@@ -8,8 +8,7 @@ from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractContentOptions
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.pipeline.step import PipelineStep
-from serpsage.text.normalize import clean_whitespace
-from serpsage.text.tokenize import tokenize_for_query
+from serpsage.utils import clean_whitespace, tokenize_for_query
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase

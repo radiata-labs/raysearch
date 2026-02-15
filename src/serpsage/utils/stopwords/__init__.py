@@ -1,4 +1,4 @@
-from serpsage.text.stopwords.identify import (
+from serpsage.utils.stopwords.identify import (
     filter_stopwords,
     is_stopword,
     stopwords,

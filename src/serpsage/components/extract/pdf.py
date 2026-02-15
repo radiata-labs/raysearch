@@ -8,7 +8,7 @@ from io import BytesIO
 from pypdf import PdfReader
 
 from serpsage.models.extract import ExtractedDocument
-from serpsage.text.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 try:
     import fitz  # type: ignore[import-not-found]

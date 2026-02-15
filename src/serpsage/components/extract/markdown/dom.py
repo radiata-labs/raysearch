@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from bs4 import BeautifulSoup
 
-from serpsage.text.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from bs4.element import Tag

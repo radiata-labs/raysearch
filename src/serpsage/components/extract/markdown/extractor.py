@@ -59,7 +59,7 @@ from serpsage.models.extract import (
     ExtractContentTag,
     ExtractedDocument,
 )
-from serpsage.text.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable

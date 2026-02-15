@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 
-from serpsage.text.normalize import normalize_text
-from serpsage.text.stopwords import is_stopword
-from serpsage.util.collections import uniq_preserve_order
+from serpsage.utils.collections import uniq_preserve_order
+from serpsage.utils.normalize import normalize_text
+from serpsage.utils.stopwords import is_stopword
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+")
 CJK_KANA_RUN_RE = re.compile(

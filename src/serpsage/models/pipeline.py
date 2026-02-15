@@ -47,6 +47,12 @@ class ScoredAbstract(MutableModel):
     score: float
 
 
+class PreparedAbstract(MutableModel):
+    text: str
+    heading: str = ""
+    position: int = 0
+
+
 class FetchStepContext(BaseStepContext):
     settings: AppSettings
     request: FetchRequest
@@ -62,6 +68,7 @@ class FetchStepContext(BaseStepContext):
     overview_request: FetchOverviewRequest | None = None
     fetch_result: FetchResult | None = None
     extracted: ExtractedDocument | None = None
+    prepared_abstracts: list[PreparedAbstract] = Field(default_factory=list)
     scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
     others_result: FetchOthersResult = Field(default_factory=FetchOthersResult)
     result: FetchResultItem | None = None
@@ -75,6 +82,7 @@ __all__ = [
     "BaseStepContext",
     "FetchStepContext",
     "FetchStepOthersRuntime",
+    "PreparedAbstract",
     "ScoredAbstract",
     "SearchStepContext",
 ]
