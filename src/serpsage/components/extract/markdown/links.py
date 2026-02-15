@@ -7,7 +7,7 @@ from bs4.element import Tag
 
 from serpsage.components.extract.markdown.dom import is_descendant_of
 from serpsage.components.extract.markdown.types import SectionName
-from serpsage.models.extract import ExtractedLink
+from serpsage.models.extract import ExtractedImageLink, ExtractedLink
 from serpsage.text.normalize import clean_whitespace
 
 if TYPE_CHECKING:
@@ -72,7 +72,9 @@ def collect_links(
                 url=normalized,
                 anchor_text=text,
                 section=section,
-                is_internal=(parsed.netloc.lower() == base_netloc) if parsed.netloc else True,
+                is_internal=(parsed.netloc.lower() == base_netloc)
+                if parsed.netloc
+                else True,
                 nofollow=("nofollow" in rel),
                 same_page=same_page,
                 source_hint=_source_hint(anchor),
@@ -82,6 +84,63 @@ def collect_links(
         if len(out) >= max(1, int(max_links)):
             break
 
+    return out
+
+
+def collect_image_links(
+    *,
+    soup: BeautifulSoup,
+    base_url: str,
+    buckets: SectionBuckets,
+    include_secondary_content: bool,
+    max_links: int,
+    keep_hash: bool,
+) -> list[ExtractedImageLink]:
+    out: list[ExtractedImageLink] = []
+    seen: set[tuple[str, SectionName]] = set()
+    base_norm = _normalize_url(url=base_url, base_url=base_url, keep_hash=keep_hash)
+    if base_norm is None:
+        base_norm = base_url
+    base_netloc = urlparse(base_norm).netloc.lower()
+
+    position = 0
+    for image in soup.find_all(["img", "source"]):
+        position += 1
+        section = _section_for_tag(image, buckets=buckets)
+        if section == "secondary" and not include_secondary_content:
+            continue
+
+        alt_text = clean_whitespace(str(image.get("alt") or "").strip())
+        candidates = _image_url_candidates(image=image)
+        for raw in candidates:
+            normalized = _normalize_url(
+                url=raw,
+                base_url=base_url,
+                keep_hash=keep_hash,
+            )
+            if not normalized:
+                continue
+            key = (normalized, section)
+            if key in seen:
+                continue
+            seen.add(key)
+            parsed = urlparse(normalized)
+            out.append(
+                ExtractedImageLink(
+                    url=normalized,
+                    alt_text=alt_text,
+                    section=section,
+                    is_internal=(
+                        (parsed.netloc.lower() == base_netloc)
+                        if parsed.netloc
+                        else True
+                    ),
+                    source_hint=_source_hint(image),
+                    position=position,
+                )
+            )
+            if len(out) >= max(1, int(max_links)):
+                return out
     return out
 
 
@@ -145,7 +204,9 @@ def _source_hint(tag: Tag) -> str:
     cur: Tag | None = tag
     hops = 0
     while cur is not None and hops < 4:
-        ident = " ".join([str(cur.get("id") or ""), " ".join(cur.get("class") or [])]).strip()
+        ident = " ".join(
+            [str(cur.get("id") or ""), " ".join(cur.get("class") or [])]
+        ).strip()
         if ident:
             return ident[:120]
 
@@ -155,3 +216,26 @@ def _source_hint(tag: Tag) -> str:
         cur = parent
         hops += 1
     return "unknown"
+
+
+def _image_url_candidates(*, image: Tag) -> list[str]:
+    out: list[str] = []
+    src = str(image.get("src") or "").strip()
+    if src:
+        out.append(src)
+    srcset = str(image.get("srcset") or "").strip()
+    if srcset:
+        for item in srcset.split(","):
+            url = item.strip().split(" ", 1)[0].strip()
+            if url:
+                out.append(url)
+    data_src = str(image.get("data-src") or "").strip()
+    if data_src:
+        out.append(data_src)
+    data_srcset = str(image.get("data-srcset") or "").strip()
+    if data_srcset:
+        for item in data_srcset.split(","):
+            url = item.strip().split(" ", 1)[0].strip()
+            if url:
+                out.append(url)
+    return out

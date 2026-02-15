@@ -42,13 +42,14 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "extract",
                         "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
             return ctx
 
-        collect_links = bool(ctx.runtime.max_links is not None)
+        collect_links = bool(ctx.others_runtime.max_links is not None)
+        collect_images = bool(ctx.others_runtime.max_image_links is not None)
         t0 = time.monotonic()
 
         def extract() -> ExtractedDocument:
@@ -59,6 +60,7 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                 content_type=ctx.fetch_result.content_type,
                 content_options=ctx.content_options,
                 collect_links=collect_links,
+                collect_images=collect_images,
             )
 
         try:
@@ -74,7 +76,7 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "extract",
                         "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
@@ -82,9 +84,13 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
         extract_ms = int((time.monotonic() - t0) * 1000)
 
         ctx.extracted = extracted
-        ctx.links = _prepare_links(
-            extracted=extracted,
-            max_links=ctx.runtime.max_links,
+        ctx.others_result.links = _prepare_links(
+            values=[str(item.url or "") for item in list(extracted.links or [])],
+            limit=ctx.others_runtime.max_links,
+        )
+        ctx.others_result.image_links = _prepare_links(
+            values=[str(item.url or "") for item in list(extracted.image_links or [])],
+            limit=ctx.others_runtime.max_image_links,
         )
         span.set_attr("extractor_used", str(extracted.extractor_used))
         span.set_attr("quality_score", float(extracted.quality_score))
@@ -92,12 +98,14 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
         span.set_attr("content_depth", str(ctx.content_options.depth))
         span.set_attr("include_html_tags", bool(ctx.content_options.include_html_tags))
         span.set_attr("collect_links", bool(collect_links))
+        span.set_attr("collect_images", bool(collect_images))
         span.set_attr("primary_chars", int(extracted.stats.get("primary_chars", 0)))
         span.set_attr(
             "secondary_chars",
             int(extracted.stats.get("secondary_chars", 0)),
         )
         span.set_attr("links_count", int(len(extracted.links or [])))
+        span.set_attr("image_links_count", int(len(extracted.image_links or [])))
         span.set_attr("engine_chain", str(extracted.stats.get("engine_chain", "")))
         if not (extracted.plain_text or "").strip():
             ctx.fatal = True
@@ -110,25 +118,26 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "extract",
                         "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
         return ctx
 
 
-def _prepare_links(*, extracted: ExtractedDocument, max_links: int | None) -> list[str]:
-    if max_links is None:
+def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
+    if limit is None:
         return []
     out: list[str] = []
     seen: set[str] = set()
-    for item in list(extracted.links or []):
-        url = str(item.url or "").strip()
+    max_items = max(1, int(limit))
+    for raw in values:
+        url = str(raw or "").strip()
         if not url or url in seen:
             continue
         seen.add(url)
         out.append(url)
-        if len(out) >= int(max_links):
+        if len(out) >= max_items:
             break
     return out
 

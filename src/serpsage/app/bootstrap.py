@@ -20,12 +20,12 @@ from serpsage.core.runtime import Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import FetchStepContext, SearchStepContext
 from serpsage.pipeline.fetch_steps import (
+    FetchAbstractRankStep,
     FetchExtractStep,
     FetchFinalizeStep,
     FetchLoadStep,
     FetchOverviewStep,
     FetchPrepareStep,
-    FetchRankStep,
 )
 from serpsage.pipeline.runner import PipelineRunner
 from serpsage.pipeline.search_steps import (
@@ -102,7 +102,7 @@ def build_engine(
         FetchPrepareStep(rt=rt),
         FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
         FetchExtractStep(rt=rt, extractor=extractor),
-        FetchRankStep(rt=rt, ranker=ranker),
+        FetchAbstractRankStep(rt=rt, ranker=ranker),
         FetchOverviewStep(rt=rt, llm=llm, cache=cache),
         FetchFinalizeStep(rt=rt),
     ]

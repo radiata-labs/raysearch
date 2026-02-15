@@ -8,7 +8,7 @@ import openai
 from openai import AsyncOpenAI
 
 from serpsage.contracts.services import LLMClientBase
-from serpsage.models.llm import ChatJSONResult, LLMUsage
+from serpsage.models.llm import ChatResult, LLMUsage
 
 if TYPE_CHECKING:
     from openai.types.chat.chat_completion import Choice
@@ -20,14 +20,6 @@ if TYPE_CHECKING:
 
 
 class OpenAIClient(LLMClientBase):
-    """LLMClient implemented via the official OpenAI Python SDK (async).
-
-    Notes:
-    - Reuses the injected `HttpClientUnit.client` for connection pooling.
-    - Keeps the narrow `LLMClient.chat_json()` interface for easy swapping with
-      other providers / local models.
-    """
-
     def __init__(
         self, *, rt: Runtime, http: HttpClientBase, model_cfg: OverviewModelSettings
     ) -> None:
@@ -35,7 +27,6 @@ class OpenAIClient(LLMClientBase):
         self.bind_deps(http)
         self._model_cfg = model_cfg
         llm = self._model_cfg
-        # AsyncOpenAI is cheap, but we keep a single instance to reuse config.
         self.client = AsyncOpenAI(
             api_key=llm.api_key,
             base_url=llm.base_url,
@@ -46,75 +37,64 @@ class OpenAIClient(LLMClientBase):
         )
 
     @override
-    async def chat_json(
+    async def chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None = None,
         timeout_s: float | None = None,
-    ) -> ChatJSONResult:
+    ) -> ChatResult:
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
 
-        response_format: dict[str, Any]
-        if llm.schema_strict:
-            response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "SerpSageOverview",
-                    "schema": schema,
-                    "strict": True,
-                },
-            }
-        else:
-            response_format = {"type": "json_object"}
+        req: dict[str, Any] = {
+            "model": model,
+            "messages": cast("Any", messages),
+            "temperature": float(llm.temperature),
+            "timeout": float(timeout_s or llm.timeout_s),
+        }
+        if schema is not None:
+            if llm.schema_strict:
+                req["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "SerpSageOverview",
+                        "schema": schema,
+                        "strict": True,
+                    },
+                }
+            else:
+                req["response_format"] = {"type": "json_object"}
 
-        with self.span("llm.openai.chat_json", model=model) as sp:
+        with self.span("llm.openai.chat", model=model) as sp:
+            sp.set_attr("schema_mode", bool(schema is not None))
             sp.set_attr("schema_strict", bool(llm.schema_strict))
             sp.set_attr("timeout_s", float(timeout_s or llm.timeout_s))
 
             try:
-                resp = await self.client.chat.completions.create(
-                    model=model,
-                    messages=cast("Any", messages),
-                    temperature=float(llm.temperature),
-                    response_format=cast("Any", response_format),
-                    timeout=float(timeout_s or llm.timeout_s),
-                )
+                resp = await self.client.chat.completions.create(**req)
             except Exception as exc:  # noqa: BLE001
-                # Some OpenAI-compatible providers reject strict schema validation.
-                # If so, degrade to `json_object` so the pipeline can still validate
-                # output with Pydantic (and self-heal in OverviewStep if needed).
-                if llm.schema_strict and _looks_like_schema_error(exc):
+                if (
+                    schema is not None
+                    and llm.schema_strict
+                    and _looks_like_schema_error(exc)
+                ):
                     sp.add_event("llm.openai.schema_rejected_fallback_json_object")
-                    resp = await self.client.chat.completions.create(
-                        model=model,
-                        messages=cast("Any", messages),
-                        temperature=float(llm.temperature),
-                        response_format=cast("Any", {"type": "json_object"}),
-                        timeout=float(timeout_s or llm.timeout_s),
-                    )
+                    req["response_format"] = {"type": "json_object"}
+                    resp = await self.client.chat.completions.create(**req)
                 else:
                     raise
 
             usage = cast("CompletionUsage | None", getattr(resp, "usage", None))
             usage_out = LLMUsage()
             if usage is not None:
-                # Best-effort: usage shape may differ across providers.
-                u: dict[str, int] = {}
-                for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                    v = getattr(usage, k, None)
-                    if v is not None:
-                        sp.set_attr(f"usage_{k}", int(v))
-                        u[k] = int(v)
                 usage_out = LLMUsage(
-                    prompt_tokens=int(u.get("prompt_tokens", 0)),
-                    completion_tokens=int(u.get("completion_tokens", 0)),
-                    total_tokens=int(u.get("total_tokens", 0)),
+                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                    total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
                 )
-
             content = ""
             choices = cast("list[Choice]", getattr(resp, "choices", None) or [])
             sp.set_attr("choices_count", int(len(choices)))
@@ -125,20 +105,22 @@ class OpenAIClient(LLMClientBase):
                 raise TypeError("LLM response content is not a string")
             sp.set_attr("response_chars", int(len(content)))
 
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                start = content.find("{")
-                end = content.rfind("}")
-                if 0 <= start < end:
-                    sp.add_event("llm.openai.json_salvage")
-                    data = json.loads(content[start : end + 1])
-                else:
-                    raise
+            data: object | None = None
+            if schema is not None:
+                data = _try_parse_json(content, span=sp)
+            return ChatResult(text=content, data=data, usage=usage_out)
 
-            if not isinstance(data, dict):
-                raise TypeError("LLM JSON output is not an object")
-            return ChatJSONResult(data=data, usage=usage_out)
+
+def _try_parse_json(content: str, *, span: Any) -> object:
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("{")
+        end = content.rfind("}")
+        if 0 <= start < end:
+            span.add_event("llm.openai.json_salvage")
+            return json.loads(content[start : end + 1])
+        raise
 
 
 def _looks_like_schema_error(exc: Exception) -> bool:
@@ -147,8 +129,6 @@ def _looks_like_schema_error(exc: Exception) -> bool:
         return True
     if "additionalProperties" in msg and "response_format" in msg:
         return True
-
-    # Official SDK error types.
     if isinstance(exc, openai.BadRequestError):
         param = getattr(exc, "param", None)
         if param == "response_format":

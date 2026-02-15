@@ -1,29 +1,26 @@
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import FetchStepContext, ScoredChunk
+from serpsage.models.pipeline import FetchStepContext, ScoredAbstract
 from serpsage.pipeline.step import PipelineStep
-from serpsage.text.chunking import (
-    chunk_segments,
-    markdown_to_segments,
-    prefilter_segments_by_tokens,
+from serpsage.text.abstracts import (
+    AbstractCandidate,
+    apply_title_logit_boost,
+    extract_abstract_candidates,
+    fit_abstract_budget,
 )
-from serpsage.text.normalize import normalize_text
-from serpsage.text.similarity import is_duplicate_text
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.contracts.services import RankerBase
     from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import ProfileSettings
 
 
-class FetchRankStep(PipelineStep[FetchStepContext]):
-    span_name = "step.fetch_chunk_rank"
+class FetchAbstractRankStep(PipelineStep[FetchStepContext]):
+    span_name = "step.fetch_abstract_rank"
 
     def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
         super().__init__(rt=rt)
@@ -36,252 +33,161 @@ class FetchRankStep(PipelineStep[FetchStepContext]):
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
-        chunks_request = ctx.chunks_request
-        span.set_attr("has_chunks", bool(chunks_request is not None))
-        if chunks_request is None:
+        abstracts_request = ctx.abstracts_request
+        span.set_attr("has_abstracts", bool(abstracts_request is not None))
+        if abstracts_request is None:
             return ctx
-        query = chunks_request.query
 
         if ctx.extracted is None:
             ctx.errors.append(
                 AppError(
-                    code="fetch_rank_failed",
+                    code="fetch_abstract_rank_failed",
                     message="missing extracted content",
                     details={
                         "url": ctx.url,
                         "url_index": ctx.url_index,
                         "stage": "rank",
                         "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
             return ctx
-        if not (ctx.extracted.plain_text or "").strip():
+
+        markdown = str(ctx.extracted.markdown or "")
+        if not markdown.strip():
             ctx.errors.append(
                 AppError(
-                    code="fetch_rank_failed",
+                    code="fetch_abstract_rank_failed",
                     message="no content extracted",
                     details={
                         "url": ctx.url,
                         "url_index": ctx.url_index,
                         "stage": "rank",
                         "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
             return ctx
 
-        top_k = int(
-            chunks_request.top_k_chunks
-            if chunks_request.top_k_chunks is not None
-            else self.settings.fetch.chunk.default_top_k
+        abstract_cfg = self.settings.fetch.abstract
+        candidates = extract_abstract_candidates(
+            markdown=markdown,
+            max_markdown_chars=int(abstract_cfg.max_markdown_chars),
+            max_abstracts=int(abstract_cfg.max_abstracts),
+            min_abstract_chars=int(abstract_cfg.min_abstract_chars),
         )
-        chunks, timing_ms, error = await self._chunk_and_score(
-            markdown=ctx.extracted.markdown,
-            plain_text=ctx.extracted.plain_text,
-            query=query,
-            query_tokens=ctx.chunk_query_tokens or [],
-            intent_tokens=ctx.chunk_intent_tokens or [],
-            profile=ctx.profile,
-            top_k=top_k,
-        )
-        max_chars = chunks_request.max_chars
-        if max_chars is not None and max_chars > 0:
-            for chunk in chunks:
-                if len(chunk.text) > max_chars:
-                    chunk.text = chunk.text[:max_chars].rstrip() + "..."
-        ctx.scored_chunks = chunks
-        span.set_attr("chunk_ms", int(timing_ms.get("chunk_ms", 0)))
-        span.set_attr("score_ms", int(timing_ms.get("score_ms", 0)))
-        if error:
+        if not candidates:
             ctx.errors.append(
                 AppError(
-                    code="fetch_rank_failed",
-                    message=error,
+                    code="fetch_abstract_rank_failed",
+                    message="no abstracts",
                     details={
                         "url": ctx.url,
                         "url_index": ctx.url_index,
                         "stage": "rank",
                         "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
-        span.set_attr("top_k_chunks", int(top_k))
-        span.set_attr("chunks_kept", int(len(chunks)))
+            return ctx
+
+        query = abstracts_request.query
+        base_scores = await self._ranker.score_texts(
+            texts=[candidate.text for candidate in candidates],
+            query=query,
+            query_tokens=list(ctx.abstract_query_tokens or []),
+            intent_tokens=list(ctx.abstract_intent_tokens or []),
+        )
+        heading_scores = await self._score_headings(
+            query=query,
+            candidates=candidates,
+            query_tokens=list(ctx.abstract_query_tokens or []),
+            intent_tokens=list(ctx.abstract_intent_tokens or []),
+        )
+        alpha = float(abstract_cfg.title_boost_alpha)
+        min_score = float(abstract_cfg.min_abstract_score)
+
+        scored: list[tuple[float, AbstractCandidate]] = []
+        for idx, candidate in enumerate(candidates):
+            base = float(base_scores[idx]) if idx < len(base_scores) else 0.0
+            title_score = float(heading_scores.get(candidate.heading, 0.0))
+            final_score = apply_title_logit_boost(
+                abstract_score=base,
+                title_score=title_score,
+                alpha=alpha,
+            )
+            if final_score < min_score:
+                continue
+            scored.append((float(final_score), candidate))
+
+        if not scored:
+            ctx.errors.append(
+                AppError(
+                    code="fetch_abstract_rank_failed",
+                    message="no matching abstracts",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "rank",
+                        "fatal": False,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                    },
+                )
+            )
+            return ctx
+
+        scored.sort(key=lambda item: (-item[0], int(item[1].position)))
+        top_k = int(
+            abstracts_request.top_k_abstracts
+            if abstracts_request.top_k_abstracts is not None
+            else abstract_cfg.default_top_k_abstracts
+        )
+        kept = fit_abstract_budget(
+            ranked=scored,
+            top_k_abstracts=top_k,
+            max_chars=abstracts_request.max_chars,
+        )
+        ctx.scored_abstracts = [
+            ScoredAbstract(
+                abstract_id=f"S1:A{i + 1}",
+                text=item.text,
+                score=float(score),
+            )
+            for i, (score, item) in enumerate(kept)
+        ]
+
+        span.set_attr("top_k_abstracts", int(top_k))
+        span.set_attr("abstracts_kept", int(len(ctx.scored_abstracts)))
         return ctx
 
-    async def _chunk_and_score(
+    async def _score_headings(
         self,
         *,
-        markdown: str,
-        plain_text: str,
         query: str,
+        candidates: list[AbstractCandidate],
         query_tokens: list[str],
         intent_tokens: list[str],
-        profile: ProfileSettings | None,
-        top_k: int | None = None,
-    ) -> tuple[list[ScoredChunk], dict[str, int], str | None]:
-        chunk_cfg = self.settings.fetch.chunk
-        profile = profile or self.settings.get_profile(
-            self.settings.search.default_profile
-        )
-
-        t0 = time.monotonic()
-        segments = markdown_to_segments(
-            markdown or plain_text,
-            max_markdown_chars=int(chunk_cfg.max_markdown_chars),
-            max_segments=int(chunk_cfg.max_segments),
-            max_sentence_chars=int(chunk_cfg.max_sentence_chars),
-        )
-        filtered_segments = prefilter_segments_by_tokens(
-            segments,
-            query_tokens=query_tokens or [],
-            min_hits=int(chunk_cfg.min_query_token_hits),
-            max_segments=int(chunk_cfg.query_prefilter_window),
-        )
-        chunks = chunk_segments(
-            filtered_segments,
-            target_chars=int(chunk_cfg.target_chars),
-            overlap_segments=int(chunk_cfg.overlap_segments),
-            min_chunk_chars=int(chunk_cfg.min_chunk_chars),
-        )
-        if len(chunks) > int(chunk_cfg.max_chunks):
-            chunks = chunks[: int(chunk_cfg.max_chunks)]
-        chunk_ms = int((time.monotonic() - t0) * 1000)
-        if not chunks:
-            return [], {"chunk_ms": chunk_ms, "score_ms": 0}, "no chunks"
-
-        kept_chunks = self._filter_noise_chunks(
-            chunks=chunks,
-            query_tokens=query_tokens,
-            profile=profile,
-            min_query_token_hits=int(chunk_cfg.min_query_token_hits),
-        )
-        if not kept_chunks:
-            return [], {"chunk_ms": chunk_ms, "score_ms": 0}, "no matching chunks"
-
-        t1 = time.monotonic()
+    ) -> dict[str, float]:
+        headings: list[str] = []
+        for candidate in candidates:
+            heading = (candidate.heading or "").strip()
+            if heading and heading not in headings:
+                headings.append(heading)
+        if not headings:
+            return {}
         scores = await self._ranker.score_texts(
-            texts=kept_chunks,
+            texts=headings,
             query=query,
             query_tokens=query_tokens,
             intent_tokens=intent_tokens,
         )
-        score_ms = int((time.monotonic() - t1) * 1000)
-
-        scored = self._post_process_chunk_scores(
-            chunks=kept_chunks,
-            scores=scores,
-            query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
-            min_score=float(chunk_cfg.min_chunk_score),
-            dedupe_threshold=float(profile.fuzzy_threshold),
-            early_bonus=float(chunk_cfg.early_bonus),
-        )
-        if not scored:
-            return (
-                [],
-                {"chunk_ms": chunk_ms, "score_ms": score_ms},
-                "no matching chunks",
-            )
-
-        limit = int(top_k or int(chunk_cfg.default_top_k))
-        top = scored[: max(1, limit)]
-        scored_chunks = [
-            ScoredChunk(chunk_id=f"S1:C{i + 1}", text=txt, score=float(score))
-            for i, (score, txt) in enumerate(top)
-        ]
-        return scored_chunks, {"chunk_ms": chunk_ms, "score_ms": score_ms}, None
-
-    def _filter_noise_chunks(
-        self,
-        *,
-        chunks: list[str],
-        query_tokens: list[str],
-        profile: ProfileSettings,
-        min_query_token_hits: int,
-    ) -> list[str]:
-        out: list[str] = []
-        for chunk in chunks:
-            lowered = normalize_text(chunk)
-            if not lowered:
-                continue
-            if any(
-                w and normalize_text(w) in lowered for w in (profile.noise_words or [])
-            ):
-                continue
-            if not query_tokens:
-                out.append(chunk)
-                continue
-            hits = 0
-            for tok in query_tokens:
-                if tok and tok.lower() in lowered:
-                    hits += 1
-            if hits >= max(1, int(min_query_token_hits)):
-                out.append(chunk)
-        return out
-
-    def _post_process_chunk_scores(
-        self,
-        *,
-        chunks: list[str],
-        scores: list[float],
-        query_tokens: list[str],
-        intent_tokens: list[str],
-        min_score: float,
-        dedupe_threshold: float,
-        early_bonus: float,
-    ) -> list[tuple[float, str]]:
-        scored: list[tuple[float, str]] = []
-        for idx, chunk in enumerate(chunks):
-            base = float(scores[idx]) if idx < len(scores) else 0.0
-            loc = self._get_hit_location(
-                chunk=chunk,
-                query_tokens=query_tokens,
-                intent_tokens=intent_tokens,
-            )
-            bonus = 1.0 + max(0.0, float(early_bonus) - 1.0) * ((1.0 - loc) ** 2)
-            score = base * bonus
-            if score >= float(min_score):
-                scored.append((float(score), chunk))
-        scored.sort(key=lambda x: x[0], reverse=True)
-
-        kept: list[tuple[float, str]] = []
-        for score, chunk in scored:
-            if is_duplicate_text(
-                chunk,
-                [c for _, c in kept],
-                threshold=float(dedupe_threshold),
-            ):
-                continue
-            kept.append((score, chunk))
-        return kept
-
-    def _get_hit_location(
-        self,
-        *,
-        chunk: str,
-        query_tokens: list[str],
-        intent_tokens: list[str],
-    ) -> float:
-        lowered = normalize_text(chunk)
-        if not lowered:
-            return 1.0
-        poses: list[int] = []
-        for token in query_tokens or []:
-            pos = lowered.find((token or "").lower())
-            if pos >= 0:
-                poses.append(pos)
-        for token in intent_tokens or []:
-            pos = lowered.find((token or "").lower())
-            if pos >= 0:
-                poses.append(pos)
-        if not poses:
-            return 1.0
-        return float(min(poses)) / float(max(1, len(lowered)))
+        return {
+            heading: (float(scores[idx]) if idx < len(scores) else 0.0)
+            for idx, heading in enumerate(headings)
+        }
 
 
-__all__ = ["FetchRankStep"]
+__all__ = ["FetchAbstractRankStep"]

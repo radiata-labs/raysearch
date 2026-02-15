@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 
 from serpsage import (
     Engine,
-    FetchChunksRequest,
+    FetchAbstractsRequest,
+    FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
-    FetchRuntimeRequest,
     load_settings,
 )
 
@@ -28,9 +28,9 @@ async def main(
         urls=[url],
         crawl_mode="fallback",
         content=True,
-        chunks=FetchChunksRequest(query=query) if query else None,
-        overview=FetchOverviewRequest(query=(query or url)) if overview else None,
-        runtime=FetchRuntimeRequest(max_links=100),
+        abstracts=FetchAbstractsRequest(query=query) if query else None,
+        overview=FetchOverviewRequest(query=query) if overview and query else None,
+        others=FetchOthersRequest(max_links=100, max_image_links=50),
     )
     async with Engine.from_settings(settings) as engine:
         resp = await engine.fetch(req)
@@ -44,9 +44,6 @@ async def main(
 
 if __name__ == "__main__":
     out = anyio.run(
-        main,
-        "https://exa.ai/docs/reference/search-best-practices",
-        "Category Filters",
-        False,
+        main, "https://exa.ai/docs/reference/search-best-practices", None, False
     )
     print(out["fetch_result"])

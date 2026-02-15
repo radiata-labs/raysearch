@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
     from serpsage.models.fetch import FetchResult
-    from serpsage.models.llm import ChatJSONResult
+    from serpsage.models.llm import ChatResult
     from serpsage.models.pipeline import BaseStepContext
 
     TContext = TypeVar("TContext", bound=BaseStepContext)
@@ -72,6 +72,7 @@ class ExtractorBase(WorkUnit, ABC):
         content_options: ExtractContentOptions | None = None,
         include_secondary_content: bool = False,
         collect_links: bool = False,
+        collect_images: bool = False,
     ) -> ExtractedDocument:
         raise NotImplementedError
 
@@ -91,14 +92,14 @@ class RankerBase(WorkUnit, ABC):
 
 class LLMClientBase(WorkUnit, ABC):
     @abstractmethod
-    async def chat_json(
+    async def chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None = None,
         timeout_s: float | None = None,
-    ) -> ChatJSONResult:
+    ) -> ChatResult:
         raise NotImplementedError
 
 

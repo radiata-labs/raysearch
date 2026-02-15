@@ -43,9 +43,9 @@ class SearchFinalizeStep(PipelineStep[SearchStepContext]):
         for i, r in enumerate(results, 1):
             sid = f"S{i}"
             r.source_id = sid
-            if r.page and r.page.chunks:
-                for j, ch in enumerate(r.page.chunks, 1):
-                    ch.chunk_id = ch.chunk_id or f"{sid}:C{j}"
+            if r.page and r.page.abstracts:
+                for j, abstract in enumerate(r.page.abstracts, 1):
+                    abstract.abstract_id = abstract.abstract_id or f"{sid}:A{j}"
 
 
 __all__ = ["SearchFinalizeStep"]

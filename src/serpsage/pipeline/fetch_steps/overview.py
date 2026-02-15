@@ -1,34 +1,20 @@
 from __future__ import annotations
 
 import hashlib
-import re
-import time
+import json
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from pydantic import ValidationError
-
-from serpsage.app.response import (
-    OverviewLLMOutput,
-    OverviewResult,
-    PageChunk,
-    PageEnrichment,
-    ResultItem,
-)
-from serpsage.components.overview.schema import overview_json_schema
 from serpsage.models.errors import AppError
-from serpsage.models.llm import LLMUsage
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.pipeline.step import PipelineStep
+from serpsage.text.normalize import clean_whitespace
 from serpsage.util.json import stable_json
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.contracts.services import CacheBase, LLMClientBase
     from serpsage.core.runtime import Runtime
-    from serpsage.models.llm import ChatJSONResult
-
-_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff]")
 
 
 class FetchOverviewStep(PipelineStep[FetchStepContext]):
@@ -52,14 +38,12 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
-        overview_request = ctx.overview_request
-        if overview_request is None:
+        req = ctx.overview_request
+        if req is None:
             return ctx
 
-        profile = self.settings.fetch.overview
-
-        source = self._build_source(ctx)
-        if source is None:
+        source_items = self._build_source_items(ctx)
+        if not source_items:
             ctx.errors.append(
                 AppError(
                     code="fetch_overview_failed",
@@ -69,457 +53,224 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "overview",
                         "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
             return ctx
-        query = overview_request.query
-        llm_cfg = self.settings.llm.resolve_model(profile.use_model)
 
+        profile = self.settings.fetch.overview
+        model_cfg = self.settings.llm.resolve_model(profile.use_model)
+        schema = dict(req.json_schema) if isinstance(req.json_schema, dict) else None
+        mode = "json" if schema is not None else "text"
         messages = self._build_messages(
-            query=query,
-            results=[source],
-            max_sources=1,
-            max_chunks_per_source=max(1, int(profile.max_chunks)),
-            max_chunk_chars=int(profile.max_chunk_chars),
+            query=req.query,
+            url=ctx.url,
+            title=(ctx.extracted.title if ctx.extracted else "") or "",
+            source_items=source_items,
             max_prompt_chars=int(profile.max_prompt_chars),
-            force_language=str(profile.force_language),
+            language_hint=str(profile.force_language or "auto"),
+            mode=mode,
         )
-        schema = self._schema()
-        cache_ttl_s = int(profile.cache_ttl_s)
         cache_key: str | None = None
+        cache_ttl_s = int(profile.cache_ttl_s)
         if cache_ttl_s > 0:
-            cache_key = hashlib.sha256(
-                stable_json(
-                    {
-                        "use_model": str(profile.use_model),
-                        "messages": messages,
-                        "schema": schema,
-                        "schema_strict": bool(llm_cfg.schema_strict),
-                    }
-                ).encode("utf-8")
-            ).hexdigest()
-            cached = await self._cache.aget(namespace="overview:fetch", key=cache_key)
+            payload = {
+                "mode": mode,
+                "use_model": str(profile.use_model),
+                "messages": messages,
+                "json_schema": schema,
+            }
+            cache_key = hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
+            cached = await self._cache.aget(
+                namespace="overview:fetch:v4", key=cache_key
+            )
             if cached:
-                span.set_attr("cache_hit", True)
                 try:
-                    ctx.overview = OverviewResult.model_validate_json(cached)
-                except Exception:
+                    decoded = json.loads(cached.decode("utf-8"))
+                except Exception:  # noqa: BLE001
                     span.add_event("overview.cache_corrupt")
                 else:
+                    ctx.overview_output = decoded
+                    span.set_attr("cache_hit", True)
                     return ctx
         span.set_attr("cache_hit", False)
+        span.set_attr("overview_mode", mode)
 
-        try:
-            t0 = time.monotonic()
-            overview = await self._build_overview(
-                query=query,
-                results=[source],
-                use_model=str(profile.use_model),
-                max_sources=1,
-                max_chunks_per_source=max(1, int(profile.max_chunks)),
-                max_chunk_chars=int(profile.max_chunk_chars),
-                max_prompt_chars=int(profile.max_prompt_chars),
-                max_output_tokens=int(profile.max_output_tokens),
-                self_heal_retries=int(profile.self_heal_retries),
-                force_language=str(profile.force_language),
-            )
-            if (
-                overview_request.max_chars is not None
-                and overview_request.max_chars > 0
-            ):
-                overview = self._clip_overview_output(
-                    overview=overview,
-                    max_chars=int(overview_request.max_chars),
+        retries = max(0, int(profile.self_heal_retries))
+        cur_messages = list(messages)
+        for attempt in range(retries + 1):
+            try:
+                res = await self._llm.chat(
+                    model=str(model_cfg.name),
+                    messages=cur_messages,
+                    schema=schema,
+                    timeout_s=float(model_cfg.timeout_s),
                 )
-            span.set_attr("overview_ms", int((time.monotonic() - t0) * 1000))
-            ctx.overview = overview
-            if cache_ttl_s > 0 and cache_key:
-                await self._cache.aset(
-                    namespace="overview:fetch",
-                    key=cache_key,
-                    value=overview.model_dump_json().encode("utf-8"),
-                    ttl_s=cache_ttl_s,
+                if schema is None:
+                    output_text = clean_whitespace(res.text or "")
+                    if not output_text:
+                        raise ValueError("overview output is empty")
+                    ctx.overview_output = output_text
+                else:
+                    output_obj = _coerce_json_output(
+                        result_data=res.data, raw_text=res.text
+                    )
+                    _validate_json_output(schema=schema, value=output_obj)
+                    ctx.overview_output = output_obj
+                if cache_ttl_s > 0 and cache_key and ctx.overview_output is not None:
+                    await self._cache.aset(
+                        namespace="overview:fetch:v4",
+                        key=cache_key,
+                        value=json.dumps(
+                            ctx.overview_output,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ).encode("utf-8"),
+                        ttl_s=cache_ttl_s,
+                    )
+                return ctx
+            except _SchemaMismatchError as exc:
+                if attempt < retries:
+                    cur_messages = cur_messages + [_self_heal_message()]
+                    continue
+                ctx.errors.append(
+                    AppError(
+                        code="overview_schema_mismatch",
+                        message=str(exc),
+                        details={
+                            "url": ctx.url,
+                            "url_index": ctx.url_index,
+                            "stage": "overview",
+                            "fatal": False,
+                            "crawl_mode": ctx.others_runtime.crawl_mode,
+                        },
+                    )
                 )
-        except Exception as exc:  # noqa: BLE001
-            ctx.errors.append(
-                AppError(
-                    code="fetch_overview_failed",
-                    message=str(exc),
-                    details={
-                        "type": type(exc).__name__,
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "overview",
-                        "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
+                return ctx
+            except Exception as exc:  # noqa: BLE001
+                if attempt < retries and schema is not None:
+                    cur_messages = cur_messages + [_self_heal_message()]
+                    continue
+                ctx.errors.append(
+                    AppError(
+                        code="fetch_overview_failed",
+                        message=str(exc),
+                        details={
+                            "type": type(exc).__name__,
+                            "url": ctx.url,
+                            "url_index": ctx.url_index,
+                            "stage": "overview",
+                            "fatal": False,
+                            "crawl_mode": ctx.others_runtime.crawl_mode,
+                        },
+                    )
                 )
-            )
+                return ctx
         return ctx
 
-    def _schema(self) -> dict[str, Any]:
-        return overview_json_schema()
+    def _build_source_items(self, ctx: FetchStepContext) -> list[str]:
+        abstracts = [
+            item.text for item in list(ctx.scored_abstracts or []) if item.text
+        ]
+        if abstracts:
+            return abstracts
+        plain = clean_whitespace(
+            (ctx.extracted.plain_text if ctx.extracted else "") or ""
+        )
+        if plain:
+            return [plain]
+        markdown = clean_whitespace(
+            ((ctx.extracted.markdown if ctx.extracted else "") or "").replace("\n", " ")
+        )
+        if markdown:
+            return [markdown]
+        return []
 
     def _build_messages(
         self,
         *,
         query: str,
-        results: list[ResultItem],
-        max_sources: int,
-        max_chunks_per_source: int,
-        max_chunk_chars: int,
+        url: str,
+        title: str,
+        source_items: list[str],
         max_prompt_chars: int,
-        force_language: str,
+        language_hint: str,
+        mode: str,
     ) -> list[dict[str, str]]:
-        lang = force_language
-        if lang == "auto":
-            lang = "zh" if _CJK_RE.search(query or "") else "en"
-
-        sources: list[str] = []
-        for r in results[: max(1, int(max_sources))]:
-            sid = r.source_id or "S?"
-            parts: list[str] = []
-            if r.title:
-                parts.append(f"TITLE: {r.title}")
-            if r.url:
-                parts.append(f"URL: {r.url}")
-            if r.snippet:
-                parts.append(f"SNIPPET: {r.snippet}")
-            if r.page and r.page.chunks:
-                for i, ch in enumerate(
-                    r.page.chunks[: max(1, int(max_chunks_per_source))], 1
-                ):
-                    t = ch.text
-                    if max_chunk_chars and len(t) > max_chunk_chars:
-                        t = t[:max_chunk_chars].rstrip() + "..."
-                    cid = ch.chunk_id or f"{sid}:C{i}"
-                    parts.append(f"CHUNK {cid}: {t}")
-            sources.append(f"[{sid}]\n" + "\n".join(parts))
-
-        if lang == "zh":
+        lang_line = (
+            "Respond in Simplified Chinese."
+            if language_hint == "zh"
+            else (
+                "Respond in English."
+                if language_hint == "en"
+                else "Follow user query language."
+            )
+        )
+        if mode == "json":
             task = (
-                "TASK:\n"
-                "Write a concise overview in Simplified Chinese (JSON). "
-                "summary is a short paragraph; key_points is a list of short bullets; "
-                "add citations for key claims."
+                "Return JSON only. Do not output markdown fences or additional text. "
+                "Your JSON must validate against the provided schema."
             )
         else:
-            task = (
-                "TASK:\n"
-                "Write a concise overview in English (JSON). "
-                "summary is a short paragraph; key_points is a list of short bullets; "
-                "add citations for key claims."
-            )
+            task = "Return plain text only. Do not wrap output in JSON."
 
-        cite_fmt = (
-            "CITATION_RULES:\n"
-            "- citations[].cite_id must be unique, e.g. C1/C2...\n"
-            "- citations[].source_id must reference provided SOURCES (e.g. S1)\n"
-            "- citations[].chunk_id is optional, but if present must exist (e.g. S1:C1)\n"
-            "- citations[].url must match the referenced source_id"
-        )
-
-        kept: list[str] = []
-        for s in sources:
-            cand = kept + [s]
-            user_cand = "\n\n".join(
-                [
-                    f"USER_QUERY:\n{query}",
-                    "SOURCES:\n" + "\n\n".join(cand),
-                    task,
-                    cite_fmt,
-                ]
-            )
-            if max_prompt_chars and len(user_cand) > max_prompt_chars:
-                break
-            kept = cand
-
+        blocks = []
+        for idx, item in enumerate(source_items, 1):
+            blocks.append(f"[A{idx}] {item}")
+        body = "\n".join(blocks)
         user = "\n\n".join(
             [
-                f"USER_QUERY:\n{query}",
-                "SOURCES:\n" + "\n\n".join(kept),
-                task,
-                cite_fmt,
+                f"QUERY:\n{query}",
+                f"URL:\n{url}",
+                f"TITLE:\n{title}",
+                f"SOURCE_ABSTRACTS:\n{body}",
             ]
         )
+        if max_prompt_chars > 0 and len(user) > max_prompt_chars:
+            user = user[:max_prompt_chars]
         return [
             {
                 "role": "system",
-                "content": "You are a research assistant. Output JSON only.",
+                "content": f"You are a research assistant. {lang_line} {task}",
             },
             {"role": "user", "content": user},
         ]
 
-    async def _build_overview(
-        self,
-        *,
-        query: str,
-        results: list[ResultItem],
-        use_model: str,
-        max_sources: int,
-        max_chunks_per_source: int,
-        max_chunk_chars: int,
-        max_prompt_chars: int,
-        max_output_tokens: int,
-        self_heal_retries: int,
-        force_language: str,
-    ) -> OverviewResult:
-        active_model = self.settings.llm.resolve_model(use_model)
-        model_alias = active_model.name
 
-        messages = self._build_messages(
-            query=query,
-            results=results,
-            max_sources=max_sources,
-            max_chunks_per_source=max_chunks_per_source,
-            max_chunk_chars=max_chunk_chars,
-            max_prompt_chars=max_prompt_chars,
-            force_language=force_language,
-        )
-        schema = self._schema()
-        retries = max(0, int(self_heal_retries))
-        cur_messages = list(messages)
-
-        with self.span("overview.build", model=model_alias) as sp:
-            sp.set_attr("backend", str(active_model.backend))
-            sp.set_attr("model_name", str(active_model.name))
-            sp.set_attr("schema_strict", bool(active_model.schema_strict))
-            sp.set_attr("self_heal_retries", int(retries))
-
-            last_exc: Exception | None = None
-            last_res: ChatJSONResult | None = None
-
-            for attempt in range(retries + 1):
-                sp.set_attr("attempt", int(attempt))
-                try:
-                    last_res = await self._llm.chat_json(
-                        model=model_alias,
-                        messages=cur_messages,
-                        schema=schema,
-                        timeout_s=float(active_model.timeout_s),
-                    )
-                    out = OverviewLLMOutput.model_validate(last_res.data)
-                    out = self._sanitize_overview(out, results)
-                    summary = self._truncate_summary(
-                        out.summary,
-                        max_output_tokens=max_output_tokens,
-                    )
-                    return OverviewResult(
-                        summary=summary,
-                        key_points=list(out.key_points or []),
-                        citations=list(out.citations or []),
-                        usage=LLMUsage(
-                            prompt_tokens=int(last_res.usage.prompt_tokens),
-                            completion_tokens=int(last_res.usage.completion_tokens),
-                            total_tokens=int(last_res.usage.total_tokens),
-                        ),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    last_exc = (
-                        exc if isinstance(exc, Exception) else Exception(str(exc))
-                    )
-                    sp.add_event(
-                        "overview.attempt_failed",
-                        attempt=int(attempt),
-                        error_type=type(exc).__name__,
-                    )
-                    if attempt < retries and _healable(exc):
-                        cur_messages = cur_messages + [
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Your previous output did not validate. "
-                                    "Return JSON only that strictly matches the given schema. "
-                                    "Do not include markdown or extra keys."
-                                ),
-                            }
-                        ]
-                        continue
-                    raise
-
-            assert last_exc is not None
-            raise last_exc
-
-    def _truncate_summary(self, summary: str, *, max_output_tokens: int) -> str:
-        if max_output_tokens <= 0:
-            return summary or ""
-        return _truncate_to_token_budget(
-            summary or "", max_tokens=int(max_output_tokens)
-        )
-
-    def _sanitize_overview(
-        self, overview: OverviewLLMOutput, results: list[ResultItem]
-    ) -> OverviewLLMOutput:
-        sid_to_url: dict[str, str] = {}
-        sid_to_chunks: dict[str, set[str]] = {}
-        for r in results:
-            sid = (r.source_id or "").strip()
-            if not sid:
-                continue
-            if r.url:
-                sid_to_url[sid] = r.url
-            chunks = set()
-            if r.page and r.page.chunks:
-                for ch in r.page.chunks:
-                    if ch.chunk_id:
-                        chunks.add(ch.chunk_id)
-            sid_to_chunks[sid] = chunks
-
-        kept = []
-        seen: set[tuple[str, str, str]] = set()
-        for c in overview.citations or []:
-            sid = (c.source_id or "").strip()
-            if not sid or sid not in sid_to_chunks:
-                continue
-
-            url = sid_to_url.get(sid) or (c.url or "")
-            chunk_id = c.chunk_id
-            if chunk_id and chunk_id not in sid_to_chunks.get(sid, set()):
-                chunk_id = None
-
-            key = (sid, chunk_id or "", (c.quote or "").strip())
-            if key in seen:
-                continue
-            seen.add(key)
-            kept.append(
-                c.model_copy(
-                    update={
-                        "url": url,
-                        "chunk_id": chunk_id,
-                    }
-                )
-            )
-
-        renum = [
-            c.model_copy(update={"cite_id": f"C{i}"}) for i, c in enumerate(kept, 1)
-        ]
-        return overview.model_copy(update={"citations": renum})
-
-    def _build_source(self, ctx: FetchStepContext) -> ResultItem | None:
-        chunks = [
-            PageChunk(chunk_id=ch.chunk_id, text=ch.text, score=float(ch.score))
-            for ch in list(ctx.scored_chunks or [])
-        ]
-        if not chunks:
-            excerpt = (ctx.extracted.plain_text if ctx.extracted else "").strip()
-            if not excerpt:
-                excerpt = (
-                    ((ctx.extracted.markdown if ctx.extracted else "") or "")
-                    .replace(
-                        "\n",
-                        " ",
-                    )
-                    .strip()
-                )
-            if excerpt:
-                chunks = [PageChunk(chunk_id="S1:C1", text=excerpt[:1000], score=1.0)]
-        if not chunks:
-            return None
-
-        page = PageEnrichment(
-            chunks=chunks, markdown=(ctx.extracted.markdown if ctx.extracted else "")
-        )
-        source = ResultItem(
-            source_id="S1",
-            url=ctx.url,
-            title=(ctx.extracted.title if ctx.extracted else "") or "",
-            snippet=((ctx.extracted.plain_text if ctx.extracted else "") or "")[:260],
-            score=1.0,
-            page=page,
-        )
-        for idx, ch in enumerate(source.page.chunks, 1):
-            ch.chunk_id = ch.chunk_id or f"S1:C{idx}"
-        return source
-
-    def _clip_overview_output(
-        self,
-        *,
-        overview: OverviewResult,
-        max_chars: int,
-    ) -> OverviewResult:
-        summary = _clip_chars(overview.summary, max_chars=max_chars)
-        key_points = [
-            _clip_chars(item, max_chars=max_chars) for item in list(overview.key_points)
-        ]
-        return overview.model_copy(
-            update={
-                "summary": summary,
-                "key_points": key_points,
-            }
-        )
-
-
-def _healable(exc: Exception) -> bool:
-    return isinstance(exc, (ValidationError, TypeError, ValueError))
-
-
-def _truncate_to_token_budget(text: str, *, max_tokens: int) -> str:
-    if max_tokens <= 0:
-        return text
+def _coerce_json_output(*, result_data: object | None, raw_text: str) -> object:
+    if result_data is not None:
+        return result_data
+    text = clean_whitespace(raw_text or "")
     if not text:
-        return ""
-
-    out_chars: list[str] = []
-    tokens = 0
-    i = 0
-    n = len(text)
-
-    def add_token(cnt: int) -> bool:
-        nonlocal tokens
-        if tokens + cnt > max_tokens:
-            return False
-        tokens += cnt
-        return True
-
-    while i < n:
-        ch = text[i]
-        if ch.isspace():
-            out_chars.append(ch)
-            i += 1
-            continue
-
-        if ch.isascii() and ch.isalnum():
-            j = i + 1
-            while j < n and text[j].isascii() and text[j].isalnum():
-                j += 1
-            run = text[i:j]
-            need = (len(run) + 3) // 4
-            if not add_token(need):
-                break
-            out_chars.append(run)
-            i = j
-            continue
-
-        if _CJK_RE.fullmatch(ch):
-            if not add_token(1):
-                break
-            out_chars.append(ch)
-            i += 1
-            continue
-
-        if not add_token(1):
-            break
-        out_chars.append(ch)
-        i += 1
-
-    out = "".join(out_chars)
-    if out == text:
-        return out
-    if out and tokens + 1 <= max_tokens:
-        out = out + "..."
-    return out
+        raise ValueError("json output is empty")
+    return json.loads(text)
 
 
-def _clip_chars(text: str, *, max_chars: int) -> str:
-    if max_chars <= 0:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    if max_chars <= 3:
-        return text[:max_chars]
-    return text[:max_chars].rstrip() + "..."
+def _validate_json_output(*, schema: dict[str, Any], value: object) -> None:
+    try:
+        from jsonschema import Draft202012Validator
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("jsonschema dependency is required") from exc
+    try:
+        Draft202012Validator(schema).validate(value)
+    except Exception as exc:  # noqa: BLE001
+        raise _SchemaMismatchError(str(exc)) from exc
+
+
+class _SchemaMismatchError(Exception):
+    pass
+
+
+def _self_heal_message() -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            "Output did not validate. Return JSON only that strictly matches "
+            "the provided schema."
+        ),
+    }
 
 
 __all__ = ["FetchOverviewStep"]

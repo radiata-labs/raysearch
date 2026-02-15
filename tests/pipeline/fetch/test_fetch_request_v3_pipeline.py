@@ -6,7 +6,7 @@ import anyio
 
 from serpsage import Engine
 from serpsage.app.request import (
-    FetchChunksRequest,
+    FetchAbstractsRequest,
     FetchContentRequest,
     FetchOverviewRequest,
     FetchRequest,
@@ -15,7 +15,7 @@ from serpsage.contracts.lifecycle import ClockBase
 from serpsage.contracts.services import CacheBase, FetcherBase, LLMClientBase, RankerBase
 from serpsage.core.runtime import Overrides, Runtime
 from serpsage.models.fetch import FetchResult
-from serpsage.models.llm import ChatJSONResult, LLMUsage
+from serpsage.models.llm import ChatResult, LLMUsage
 from serpsage.settings.models import AppSettings
 from serpsage.telemetry.trace import NoopTelemetry
 
@@ -89,30 +89,23 @@ class _StubRanker(RankerBase):
 
 
 class _StubLLM(LLMClientBase):
-    async def chat_json(
+    async def chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: dict[str, object],
+        schema: dict[str, object] | None = None,
         timeout_s: float | None = None,
-    ) -> ChatJSONResult:
+    ) -> ChatResult:
         _ = model, messages, schema, timeout_s
-        return ChatJSONResult(
-            data={
-                "summary": "Alpha overview summary with enough length for clipping checks.",
-                "key_points": [
-                    "Alpha key point one with details.",
-                    "Alpha key point two with extra context.",
-                ],
-                "citations": [
-                    {
-                        "cite_id": "C1",
-                        "source_id": "S1",
-                        "url": _URL,
-                    }
-                ],
-            },
+        if schema is None:
+            return ChatResult(
+                text="Alpha overview summary with extra context.",
+                usage=LLMUsage(prompt_tokens=12, completion_tokens=24, total_tokens=36),
+            )
+        return ChatResult(
+            text='{"answer":"alpha"}',
+            data={"answer": "alpha"},
             usage=LLMUsage(prompt_tokens=12, completion_tokens=24, total_tokens=36),
         )
 
@@ -123,7 +116,7 @@ def _build_runtime(settings: AppSettings) -> Runtime:
 
 def _build_settings() -> AppSettings:
     settings = AppSettings()
-    settings.fetch.chunk.min_query_token_hits = 1
+    settings.fetch.abstract.min_query_token_hits = 1
     settings.fetch.render.enabled = False
     settings.fetch.extract.collect_links_default = True
     return settings
@@ -142,33 +135,34 @@ async def _run_fetch(req: FetchRequest) -> object:
         return await engine.fetch(req)
 
 
-def test_content_false_still_computes_chunks_and_overview() -> None:
+def test_content_false_still_computes_abstracts_and_overview() -> None:
     req = FetchRequest(
         urls=[_URL],
         content=False,
-        chunks=FetchChunksRequest(query="alpha", top_k_chunks=2),
+        abstracts=FetchAbstractsRequest(query="alpha", top_k_abstracts=2),
         overview=FetchOverviewRequest(query="alpha"),
     )
     resp = anyio.run(_run_fetch, req)
     assert len(resp.results) == 1
     item = resp.results[0]
     assert item.content == ""
-    assert item.chunks
-    assert item.overview is not None
+    assert item.abstracts
+    assert isinstance(item.overview, str)
+    assert item.overview
 
 
-def test_without_chunks_and_overview_only_returns_content() -> None:
+def test_without_abstracts_and_overview_only_returns_content() -> None:
     req = FetchRequest(
         urls=[_URL],
         content=True,
-        chunks=None,
+        abstracts=None,
         overview=None,
     )
     resp = anyio.run(_run_fetch, req)
     assert len(resp.results) == 1
     item = resp.results[0]
     assert item.content
-    assert item.chunks == []
+    assert item.abstracts == []
     assert item.overview is None
 
 
@@ -176,16 +170,14 @@ def test_max_chars_only_limits_output_fields() -> None:
     req = FetchRequest(
         urls=[_URL],
         content=FetchContentRequest(max_chars=120, depth="low"),
-        chunks=FetchChunksRequest(query="alpha", top_k_chunks=2, max_chars=40),
-        overview=FetchOverviewRequest(query="alpha", max_chars=30),
+        abstracts=FetchAbstractsRequest(query="alpha", top_k_abstracts=4, max_chars=160),
+        overview=FetchOverviewRequest(query="alpha"),
     )
     resp = anyio.run(_run_fetch, req)
 
     assert len(resp.results) == 1
     item = resp.results[0]
     assert len(item.content) <= 120
-    assert item.chunks
-    assert all(len(ch) <= 43 for ch in item.chunks)
+    assert item.abstracts
+    assert len("\n".join(item.abstracts)) <= 160
     assert item.overview is not None
-    assert len(item.overview.summary) <= 33
-    assert all(len(text) <= 33 for text in item.overview.key_points)

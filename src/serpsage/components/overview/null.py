@@ -7,7 +7,7 @@ from serpsage.contracts.services import LLMClientBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.models.llm import ChatJSONResult
+    from serpsage.models.llm import ChatResult
 
 
 class NullLLMClient(LLMClientBase):
@@ -15,14 +15,15 @@ class NullLLMClient(LLMClientBase):
         super().__init__(rt=rt)
 
     @override
-    async def chat_json(
+    async def chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None = None,
         timeout_s: float | None = None,
-    ) -> ChatJSONResult:
+    ) -> ChatResult:
+        _ = model, messages, schema, timeout_s
         raise RuntimeError("LLM is not configured (missing api_key or disabled).")
 
 

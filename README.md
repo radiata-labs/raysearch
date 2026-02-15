@@ -3,7 +3,7 @@
 SerpSage is an async-only SERP + page intelligence engine with two first-class paths:
 
 - `Engine.search(req)`: query search pipeline (`search -> normalize -> filter -> dedupe -> rank -> fetch-enhance -> rerank -> optional overview`)
-- `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional chunk rank -> optional overview -> finalize`)
+- `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional abstract rank -> optional overview -> finalize`)
 
 The `fetch` path is Markdown-first: output is centered on clean main-content markdown (`response.results[].content`).
 
@@ -49,8 +49,9 @@ Runtime prerequisites:
 ```python
 from serpsage import (
     Engine,
-    FetchChunksRequest,
+    FetchAbstractsRequest,
     FetchContentRequest,
+    FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
     SearchRequest,
@@ -69,8 +70,9 @@ async with Engine.from_settings(settings) as engine:
             crawl_mode="fallback",
             crawl_timeout=2.5,
             content=FetchContentRequest(depth="medium"),
-            chunks=FetchChunksRequest(query="benchmark results", top_k_chunks=3),
+            abstracts=FetchAbstractsRequest(query="benchmark results", top_k_abstracts=3),
             overview=FetchOverviewRequest(query="benchmark results"),
+            others=FetchOthersRequest(max_links=20, max_image_links=10),
         )
     )
 ```
@@ -79,14 +81,14 @@ async with Engine.from_settings(settings) as engine:
 
 - `search.depth`: `simple|low|medium|high` (kept semantics)
 - `fetch`: no depth tiers, single strategy profile
-- `FetchRequest` V3 fields:
+- `FetchRequest` V4 fields:
   - `urls`: list of URLs, processed concurrently with stable output order
   - `crawl_mode`: `never|fallback|preferred|always`
   - `crawl_timeout`: per-URL crawler timeout in seconds
   - `content`: `bool | FetchContentRequest` (`false` hides output markdown only; internal extraction still runs)
-  - `chunks`: `FetchChunksRequest | None` (controls chunking query / limits)
-  - `overview`: `FetchOverviewRequest | None` (controls overview query / limits)
-  - `runtime.max_links`: optional link collection cap; omitted means no links output
-  - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content`) are removed
+  - `abstracts`: `FetchAbstractsRequest | None` (query + top-k + total-char budget)
+  - `overview`: `FetchOverviewRequest | None` (`query` + optional `json_schema`; output is `str | object`)
+  - `others.max_links` / `others.max_image_links`: optional link collection caps; omitted means no links output
+  - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
 - both `search` and `fetch` support optional overview
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering

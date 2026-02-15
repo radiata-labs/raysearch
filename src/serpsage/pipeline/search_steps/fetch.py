@@ -7,11 +7,11 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.app.request import FetchChunksRequest, FetchRequest
-from serpsage.app.response import PageChunk, PageEnrichment
+from serpsage.app.request import FetchAbstractsRequest, FetchRequest
+from serpsage.app.response import PageAbstract, PageEnrichment
 from serpsage.models.pipeline import (
     FetchStepContext,
-    FetchStepRuntime,
+    FetchStepOthersRuntime,
     SearchStepContext,
 )
 from serpsage.pipeline.step import PipelineStep
@@ -60,7 +60,7 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
 
         work = ctx.results[:m]
         query = ctx.request.query
-        top_k = int(preset.top_chunks_per_page)
+        top_k = int(preset.top_abstracts_per_page)
         step_deadline_ts = time.monotonic() + max(0.1, float(preset.step_timeout_s))
         page_timeout_s = float(preset.page_timeout_s)
         max_parallel = min(
@@ -77,7 +77,7 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
             now = time.monotonic()
             if now >= step_deadline_ts:
                 r.page = PageEnrichment(
-                    chunks=[],
+                    abstracts=[],
                     markdown="",
                     timing_ms={"total_ms": 0},
                     warnings=["step deadline exceeded"],
@@ -90,7 +90,7 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                 timeout_s = min(float(page_timeout_s), remaining_s)
                 if timeout_s <= 0:
                     r.page = PageEnrichment(
-                        chunks=[],
+                        abstracts=[],
                         markdown="",
                         timing_ms={"total_ms": 0},
                         warnings=["step deadline exceeded"],
@@ -107,15 +107,15 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                             crawl_mode="fallback",
                             crawl_timeout=timeout_s,
                             content=True,
-                            chunks=FetchChunksRequest(
+                            abstracts=FetchAbstractsRequest(
                                 query=query,
-                                top_k_chunks=top_k,
+                                top_k_abstracts=top_k,
                             ),
                             overview=None,
                         ),
                         url=r.url,
                         url_index=0,
-                        runtime=FetchStepRuntime(
+                        others_runtime=FetchStepOthersRuntime(
                             crawl_mode="fallback",
                             crawl_timeout_s=timeout_s,
                             allow_render=bool(
@@ -123,18 +123,19 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                             ),
                             rank_index=rank_index,
                             max_links=None,
+                            max_image_links=None,
                         ),
                     )
                 )
                 if fetch_ctx.result is not None:
                     r.page = PageEnrichment(
-                        chunks=[
-                            PageChunk(
-                                chunk_id=f"S1:C{i + 1}",
+                        abstracts=[
+                            PageAbstract(
+                                abstract_id=f"S1:A{i + 1}",
                                 text=txt,
-                                score=float(fetch_ctx.result.chunk_scores[i]),
+                                score=float(fetch_ctx.result.abstract_scores[i]),
                             )
-                            for i, txt in enumerate(fetch_ctx.result.chunks)
+                            for i, txt in enumerate(fetch_ctx.result.abstracts)
                         ],
                         markdown=fetch_ctx.result.content,
                     )
@@ -147,7 +148,7 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                         else "fetch failed"
                     )
                     r.page = PageEnrichment(
-                        chunks=[],
+                        abstracts=[],
                         markdown="",
                         timing_ms={"total_ms": 0},
                         warnings=["fetch failed"],

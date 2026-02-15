@@ -7,7 +7,7 @@ from serpsage.contracts.services import LLMClientBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.models.llm import ChatJSONResult
+    from serpsage.models.llm import ChatResult
 
 
 class RoutedLLMClient(LLMClientBase):
@@ -22,19 +22,19 @@ class RoutedLLMClient(LLMClientBase):
         self.bind_deps(*[unit for unit, _ in self._routes.values()])
 
     @override
-    async def chat_json(
+    async def chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None = None,
         timeout_s: float | None = None,
-    ) -> ChatJSONResult:
+    ) -> ChatResult:
         route = self._routes.get(str(model))
         if route is None:
             raise ValueError(f"llm model route `{model}` is not configured")
         client, provider_model = route
-        return await client.chat_json(
+        return await client.chat(
             model=provider_model,
             messages=messages,
             schema=schema,

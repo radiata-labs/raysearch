@@ -24,6 +24,7 @@ dependencies = [
     "beautifulsoup4",
     "curl_cffi",
     "httpx>=0.27,<1",
+    "jsonschema>=4.23",
     "pymupdf>=1.24.0",
     "playwright>=1.49.1",
     "pypdf>=5.2.0",

@@ -30,6 +30,15 @@ class ExtractedLink(FrozenModel):
     position: int = 0
 
 
+class ExtractedImageLink(FrozenModel):
+    url: str = ""
+    alt_text: str = ""
+    section: Literal["primary", "secondary"] = "primary"
+    is_internal: bool = False
+    source_hint: str = ""
+    position: int = 0
+
+
 class ExtractedDocument(FrozenModel):
     markdown: str = ""
     plain_text: str = ""
@@ -40,6 +49,7 @@ class ExtractedDocument(FrozenModel):
     warnings: list[str] = Field(default_factory=list)
     stats: dict[str, int | float | str | bool] = Field(default_factory=dict)
     links: list[ExtractedLink] = Field(default_factory=list)
+    image_links: list[ExtractedImageLink] = Field(default_factory=list)
 
 
 __all__ = [
@@ -47,5 +57,6 @@ __all__ = [
     "ExtractContentOptions",
     "ExtractContentTag",
     "ExtractedDocument",
+    "ExtractedImageLink",
     "ExtractedLink",
 ]

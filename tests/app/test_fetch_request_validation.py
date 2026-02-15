@@ -4,11 +4,12 @@ import pytest
 from pydantic import ValidationError
 
 from serpsage.app.request import (
-    FetchChunksRequest,
+    FetchAbstractsRequest,
     FetchContentRequest,
+    FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
-    FetchRuntimeRequest,
+    SearchOverviewRequest,
 )
 
 
@@ -17,9 +18,9 @@ def test_fetch_content_request_rejects_tag_overlap() -> None:
         FetchContentRequest(include_tags=["header"], exclude_tags=["header"])
 
 
-def test_fetch_chunks_request_rejects_blank_query() -> None:
+def test_fetch_abstracts_request_rejects_blank_query() -> None:
     with pytest.raises(ValidationError):
-        FetchChunksRequest(query="   ")
+        FetchAbstractsRequest(query="   ")
 
 
 def test_fetch_overview_request_rejects_blank_query() -> None:
@@ -31,13 +32,13 @@ def test_fetch_request_positive_constraints() -> None:
     with pytest.raises(ValidationError):
         FetchContentRequest(max_chars=0)
     with pytest.raises(ValidationError):
-        FetchChunksRequest(query="alpha", max_chars=-1)
+        FetchAbstractsRequest(query="alpha", max_chars=-1)
     with pytest.raises(ValidationError):
-        FetchChunksRequest(query="alpha", top_k_chunks=0)
+        FetchAbstractsRequest(query="alpha", top_k_abstracts=0)
     with pytest.raises(ValidationError):
-        FetchOverviewRequest(query="alpha", max_chars=0)
+        FetchOthersRequest(max_links=0)
     with pytest.raises(ValidationError):
-        FetchRuntimeRequest(max_links=0)
+        FetchOthersRequest(max_image_links=0)
     with pytest.raises(ValidationError):
         FetchRequest(
             urls=["https://example.com"],
@@ -47,10 +48,17 @@ def test_fetch_request_positive_constraints() -> None:
 
 
 def test_fetch_query_fields_are_trimmed() -> None:
-    chunks = FetchChunksRequest(query="  alpha beta  ")
+    abstracts = FetchAbstractsRequest(query="  alpha beta  ")
     overview = FetchOverviewRequest(query="  gamma  ")
-    assert chunks.query == "alpha beta"
+    assert abstracts.query == "alpha beta"
     assert overview.query == "gamma"
+
+
+def test_json_schema_validation() -> None:
+    with pytest.raises(ValidationError):
+        FetchOverviewRequest(query="alpha", json_schema={"type": "wat"})
+    with pytest.raises(ValidationError):
+        SearchOverviewRequest(json_schema=["not", "object"])
 
 
 def test_fetch_request_urls_validation() -> None:

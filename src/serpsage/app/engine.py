@@ -10,7 +10,7 @@ from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import (
     FetchStepContext,
-    FetchStepRuntime,
+    FetchStepOthersRuntime,
     SearchStepContext,
 )
 
@@ -67,12 +67,13 @@ class Engine(WorkUnit):
                     request=req,
                     url=url,
                     url_index=idx,
-                    runtime=FetchStepRuntime(
+                    others_runtime=FetchStepOthersRuntime(
                         crawl_mode=req.crawl_mode,
                         crawl_timeout_s=float(req.crawl_timeout or 0.0),
                         allow_render=True,
                         rank_index=idx,
-                        max_links=req.runtime.max_links,
+                        max_links=req.others.max_links,
+                        max_image_links=req.others.max_image_links,
                     ),
                 )
                 for idx, url in enumerate(req.urls)

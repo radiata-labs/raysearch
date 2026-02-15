@@ -43,7 +43,7 @@ search:
       pages_ratio: 0.25
       min_pages: 1
       max_pages: 3
-      top_chunks_per_page: 2
+      top_abstracts_per_page: 2
       step_timeout_s: 1.2
       page_timeout_s: 0.9
       max_render_pages: 0
@@ -51,7 +51,7 @@ search:
       pages_ratio: 0.50
       min_pages: 2
       max_pages: 6
-      top_chunks_per_page: 3
+      top_abstracts_per_page: 3
       step_timeout_s: 2.0
       page_timeout_s: 1.6
       max_render_pages: 2
@@ -59,7 +59,7 @@ search:
       pages_ratio: 0.75
       min_pages: 3
       max_pages: 10
-      top_chunks_per_page: 5
+      top_abstracts_per_page: 5
       step_timeout_s: 4.0
       page_timeout_s: 2.5
       max_render_pages: 6
@@ -67,8 +67,8 @@ search:
     enabled_default: true
     use_model: gpt-4.1-mini
     max_sources: 8
-    max_chunks_per_source: 2
-    max_chunk_chars: 900
+    max_abstracts_per_source: 2
+    max_abstract_chars: 900
     max_output_tokens: 600
     max_prompt_chars: 32000
     cache_ttl_s: 0
@@ -115,24 +115,21 @@ fetch:
     collect_links_default: false
     link_max_count: 800
     link_keep_hash: false
-  chunk:
-    target_chars: 1050
-    overlap_segments: 1
-    max_chunks: 42
-    min_chunk_score: 0.2
+  abstract:
+    max_abstracts: 42
+    min_abstract_score: 0.2
     min_query_token_hits: 2
-    default_top_k: 3
+    default_top_k_abstracts: 3
     max_markdown_chars: 140000
     max_segments: 420
-    max_sentence_chars: 600
-    min_chunk_chars: 160
+    min_abstract_chars: 1
     query_prefilter_window: 320
-    early_bonus: 1.15
+    title_boost_alpha: 0.35
   overview:
     enabled_default: false
     use_model: gpt-4.1-mini
-    max_chunks: 6
-    max_chunk_chars: 900
+    max_abstracts: 6
+    max_abstract_chars: 900
     max_output_tokens: 600
     max_prompt_chars: 32000
     cache_ttl_s: 0

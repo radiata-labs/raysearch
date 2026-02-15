@@ -5,13 +5,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from serpsage.models.errors import AppError  # noqa: TC001
-from serpsage.models.llm import LLMUsage  # noqa: TC001
 
 
-class PageChunk(BaseModel):
+class PageAbstract(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
-    chunk_id: str | None = None
+    abstract_id: str | None = None
     text: str
     score: float = 0.0
 
@@ -19,7 +18,7 @@ class PageChunk(BaseModel):
 class PageEnrichment(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
-    chunks: list[PageChunk] = Field(default_factory=list)
+    abstracts: list[PageAbstract] = Field(default_factory=list)
     markdown: str = ""
     content_kind: str | None = None
     fetch_mode: str | None = None
@@ -44,31 +43,6 @@ class ResultItem(BaseModel):
     raw: dict[str, Any] | None = None
 
 
-class Citation(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-
-    cite_id: str
-    source_id: str
-    url: str
-    title: str | None = None
-    chunk_id: str | None = None
-    quote: str | None = None
-
-
-class OverviewLLMOutput(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-
-    summary: str = ""
-    key_points: list[str] = Field(default_factory=list)
-    citations: list[Citation] = Field(default_factory=list)
-
-
-class OverviewResult(OverviewLLMOutput):
-    model_config = ConfigDict(validate_assignment=True)
-
-    usage: LLMUsage = Field(default_factory=LLMUsage)
-
-
 def _default_telemetry() -> dict[str, Any]:
     return {"enabled": False, "trace_id": "noop", "spans": []}
 
@@ -79,9 +53,34 @@ class SearchResponse(BaseModel):
     query: str
     depth: str
     results: list[ResultItem] = Field(default_factory=list)
-    overview: OverviewResult | None = None
+    overview: str | object | None = None
     errors: list[AppError] = Field(default_factory=list)
     telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
+
+
+class FetchOthersResult(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    links: list[str] = Field(default_factory=list)
+    image_links: list[str] = Field(default_factory=list)
+
+
+class FetchResultItem(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    url: str
+    title: str
+    content: str
+    abstracts: list[str]
+    abstract_scores: list[float]
+    overview: str | object | None = None
+    others: FetchOthersResult = Field(default_factory=FetchOthersResult)
+
+    @model_validator(mode="after")
+    def _validate_abstract_alignment(self) -> FetchResultItem:
+        if len(self.abstracts) != len(self.abstract_scores):
+            raise ValueError("abstracts and abstract_scores length mismatch")
+        return self
 
 
 class FetchResponse(BaseModel):
@@ -92,37 +91,16 @@ class FetchResponse(BaseModel):
     telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
-class FetchResultItem(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-
-    url: str
-    title: str
-    content: str
-    chunks: list[str]
-    chunk_scores: list[float]
-    links: list[str]
-    overview: OverviewResult | None = None
-
-    @model_validator(mode="after")
-    def _validate_chunk_alignment(self) -> FetchResultItem:
-        if len(self.chunks) != len(self.chunk_scores):
-            raise ValueError("chunks and chunk_scores length mismatch")
-        return self
-
-
 __all__ = [
-    "Citation",
+    "FetchOthersResult",
     "FetchResponse",
     "FetchResultItem",
-    "OverviewLLMOutput",
-    "OverviewResult",
-    "PageChunk",
+    "PageAbstract",
     "PageEnrichment",
     "ResultItem",
     "SearchResponse",
 ]
 
-# Ensure forward references are resolved (Pydantic v2 + postponed annotations).
 SearchResponse.model_rebuild()
 FetchResultItem.model_rebuild()
 FetchResponse.model_rebuild()

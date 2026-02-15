@@ -37,7 +37,7 @@ class FetchFinalizeStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "finalize",
                         "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
@@ -49,23 +49,25 @@ class FetchFinalizeStep(PipelineStep[FetchStepContext]):
             markdown = finalize_markdown(markdown=markdown, max_chars=max_chars)
         content = markdown if ctx.return_content else ""
 
-        chunks = [str(item.text) for item in list(ctx.scored_chunks or [])]
-        chunk_scores = [float(item.score) for item in list(ctx.scored_chunks or [])]
-        result = FetchResultItem(
+        abstracts = [str(item.text) for item in list(ctx.scored_abstracts or [])]
+        abstract_scores = [
+            float(item.score) for item in list(ctx.scored_abstracts or [])
+        ]
+        ctx.result = FetchResultItem(
             url=ctx.url,
             title=str(ctx.extracted.title or ""),
             content=content,
-            chunks=chunks,
-            chunk_scores=chunk_scores,
-            links=list(ctx.links or []),
-            overview=ctx.overview,
+            abstracts=abstracts,
+            abstract_scores=abstract_scores,
+            overview=ctx.overview_output,
+            others=ctx.others_result,
         )
-        ctx.result = result
 
         span.set_attr("has_result", True)
-        span.set_attr("chunks_count", int(len(chunks)))
-        span.set_attr("links_count", int(len(ctx.links or [])))
-        span.set_attr("has_overview", bool(ctx.overview is not None))
+        span.set_attr("abstracts_count", int(len(abstracts)))
+        span.set_attr("links_count", int(len(ctx.others_result.links)))
+        span.set_attr("image_links_count", int(len(ctx.others_result.image_links)))
+        span.set_attr("has_overview", bool(ctx.overview_output is not None))
         span.set_attr("has_content_output", bool(ctx.return_content))
         return ctx
 

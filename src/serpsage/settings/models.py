@@ -71,7 +71,7 @@ class SearchDepthProfile(Model):
     pages_ratio: float = 0.25
     min_pages: int = 1
     max_pages: int = 3
-    top_chunks_per_page: int = 2
+    top_abstracts_per_page: int = 2
     step_timeout_s: float = 2.0
     page_timeout_s: float = 1.6
     max_render_pages: int = 2
@@ -83,7 +83,7 @@ def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
             pages_ratio=0.25,
             min_pages=1,
             max_pages=3,
-            top_chunks_per_page=2,
+            top_abstracts_per_page=2,
             step_timeout_s=1.2,
             page_timeout_s=0.9,
             max_render_pages=0,
@@ -92,7 +92,7 @@ def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
             pages_ratio=0.50,
             min_pages=2,
             max_pages=6,
-            top_chunks_per_page=3,
+            top_abstracts_per_page=3,
             step_timeout_s=2.0,
             page_timeout_s=1.6,
             max_render_pages=2,
@@ -101,7 +101,7 @@ def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
             pages_ratio=0.75,
             min_pages=3,
             max_pages=10,
-            top_chunks_per_page=5,
+            top_abstracts_per_page=5,
             step_timeout_s=4.0,
             page_timeout_s=2.5,
             max_render_pages=6,
@@ -117,7 +117,7 @@ class OverviewProfileBase(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     use_model: str = "gpt-4.1-mini"
-    max_chunk_chars: int = 900
+    max_abstract_chars: int = 900
     max_output_tokens: int = 600
     max_prompt_chars: int = 32_000
     cache_ttl_s: int = 0
@@ -130,14 +130,14 @@ class SearchOverviewSettings(OverviewProfileBase):
 
     enabled_default: bool = True
     max_sources: int = 8
-    max_chunks_per_source: int = 2
+    max_abstracts_per_source: int = 2
 
 
 class FetchOverviewSettings(OverviewProfileBase):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     enabled_default: bool = False
-    max_chunks: int = 6
+    max_abstracts: int = 6
 
 
 class SearchSettings(Model):
@@ -222,21 +222,18 @@ class FetchExtractSettings(Model):
     link_keep_hash: bool = False
 
 
-class FetchChunkSettings(Model):
+class FetchAbstractSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    target_chars: int = 1_050
-    overlap_segments: int = 1
-    max_chunks: int = 42
-    min_chunk_score: float = 0.20
+    max_abstracts: int = 42
+    min_abstract_score: float = 0.20
     min_query_token_hits: int = 2
-    default_top_k: int = 3
+    default_top_k_abstracts: int = 3
     max_markdown_chars: int = 140_000
     max_segments: int = 420
-    max_sentence_chars: int = 600
-    min_chunk_chars: int = 160
+    min_abstract_chars: int = 1
     query_prefilter_window: int = 320
-    early_bonus: float = 1.15
+    title_boost_alpha: float = 0.35
 
 
 class FetchSettings(Model):
@@ -252,7 +249,7 @@ class FetchSettings(Model):
     render: FetchRenderSettings = Field(default_factory=FetchRenderSettings)
     quality: FetchQualitySettings = Field(default_factory=FetchQualitySettings)
     extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
-    chunk: FetchChunkSettings = Field(default_factory=FetchChunkSettings)
+    abstract: FetchAbstractSettings = Field(default_factory=FetchAbstractSettings)
     overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
 
 
@@ -453,7 +450,7 @@ __all__ = [
     "CacheSettings",
     "DepthKey",
     "FetchBackendKey",
-    "FetchChunkSettings",
+    "FetchAbstractSettings",
     "FetchConcurrencySettings",
     "FetchExtractSettings",
     "FetchOverviewSettings",

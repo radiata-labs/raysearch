@@ -39,37 +39,39 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "prepare",
                         "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
                     },
                 )
             )
             return ctx
 
-        chunks_request = ctx.request.chunks
-        if chunks_request is not None:
-            query = clean_whitespace(chunks_request.query or "")
+        abstracts_request = ctx.request.abstracts
+        if abstracts_request is not None:
+            query = clean_whitespace(abstracts_request.query or "")
             if not query:
                 ctx.fatal = True
                 ctx.errors.append(
                     AppError(
-                        code="fetch_rank_failed",
-                        message="chunks.query must not be empty",
+                        code="fetch_abstract_rank_failed",
+                        message="abstracts.query must not be empty",
                         details={
                             "url": url,
                             "url_index": ctx.url_index,
                             "stage": "prepare",
                             "fatal": True,
-                            "crawl_mode": ctx.runtime.crawl_mode,
+                            "crawl_mode": ctx.others_runtime.crawl_mode,
                         },
                     )
                 )
                 return ctx
-            chunks_request = chunks_request.model_copy(update={"query": query})
+            abstracts_request = abstracts_request.model_copy(update={"query": query})
 
         overview_request = ctx.request.overview
         if overview_request is not None:
-            query = clean_whitespace(overview_request.query or "")
-            if not query:
+            overview_request = overview_request.model_copy(
+                update={"query": clean_whitespace(overview_request.query or "")}
+            )
+            if not overview_request.query:
                 ctx.fatal = True
                 ctx.errors.append(
                     AppError(
@@ -80,12 +82,11 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "prepare",
                             "fatal": True,
-                            "crawl_mode": ctx.runtime.crawl_mode,
+                            "crawl_mode": ctx.others_runtime.crawl_mode,
                         },
                     )
                 )
                 return ctx
-            overview_request = overview_request.model_copy(update={"query": query})
 
         raw_content = ctx.request.content
         content_request: FetchContentRequest
@@ -104,9 +105,10 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
             exclude_tags=list(content_request.exclude_tags),
         )
         ctx.url = url
+
         profile_query = (
-            chunks_request.query
-            if chunks_request is not None
+            abstracts_request.query
+            if abstracts_request is not None
             else (overview_request.query if overview_request is not None else ctx.url)
         )
         profile_name, profile = self.settings.select_profile(
@@ -116,31 +118,31 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
         ctx.profile_name = profile_name
         ctx.profile = profile
 
-        if chunks_request is not None:
-            chunk_query_tokens = tokenize_for_query(chunks_request.query)
-            chunk_intent_tokens = extract_intent_tokens(
-                chunks_request.query,
+        if abstracts_request is not None:
+            abstract_query_tokens = tokenize_for_query(abstracts_request.query)
+            abstract_intent_tokens = extract_intent_tokens(
+                abstracts_request.query,
                 profile.intent_terms,
             )
         else:
-            chunk_query_tokens = []
-            chunk_intent_tokens = []
+            abstract_query_tokens = []
+            abstract_intent_tokens = []
 
         ctx.return_content = bool(return_content)
         ctx.content_request = content_request
         ctx.content_options = content_options
-        ctx.chunks_request = chunks_request
+        ctx.abstracts_request = abstracts_request
         ctx.overview_request = overview_request
-        ctx.chunk_query_tokens = chunk_query_tokens
-        ctx.chunk_intent_tokens = chunk_intent_tokens
+        ctx.abstract_query_tokens = abstract_query_tokens
+        ctx.abstract_intent_tokens = abstract_intent_tokens
 
         span.set_attr("has_content_output", bool(return_content))
-        span.set_attr("has_chunks", bool(chunks_request is not None))
+        span.set_attr("has_abstracts", bool(abstracts_request is not None))
         span.set_attr("has_overview", bool(overview_request is not None))
         span.set_attr("content_depth", str(content_request.depth))
         span.set_attr("profile_name", str(profile_name))
-        span.set_attr("crawl_mode", str(ctx.runtime.crawl_mode))
-        span.set_attr("crawl_timeout_s", float(ctx.runtime.crawl_timeout_s))
+        span.set_attr("crawl_mode", str(ctx.others_runtime.crawl_mode))
+        span.set_attr("crawl_timeout_s", float(ctx.others_runtime.crawl_timeout_s))
         span.set_attr("url_index", int(ctx.url_index))
         return ctx
 

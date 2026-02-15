@@ -4,7 +4,7 @@ import html
 import re
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 from serpsage.components.extract.markdown.config import build_extract_profile
@@ -19,6 +19,9 @@ from serpsage.components.extract.markdown.engines import (
     run_readability,
     run_trafilatura,
     trafilatura_available,
+)
+from serpsage.components.extract.markdown.links import (
+    collect_image_links as collect_image_links_inventory,
 )
 from serpsage.components.extract.markdown.links import (
     collect_links as collect_links_inventory,
@@ -93,9 +96,12 @@ class MarkdownExtractor(ExtractorBase):
         content_options: ExtractContentOptions | None = None,
         include_secondary_content: bool = False,
         collect_links: bool = False,
+        collect_images: bool = False,
     ) -> ExtractedDocument:
         profile = self._profile
-        kind = classify_content_kind(content_type=content_type, url=url, content=content)
+        kind = classify_content_kind(
+            content_type=content_type, url=url, content=content
+        )
         if kind == "pdf":
             return extract_pdf_document(content=content)
 
@@ -134,6 +140,7 @@ class MarkdownExtractor(ExtractorBase):
                 profile=profile,
                 include_secondary_content=(options.depth == "high"),
                 collect_links=bool(collect_links),
+                collect_images=bool(collect_images),
             )
         return self._extract_html_with_options(
             html_doc=html_doc,
@@ -141,6 +148,7 @@ class MarkdownExtractor(ExtractorBase):
             profile=profile,
             options=options,
             collect_links=bool(collect_links),
+            collect_images=bool(collect_images),
         )
 
     def _extract_text(
@@ -149,7 +157,11 @@ class MarkdownExtractor(ExtractorBase):
         text: str,
         include_secondary_content: bool,
     ) -> ExtractedDocument:
-        lines = [clean_whitespace(line) for line in text.splitlines() if clean_whitespace(line)]
+        lines = [
+            clean_whitespace(line)
+            for line in text.splitlines()
+            if clean_whitespace(line)
+        ]
         markdown = finalize_markdown(
             markdown="\n\n".join(lines),
             max_chars=int(self._profile.max_markdown_chars),
@@ -198,6 +210,7 @@ class MarkdownExtractor(ExtractorBase):
         profile: ExtractProfile,
         options: ExtractContentOptions,
         collect_links: bool,
+        collect_images: bool,
     ) -> ExtractedDocument:
         low_doc = self._extract_html(
             html_doc=html_doc,
@@ -205,6 +218,7 @@ class MarkdownExtractor(ExtractorBase):
             profile=profile,
             include_secondary_content=False,
             collect_links=collect_links,
+            collect_images=collect_images,
         )
 
         include_secondary = False
@@ -217,6 +231,7 @@ class MarkdownExtractor(ExtractorBase):
                 profile=profile,
                 include_secondary_content=True,
                 collect_links=collect_links,
+                collect_images=collect_images,
             )
         elif options.depth == "medium":
             primary_chars = int(low_doc.stats.get("primary_chars", 0))
@@ -231,6 +246,7 @@ class MarkdownExtractor(ExtractorBase):
                     profile=profile,
                     include_secondary_content=True,
                     collect_links=collect_links,
+                    collect_images=collect_images,
                 )
 
         needs_semantic_render = bool(
@@ -245,6 +261,7 @@ class MarkdownExtractor(ExtractorBase):
             options=options,
             include_secondary=include_secondary,
             collect_links=collect_links,
+            collect_images=collect_images,
             base_doc=base_doc,
         )
 
@@ -257,6 +274,7 @@ class MarkdownExtractor(ExtractorBase):
         options: ExtractContentOptions,
         include_secondary: bool,
         collect_links: bool,
+        collect_images: bool,
         base_doc: ExtractedDocument,
     ) -> ExtractedDocument:
         selected_tags = self._resolve_selected_tags(
@@ -279,7 +297,9 @@ class MarkdownExtractor(ExtractorBase):
             selected_tags=selected_tags,
             preserve_html_tags=bool(options.include_html_tags),
         )
-        markdown = finalize_markdown(markdown=markdown, max_chars=profile.max_markdown_chars)
+        markdown = finalize_markdown(
+            markdown=markdown, max_chars=profile.max_markdown_chars
+        )
         plain = markdown_to_plain(markdown)
 
         merged_stats: StatsMap = dict(base_doc.stats)
@@ -336,6 +356,18 @@ class MarkdownExtractor(ExtractorBase):
             if collect_links
             else []
         )
+        image_links = (
+            collect_image_links_inventory(
+                soup=soup,
+                base_url=url,
+                buckets=buckets,
+                include_secondary_content=("sidebar" in selected_tags),
+                max_links=profile.link_max_count,
+                keep_hash=profile.link_keep_hash,
+            )
+            if collect_images
+            else []
+        )
         title = clean_whitespace(
             html.unescape(soup.title.get_text(" ", strip=True) if soup.title else "")
         )
@@ -349,6 +381,7 @@ class MarkdownExtractor(ExtractorBase):
             warnings=merged_warnings,
             stats=merged_stats,
             links=links,
+            image_links=image_links,
         )
 
     def _resolve_selected_tags(
@@ -364,7 +397,7 @@ class MarkdownExtractor(ExtractorBase):
             if include_secondary:
                 selected.add("sidebar")
         selected -= set(options.exclude_tags)
-        return selected
+        return cast("set[ExtractContentTag]", selected)
 
     def _render_selected_tags_markdown(
         self,
@@ -526,6 +559,7 @@ class MarkdownExtractor(ExtractorBase):
         profile: ExtractProfile,
         include_secondary_content: bool,
         collect_links: bool,
+        collect_images: bool,
     ) -> ExtractedDocument:
         soup = parse_html_document(html_doc)
         cleanup_dom(soup)
@@ -551,10 +585,9 @@ class MarkdownExtractor(ExtractorBase):
         candidates.append(fast)
         engine_chain.append(fast.extractor_used)
 
-        need_fallback = (
-            fast.quality_score < float(profile.quality_threshold)
-            or int(fast.primary_chars) < int(profile.min_primary_chars)
-        )
+        need_fallback = fast.quality_score < float(profile.quality_threshold) or int(
+            fast.primary_chars
+        ) < int(profile.min_primary_chars)
         if need_fallback:
             for name in profile.engine_order:
                 if name == "fastdom":
@@ -575,7 +608,10 @@ class MarkdownExtractor(ExtractorBase):
                 candidates.append(cand)
                 engine_chain.append(cand.extractor_used)
 
-        best = max(candidates, key=lambda item: (float(item.quality_score), len(item.plain_text)))
+        best = max(
+            candidates,
+            key=lambda item: (float(item.quality_score), len(item.plain_text)),
+        )
         best = self._enhance_for_missing_features(
             best=best,
             candidates=candidates,
@@ -643,6 +679,18 @@ class MarkdownExtractor(ExtractorBase):
             if collect_links
             else []
         )
+        image_links = (
+            collect_image_links_inventory(
+                soup=soup,
+                base_url=url,
+                buckets=buckets,
+                include_secondary_content=include_secondary_content,
+                max_links=profile.link_max_count,
+                keep_hash=profile.link_keep_hash,
+            )
+            if collect_images
+            else []
+        )
 
         title = clean_whitespace(
             html.unescape(soup.title.get_text(" ", strip=True) if soup.title else "")
@@ -657,6 +705,7 @@ class MarkdownExtractor(ExtractorBase):
             warnings=merged_warnings,
             stats=merged_stats,
             links=links,
+            image_links=image_links,
         )
 
     def _run_engine(
@@ -786,7 +835,8 @@ class MarkdownExtractor(ExtractorBase):
                         key=lambda item: item.quality_score,
                         reverse=True,
                     )
-                    if candidate is not best and int(candidate.stats.get(feature, 0)) > 0
+                    if candidate is not best
+                    and int(candidate.stats.get(feature, 0)) > 0
                 ),
                 None,
             )

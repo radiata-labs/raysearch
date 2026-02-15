@@ -11,6 +11,30 @@ FetchContentTag = Literal[
 CrawlMode = Literal["never", "fallback", "preferred", "always"]
 
 
+def _validate_json_schema(value: object | None) -> object | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("json_schema must be a JSON object")
+    try:
+        from jsonschema import Draft202012Validator
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("jsonschema dependency is required") from exc
+    Draft202012Validator.check_schema(value)
+    return value
+
+
+class SearchOverviewRequest(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    json_schema: object | None = None
+
+    @field_validator("json_schema")
+    @classmethod
+    def _validate_schema(cls, value: object | None) -> object | None:
+        return _validate_json_schema(value)
+
+
 class SearchRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -18,22 +42,23 @@ class SearchRequest(BaseModel):
     depth: SearchDepth = "simple"
     max_results: int | None = None
     profile: str | None = None
-    overview: bool | None = None
+    overview: bool | SearchOverviewRequest | None = None
     params: dict[str, object] = Field(default_factory=dict)
 
 
-class FetchRuntimeRequest(BaseModel):
+class FetchOthersRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     max_links: int | None = None
+    max_image_links: int | None = None
 
-    @field_validator("max_links")
+    @field_validator("max_links", "max_image_links")
     @classmethod
-    def _validate_max_links(cls, value: int | None) -> int | None:
+    def _validate_positive_limit(cls, value: int | None) -> int | None:
         if value is None:
             return None
         if value <= 0:
-            raise ValueError("max_links must be > 0")
+            raise ValueError("limit must be > 0")
         return value
 
 
@@ -65,12 +90,12 @@ class FetchContentRequest(BaseModel):
         return self
 
 
-class FetchChunksRequest(BaseModel):
+class FetchAbstractsRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     query: str
     max_chars: int | None = None
-    top_k_chunks: int | None = None
+    top_k_abstracts: int | None = None
 
     @field_validator("query")
     @classmethod
@@ -80,22 +105,13 @@ class FetchChunksRequest(BaseModel):
             raise ValueError("query must not be empty")
         return query
 
-    @field_validator("max_chars")
+    @field_validator("max_chars", "top_k_abstracts")
     @classmethod
-    def _validate_max_chars(cls, value: int | None) -> int | None:
+    def _validate_positive_int(cls, value: int | None) -> int | None:
         if value is None:
             return None
         if value <= 0:
-            raise ValueError("max_chars must be > 0")
-        return value
-
-    @field_validator("top_k_chunks")
-    @classmethod
-    def _validate_top_k_chunks(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if value <= 0:
-            raise ValueError("top_k_chunks must be > 0")
+            raise ValueError("value must be > 0")
         return value
 
 
@@ -103,7 +119,7 @@ class FetchOverviewRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     query: str
-    max_chars: int | None = None
+    json_schema: object | None = None
 
     @field_validator("query")
     @classmethod
@@ -113,14 +129,10 @@ class FetchOverviewRequest(BaseModel):
             raise ValueError("query must not be empty")
         return query
 
-    @field_validator("max_chars")
+    @field_validator("json_schema")
     @classmethod
-    def _validate_max_chars(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if value <= 0:
-            raise ValueError("max_chars must be > 0")
-        return value
+    def _validate_schema(cls, value: object | None) -> object | None:
+        return _validate_json_schema(value)
 
 
 class FetchRequest(BaseModel):
@@ -130,9 +142,9 @@ class FetchRequest(BaseModel):
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout: float | None = None
     content: bool | FetchContentRequest
-    chunks: FetchChunksRequest | None = None
+    abstracts: FetchAbstractsRequest | None = None
     overview: FetchOverviewRequest | None = None
-    runtime: FetchRuntimeRequest = Field(default_factory=FetchRuntimeRequest)
+    others: FetchOthersRequest = Field(default_factory=FetchOthersRequest)
 
     @field_validator("urls")
     @classmethod
@@ -163,10 +175,11 @@ __all__ = [
     "CrawlMode",
     "FetchContentTag",
     "FetchRequest",
-    "FetchRuntimeRequest",
+    "FetchOthersRequest",
     "FetchContentRequest",
-    "FetchChunksRequest",
+    "FetchAbstractsRequest",
     "FetchOverviewRequest",
+    "SearchOverviewRequest",
     "SearchDepth",
     "SearchRequest",
 ]

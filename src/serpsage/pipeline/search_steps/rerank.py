@@ -38,8 +38,8 @@ class RerankStep(PipelineStep[SearchStepContext]):
         page_scores: list[float] = []
         has_any_page = False
         for r in results:
-            if r.page and r.page.chunks:
-                scores = [float(c.score or 0.0) for c in r.page.chunks]
+            if r.page and r.page.abstracts:
+                scores = [float(c.score or 0.0) for c in r.page.abstracts]
                 page_scores.append(max(scores) if scores else 0.0)
                 has_any_page = True
             else:

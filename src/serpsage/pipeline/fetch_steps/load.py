@@ -51,19 +51,19 @@ class FetchLoadStep(PipelineStep[FetchStepContext]):
             )
             return ctx
 
-        mode = str(ctx.runtime.crawl_mode or "fallback")
+        mode = str(ctx.others_runtime.crawl_mode or "fallback")
         cache_key = _cache_key(
             url=url,
             backend=str(self.settings.fetch.backend or "auto").lower(),
-            allow_render=bool(ctx.runtime.allow_render),
+            allow_render=bool(ctx.others_runtime.allow_render),
         )
-        timeout_s = float(ctx.runtime.crawl_timeout_s or 0.0) or float(
+        timeout_s = float(ctx.others_runtime.crawl_timeout_s or 0.0) or float(
             self.settings.fetch.timeout_s
         )
         span.set_attr("crawl_mode", mode)
         span.set_attr("crawl_timeout_s", float(timeout_s))
-        span.set_attr("allow_render", bool(ctx.runtime.allow_render))
-        span.set_attr("rank_index", int(ctx.runtime.rank_index))
+        span.set_attr("allow_render", bool(ctx.others_runtime.allow_render))
+        span.set_attr("rank_index", int(ctx.others_runtime.rank_index))
 
         cache_fetch_ms = 0
         crawl_fetch_ms = 0
@@ -86,8 +86,8 @@ class FetchLoadStep(PipelineStep[FetchStepContext]):
             result = await self._fetcher.afetch(
                 url=url,
                 timeout_s=float(timeout_s),
-                allow_render=bool(ctx.runtime.allow_render),
-                rank_index=int(ctx.runtime.rank_index),
+                allow_render=bool(ctx.others_runtime.allow_render),
+                rank_index=int(ctx.others_runtime.rank_index),
             )
             crawl_fetch_ms = int((time.monotonic() - t0) * 1000)
             return result
@@ -215,7 +215,7 @@ class FetchLoadStep(PipelineStep[FetchStepContext]):
             "url_index": ctx.url_index,
             "stage": stage,
             "fatal": True,
-            "crawl_mode": ctx.runtime.crawl_mode,
+            "crawl_mode": ctx.others_runtime.crawl_mode,
         }
         if source:
             details["source"] = source
