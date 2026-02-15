@@ -17,27 +17,8 @@ http:
 search:
   max_results: 16
   min_score: 0.3
-  default_profile: general
+  fuzzy_threshold: 0.88
   include_raw: false
-  profiles:
-    general: {}
-    music:
-      fuzzy_threshold: 0.88
-      auto_match:
-        enabled: true
-        keywords: ["new song", "single", "album", "MV"]
-        regex: []
-        priority: 10
-      intent_terms: ["release", "single", "album", "new song"]
-      noise_words: ["privacy", "terms", "cookie"]
-      domain_bonus:
-        wikipedia.org: 3
-        youtube.com: 2
-      domain_groups:
-        wikipedia: ["wikipedia"]
-        youtube: ["youtube"]
-      title_tail_patterns:
-        - "(?:-?\\s*)?(wikipedia.*)$"
   depth_profiles:
     low:
       pages_ratio: 0.25

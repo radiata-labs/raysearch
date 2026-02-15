@@ -15,7 +15,7 @@ from serpsage.core.model_base import MutableModel
 from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
 from serpsage.models.fetch import FetchResult
-from serpsage.settings.models import AppSettings, ProfileSettings
+from serpsage.settings.models import AppSettings
 
 
 class BaseStepContext(MutableModel):
@@ -27,10 +27,7 @@ class SearchStepContext(BaseStepContext):
     request: SearchRequest
     raw_results: list[dict[str, object]] = Field(default_factory=list)
     results: list[ResultItem] = Field(default_factory=list)
-    profile_name: str = ""
-    profile: ProfileSettings | None = None
     query_tokens: list[str] | None = None
-    intent_tokens: list[str] | None = None
     overview: str | object | None = None
     errors: list[AppError] = Field(default_factory=list)
 
@@ -69,10 +66,7 @@ class FetchStepContext(BaseStepContext):
     others_result: FetchOthersResult = Field(default_factory=FetchOthersResult)
     result: FetchResultItem | None = None
     fatal: bool = False
-    profile_name: str = ""
-    profile: ProfileSettings | None = None
     abstract_query_tokens: list[str] | None = None
-    abstract_intent_tokens: list[str] | None = None
     overview_output: str | object | None = None
     errors: list[AppError] = Field(default_factory=list)
 

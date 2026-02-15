@@ -31,7 +31,6 @@ class RankStep(PipelineStep[SearchStepContext]):
 
         query = ctx.request.query
         query_tokens = ctx.query_tokens or []
-        intent_tokens = ctx.intent_tokens or []
 
         docs = [f"{r.title} {r.snippet}".strip() for r in ctx.results]
         span.set_attr("items_count", int(len(docs)))
@@ -54,7 +53,6 @@ class RankStep(PipelineStep[SearchStepContext]):
             texts=docs,
             query=query,
             query_tokens=list(query_tokens),
-            intent_tokens=list(intent_tokens),
         )
 
         for i, r in enumerate(ctx.results):

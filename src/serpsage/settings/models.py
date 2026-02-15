@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -45,26 +44,6 @@ class HttpSettings(Model):
 class ProviderSettings(Model):
     backend: ProviderBackendKey = "searxng"
     searxng: SearxngSettings = Field(default_factory=SearxngSettings)
-
-
-class AutoMatchSettings(Model):
-    enabled: bool = False
-    keywords: list[str] = Field(default_factory=list)
-    regex: list[str] = Field(default_factory=list)
-    priority: int = 0
-
-
-class ProfileSettings(Model):
-    fuzzy_threshold: float = 0.88
-    auto_match: AutoMatchSettings = Field(default_factory=AutoMatchSettings)
-    intent_terms: list[str] = Field(default_factory=list)
-    noise_words: list[str] = Field(default_factory=list)
-    noise_extensions: list[str] = Field(
-        default_factory=lambda: ["txt", "dic", "zip", "rar", "7z"]
-    )
-    domain_bonus: dict[str, int] = Field(default_factory=dict)
-    domain_groups: dict[str, list[str]] = Field(default_factory=dict)
-    title_tail_patterns: list[str] = Field(default_factory=list)
 
 
 class SearchDepthProfile(Model):
@@ -145,10 +124,7 @@ class SearchSettings(Model):
 
     max_results: int = 16
     min_score: float = 0.3
-    default_profile: str = "general"
-    profiles: dict[str, ProfileSettings] = Field(
-        default_factory=lambda: {"general": ProfileSettings()}
-    )
+    fuzzy_threshold: float = 0.88
     include_raw: bool = False
     depth_profiles: dict[DepthKey, SearchDepthProfile] = Field(
         default_factory=_default_search_depth_profiles
@@ -401,46 +377,6 @@ class AppSettings(Model):
             )
         return self
 
-    def get_profile(self, name: str) -> ProfileSettings:
-        if name in self.search.profiles:
-            return self.search.profiles[name]
-        if self.search.default_profile in self.search.profiles:
-            return self.search.profiles[self.search.default_profile]
-        return ProfileSettings()
-
-    def select_profile(
-        self, *, query: str, explicit: str | None
-    ) -> tuple[str, ProfileSettings]:
-        if explicit:
-            return explicit, self.get_profile(explicit)
-
-        q = (query or "").lower()
-        best_name: str | None = None
-        best_score = -(10**9)
-        for name, prof in self.search.profiles.items():
-            am = prof.auto_match
-            if not am.enabled:
-                continue
-            hits = sum(1 for kw in am.keywords if kw and kw.lower() in q)
-            if am.regex:
-                for pat in am.regex:
-                    if not pat:
-                        continue
-                    try:
-                        if re.search(pat, q, re.IGNORECASE):
-                            hits += 1
-                    except re.error:
-                        continue
-            if hits <= 0:
-                continue
-            score = hits + int(am.priority)
-            if score > best_score:
-                best_score = score
-                best_name = name
-
-        chosen = best_name or self.search.default_profile
-        return chosen, self.get_profile(chosen)
-
 
 __all__ = [
     "AppSettings",
@@ -462,7 +398,6 @@ __all__ = [
     "LLMSettings",
     "OverviewModelBackendKey",
     "OverviewModelSettings",
-    "ProfileSettings",
     "ProviderSettings",
     "SearchDepthProfile",
     "SearchOverviewSettings",

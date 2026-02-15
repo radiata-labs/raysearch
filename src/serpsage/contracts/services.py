@@ -85,7 +85,6 @@ class RankerBase(WorkUnit, ABC):
         texts: list[str],
         query: str,
         query_tokens: list[str],
-        intent_tokens: list[str],
     ) -> list[float]:
         raise NotImplementedError
 

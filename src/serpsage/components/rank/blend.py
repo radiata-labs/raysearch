@@ -45,7 +45,6 @@ class BlendRanker(RankerBase):
         texts: list[str],
         query: str,
         query_tokens: list[str],
-        intent_tokens: list[str],
     ) -> list[float]:
         if not texts:
             return []
@@ -64,7 +63,6 @@ class BlendRanker(RankerBase):
                 texts=texts,
                 query=query,
                 query_tokens=query_tokens,
-                intent_tokens=intent_tokens,
             )
 
         async def run_bm25() -> None:
@@ -74,7 +72,6 @@ class BlendRanker(RankerBase):
                 texts=texts,
                 query=query,
                 query_tokens=query_tokens,
-                intent_tokens=intent_tokens,
             )
 
         async with anyio.create_task_group() as tg:

@@ -31,9 +31,7 @@ class Bm25Ranker(RankerBase):
         texts: list[str],
         query: str,
         query_tokens: list[str],
-        intent_tokens: list[str],
     ) -> list[float]:
-        _ = intent_tokens
         if not texts:
             return []
         if not BM25_AVAILABLE or BM25Okapi is None:

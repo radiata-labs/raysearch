@@ -61,11 +61,9 @@ class HeuristicRanker(RankerBase):
         texts: list[str],
         query: str,
         query_tokens: list[str],
-        intent_tokens: list[str],
     ) -> list[float]:
         cfg = self.settings.rank.heuristic
         query_terms = _dedupe_tokens(query_tokens)
-        intent_terms = _dedupe_tokens(intent_tokens)
         normalized_query = normalize_text(query)
         max_count = max(1, int(cfg.max_count_per_token))
         max_count_log = math.log1p(float(max_count))
@@ -92,21 +90,10 @@ class HeuristicRanker(RankerBase):
                 capped_count = min(len(positions), max_count)
                 query_tf_quality_sum += math.log1p(float(capped_count))
 
-            intent_hit_count = 0
-            for token in intent_terms:
-                positions = _find_occurrences(normalized_text, token)
-                if not positions:
-                    continue
-                intent_hit_count += 1
-                all_hit_positions.extend(positions)
 
             total_query = len(query_terms)
-            total_intent = len(intent_terms)
             query_coverage = (
                 float(query_hit_count) / float(total_query) if total_query > 0 else 0.0
-            )
-            intent_coverage = (
-                float(intent_hit_count) / float(total_intent) if total_intent > 0 else 0.0
             )
 
             if total_query > 0 and max_count_log > 0:
@@ -142,12 +129,11 @@ class HeuristicRanker(RankerBase):
             base = (
                 float(cfg.unique_hit_weight) * query_quality
                 + float(cfg.count_weight) * phrase_hit
-                + float(cfg.intent_hit_weight) * intent_coverage
             )
 
-            if query_coverage <= 0.0 and intent_coverage <= 0.0:
+            if query_coverage <= 0.0:
                 base = 0.0
-            elif query_coverage < 0.5 and intent_coverage <= 0.0 and phrase_hit <= 0.0:
+            elif query_coverage < 0.5 and phrase_hit <= 0.0:
                 base *= 0.6
 
             if base <= 0.0 or not all_hit_positions:

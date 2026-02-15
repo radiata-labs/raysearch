@@ -41,7 +41,6 @@ class SearchRequest(BaseModel):
     query: str
     depth: SearchDepth = "simple"
     max_results: int | None = None
-    profile: str | None = None
     overview: bool | SearchOverviewRequest | None = None
     params: dict[str, object] = Field(default_factory=dict)
 

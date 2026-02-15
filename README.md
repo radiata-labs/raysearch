@@ -80,7 +80,8 @@ async with Engine.from_settings(settings) as engine:
 ## Behavior notes
 
 - `search.depth`: `simple|low|medium|high` (kept semantics)
-- `fetch`: no depth tiers, single strategy profile
+- `fetch`: no depth tiers, single strategy
+- migration: `search.default_profile`, `search.profiles`, and `SearchRequest.profile` are removed; use `search.fuzzy_threshold`
 - `FetchRequest` V4 fields:
   - `urls`: list of URLs, processed concurrently with stable output order
   - `crawl_mode`: `never|fallback|preferred|always`

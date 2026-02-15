@@ -10,7 +10,6 @@ from serpsage.models.pipeline import FetchStepContext
 from serpsage.pipeline.step import PipelineStep
 from serpsage.text.normalize import clean_whitespace
 from serpsage.text.tokenize import tokenize_for_query
-from serpsage.text.utils import extract_intent_tokens
 
 if TYPE_CHECKING:
     from serpsage.contracts.lifecycle import SpanBase
@@ -106,27 +105,10 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
         )
         ctx.url = url
 
-        profile_query = (
-            abstracts_request.query
-            if abstracts_request is not None
-            else (overview_request.query if overview_request is not None else ctx.url)
-        )
-        profile_name, profile = self.settings.select_profile(
-            query=profile_query,
-            explicit=None,
-        )
-        ctx.profile_name = profile_name
-        ctx.profile = profile
-
         if abstracts_request is not None:
             abstract_query_tokens = tokenize_for_query(abstracts_request.query)
-            abstract_intent_tokens = extract_intent_tokens(
-                abstracts_request.query,
-                profile.intent_terms,
-            )
         else:
             abstract_query_tokens = []
-            abstract_intent_tokens = []
 
         ctx.return_content = bool(return_content)
         ctx.content_request = content_request
@@ -134,13 +116,11 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
         ctx.abstracts_request = abstracts_request
         ctx.overview_request = overview_request
         ctx.abstract_query_tokens = abstract_query_tokens
-        ctx.abstract_intent_tokens = abstract_intent_tokens
 
         span.set_attr("has_content_output", bool(return_content))
         span.set_attr("has_abstracts", bool(abstracts_request is not None))
         span.set_attr("has_overview", bool(overview_request is not None))
         span.set_attr("content_depth", str(content_request.depth))
-        span.set_attr("profile_name", str(profile_name))
         span.set_attr("crawl_mode", str(ctx.others_runtime.crawl_mode))
         span.set_attr("crawl_timeout_s", float(ctx.others_runtime.crawl_timeout_s))
         span.set_attr("url_index", int(ctx.url_index))

@@ -99,13 +99,11 @@ class FetchAbstractRankStep(PipelineStep[FetchStepContext]):
             texts=[candidate.text for candidate in candidates],
             query=query,
             query_tokens=list(ctx.abstract_query_tokens or []),
-            intent_tokens=list(ctx.abstract_intent_tokens or []),
         )
         heading_scores = await self._score_headings(
             query=query,
             candidates=candidates,
             query_tokens=list(ctx.abstract_query_tokens or []),
-            intent_tokens=list(ctx.abstract_intent_tokens or []),
         )
         alpha = float(abstract_cfg.title_boost_alpha)
         min_score = float(abstract_cfg.min_abstract_score)
@@ -169,7 +167,6 @@ class FetchAbstractRankStep(PipelineStep[FetchStepContext]):
         query: str,
         candidates: list[AbstractCandidate],
         query_tokens: list[str],
-        intent_tokens: list[str],
     ) -> dict[str, float]:
         headings: list[str] = []
         for candidate in candidates:
@@ -182,7 +179,6 @@ class FetchAbstractRankStep(PipelineStep[FetchStepContext]):
             texts=headings,
             query=query,
             query_tokens=query_tokens,
-            intent_tokens=intent_tokens,
         )
         return {
             heading: (float(scores[idx]) if idx < len(scores) else 0.0)
