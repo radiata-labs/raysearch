@@ -6,6 +6,7 @@ from typing_extensions import override
 
 import anyio
 
+from serpsage.components.fetch.base import FetcherBase
 from serpsage.components.fetch.utils import (
     blocked_marker_hit,
     browser_headers,
@@ -14,7 +15,6 @@ from serpsage.components.fetch.utils import (
     get_delay_s,
     parse_retry_after_s,
 )
-from serpsage.contracts.services import FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 CurlSessionFactory: type[AsyncSession] | None = None
@@ -29,9 +29,9 @@ except Exception:  # noqa: BLE001
 if TYPE_CHECKING:
     from curl_cffi.requests import AsyncSession
 
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
+    from serpsage.telemetry.base import SpanBase
 
 
 class CurlCffiFetcher(FetcherBase):
@@ -52,10 +52,7 @@ class CurlCffiFetcher(FetcherBase):
         *,
         url: str,
         timeout_s: float | None = None,
-        allow_render: bool = True,
-        rank_index: int = 0,
     ) -> FetchResult:
-        _ = allow_render, rank_index
         with self.span("fetch.curl", url=url) as sp:
             res = await self.fetch_attempt(
                 url=url,

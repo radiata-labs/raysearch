@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Generic
-from typing_extensions import override
+from typing import TYPE_CHECKING, Generic, TypeVar
 
-from serpsage.contracts.lifecycle import SpanBase
-from serpsage.contracts.services import PipelineStepBase, TContext
+from serpsage.core.workunit import WorkUnit
 from serpsage.models.errors import AppError
+from serpsage.telemetry.base import SpanBase
+
+if TYPE_CHECKING:
+    from serpsage.core.runtime import Runtime
+    from serpsage.models.pipeline import BaseStepContext
+
+    TContext = TypeVar("TContext", bound=BaseStepContext)
+else:
+    TContext = TypeVar("TContext")
 
 
-class PipelineStep(PipelineStepBase[TContext], ABC, Generic[TContext]):
+class StepBase(WorkUnit, ABC, Generic[TContext]):
     span_name: str | None = None
 
-    @override
     async def run(self, ctx: TContext) -> TContext:
         name = (
             self.span_name or f"step.{type(self).__name__.replace('Step', '').lower()}"
@@ -46,4 +52,16 @@ class PipelineStep(PipelineStepBase[TContext], ABC, Generic[TContext]):
         raise NotImplementedError
 
 
-__all__ = ["PipelineStep"]
+class RunnerBase(WorkUnit, Generic[TContext]):
+    def __init__(self, *, rt: Runtime, steps: list[StepBase[TContext]]) -> None:
+        super().__init__(rt=rt)
+        self._steps = list(steps)
+        self.bind_deps(*steps)
+
+    async def run(self, ctx: TContext) -> TContext:
+        for step in self._steps:
+            ctx = await step.run(ctx)
+        return ctx
+
+
+__all__ = ["StepBase"]

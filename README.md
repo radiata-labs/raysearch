@@ -82,6 +82,7 @@ async with Engine.from_settings(settings) as engine:
 
 - `search.depth`: `simple|low|medium|high` (kept semantics)
 - `fetch`: no depth tiers, single strategy
+- `fetch.backend`: `auto|curl_cffi|playwright` (`httpx` backend removed)
 - migration: `search.default_profile`, `search.profiles`, and `SearchRequest.profile` are removed; use `search.fuzzy_threshold`
 - `FetchRequest` V4 fields:
   - `urls`: list of URLs, processed concurrently with stable output order

@@ -7,15 +7,15 @@ from serpsage.app.request import FetchContentRequest
 from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractContentOptions
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import clean_whitespace, tokenize_for_query
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class FetchPrepareStep(PipelineStep[FetchStepContext]):
+class FetchPrepareStep(StepBase[FetchStepContext]):
     span_name = "step.fetch_prepare"
 
     def __init__(self, *, rt: Runtime) -> None:
@@ -37,7 +37,7 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "prepare",
                         "fatal": True,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )
@@ -57,7 +57,7 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "prepare",
                             "fatal": True,
-                            "crawl_mode": ctx.others_runtime.crawl_mode,
+                            "crawl_mode": ctx.others.crawl_mode,
                         },
                     )
                 )
@@ -80,7 +80,7 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "prepare",
                             "fatal": True,
-                            "crawl_mode": ctx.others_runtime.crawl_mode,
+                            "crawl_mode": ctx.others.crawl_mode,
                         },
                     )
                 )
@@ -120,8 +120,8 @@ class FetchPrepareStep(PipelineStep[FetchStepContext]):
         span.set_attr("has_abstracts", bool(abstracts_request is not None))
         span.set_attr("has_overview", bool(overview_request is not None))
         span.set_attr("content_depth", str(content_request.depth))
-        span.set_attr("crawl_mode", str(ctx.others_runtime.crawl_mode))
-        span.set_attr("crawl_timeout_s", float(ctx.others_runtime.crawl_timeout_s))
+        span.set_attr("crawl_mode", str(ctx.others.crawl_mode))
+        span.set_attr("crawl_timeout_s", float(ctx.others.crawl_timeout_s))
         span.set_attr("url_index", int(ctx.url_index))
         return ctx
 

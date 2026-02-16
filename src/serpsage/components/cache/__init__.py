@@ -3,8 +3,9 @@ from __future__ import annotations
 import importlib.util
 from typing import TYPE_CHECKING
 
+from serpsage.components.cache.base import CacheBase
+
 if TYPE_CHECKING:
-    from serpsage.contracts.services import CacheBase
     from serpsage.core.runtime import Runtime
 
 
@@ -121,5 +122,6 @@ def build_cache(*, rt: Runtime) -> CacheBase:
 
 
 __all__ = [
+    "CacheBase",
     "build_cache",
 ]

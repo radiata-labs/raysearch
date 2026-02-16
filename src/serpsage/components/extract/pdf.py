@@ -9,8 +9,8 @@ from typing_extensions import override
 
 from pypdf import PdfReader
 
+from serpsage.components.extract.base import ExtractorBase
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.contracts.services import ExtractorBase
 from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
 from serpsage.utils import clean_whitespace
 
@@ -262,4 +262,3 @@ class PdfExtractor(ExtractorBase):
 
 
 __all__ = ["PdfExtractor"]
-

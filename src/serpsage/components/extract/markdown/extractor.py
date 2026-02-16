@@ -9,6 +9,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from bs4.element import Tag
 
+from serpsage.components.extract.base import ExtractorBase
 from serpsage.components.extract.markdown.dom import (
     cleanup_dom,
     is_descendant_of,
@@ -31,7 +32,6 @@ from serpsage.components.extract.utils import (
     guess_apparent_encoding,
 )
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.contracts.services import ExtractorBase
 from serpsage.models.extract import (
     ExtractContentOptions,
     ExtractContentTag,

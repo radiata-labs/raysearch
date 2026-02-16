@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from serpsage.components.fetch.base import FetcherBase
+
 if TYPE_CHECKING:
-    from serpsage.contracts.services import FetcherBase, HttpClientBase, RateLimiterBase
+    from serpsage.components.http import HttpClientBase
+    from serpsage.components.rate_limit import RateLimiterBase
     from serpsage.core.runtime import Runtime
 
 
@@ -13,14 +16,7 @@ def build_fetcher(
     rate_limiter: RateLimiterBase,
     http: HttpClientBase,
 ) -> FetcherBase:
-    fetch_cfg = rt.settings.fetch
-    backend = str(fetch_cfg.backend or "auto").lower()
-
-    httpx_fetcher = None
-    if backend in {"auto", "httpx"}:
-        from serpsage.components.fetch.http import HttpxFetcher
-
-        httpx_fetcher = HttpxFetcher(rt=rt, http=http)
+    backend = str(rt.settings.fetch.backend or "auto").lower()
 
     curl_fetcher = None
     if backend in {"auto", "curl_cffi"}:
@@ -48,10 +44,6 @@ def build_fetcher(
             except Exception:
                 playwright_fetcher = None
 
-    if backend == "httpx":
-        assert httpx_fetcher is not None
-        return httpx_fetcher
-
     if backend == "curl_cffi":
         if curl_fetcher is None:
             raise RuntimeError(
@@ -67,26 +59,32 @@ def build_fetcher(
         return playwright_fetcher
 
     if backend == "auto":
-        if bool(fetch_cfg.render.enabled) and playwright_fetcher is None:
+        if curl_fetcher is None:
+            raise RuntimeError(
+                "fetch backend `auto` requires curl_cffi runtime dependencies"
+            )
+        if playwright_fetcher is None:
             raise RuntimeError(
                 "fetch backend `auto` requires playwright runtime dependencies"
             )
         from serpsage.components.fetch.auto import AutoFetcher
 
-        assert httpx_fetcher is not None
+        assert curl_fetcher is not None
+        assert playwright_fetcher is not None
         return AutoFetcher(
             rt=rt,
             rate_limiter=rate_limiter,
-            httpx_fetcher=httpx_fetcher,
+            http=http,
             curl_fetcher=curl_fetcher,
             playwright_fetcher=playwright_fetcher,
         )
 
     raise ValueError(
-        f"unsupported fetch backend `{backend}`; expected httpx|curl_cffi|playwright|auto"
+        f"unsupported fetch backend `{backend}`; expected curl_cffi|playwright|auto"
     )
 
 
 __all__ = [
+    "FetcherBase",
     "build_fetcher",
 ]

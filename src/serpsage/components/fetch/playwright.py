@@ -7,12 +7,12 @@ from typing_extensions import override
 
 import anyio
 
+from serpsage.components.fetch.base import FetcherBase
 from serpsage.components.fetch.utils import (
     blocked_marker_hit,
     classify_content_kind,
     estimate_text_quality,
 )
-from serpsage.contracts.services import FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
@@ -24,8 +24,8 @@ if TYPE_CHECKING:
         Route,
     )
 
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 PLAYWRIGHT_AVAILABLE = False
 _pw_factory = None
@@ -96,10 +96,7 @@ class PlaywrightFetcher(FetcherBase):
         *,
         url: str,
         timeout_s: float | None = None,
-        allow_render: bool = True,
-        rank_index: int = 0,
     ) -> FetchResult:
-        _ = allow_render, rank_index
         with self.span("fetch.playwright", url=url) as sp:
             attempt = await self.fetch_attempt(
                 url=url,

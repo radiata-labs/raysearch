@@ -12,7 +12,7 @@ class FetchResult(FrozenModel):
     status_code: int
     content_type: str | None = None
     content: bytes = b""
-    fetch_mode: Literal["httpx", "curl_cffi", "playwright"] = "httpx"
+    fetch_mode: Literal["curl_cffi", "playwright"] = "curl_cffi"
     rendered: bool = False
     content_kind: Literal["html", "pdf", "text", "binary", "unknown"] = "unknown"
     headers: dict[str, str] = Field(default_factory=dict)
@@ -20,7 +20,7 @@ class FetchResult(FrozenModel):
 
 
 class FetchAttempt(FetchResult):
-    strategy_used: Literal["httpx", "curl_cffi", "playwright"] = "httpx"
+    strategy_used: Literal["curl_cffi", "playwright"] = "curl_cffi"
     content_encoding: str | None = None
     content_length_header: str | None = None
     content_score: float = 0.0

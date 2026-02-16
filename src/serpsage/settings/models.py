@@ -11,7 +11,7 @@ class Model(BaseModel):
 
 DepthKey = Literal["low", "medium", "high"]
 ProviderBackendKey = Literal["searxng"]
-FetchBackendKey = Literal["httpx", "curl_cffi", "playwright", "auto"]
+FetchBackendKey = Literal["curl_cffi", "playwright", "auto"]
 RankBackendKey = Literal["blend", "heuristic", "bm25"]
 RankBlendProviderKey = Literal["heuristic", "bm25"]
 CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
@@ -47,13 +47,14 @@ class ProviderSettings(Model):
 
 
 class SearchDepthProfile(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     pages_ratio: float = 0.25
     min_pages: int = 1
     max_pages: int = 3
     top_abstracts_per_page: int = 2
     step_timeout_s: float = 2.0
     page_timeout_s: float = 1.6
-    max_render_pages: int = 2
 
 
 def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
@@ -65,7 +66,6 @@ def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
             top_abstracts_per_page=2,
             step_timeout_s=1.2,
             page_timeout_s=0.9,
-            max_render_pages=0,
         ),
         "medium": SearchDepthProfile(
             pages_ratio=0.50,
@@ -74,7 +74,6 @@ def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
             top_abstracts_per_page=3,
             step_timeout_s=2.0,
             page_timeout_s=1.6,
-            max_render_pages=2,
         ),
         "high": SearchDepthProfile(
             pages_ratio=0.75,
@@ -83,7 +82,6 @@ def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
             top_abstracts_per_page=5,
             step_timeout_s=4.0,
             page_timeout_s=2.5,
-            max_render_pages=6,
         ),
     }
 
@@ -155,7 +153,6 @@ class FetchConcurrencySettings(Model):
 class FetchRenderSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    enabled: bool = True
     js_concurrency: int = 4
     nav_timeout_ms: int = 2_500
     wait_network_idle_ms: int = 220
@@ -168,7 +165,6 @@ class FetchQualitySettings(Model):
     min_text_chars: int = 220
     script_ratio_threshold: float = 0.35
     blocked_markers: list[str] = Field(default_factory=_default_blocked_markers)
-    max_render_pages_search: int = 2
 
 
 class FetchExtractSettings(Model):

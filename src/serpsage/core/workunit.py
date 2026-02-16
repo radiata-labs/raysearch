@@ -9,9 +9,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from types import TracebackType
 
-    from serpsage.contracts.lifecycle import ClockBase, SpanBase, TelemetryBase
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import AppSettings
+    from serpsage.telemetry.base import ClockBase, SpanBase, TelemetryBase
 
 
 class WorkUnit:

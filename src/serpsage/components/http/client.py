@@ -5,7 +5,7 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.contracts.services import HttpClientBase
+from serpsage.components.http.base import HttpClientBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Overrides, Runtime

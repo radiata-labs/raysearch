@@ -5,12 +5,12 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.contracts.services import SearchProviderBase
+from serpsage.components.provider.base import SearchProviderBase
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from serpsage.contracts.services import HttpClientBase
+    from serpsage.components.http.base import HttpClientBase
     from serpsage.core.runtime import Runtime
 
 

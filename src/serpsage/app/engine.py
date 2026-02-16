@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING
 import anyio
 
 from serpsage.app.response import FetchResponse, SearchResponse
-from serpsage.contracts.services import PipelineRunnerBase
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import (
     FetchStepContext,
-    FetchStepOthersRuntime,
+    FetchStepOthers,
     SearchStepContext,
 )
+from serpsage.pipeline.base import RunnerBase
 
 if TYPE_CHECKING:
     from serpsage.app.request import FetchRequest, SearchRequest
@@ -27,8 +27,8 @@ class Engine(WorkUnit):
         self,
         *,
         rt: Runtime,
-        search_runner: PipelineRunnerBase[SearchStepContext],
-        fetch_runner: PipelineRunnerBase[FetchStepContext],
+        search_runner: RunnerBase[SearchStepContext],
+        fetch_runner: RunnerBase[FetchStepContext],
     ) -> None:
         super().__init__(rt=rt)
         self._search_runner = search_runner
@@ -67,11 +67,9 @@ class Engine(WorkUnit):
                     request=req,
                     url=url,
                     url_index=idx,
-                    others_runtime=FetchStepOthersRuntime(
+                    others=FetchStepOthers(
                         crawl_mode=req.crawl_mode,
                         crawl_timeout_s=float(req.crawl_timeout or 0.0),
-                        allow_render=True,
-                        rank_index=idx,
                         max_links=req.others.max_links,
                         max_image_links=req.others.max_image_links,
                     ),

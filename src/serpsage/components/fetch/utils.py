@@ -150,7 +150,9 @@ def blocked_marker_hit(
     if not content:
         return False
     use_markers = tuple(
-        marker.strip().lower() for marker in (markers or ()) if marker and marker.strip()
+        marker.strip().lower()
+        for marker in (markers or ())
+        if marker and marker.strip()
     )
     if not use_markers:
         return False

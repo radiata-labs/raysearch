@@ -9,16 +9,16 @@ from anyio import to_thread
 from serpsage.components.extract.markdown.postprocess import markdown_to_text
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.contracts.services import ExtractorBase
+    from serpsage.components.extract import ExtractorBase
     from serpsage.core.runtime import Runtime
     from serpsage.models.extract import ExtractedDocument
+    from serpsage.telemetry.base import SpanBase
 
 
-class FetchExtractStep(PipelineStep[FetchStepContext]):
+class FetchExtractStep(StepBase[FetchStepContext]):
     span_name = "step.fetch_extract"
 
     def __init__(self, *, rt: Runtime, extractor: ExtractorBase) -> None:
@@ -43,14 +43,14 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "extract",
                         "fatal": True,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )
             return ctx
 
-        collect_links = bool(ctx.others_runtime.max_links is not None)
-        collect_images = bool(ctx.others_runtime.max_image_links is not None)
+        collect_links = bool(ctx.others.max_links is not None)
+        collect_images = bool(ctx.others.max_image_links is not None)
         t0 = time.monotonic()
 
         def extract() -> ExtractedDocument:
@@ -77,7 +77,7 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "extract",
                         "fatal": True,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )
@@ -87,11 +87,11 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
         ctx.extracted = extracted
         ctx.others_result.links = _prepare_links(
             values=[str(item.url or "") for item in list(extracted.links or [])],
-            limit=ctx.others_runtime.max_links,
+            limit=ctx.others.max_links,
         )
         ctx.others_result.image_links = _prepare_links(
             values=[str(item.url or "") for item in list(extracted.image_links or [])],
-            limit=ctx.others_runtime.max_image_links,
+            limit=ctx.others.max_image_links,
         )
         span.set_attr("extractor_used", str(extracted.extractor_used))
         span.set_attr("extract_ms", int(extract_ms))
@@ -123,7 +123,7 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "extract",
                         "fatal": True,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )
@@ -138,7 +138,7 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "extract",
                         "fatal": True,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                         "text_chars": int(text_chars),
                         "min_text_chars": int(min_text_chars),
                     },
@@ -165,4 +165,3 @@ def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
 
 
 __all__ = ["FetchExtractStep"]
-

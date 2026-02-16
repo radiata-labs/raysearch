@@ -6,12 +6,12 @@ from typing_extensions import override
 
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$")
@@ -22,7 +22,7 @@ _INLINE_CODE_ONLY_RE = re.compile(r"^\s*`[^`]+`\s*$")
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[\u3002\uFF01\uFF1F!?;\uFF1B.])")
 
 
-class FetchAbstractBuildStep(PipelineStep[FetchStepContext]):
+class FetchAbstractBuildStep(StepBase[FetchStepContext]):
     span_name = "step.fetch_abstract_build"
 
     def __init__(self, *, rt: Runtime) -> None:
@@ -48,7 +48,7 @@ class FetchAbstractBuildStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "abstract_build",
                         "fatal": False,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )

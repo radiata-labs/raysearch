@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from serpsage.components.http.base import HttpClientBase
 from serpsage.components.http.client import HttpClient
 
 if TYPE_CHECKING:
-    from serpsage.contracts.services import HttpClientBase
     from serpsage.core.runtime import Overrides, Runtime
 
 
@@ -17,4 +17,7 @@ def build_http_client(
     return HttpClient(rt=rt, overrides=overrides)
 
 
-__all__ = ["build_http_client"]
+__all__ = [
+    "HttpClientBase",
+    "build_http_client",
+]

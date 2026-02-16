@@ -5,7 +5,7 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.contracts.services import CacheBase
+from serpsage.components.cache.base import CacheBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

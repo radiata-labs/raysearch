@@ -5,8 +5,8 @@ import re
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.rank.base import RankerBase
 from serpsage.components.rank.utils import normalize_scores
-from serpsage.contracts.services import RankerBase
 from serpsage.utils import normalize_text
 
 if TYPE_CHECKING:
@@ -90,7 +90,6 @@ class HeuristicRanker(RankerBase):
                 capped_count = min(len(positions), max_count)
                 query_tf_quality_sum += math.log1p(float(capped_count))
 
-
             total_query = len(query_terms)
             query_coverage = (
                 float(query_hit_count) / float(total_query) if total_query > 0 else 0.0
@@ -121,9 +120,7 @@ class HeuristicRanker(RankerBase):
                     all_hit_positions.append(phrase_pos)
 
             query_quality = (
-                0.60 * query_coverage
-                + 0.25 * query_tf_quality
-                + 0.15 * query_proximity
+                0.60 * query_coverage + 0.25 * query_tf_quality + 0.15 * query_proximity
             )
 
             base = (

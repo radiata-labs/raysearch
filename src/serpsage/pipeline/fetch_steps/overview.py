@@ -7,16 +7,16 @@ from typing_extensions import override
 
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import clean_whitespace, stable_json
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.contracts.services import CacheBase, LLMClientBase
+    from serpsage.components.cache import CacheBase, LLMClientBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class FetchOverviewStep(PipelineStep[FetchStepContext]):
+class FetchOverviewStep(StepBase[FetchStepContext]):
     span_name = "step.fetch_overview"
 
     def __init__(
@@ -52,7 +52,7 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "overview",
                         "fatal": False,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )
@@ -143,7 +143,7 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "overview",
                             "fatal": False,
-                            "crawl_mode": ctx.others_runtime.crawl_mode,
+                            "crawl_mode": ctx.others.crawl_mode,
                         },
                     )
                 )
@@ -162,7 +162,7 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "overview",
                             "fatal": False,
-                            "crawl_mode": ctx.others_runtime.crawl_mode,
+                            "crawl_mode": ctx.others.crawl_mode,
                         },
                     )
                 )
@@ -268,4 +268,3 @@ def _self_heal_message() -> dict[str, str]:
 
 
 __all__ = ["FetchOverviewStep"]
-

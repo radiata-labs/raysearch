@@ -5,7 +5,7 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.contracts.services import RateLimiterBase
+from serpsage.components.rate_limit.base import RateLimiterBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

@@ -4,7 +4,7 @@ import zlib
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.contracts.services import CacheBase
+from serpsage.components.cache.base import CacheBase
 
 AioredisModule: type[aioredis.Redis] | None = None
 try:

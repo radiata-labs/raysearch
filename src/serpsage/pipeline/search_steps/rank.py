@@ -4,16 +4,16 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import uniq_preserve_order
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.contracts.services import RankerBase
+    from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class RankStep(PipelineStep[SearchStepContext]):
+class RankStep(StepBase[SearchStepContext]):
     span_name = "step.rank"
 
     def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:

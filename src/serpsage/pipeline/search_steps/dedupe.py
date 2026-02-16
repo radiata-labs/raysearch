@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import clean_whitespace, normalize_text
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 _WS_RE = re.compile(r"\s+")
 
@@ -70,7 +70,7 @@ def simhash64(text: str) -> int:
     return out
 
 
-class DedupeStep(PipelineStep[SearchStepContext]):
+class DedupeStep(StepBase[SearchStepContext]):
     span_name = "step.dedupe"
 
     def __init__(self, *, rt: Runtime) -> None:

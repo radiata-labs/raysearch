@@ -7,14 +7,14 @@ from serpsage.app.response import FetchResultItem
 from serpsage.components.extract.markdown.postprocess import finalize_markdown
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class FetchFinalizeStep(PipelineStep[FetchStepContext]):
+class FetchFinalizeStep(StepBase[FetchStepContext]):
     span_name = "step.fetch_finalize"
 
     def __init__(self, *, rt: Runtime) -> None:
@@ -37,7 +37,7 @@ class FetchFinalizeStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "finalize",
                         "fatal": True,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )

@@ -5,10 +5,10 @@ from typing_extensions import override
 
 import anyio
 
+from serpsage.components.rank.base import RankerBase
 from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
 from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
-from serpsage.contracts.services import RankerBase
 
 if TYPE_CHECKING:
     from collections.abc import Callable

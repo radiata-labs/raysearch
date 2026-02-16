@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
-from serpsage.contracts.services import CacheBase
+from serpsage.components.cache.base import CacheBase
 
 AioSqliteModule: Any | None = None
 try:

@@ -11,26 +11,26 @@ from serpsage.app.request import FetchAbstractsRequest, FetchRequest
 from serpsage.app.response import PageAbstract, PageEnrichment
 from serpsage.models.pipeline import (
     FetchStepContext,
-    FetchStepOthersRuntime,
+    FetchStepOthers,
     SearchStepContext,
 )
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
-    from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.contracts.services import PipelineRunnerBase
     from serpsage.core.runtime import Runtime
+    from serpsage.pipeline.base import RunnerBase
+    from serpsage.telemetry.base import SpanBase
 
 
-class SearchFetchStep(PipelineStep[SearchStepContext]):
+class SearchFetchStep(StepBase[SearchStepContext]):
     span_name = "step.search_fetch"
 
     def __init__(
         self,
         *,
         rt: Runtime,
-        fetch_runner: PipelineRunnerBase[FetchStepContext],
+        fetch_runner: RunnerBase[FetchStepContext],
     ) -> None:
         super().__init__(rt=rt)
         self._fetch_runner = fetch_runner
@@ -72,7 +72,7 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
         completed_count = 0
         rendered_count = 0
 
-        async def enrich_one(rank_index: int, r: ResultItem) -> None:
+        async def enrich_one(r: ResultItem) -> None:
             nonlocal timeout_count, completed_count, rendered_count
             now = time.monotonic()
             if now >= step_deadline_ts:
@@ -115,13 +115,9 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                         ),
                         url=r.url,
                         url_index=0,
-                        others_runtime=FetchStepOthersRuntime(
+                        others=FetchStepOthers(
                             crawl_mode="fallback",
                             crawl_timeout_s=timeout_s,
-                            allow_render=bool(
-                                rank_index < int(preset.max_render_pages)
-                            ),
-                            rank_index=rank_index,
                             max_links=None,
                             max_image_links=None,
                         ),
@@ -164,8 +160,8 @@ class SearchFetchStep(PipelineStep[SearchStepContext]):
                     timeout_count += 1
 
         async with anyio.create_task_group() as tg:
-            for idx, r in enumerate(work):
-                tg.start_soon(enrich_one, idx, r)
+            for r in work:
+                tg.start_soon(enrich_one, r)
 
         span.set_attr("items_considered", int(m))
         span.set_attr("pages_enriched", int(m))

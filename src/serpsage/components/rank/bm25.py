@@ -13,7 +13,7 @@ except Exception:  # noqa: BLE001
     BM25Okapi = None
     BM25_AVAILABLE = False
 
-from serpsage.contracts.services import RankerBase
+from serpsage.components.rank.base import RankerBase
 from serpsage.utils import tokenize
 
 if TYPE_CHECKING:

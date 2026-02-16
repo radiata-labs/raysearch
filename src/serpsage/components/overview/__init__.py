@@ -3,10 +3,11 @@ from __future__ import annotations
 import importlib.util
 from typing import TYPE_CHECKING
 
+from serpsage.components.overview.base import LLMClientBase
 from serpsage.components.overview.router import RoutedLLMClient
 
 if TYPE_CHECKING:
-    from serpsage.contracts.services import HttpClientBase, LLMClientBase
+    from serpsage.components.http.base import HttpClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import OverviewModelSettings
 
@@ -76,4 +77,7 @@ def build_overview_client(*, rt: Runtime, http: HttpClientBase) -> LLMClientBase
     return RoutedLLMClient(rt=rt, routes=routes)
 
 
-__all__ = ["build_overview_client"]
+__all__ = [
+    "LLMClientBase",
+    "build_overview_client",
+]

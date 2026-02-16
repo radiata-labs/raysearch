@@ -6,15 +6,15 @@ from typing_extensions import override
 
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract, ScoredAbstract
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.contracts.services import RankerBase
+    from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class FetchAbstractRankStep(PipelineStep[FetchStepContext]):
+class FetchAbstractRankStep(StepBase[FetchStepContext]):
     span_name = "step.fetch_abstract_rank"
 
     def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
@@ -44,7 +44,7 @@ class FetchAbstractRankStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "rank",
                         "fatal": False,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )
@@ -89,7 +89,7 @@ class FetchAbstractRankStep(PipelineStep[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "rank",
                         "fatal": False,
-                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "crawl_mode": ctx.others.crawl_mode,
                     },
                 )
             )

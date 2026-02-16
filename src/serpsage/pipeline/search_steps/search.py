@@ -7,16 +7,16 @@ from typing_extensions import override
 
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import stable_json
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.contracts.services import CacheBase, SearchProviderBase
+    from serpsage.components.cache import CacheBase, SearchProviderBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class SearchStep(PipelineStep[SearchStepContext]):
+class SearchStep(StepBase[SearchStepContext]):
     span_name = "step.search"
 
     def __init__(

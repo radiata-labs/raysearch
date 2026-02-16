@@ -32,11 +32,9 @@ class SearchStepContext(BaseStepContext):
     errors: list[AppError] = Field(default_factory=list)
 
 
-class FetchStepOthersRuntime(MutableModel):
+class FetchStepOthers(MutableModel):
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout_s: float = 0.0
-    allow_render: bool = True
-    rank_index: int = 0
     max_links: int | None = None
     max_image_links: int | None = None
 
@@ -58,7 +56,7 @@ class FetchStepContext(BaseStepContext):
     request: FetchRequest
     url: str
     url_index: int
-    others_runtime: FetchStepOthersRuntime
+    others: FetchStepOthers
     return_content: bool = True
     content_request: FetchContentRequest = Field(default_factory=FetchContentRequest)
     content_options: ExtractContentOptions = Field(
@@ -81,7 +79,7 @@ class FetchStepContext(BaseStepContext):
 __all__ = [
     "BaseStepContext",
     "FetchStepContext",
-    "FetchStepOthersRuntime",
+    "FetchStepOthers",
     "PreparedAbstract",
     "ScoredAbstract",
     "SearchStepContext",

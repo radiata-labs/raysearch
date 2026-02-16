@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from serpsage.components.provider.base import SearchProviderBase
+
 if TYPE_CHECKING:
-    from serpsage.contracts.services import HttpClientBase, SearchProviderBase
+    from serpsage.components.http.base import HttpClientBase
     from serpsage.core.runtime import Runtime
 
 
@@ -17,5 +19,6 @@ def build_provider(*, rt: Runtime, http: HttpClientBase) -> SearchProviderBase:
 
 
 __all__ = [
+    "SearchProviderBase",
     "build_provider",
 ]

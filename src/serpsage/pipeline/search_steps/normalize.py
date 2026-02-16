@@ -5,16 +5,16 @@ from typing_extensions import override
 from urllib.parse import urlparse
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import clean_whitespace, strip_html, tokenize_for_query
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class NormalizeStep(PipelineStep[SearchStepContext]):
+class NormalizeStep(StepBase[SearchStepContext]):
     span_name = "step.normalize"
 
     def __init__(self, *, rt: Runtime) -> None:

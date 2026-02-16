@@ -7,8 +7,8 @@ from typing_extensions import override
 
 from pydantic import Field
 
-from serpsage.contracts.lifecycle import ClockBase, SpanBase, TelemetryBase
 from serpsage.core.model_base import MutableModel
+from serpsage.telemetry.base import ClockBase, SpanBase, TelemetryBase
 
 if TYPE_CHECKING:
     from serpsage.settings.models import TelemetrySettings

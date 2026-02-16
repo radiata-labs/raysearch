@@ -9,17 +9,17 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.fetch import FetchResult
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
-    from serpsage.contracts.services import CacheBase, FetcherBase
+    from serpsage.components.cache import CacheBase, FetcherBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
-_CACHE_NAMESPACE = "fetch:v3"
+_CACHE_NAMESPACE = "fetch:v4"
 
 
-class FetchLoadStep(PipelineStep[FetchStepContext]):
+class FetchLoadStep(StepBase[FetchStepContext]):
     span_name = "step.fetch_load"
 
     def __init__(
@@ -51,19 +51,16 @@ class FetchLoadStep(PipelineStep[FetchStepContext]):
             )
             return ctx
 
-        mode = str(ctx.others_runtime.crawl_mode or "fallback")
+        mode = str(ctx.others.crawl_mode or "fallback")
         cache_key = _cache_key(
             url=url,
             backend=str(self.settings.fetch.backend or "auto").lower(),
-            allow_render=bool(ctx.others_runtime.allow_render),
         )
-        timeout_s = float(ctx.others_runtime.crawl_timeout_s or 0.0) or float(
+        timeout_s = float(ctx.others.crawl_timeout_s or 0.0) or float(
             self.settings.fetch.timeout_s
         )
         span.set_attr("crawl_mode", mode)
         span.set_attr("crawl_timeout_s", float(timeout_s))
-        span.set_attr("allow_render", bool(ctx.others_runtime.allow_render))
-        span.set_attr("rank_index", int(ctx.others_runtime.rank_index))
 
         cache_fetch_ms = 0
         crawl_fetch_ms = 0
@@ -86,8 +83,6 @@ class FetchLoadStep(PipelineStep[FetchStepContext]):
             result = await self._fetcher.afetch(
                 url=url,
                 timeout_s=float(timeout_s),
-                allow_render=bool(ctx.others_runtime.allow_render),
-                rank_index=int(ctx.others_runtime.rank_index),
             )
             crawl_fetch_ms = int((time.monotonic() - t0) * 1000)
             return result
@@ -215,7 +210,7 @@ class FetchLoadStep(PipelineStep[FetchStepContext]):
             "url_index": ctx.url_index,
             "stage": stage,
             "fatal": True,
-            "crawl_mode": ctx.others_runtime.crawl_mode,
+            "crawl_mode": ctx.others.crawl_mode,
         }
         if source:
             details["source"] = source
@@ -228,12 +223,11 @@ class FetchLoadStep(PipelineStep[FetchStepContext]):
         )
 
 
-def _cache_key(*, url: str, backend: str, allow_render: bool) -> str:
+def _cache_key(*, url: str, backend: str) -> str:
     payload = json.dumps(
         {
             "url": str(url),
             "backend": str(backend),
-            "allow_render": bool(allow_render),
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -268,7 +262,7 @@ def _decode_fetch_cache(payload: bytes, *, url: str) -> FetchResult:
         status_code=int(obj.get("status_code") or 0),
         content_type=obj.get("content_type"),
         content=bytes.fromhex(str(obj.get("content_hex") or "")),
-        fetch_mode=str(obj.get("fetch_mode") or "httpx"),  # type: ignore[arg-type]
+        fetch_mode=str(obj.get("fetch_mode") or "curl_cffi"),  # type: ignore[arg-type]
         rendered=bool(obj.get("rendered", False)),
         content_kind=str(obj.get("content_kind") or "unknown"),  # type: ignore[arg-type]
         headers={str(k): str(v) for k, v in dict(obj.get("headers") or {}).items()},

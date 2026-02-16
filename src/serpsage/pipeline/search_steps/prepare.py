@@ -4,15 +4,15 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class SearchPrepareStep(PipelineStep[SearchStepContext]):
+class SearchPrepareStep(StepBase[SearchStepContext]):
     span_name = "step.search_prepare"
 
     def __init__(self, *, rt: Runtime) -> None:

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from serpsage.components.extract.base import ExtractorBase
+
 if TYPE_CHECKING:
-    from serpsage.contracts.services import ExtractorBase
     from serpsage.core.runtime import Runtime
 
 
@@ -22,5 +23,6 @@ def build_extractor(*, rt: Runtime) -> ExtractorBase:
 
 
 __all__ = [
+    "ExtractorBase",
     "build_extractor",
 ]

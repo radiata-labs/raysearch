@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from serpsage.components.rank.base import RankerBase
+
 if TYPE_CHECKING:
-    from serpsage.contracts.services import RankerBase
     from serpsage.core.runtime import Runtime
 
 
@@ -36,5 +37,6 @@ def build_ranker(*, rt: Runtime) -> RankerBase:
 
 
 __all__ = [
+    "RankerBase",
     "build_ranker",
 ]

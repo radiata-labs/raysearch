@@ -4,15 +4,15 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class SearchFinalizeStep(PipelineStep[SearchStepContext]):
+class SearchFinalizeStep(StepBase[SearchStepContext]):
     span_name = "step.search_finalize"
 
     def __init__(self, *, rt: Runtime) -> None:

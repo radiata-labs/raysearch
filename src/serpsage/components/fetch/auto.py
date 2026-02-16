@@ -1,30 +1,50 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from typing_extensions import override
 from urllib.parse import urlparse
 
-import anyio
+import httpx
 
+from serpsage.components.fetch.base import FetcherBase
 from serpsage.components.fetch.utils import (
     blocked_marker_hit,
+    browser_headers,
+    classify_content_kind,
     estimate_text_quality,
     has_spa_signals,
 )
-from serpsage.contracts.services import FetcherBase, RateLimiterBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
-from serpsage.settings.models import RetrySettings
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from serpsage.components.fetch.curl_cffi import CurlCffiFetcher
-    from serpsage.components.fetch.http import HttpxFetcher
     from serpsage.components.fetch.playwright import PlaywrightFetcher
-    from serpsage.contracts.lifecycle import SpanBase
+    from serpsage.components.http import HttpClientBase
+    from serpsage.components.rate_limit import RateLimiterBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 _MIN_BYTES = 96
+_PROBE_MAX_BYTES = 220_000
+_BLOCK_STATUSES = {401, 403, 429}
+
+
+@dataclass(slots=True)
+class _ProbeSnapshot:
+    status_code: int = 0
+    final_url: str = ""
+    content_type: str | None = None
+    content_kind: str = "unknown"
+    text_chars: int = 0
+    script_ratio: float = 0.0
+    blocked_marker: bool = False
+    anti_bot: bool = False
+    spa: bool = False
+    low_text: bool = False
+    error_type: str | None = None
+    bytes_read: int = 0
 
 
 class AutoFetcher(FetcherBase):
@@ -33,18 +53,18 @@ class AutoFetcher(FetcherBase):
         *,
         rt: Runtime,
         rate_limiter: RateLimiterBase,
-        httpx_fetcher: HttpxFetcher,
-        curl_fetcher: CurlCffiFetcher | None,
-        playwright_fetcher: PlaywrightFetcher | None,
+        http: HttpClientBase,
+        curl_fetcher: CurlCffiFetcher,
+        playwright_fetcher: PlaywrightFetcher,
     ) -> None:
         super().__init__(rt=rt)
         self._rl = rate_limiter
-        self._httpx = httpx_fetcher
+        self._http = http.client
         self._curl = curl_fetcher
         self._playwright = playwright_fetcher
         self.bind_deps(
             rate_limiter,
-            httpx_fetcher,
+            http,
             curl_fetcher,
             playwright_fetcher,
         )
@@ -55,28 +75,20 @@ class AutoFetcher(FetcherBase):
         *,
         url: str,
         timeout_s: float | None = None,
-        allow_render: bool = True,
-        rank_index: int = 0,
     ) -> FetchResult:
         backend = str(self.settings.fetch.backend or "auto").lower()
         with self.span("fetch.auto", url=url, strategy=backend) as sp:
-            sp.set_attr("rank_index", int(rank_index))
-            sp.set_attr("allow_render", bool(allow_render))
-            return await self._afetch_uncached(
+            return await self._afetch(
                 url=url,
                 timeout_s=timeout_s,
-                allow_render=allow_render,
-                rank_index=rank_index,
                 span=sp,
             )
 
-    async def _afetch_uncached(
+    async def _afetch(
         self,
         *,
         url: str,
         timeout_s: float | None,
-        allow_render: bool,
-        rank_index: int,
         span: SpanBase,
     ) -> FetchResult:
         host = urlparse(url).netloc.lower()
@@ -87,8 +99,6 @@ class AutoFetcher(FetcherBase):
                 strategy=str(self.settings.fetch.backend or "auto").lower(),
                 span=span,
                 timeout_s=timeout_s,
-                allow_render=allow_render,
-                rank_index=rank_index,
             )
         finally:
             await self._rl.release(host=host)
@@ -111,52 +121,38 @@ class AutoFetcher(FetcherBase):
         strategy: str,
         span: SpanBase,
         timeout_s: float | None,
-        allow_render: bool,
-        rank_index: int,
     ) -> FetchAttempt:
-        if strategy == "httpx":
-            res = await self._httpx.fetch_attempt(
-                url=url,
-                profile="browser",
-                span=span,
-                timeout_s=timeout_s,
-            )
-            if self._is_useful(res):
-                return res
-            raise RuntimeError("fetch_unusable:httpx")
+        deadline_ts = time.monotonic() + self._resolve_timeout_s(timeout_s)
         if strategy == "curl_cffi":
-            if self._curl is None:
-                raise RuntimeError(
-                    "curl_cffi fetch strategy requested but curl fetcher not available"
-                )
-            res = await self._curl.fetch_attempt(
+            attempt = await self._run_curl(
                 url=url,
                 span=span,
-                timeout_s=timeout_s,
+                deadline_ts=deadline_ts,
             )
-            if self._is_useful(res):
-                return res
-            raise RuntimeError("fetch_unusable:curl_cffi")
+            if self._is_useful(attempt):
+                return attempt
+            raise RuntimeError(f"fetch_unusable:curl_cffi:{int(attempt.status_code)}")
+
         if strategy == "playwright":
-            if self._playwright is None:
-                raise RuntimeError(
-                    "playwright fetch strategy requested but unavailable"
-                )
-            res = await self._playwright.fetch_attempt(
+            attempt = await self._run_playwright(
                 url=url,
                 span=span,
-                timeout_s=timeout_s,
+                deadline_ts=deadline_ts,
                 render_reason="backend_playwright",
             )
-            if self._is_useful(res):
-                return res
-            raise RuntimeError("fetch_unusable:playwright")
+            if self._is_useful(attempt):
+                return attempt
+            raise RuntimeError(f"fetch_unusable:playwright:{int(attempt.status_code)}")
+
+        if strategy != "auto":
+            raise ValueError(
+                f"unsupported fetch backend `{strategy}`; expected curl_cffi|playwright|auto"
+            )
+
         return await self._fetch_auto(
             url=url,
             span=span,
-            timeout_s=timeout_s,
-            allow_render=allow_render,
-            rank_index=rank_index,
+            deadline_ts=deadline_ts,
         )
 
     async def _fetch_auto(
@@ -164,211 +160,268 @@ class AutoFetcher(FetcherBase):
         *,
         url: str,
         span: SpanBase,
-        timeout_s: float | None,
-        allow_render: bool,
-        rank_index: int,
+        deadline_ts: float,
     ) -> FetchAttempt:
-        base_candidates: list[FetchAttempt] = []
-        winner: FetchAttempt | None = None
-        render_launched = False
-        span.set_attr("render_triggered", False)
+        probe = await self._probe_http(url=url, deadline_ts=deadline_ts, span=span)
+        self._set_probe_attrs(span=span, probe=probe)
+        selected_backend, selection_reason = self._choose_backend(probe)
+        span.set_attr("selected_backend", selected_backend)
+        span.set_attr("selection_reason", selection_reason)
+        span.set_attr("fallback_triggered", False)
 
-        hedge_compat_s = 0.08
-        hedge_curl_s = 0.11
-        retry = RetrySettings(max_attempts=1, delay_ms=90)
+        probe_chain = self._probe_chain_item(probe)
+        decision_chain = f"decision:{selected_backend}:{selection_reason}"
 
-        def make_runner(
-            func: Callable[..., Awaitable[Any]], *args: object, **kwargs: object
-        ) -> Callable[[SpanBase], Awaitable[FetchAttempt]]:
-            async def runner(candidate_span: SpanBase) -> FetchAttempt:
-                return await func(*args, span=candidate_span, **kwargs)
-
-            return runner
-
-        async with anyio.create_task_group() as tg:
-
-            async def worker(
-                label: str,
-                delay_s: float,
-                runner: Callable[[SpanBase], Awaitable[FetchAttempt]],
-                can_trigger_render: bool = True,
-            ) -> None:
-                nonlocal winner, render_launched
-                if delay_s > 0:
-                    await anyio.sleep(delay_s)
-                if winner is not None:
-                    return
-                with self.span("fetch.auto.candidate", url=url, mode=label) as csp:
-                    try:
-                        attempt = await runner(csp)
-                    except Exception as exc:  # noqa: BLE001
-                        attempt = self._failed_attempt(
-                            url=url,
-                            mode=label,
-                            error=type(exc).__name__,
-                        )
-                        csp.set_attr("candidate_error_type", type(exc).__name__)
-
-                    blocked = self._is_blocked(attempt)
-                    useful = self._is_useful(attempt)
-                    self._set_candidate_span_attrs(
-                        span=csp,
-                        attempt=attempt,
-                        blocked=blocked,
-                        useful=useful,
-                    )
-                    base_candidates.append(attempt)
-                    span.set_attr("candidate_count", int(len(base_candidates)))
-
-                    if can_trigger_render and self._should_render(
-                        attempt,
-                        allow_render=allow_render,
-                        rank_index=rank_index,
-                        render_launched=render_launched,
-                    ):
-                        render_launched = True
-                        reason = self._render_reason(attempt)
-                        span.set_attr("render_triggered", True)
-                        span.set_attr("render_reason", reason)
-                        if self._playwright is not None:
-                            tg.start_soon(
-                                worker,
-                                "playwright",
-                                0.0,
-                                make_runner(
-                                    self._playwright.fetch_attempt,
-                                    url=url,
-                                    timeout_s=timeout_s,
-                                    render_reason=reason,
-                                ),
-                                False,
-                            )
-                    if useful:
-                        winner = attempt
-                        self._set_winner_attrs(span=span, winner=attempt)
-                        tg.cancel_scope.cancel()
-
-            tg.start_soon(
-                worker,
-                "httpx:browser",
-                0.0,
-                make_runner(
-                    self._httpx.fetch_attempt,
+        if selected_backend == "playwright":
+            try:
+                attempt = await self._run_playwright(
                     url=url,
-                    profile="browser",
-                    retry=retry,
-                    timeout_s=timeout_s,
-                ),
-            )
-            tg.start_soon(
-                worker,
-                "httpx:compat",
-                hedge_compat_s,
-                make_runner(
-                    self._httpx.fetch_attempt,
-                    url=url,
-                    profile="compat",
-                    retry=retry,
-                    timeout_s=timeout_s,
-                ),
-            )
-            if self._curl is not None:
-                tg.start_soon(
-                    worker,
-                    "curl_cffi",
-                    hedge_curl_s,
-                    make_runner(
-                        self._curl.fetch_attempt,
-                        url=url,
-                        retry=retry,
-                        timeout_s=timeout_s,
-                    ),
+                    span=span,
+                    deadline_ts=deadline_ts,
+                    render_reason=f"auto_probe:{selection_reason}",
                 )
-
-        if winner is None and self._playwright is not None and not render_launched:
-            best_http = (
-                max(base_candidates, key=self._candidate_score)
-                if base_candidates
-                else None
-            )
-            if best_http is not None and self._should_render(
-                best_http,
-                allow_render=allow_render,
-                rank_index=rank_index,
-                render_launched=False,
-            ):
-                reason = self._render_reason(best_http)
-                span.set_attr("render_triggered", True)
-                span.set_attr("render_reason", reason)
-                try:
-                    with self.span(
-                        "fetch.auto.candidate",
-                        url=url,
-                        mode="playwright",
-                    ) as csp:
-                        render_attempt = await self._playwright.fetch_attempt(
-                            url=url,
-                            span=csp,
-                            timeout_s=timeout_s,
-                            render_reason=reason,
-                        )
-                        blocked = self._is_blocked(render_attempt)
-                        useful = self._is_useful(render_attempt)
-                        self._set_candidate_span_attrs(
-                            span=csp,
-                            attempt=render_attempt,
-                            blocked=blocked,
-                            useful=useful,
-                        )
-                        base_candidates.append(render_attempt)
-                        span.set_attr("candidate_count", int(len(base_candidates)))
-                        if useful:
-                            winner = render_attempt
-                            self._set_winner_attrs(span=span, winner=render_attempt)
-                except Exception as exc:  # noqa: BLE001
-                    span.set_attr("playwright_error", type(exc).__name__)
-
-        if winner is not None:
-            return self._attach_attempt_chain(winner, base_candidates)
-
-        if base_candidates:
-            best = max(base_candidates, key=self._candidate_score)
-            if self._is_useful(best):
-                self._set_winner_attrs(span=span, winner=best)
-                return self._attach_attempt_chain(best, base_candidates)
-            best = self._attach_attempt_chain(best, base_candidates)
+            except Exception as exc:  # noqa: BLE001
+                span.set_attr("playwright_error_type", type(exc).__name__)
+                raise RuntimeError(
+                    f"fetch_unusable:auto:playwright_error:{type(exc).__name__}"
+                ) from exc
+            if self._is_useful(attempt):
+                winner = self._attach_attempt_chain(
+                    winner=attempt,
+                    chain_prefix=[probe_chain, decision_chain],
+                )
+                self._set_winner_attrs(span=span, winner=winner)
+                return winner
             raise RuntimeError(
-                f"fetch_unusable:auto:{best.fetch_mode}:{best.status_code}"
+                f"fetch_unusable:auto:playwright:{int(attempt.status_code)}"
             )
-        raise RuntimeError("fetch_unusable:auto:no_candidates")
+
+        curl_attempt: FetchAttempt | None = None
+        curl_error_type: str | None = None
+        try:
+            curl_attempt = await self._run_curl(
+                url=url,
+                span=span,
+                deadline_ts=deadline_ts,
+            )
+        except Exception as exc:  # noqa: BLE001
+            curl_error_type = type(exc).__name__
+            span.set_attr("curl_error_type", curl_error_type)
+
+        if curl_attempt is not None and self._is_useful(curl_attempt):
+            winner = self._attach_attempt_chain(
+                winner=curl_attempt,
+                chain_prefix=[probe_chain, decision_chain],
+            )
+            self._set_winner_attrs(span=span, winner=winner)
+            return winner
+
+        span.set_attr("fallback_triggered", True)
+        fallback_reason = "curl_nonperfect"
+        if curl_error_type is not None:
+            fallback_reason = f"curl_error:{curl_error_type}"
+        span.set_attr("fallback_reason", fallback_reason)
+
+        try:
+            playwright_attempt = await self._run_playwright(
+                url=url,
+                span=span,
+                deadline_ts=deadline_ts,
+                render_reason="curl_nonperfect_fallback",
+            )
+        except Exception as exc:  # noqa: BLE001
+            span.set_attr("playwright_error_type", type(exc).__name__)
+            raise RuntimeError(
+                f"fetch_unusable:auto:playwright_fallback_error:{type(exc).__name__}"
+            ) from exc
+
+        if self._is_useful(playwright_attempt):
+            prefix = [probe_chain, decision_chain, "fallback:playwright"]
+            if curl_error_type is not None:
+                prefix.append(f"curl_error:{curl_error_type}")
+            elif curl_attempt is not None:
+                prefix.extend(list(curl_attempt.attempt_chain or ["curl_cffi"]))
+            winner = self._attach_attempt_chain(
+                winner=playwright_attempt,
+                chain_prefix=prefix,
+            )
+            self._set_winner_attrs(span=span, winner=winner)
+            return winner
+        raise RuntimeError(
+            f"fetch_unusable:auto:playwright:{int(playwright_attempt.status_code)}"
+        )
+
+    async def _probe_http(
+        self,
+        *,
+        url: str,
+        deadline_ts: float,
+        span: SpanBase,
+    ) -> _ProbeSnapshot:
+        with self.span("fetch.auto.probe", url=url) as probe_span:
+            snap = _ProbeSnapshot(final_url=url)
+            try:
+                timeout_s = self._remaining_timeout_s(deadline_ts)
+                timeout = httpx.Timeout(timeout_s)
+                fetch_cfg = self.settings.fetch
+                async with self._http.stream(
+                    "GET",
+                    url,
+                    headers=browser_headers(
+                        profile="browser",
+                        user_agent=str(fetch_cfg.user_agent),
+                    ),
+                    timeout=timeout,
+                    follow_redirects=bool(fetch_cfg.follow_redirects),
+                ) as resp:
+                    snap.status_code = int(resp.status_code)
+                    snap.final_url = str(resp.url)
+                    snap.content_type = resp.headers.get("content-type")
+                    body = await self._read_probe_body(resp=resp)
+
+                quality = self.settings.fetch.quality
+                content_kind = classify_content_kind(
+                    content_type=snap.content_type,
+                    url=snap.final_url,
+                    content=body,
+                )
+                text_chars, _, script_ratio = estimate_text_quality(
+                    body,
+                    content_kind=content_kind,
+                )
+                marker_hit = bool(
+                    blocked_marker_hit(
+                        body,
+                        markers=tuple(quality.blocked_markers or []),
+                    )
+                )
+                anti_bot = int(snap.status_code) in _BLOCK_STATUSES or marker_hit
+                spa = bool(
+                    content_kind == "html"
+                    and script_ratio >= float(quality.script_ratio_threshold)
+                    and has_spa_signals(body)
+                )
+                low_text = bool(
+                    content_kind == "html"
+                    and int(text_chars) < int(quality.min_text_chars)
+                )
+                snap.content_kind = content_kind
+                snap.text_chars = int(text_chars)
+                snap.script_ratio = float(script_ratio)
+                snap.blocked_marker = marker_hit
+                snap.anti_bot = anti_bot
+                snap.spa = spa
+                snap.low_text = low_text
+                snap.bytes_read = int(len(body))
+            except Exception as exc:  # noqa: BLE001
+                snap.error_type = type(exc).__name__
+                probe_span.set_attr("probe_error_type", snap.error_type)
+                span.set_attr("probe_error_type", snap.error_type)
+
+            probe_span.set_attr("status_code", int(snap.status_code))
+            probe_span.set_attr("content_kind", str(snap.content_kind))
+            probe_span.set_attr("text_chars", int(snap.text_chars))
+            probe_span.set_attr("script_ratio", float(snap.script_ratio))
+            probe_span.set_attr("anti_bot", bool(snap.anti_bot))
+            probe_span.set_attr("spa", bool(snap.spa))
+            probe_span.set_attr("low_text", bool(snap.low_text))
+            probe_span.set_attr("bytes_read", int(snap.bytes_read))
+            return snap
+
+    async def _read_probe_body(self, *, resp: httpx.Response) -> bytes:
+        total = 0
+        parts: list[bytes] = []
+        async for chunk in resp.aiter_bytes():
+            if not chunk:
+                continue
+            remain = _PROBE_MAX_BYTES - total
+            if remain <= 0:
+                break
+            if len(chunk) > remain:
+                chunk = chunk[:remain]
+            parts.append(chunk)
+            total += len(chunk)
+            if total >= _PROBE_MAX_BYTES:
+                break
+        return b"".join(parts)
+
+    def _choose_backend(self, probe: _ProbeSnapshot) -> tuple[str, str]:
+        if probe.error_type is not None:
+            return "curl_cffi", "probe_error"
+        if probe.anti_bot:
+            return "playwright", "anti_bot"
+        if probe.spa:
+            return "playwright", "spa"
+        if probe.low_text:
+            return "playwright", "low_text"
+        return "curl_cffi", "default"
+
+    async def _run_curl(
+        self,
+        *,
+        url: str,
+        span: SpanBase,
+        deadline_ts: float,
+    ) -> FetchAttempt:
+        with self.span("fetch.auto.backend", url=url, backend="curl_cffi") as csp:
+            timeout_s = self._remaining_timeout_s(deadline_ts)
+            csp.set_attr("timeout_s", float(timeout_s))
+            attempt = await self._curl.fetch_attempt(
+                url=url,
+                span=csp,
+                timeout_s=timeout_s,
+            )
+            useful = self._is_useful(attempt)
+            csp.set_attr("useful", bool(useful))
+            span.set_attr("curl_status", int(attempt.status_code or 0))
+            span.set_attr("curl_useful", bool(useful))
+            return attempt
+
+    async def _run_playwright(
+        self,
+        *,
+        url: str,
+        span: SpanBase,
+        deadline_ts: float,
+        render_reason: str,
+    ) -> FetchAttempt:
+        with self.span("fetch.auto.backend", url=url, backend="playwright") as psp:
+            timeout_s = self._remaining_timeout_s(deadline_ts)
+            psp.set_attr("timeout_s", float(timeout_s))
+            attempt = await self._playwright.fetch_attempt(
+                url=url,
+                span=psp,
+                timeout_s=timeout_s,
+                render_reason=render_reason,
+            )
+            useful = self._is_useful(attempt)
+            psp.set_attr("useful", bool(useful))
+            span.set_attr("playwright_status", int(attempt.status_code or 0))
+            span.set_attr("playwright_useful", bool(useful))
+            return attempt
+
+    def _resolve_timeout_s(self, timeout_s: float | None) -> float:
+        resolved = float(timeout_s or 0.0)
+        if resolved <= 0.0:
+            resolved = float(self.settings.fetch.timeout_s)
+        return max(0.05, resolved)
+
+    def _remaining_timeout_s(self, deadline_ts: float) -> float:
+        remaining = float(deadline_ts - time.monotonic())
+        if remaining <= 0.0:
+            raise TimeoutError("fetch timeout reached before backend request")
+        return remaining
 
     def _is_blocked(self, res: FetchAttempt) -> bool:
         status = int(res.status_code or 0)
-        if status in {401, 403}:
+        if status in _BLOCK_STATUSES:
             return True
-        marker_hit = self._has_block_marker(res=res)
-        if not marker_hit:
-            return False
-        return self._is_low_quality_for_block(res)
-
-    def _has_block_marker(self, *, res: FetchAttempt) -> bool:
-        markers = tuple(self.settings.fetch.quality.blocked_markers or [])
-        if not markers:
-            return bool(res.blocked)
-        if blocked_marker_hit(res.content, markers=markers):
+        if blocked_marker_hit(
+            res.content,
+            markers=tuple(self.settings.fetch.quality.blocked_markers or []),
+        ):
             return True
         return bool(res.blocked)
-
-    def _is_low_quality_for_block(self, res: FetchAttempt) -> bool:
-        quality = self.settings.fetch.quality
-        if len(res.content or b"") < _MIN_BYTES:
-            return True
-        if res.content_kind in {"binary", "unknown"}:
-            return True
-        if res.content_kind == "html":
-            if int(res.text_chars or 0) < int(quality.min_text_chars):
-                return True
-        return False
 
     def _is_useful(self, res: FetchAttempt) -> bool:
         quality = self.settings.fetch.quality
@@ -386,131 +439,39 @@ class AutoFetcher(FetcherBase):
                 return False
         return True
 
-    def _candidate_score(self, res: FetchAttempt) -> float:
-        status = int(res.status_code or 0)
-        status_bonus = 0.0
-        if 200 <= status < 300:
-            status_bonus = 0.30
-        elif 300 <= status < 400:
-            status_bonus = 0.12
-        mode_bonus = 0.10 if res.rendered else 0.0
-        text_bonus = min(0.35, float(max(0, int(res.text_chars or 0))) / 8000.0)
-        blocked_penalty = 0.60 if self._is_blocked(res) else 0.0
-        return (
-            status_bonus
-            + mode_bonus
-            + text_bonus
-            - blocked_penalty
-        )
-
-    def _should_render(
-        self,
-        res: FetchAttempt,
-        *,
-        allow_render: bool,
-        rank_index: int,
-        render_launched: bool,
-    ) -> bool:
-        if not allow_render or render_launched:
-            return False
-        if not bool(self.settings.fetch.render.enabled) or self._playwright is None:
-            return False
-
-        max_pages = int(self.settings.fetch.quality.max_render_pages_search)
-        if rank_index >= max_pages:
-            return False
-        if self._is_blocked(res):
-            return True
-        if int(res.status_code or 0) in {401, 403}:
-            return True
-        if res.content_kind != "html":
-            return False
-
-        quality = self.settings.fetch.quality
-        if int(res.text_chars or 0) < int(quality.min_text_chars):
-            return True
-        _, _, script_ratio = estimate_text_quality(res.content, content_kind="html")
-        return bool(
-            script_ratio >= float(quality.script_ratio_threshold)
-            and has_spa_signals(res.content)
-        )
-
-    def _render_reason(self, res: FetchAttempt) -> str:
-        quality = self.settings.fetch.quality
-        if self._is_blocked(res):
-            return "challenge_page"
-        if int(res.status_code or 0) in {401, 403}:
-            return "status_forbidden"
-        if int(res.text_chars or 0) < int(quality.min_text_chars):
-            return "low_text_chars"
-        _, _, script_ratio = estimate_text_quality(res.content, content_kind="html")
-        if script_ratio >= float(quality.script_ratio_threshold) and has_spa_signals(
-            res.content
-        ):
-            return "spa_script_heavy"
-        return "quality_gate"
-
-    def _failed_attempt(self, *, url: str, mode: str, error: str) -> FetchAttempt:
-        fetch_mode = "httpx"
-        if mode.startswith("curl"):
-            fetch_mode = "curl_cffi"
-        elif mode.startswith("playwright"):
-            fetch_mode = "playwright"
-        return FetchAttempt(
-            url=url,
-            status_code=0,
-            content_type=None,
-            content=b"",
-            strategy_used=fetch_mode,  # type: ignore[arg-type]
-            fetch_mode=fetch_mode,  # type: ignore[arg-type]
-            rendered=bool(fetch_mode == "playwright"),
-            content_kind="unknown",
-            headers={},
-            content_encoding=None,
-            content_length_header=None,
-            content_score=0.0,
-            text_chars=0,
-            blocked=False,
-            render_reason=None,
-            attempt_chain=[f"{mode}:error:{error}"],
-        )
-
     def _attach_attempt_chain(
         self,
-        winner: FetchAttempt,
-        candidates: list[FetchAttempt],
-    ) -> FetchAttempt:
-        chain: list[str] = []
-        for c in candidates:
-            for item in c.attempt_chain or [c.fetch_mode]:
-                if item not in chain:
-                    chain.append(item)
-        if not chain:
-            chain = [winner.fetch_mode]
-        return winner.model_copy(
-            update={
-                "attempt_chain": chain,
-            }
-        )
-
-    def _set_candidate_span_attrs(
-        self,
         *,
-        span: SpanBase,
-        attempt: FetchAttempt,
-        blocked: bool,
-        useful: bool,
-    ) -> None:
-        span.set_attr("status", int(attempt.status_code or 0))
-        span.set_attr("fetch_mode", str(attempt.fetch_mode))
-        span.set_attr("content_kind", str(attempt.content_kind))
-        span.set_attr("content_bytes", int(len(attempt.content or b"")))
-        span.set_attr("text_chars", int(attempt.text_chars or 0))
-        span.set_attr("content_score", float(attempt.content_score or 0.0))
-        span.set_attr("blocked", bool(blocked))
-        span.set_attr("useful", bool(useful))
-        if attempt.render_reason:
-            span.set_attr("render_reason", str(attempt.render_reason))
+        winner: FetchAttempt,
+        chain_prefix: list[str],
+    ) -> FetchAttempt:
+        out: list[str] = []
+        for item in chain_prefix + list(winner.attempt_chain or [winner.fetch_mode]):
+            token = str(item or "").strip()
+            if not token or token in out:
+                continue
+            out.append(token)
+        if not out:
+            out = [winner.fetch_mode]
+        return winner.model_copy(update={"attempt_chain": out})
+
+    def _probe_chain_item(self, probe: _ProbeSnapshot) -> str:
+        if probe.error_type is not None:
+            return f"probe:error:{probe.error_type}"
+        return f"probe:http:get:{int(probe.status_code or 0)}"
+
+    def _set_probe_attrs(self, *, span: SpanBase, probe: _ProbeSnapshot) -> None:
+        span.set_attr("probe_status", int(probe.status_code))
+        span.set_attr("probe_content_kind", str(probe.content_kind))
+        span.set_attr("probe_text_chars", int(probe.text_chars))
+        span.set_attr("probe_script_ratio", float(probe.script_ratio))
+        span.set_attr("probe_blocked_marker", bool(probe.blocked_marker))
+        span.set_attr("probe_anti_bot", bool(probe.anti_bot))
+        span.set_attr("probe_spa", bool(probe.spa))
+        span.set_attr("probe_low_text", bool(probe.low_text))
+        span.set_attr("probe_bytes", int(probe.bytes_read))
+        if probe.error_type is not None:
+            span.set_attr("probe_error_type", probe.error_type)
 
     def _set_winner_attrs(self, *, span: SpanBase, winner: FetchAttempt) -> None:
         span.set_attr("winner_mode", str(winner.fetch_mode))

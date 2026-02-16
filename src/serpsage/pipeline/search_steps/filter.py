@@ -4,15 +4,15 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
-    from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
+    from serpsage.telemetry.base import SpanBase
 
 
-class FilterStep(PipelineStep[SearchStepContext]):
+class FilterStep(StepBase[SearchStepContext]):
     span_name = "step.filter"
 
     def __init__(self, *, rt: Runtime) -> None:
@@ -39,8 +39,7 @@ class FilterStep(PipelineStep[SearchStepContext]):
         return [
             r
             for r in results
-            if self._is_not_noise(r)
-            and self._is_relevant(r, query_tokens=query_tokens)
+            if self._is_not_noise(r) and self._is_relevant(r, query_tokens=query_tokens)
         ]
 
     def _is_not_noise(self, r: ResultItem) -> bool:

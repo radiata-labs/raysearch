@@ -7,14 +7,14 @@ from typing_extensions import override
 import openai
 from openai import AsyncOpenAI
 
-from serpsage.contracts.services import LLMClientBase
+from serpsage.components.overview.base import LLMClientBase
 from serpsage.models.llm import ChatResult, LLMUsage
 
 if TYPE_CHECKING:
     from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
-    from serpsage.contracts.services import HttpClientBase
+    from serpsage.components.http.base import HttpClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import OverviewModelSettings
 

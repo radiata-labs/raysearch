@@ -27,7 +27,6 @@ search:
       top_abstracts_per_page: 2
       step_timeout_s: 1.2
       page_timeout_s: 0.9
-      max_render_pages: 0
     medium:
       pages_ratio: 0.50
       min_pages: 2
@@ -35,7 +34,6 @@ search:
       top_abstracts_per_page: 3
       step_timeout_s: 2.0
       page_timeout_s: 1.6
-      max_render_pages: 2
     high:
       pages_ratio: 0.75
       min_pages: 3
@@ -43,7 +41,6 @@ search:
       top_abstracts_per_page: 5
       step_timeout_s: 4.0
       page_timeout_s: 2.5
-      max_render_pages: 6
   overview:
     enabled_default: true
     use_model: gpt-4.1-mini
@@ -57,7 +54,7 @@ search:
     force_language: auto
 
 fetch:
-  backend: playwright # auto|httpx|curl_cffi|playwright
+  backend: auto # auto|curl_cffi|playwright
   timeout_s: 20
   follow_redirects: true
   user_agent: serpsage-bot/4.0
@@ -66,7 +63,6 @@ fetch:
     per_host: 4
     politeness_delay_ms: 0
   render:
-    enabled: true
     js_concurrency: 4
     nav_timeout_ms: 25000
     wait_network_idle_ms: 220
@@ -82,7 +78,6 @@ fetch:
       - please enable javascript
       - security check
       - checking your browser
-    max_render_pages_search: 2
   extract:
     max_markdown_chars: 160000
     min_text_chars: 220

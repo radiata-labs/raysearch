@@ -11,7 +11,7 @@ from typing import (
 )
 from typing_extensions import override
 
-from serpsage.contracts.services import CacheBase
+from serpsage.components.cache.base import CacheBase
 
 if TYPE_CHECKING:
     import aiomysql

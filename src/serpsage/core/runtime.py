@@ -3,18 +3,16 @@ from __future__ import annotations
 import httpx
 from pydantic import ConfigDict
 
+from serpsage.components.cache import CacheBase
+from serpsage.components.extract import ExtractorBase
+from serpsage.components.fetch import FetcherBase
+from serpsage.components.overview import LLMClientBase
+from serpsage.components.provider import SearchProviderBase
+from serpsage.components.rank import RankerBase
 from serpsage.components.rate_limit.basic import BasicRateLimiter
-from serpsage.contracts.lifecycle import ClockBase, TelemetryBase
-from serpsage.contracts.services import (
-    CacheBase,
-    ExtractorBase,
-    FetcherBase,
-    LLMClientBase,
-    RankerBase,
-    SearchProviderBase,
-)
 from serpsage.core.model_base import FrozenModel, MutableModel
 from serpsage.settings.models import AppSettings
+from serpsage.telemetry.base import ClockBase, TelemetryBase
 
 
 class Runtime(FrozenModel):

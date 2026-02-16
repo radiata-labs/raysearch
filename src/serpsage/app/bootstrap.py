@@ -15,10 +15,10 @@ from serpsage.components import (
     build_ranker,
     build_rate_limiter,
 )
-from serpsage.contracts.lifecycle import ClockBase
 from serpsage.core.runtime import Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import FetchStepContext, SearchStepContext
+from serpsage.pipeline.base import RunnerBase, StepBase
 from serpsage.pipeline.fetch_steps import (
     FetchAbstractBuildStep,
     FetchAbstractRankStep,
@@ -28,7 +28,6 @@ from serpsage.pipeline.fetch_steps import (
     FetchOverviewStep,
     FetchPrepareStep,
 )
-from serpsage.pipeline.runner import PipelineRunner
 from serpsage.pipeline.search_steps import (
     DedupeStep,
     FilterStep,
@@ -41,19 +40,17 @@ from serpsage.pipeline.search_steps import (
     SearchPrepareStep,
     SearchStep,
 )
+from serpsage.telemetry.base import ClockBase
 from serpsage.telemetry.trace import NoopTelemetry, TraceTelemetry
 
 if TYPE_CHECKING:
-    from serpsage.contracts.services import (
-        CacheBase,
-        ExtractorBase,
-        FetcherBase,
-        LLMClientBase,
-        PipelineStepBase,
-        RankerBase,
-        RateLimiterBase,
-        SearchProviderBase,
-    )
+    from serpsage.components.cache import CacheBase
+    from serpsage.components.extract import ExtractorBase
+    from serpsage.components.fetch import FetcherBase
+    from serpsage.components.overview import LLMClientBase
+    from serpsage.components.provider import SearchProviderBase
+    from serpsage.components.rank import RankerBase
+    from serpsage.components.rate_limit import RateLimiterBase
     from serpsage.settings.models import AppSettings
 
 
@@ -99,7 +96,7 @@ def build_engine(
     ranker: RankerBase = ov.ranker or build_ranker(rt=rt)
     llm: LLMClientBase = ov.llm or build_overview_client(rt=rt, http=shared_http_unit)
 
-    fetch_steps: list[PipelineStepBase[FetchStepContext]] = [
+    fetch_steps: list[StepBase[FetchStepContext]] = [
         FetchPrepareStep(rt=rt),
         FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
         FetchExtractStep(rt=rt, extractor=extractor),
@@ -108,8 +105,8 @@ def build_engine(
         FetchOverviewStep(rt=rt, llm=llm, cache=cache),
         FetchFinalizeStep(rt=rt),
     ]
-    fetch_runner = PipelineRunner[FetchStepContext](rt=rt, steps=fetch_steps)
-    search_steps: list[PipelineStepBase[SearchStepContext]] = [
+    fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps)
+    search_steps: list[StepBase[SearchStepContext]] = [
         SearchPrepareStep(rt=rt),
         SearchStep(rt=rt, provider=provider, cache=cache),
         NormalizeStep(rt=rt),
@@ -121,7 +118,7 @@ def build_engine(
         SearchFinalizeStep(rt=rt),
         SearchOverviewStep(rt=rt, llm=llm, cache=cache),
     ]
-    search_runner = PipelineRunner[SearchStepContext](rt=rt, steps=search_steps)
+    search_runner = RunnerBase[SearchStepContext](rt=rt, steps=search_steps)
 
     return Engine(
         rt=rt,

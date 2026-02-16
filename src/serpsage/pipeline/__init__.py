@@ -1,6 +1,5 @@
 from serpsage.models.pipeline import FetchStepContext, SearchStepContext
-from serpsage.pipeline.runner import PipelineRunner
-from serpsage.pipeline.step import PipelineStep
+from serpsage.pipeline.base import RunnerBase, StepBase
 from serpsage.pipeline.search_steps import (
     DedupeStep,
     FilterStep,
@@ -19,8 +18,8 @@ __all__ = [
     "FetchStepContext",
     "FilterStep",
     "NormalizeStep",
-    "PipelineRunner",
-    "PipelineStep",
+    "RunnerBase",
+    "StepBase",
     "RankStep",
     "RerankStep",
     "SearchFinalizeStep",

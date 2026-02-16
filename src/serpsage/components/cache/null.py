@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.contracts.services import CacheBase
+from serpsage.components.cache.base import CacheBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
