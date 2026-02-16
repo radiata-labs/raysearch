@@ -102,7 +102,6 @@ class AutoFetcher(FetcherBase):
             content_kind=attempt.content_kind,
             headers=dict(attempt.headers or {}),
             attempt_chain=list(attempt.attempt_chain or []),
-            quality_score=float(attempt.quality_score or attempt.content_score),
         )
 
     async def _fetch_useful(
@@ -369,8 +368,6 @@ class AutoFetcher(FetcherBase):
         if res.content_kind == "html":
             if int(res.text_chars or 0) < int(quality.min_text_chars):
                 return True
-            if float(res.content_score or 0.0) < float(quality.min_content_score):
-                return True
         return False
 
     def _is_useful(self, res: FetchAttempt) -> bool:
@@ -387,8 +384,6 @@ class AutoFetcher(FetcherBase):
         if res.content_kind == "html":
             if int(res.text_chars or 0) < int(quality.min_text_chars):
                 return False
-            if float(res.content_score or 0.0) < float(quality.min_content_score):
-                return False
         return True
 
     def _candidate_score(self, res: FetchAttempt) -> float:
@@ -402,8 +397,7 @@ class AutoFetcher(FetcherBase):
         text_bonus = min(0.35, float(max(0, int(res.text_chars or 0))) / 8000.0)
         blocked_penalty = 0.60 if self._is_blocked(res) else 0.0
         return (
-            float(res.quality_score or res.content_score or 0.0)
-            + status_bonus
+            status_bonus
             + mode_bonus
             + text_bonus
             - blocked_penalty
@@ -435,8 +429,6 @@ class AutoFetcher(FetcherBase):
         quality = self.settings.fetch.quality
         if int(res.text_chars or 0) < int(quality.min_text_chars):
             return True
-        if float(res.content_score or 0.0) < float(quality.min_content_score):
-            return True
         _, _, script_ratio = estimate_text_quality(res.content, content_kind="html")
         return bool(
             script_ratio >= float(quality.script_ratio_threshold)
@@ -451,8 +443,6 @@ class AutoFetcher(FetcherBase):
             return "status_forbidden"
         if int(res.text_chars or 0) < int(quality.min_text_chars):
             return "low_text_chars"
-        if float(res.content_score or 0.0) < float(quality.min_content_score):
-            return "low_content_score"
         _, _, script_ratio = estimate_text_quality(res.content, content_kind="html")
         if script_ratio >= float(quality.script_ratio_threshold) and has_spa_signals(
             res.content
@@ -483,7 +473,6 @@ class AutoFetcher(FetcherBase):
             blocked=False,
             render_reason=None,
             attempt_chain=[f"{mode}:error:{error}"],
-            quality_score=0.0,
         )
 
     def _attach_attempt_chain(
@@ -501,7 +490,6 @@ class AutoFetcher(FetcherBase):
         return winner.model_copy(
             update={
                 "attempt_chain": chain,
-                "quality_score": float(max(0.0, self._candidate_score(winner))),
             }
         )
 

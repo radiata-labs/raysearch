@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
@@ -175,11 +175,6 @@ class FetchOverviewStep(PipelineStep[FetchStepContext]):
         ]
         if abstracts:
             return abstracts
-        plain = clean_whitespace(
-            (ctx.extracted.plain_text if ctx.extracted else "") or ""
-        )
-        if plain:
-            return [plain]
         markdown = clean_whitespace(
             ((ctx.extracted.markdown if ctx.extracted else "") or "").replace("\n", " ")
         )
@@ -273,3 +268,4 @@ def _self_heal_message() -> dict[str, str]:
 
 
 __all__ = ["FetchOverviewStep"]
+

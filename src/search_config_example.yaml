@@ -1,4 +1,4 @@
-provider:
+﻿provider:
   backend: searxng
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
@@ -73,7 +73,6 @@ fetch:
     block_resources: true
   quality:
     min_text_chars: 220
-    min_content_score: 0.42
     script_ratio_threshold: 0.35
     blocked_markers:
       - cloudflare
@@ -85,11 +84,8 @@ fetch:
       - checking your browser
     max_render_pages_search: 2
   extract:
-    engines: [fastdom, readability, trafilatura, justext, boilerpy3]
-    engine_order: [fastdom, readability, trafilatura, justext, boilerpy3]
-    engine_timeout_ms: 1800
     max_markdown_chars: 160000
-    min_plain_chars: 220
+    min_text_chars: 220
     min_primary_chars: 220
     min_total_chars_with_secondary: 220
     include_secondary_content_default: false
@@ -187,3 +183,4 @@ cache:
 telemetry:
   enabled: true
   include_events: false
+

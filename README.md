@@ -43,6 +43,7 @@ Runtime prerequisites:
 
 - JS rendering uses Playwright. Install browsers with `playwright install`.
 - Overview uses optional dependencies (`serpsage[overview]`) plus API keys.
+- HTML->Markdown conversion uses an internal renderer (compat backend name remains `markdownify`).
 
 ## Usage
 
@@ -93,3 +94,4 @@ async with Engine.from_settings(settings) as engine:
   - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
 - both `search` and `fetch` support optional overview
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering
+- `fetch.extract` uses an internal markdown renderer pipeline; no renderer backend toggle is exposed.

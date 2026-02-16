@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
@@ -6,6 +6,7 @@ from typing_extensions import override
 
 from anyio import to_thread
 
+from serpsage.components.extract.markdown.postprocess import markdown_to_text
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.pipeline.step import PipelineStep
@@ -93,7 +94,6 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
             limit=ctx.others_runtime.max_image_links,
         )
         span.set_attr("extractor_used", str(extracted.extractor_used))
-        span.set_attr("quality_score", float(extracted.quality_score))
         span.set_attr("extract_ms", int(extract_ms))
         span.set_attr("content_depth", str(ctx.content_options.depth))
         span.set_attr("include_html_tags", bool(ctx.content_options.include_html_tags))
@@ -107,7 +107,12 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
         span.set_attr("links_count", int(len(extracted.links or [])))
         span.set_attr("image_links_count", int(len(extracted.image_links or [])))
         span.set_attr("engine_chain", str(extracted.stats.get("engine_chain", "")))
-        if not (extracted.plain_text or "").strip():
+        markdown = str(extracted.markdown or "")
+        text_chars = len(markdown_to_text(markdown))
+        min_text_chars = int(self.settings.fetch.extract.min_text_chars)
+        span.set_attr("text_chars", int(text_chars))
+        span.set_attr("min_text_chars", int(min_text_chars))
+        if not markdown.strip():
             ctx.fatal = True
             ctx.errors.append(
                 AppError(
@@ -119,6 +124,23 @@ class FetchExtractStep(PipelineStep[FetchStepContext]):
                         "stage": "extract",
                         "fatal": True,
                         "crawl_mode": ctx.others_runtime.crawl_mode,
+                    },
+                )
+            )
+        elif text_chars < min_text_chars:
+            ctx.fatal = True
+            ctx.errors.append(
+                AppError(
+                    code="fetch_extract_failed",
+                    message="extracted content below min_text_chars",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "extract",
+                        "fatal": True,
+                        "crawl_mode": ctx.others_runtime.crawl_mode,
+                        "text_chars": int(text_chars),
+                        "min_text_chars": int(min_text_chars),
                     },
                 )
             )
@@ -143,3 +165,4 @@ def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
 
 
 __all__ = ["FetchExtractStep"]
+

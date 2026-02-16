@@ -16,7 +16,13 @@ from serpsage.contracts.services import FetcherBase
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route
+    from playwright.async_api import (
+        Browser,
+        BrowserContext,
+        Page,
+        Playwright,
+        Route,
+    )
 
     from serpsage.contracts.lifecycle import SpanBase
     from serpsage.core.runtime import Runtime
@@ -62,9 +68,7 @@ class PlaywrightFetcher(FetcherBase):
         if _pw_factory is None:
             raise RuntimeError("playwright is not available")
         self._pw = await _pw_factory().start()
-        self._browser = await self._pw.chromium.launch(
-            headless=True
-        )
+        self._browser = await self._pw.chromium.launch(headless=True)
         self._context = await self._browser.new_context(
             user_agent=str(self.settings.fetch.user_agent),
             ignore_https_errors=True,
@@ -114,7 +118,6 @@ class PlaywrightFetcher(FetcherBase):
                 content_kind=attempt.content_kind,
                 headers=dict(attempt.headers or {}),
                 attempt_chain=list(attempt.attempt_chain or []),
-                quality_score=float(attempt.quality_score or attempt.content_score),
             )
 
     async def fetch_attempt(
@@ -167,8 +170,6 @@ class PlaywrightFetcher(FetcherBase):
                 markers=tuple(self.settings.fetch.quality.blocked_markers),
             )
         )
-        quality_score = float(content_score - (0.3 if blocked else 0.0))
-
         span.set_attr("playwright_status", int(status))
         span.set_attr("playwright_elapsed_ms", int(elapsed_ms))
         span.set_attr("content_kind", content_kind)
@@ -194,7 +195,6 @@ class PlaywrightFetcher(FetcherBase):
             blocked=blocked,
             render_reason=render_reason,
             attempt_chain=["playwright"],
-            quality_score=float(quality_score),
         )
 
     async def _prepare_page(self, page: Page) -> None:

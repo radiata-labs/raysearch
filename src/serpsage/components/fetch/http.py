@@ -60,7 +60,6 @@ class HttpxFetcher(FetcherBase):
                 content_kind=res.content_kind,
                 headers=dict(res.headers or {}),
                 attempt_chain=list(res.attempt_chain or []),
-                quality_score=float(res.quality_score or res.content_score),
             )
 
     async def fetch_attempt(
@@ -124,7 +123,6 @@ class HttpxFetcher(FetcherBase):
                         resp=resp,
                         kind_hint=kind_hint,
                         min_text_chars=int(quality.min_text_chars),
-                        min_content_score=float(quality.min_content_score),
                     )
 
                     if last_status == 429 or (500 <= last_status < 600):
@@ -171,7 +169,6 @@ class HttpxFetcher(FetcherBase):
                 markers=tuple(self.settings.fetch.quality.blocked_markers),
             )
         )
-        quality_score = float(content_score - (0.3 if blocked else 0.0))
         span.set_attr("content_kind", content_kind)
         span.set_attr("text_chars", int(text_chars))
         span.set_attr("content_score", float(content_score))
@@ -192,7 +189,6 @@ class HttpxFetcher(FetcherBase):
             text_chars=int(text_chars),
             blocked=blocked,
             attempt_chain=[f"httpx:{profile}"],
-            quality_score=float(quality_score),
         )
 
     async def _read_stream_body(
@@ -201,7 +197,6 @@ class HttpxFetcher(FetcherBase):
         resp: httpx.Response,
         kind_hint: str,
         min_text_chars: int,
-        min_content_score: float,
     ) -> tuple[bytes, bool]:
         if kind_hint == "pdf":
             budget = 16_000_000
@@ -236,9 +231,7 @@ class HttpxFetcher(FetcherBase):
                     body,
                     content_kind="html",
                 )
-                if text_chars >= max(300, int(min_text_chars)) and content_score >= max(
-                    0.35, float(min_content_score)
-                ):
+                if text_chars >= max(300, int(min_text_chars)):
                     break
         return b"".join(parts), truncated
 

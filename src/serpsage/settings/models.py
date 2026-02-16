@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Literal
 
@@ -166,7 +166,6 @@ class FetchQualitySettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     min_text_chars: int = 220
-    min_content_score: float = 0.42
     script_ratio_threshold: float = 0.35
     blocked_markers: list[str] = Field(default_factory=_default_blocked_markers)
     max_render_pages_search: int = 2
@@ -175,21 +174,8 @@ class FetchQualitySettings(Model):
 class FetchExtractSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    engines: list[str] = Field(
-        default_factory=lambda: ["fastdom", "readability", "trafilatura"]
-    )
-    engine_order: list[str] = Field(
-        default_factory=lambda: [
-            "fastdom",
-            "readability",
-            "trafilatura",
-            "justext",
-            "boilerpy3",
-        ]
-    )
-    engine_timeout_ms: int = 1_800
     max_markdown_chars: int = 160_000
-    min_plain_chars: int = 220
+    min_text_chars: int = 220
     min_primary_chars: int = 220
     min_total_chars_with_secondary: int = 220
     include_secondary_content_default: bool = False
@@ -408,3 +394,4 @@ __all__ = [
     "SearxngSettings",
     "TelemetrySettings",
 ]
+

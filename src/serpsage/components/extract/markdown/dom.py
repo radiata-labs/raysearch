@@ -24,14 +24,15 @@ _DROP_TAGS = {
     "textarea",
     "form",
     "meta",
-    "picture",
-    "source",
 }
 _HARD_NOISE_TAGS = {"nav", "header", "footer"}
 _HARD_NOISE_ROLE = {"navigation", "banner", "contentinfo", "search"}
 _NOISE_PATTERNS = re.compile(
     r"(cookie|consent|subscribe|signin|login|toolbar|promo|banner|share|social|"
-    r"advert|sponsor|popup|modal|dialog|pager|tracking|breadcrumb|newsletter)",
+    r"advert|sponsor|popup|modal|dialog|pager|tracking|breadcrumb|newsletter|"
+    r"related|recommend|citation|bibliograph|extra-services|labstabs|toggle|"
+    r"search|searchbox|site-search|autocomplete|ads?|ad-|ad_|sponsored|"
+    r"promotion|promoted|marketing|outbrain|taboola)",
     re.IGNORECASE,
 )
 _SECONDARY_PATTERNS = re.compile(
@@ -44,6 +45,27 @@ _PRIMARY_HINT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 _PUNCT_RE = re.compile(r"[,.!?;:\u3002\uff01\uff1f\uff1b]")
+_SEARCH_HINT_RE = re.compile(
+    r"(search|searchbox|site-search|autocomplete|query|type to search)",
+    re.IGNORECASE,
+)
+_AD_HINT_RE = re.compile(
+    r"(ads?|ad-|ad_|sponsored|sponsor|promotion|promoted|outbrain|taboola)",
+    re.IGNORECASE,
+)
+_NOISE_DATA_ATTR_KEYS = (
+    "data-testid",
+    "data-test",
+    "data-track",
+    "data-component",
+    "data-slot",
+    "data-module",
+    "data-ad",
+    "data-ads",
+    "data-ad-slot",
+    "data-ad-client",
+    "data-google-query-id",
+)
 
 
 def parse_html_document(html_doc: str) -> BeautifulSoup:
@@ -88,9 +110,17 @@ def cleanup_dom(
                     tag.decompose()
                     continue
 
+            if sem not in keep_semantic and _looks_like_search_or_ad(tag):
+                tag.decompose()
+                continue
+
             hidden = str(tag.get("aria-hidden") or "").lower() == "true"
             style = str(tag.get("style") or "").lower()
             if hidden or "display:none" in style or "visibility:hidden" in style:
+                tag.decompose()
+                continue
+
+            if sem not in keep_semantic and _looks_like_link_farm(tag):
                 tag.decompose()
 
 
@@ -121,7 +151,9 @@ def is_noise_container(tag: Tag) -> bool:
     ident = " ".join(
         [str(tag.get("id") or ""), " ".join(tag.get("class") or [])]
     )
-    return bool(ident and _NOISE_PATTERNS.search(ident))
+    if ident and _NOISE_PATTERNS.search(ident):
+        return True
+    return _looks_like_search_or_ad(tag)
 
 
 def is_descendant_of(tag: Tag, ancestor: Tag | BeautifulSoup) -> bool:
@@ -176,3 +208,64 @@ def _semantic_tag_for_role(role: str) -> str | None:
     if role == "contentinfo":
         return "footer"
     return None
+
+
+def _looks_like_link_farm(tag: Tag) -> bool:
+    name = (tag.name or "").lower()
+    if name not in {"div", "section", "aside", "ul", "ol", "nav"}:
+        return False
+
+    text = clean_whitespace(tag.get_text(" ", strip=True))
+    chars = len(text)
+    if chars < 140:
+        return False
+
+    links = tag.find_all("a")
+    link_count = len(links)
+    if link_count < 8:
+        return False
+
+    link_text = clean_whitespace(
+        " ".join(a.get_text(" ", strip=True) for a in links)
+    )
+    link_density = len(link_text) / max(1, chars)
+    punct_density = len(_PUNCT_RE.findall(text)) / max(1, chars)
+    paragraph_count = len(tag.find_all("p"))
+    has_structure = bool(tag.find(["table", "pre", "code"]))
+
+    return (
+        not has_structure
+        and link_density >= 0.38
+        and punct_density <= 0.018
+        and paragraph_count <= 2
+    )
+
+
+def _looks_like_search_or_ad(tag: Tag) -> bool:
+    role = str(tag.get("role") or "").lower()
+    if role == "search":
+        return True
+
+    type_attr = str(tag.get("type") or "").lower()
+    if type_attr == "search":
+        return True
+
+    aria_label = str(tag.get("aria-label") or "")
+    placeholder = str(tag.get("placeholder") or "")
+    ident = " ".join(
+        [
+            str(tag.get("id") or ""),
+            " ".join(tag.get("class") or []),
+            aria_label,
+            placeholder,
+            str(tag.get("name") or ""),
+        ]
+    ).strip()
+    if ident and (_SEARCH_HINT_RE.search(ident) or _AD_HINT_RE.search(ident)):
+        return True
+
+    for key in _NOISE_DATA_ATTR_KEYS:
+        value = str(tag.get(key) or "").strip()
+        if value and (_SEARCH_HINT_RE.search(value) or _AD_HINT_RE.search(value)):
+            return True
+    return False

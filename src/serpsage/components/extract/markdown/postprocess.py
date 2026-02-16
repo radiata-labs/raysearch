@@ -114,7 +114,7 @@ def finalize_markdown(*, markdown: str, max_chars: int) -> str:
     return _clip_with_structure(result=result, max_chars=int(max_chars))
 
 
-def markdown_to_plain(markdown: str) -> str:
+def markdown_to_text(markdown: str) -> str:
     out: list[str] = []
     in_code = False
     active_fence = ""
@@ -381,6 +381,6 @@ def _find_unclosed_fence_start(markdown: str) -> int:
 __all__ = [
     "extract_feature_snippets",
     "finalize_markdown",
-    "markdown_to_plain",
+    "markdown_to_text",
     "merge_markdown",
 ]

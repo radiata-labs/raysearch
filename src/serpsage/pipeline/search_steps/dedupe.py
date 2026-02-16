@@ -132,7 +132,7 @@ class DedupeStep(PipelineStep[SearchStepContext]):
         d = (domain or "").lower()
         return d or "other"
 
-    def _quality_score(self, r: ResultItem) -> int:
+    def _rank_score(self, r: ResultItem) -> int:
         return min(len(r.snippet or ""), 1200) + min(len(r.title or ""), 220)
 
     def _dedupe_fuzzy_lsh(
@@ -144,7 +144,7 @@ class DedupeStep(PipelineStep[SearchStepContext]):
         if not results:
             return [], 0
 
-        candidates = sorted(results, key=self._quality_score, reverse=True)
+        candidates = sorted(results, key=self._rank_score, reverse=True)
 
         keys = [self._fuzzy_key(r) for r in candidates]
         sites = [self._canonical_site(r.domain) for r in candidates]

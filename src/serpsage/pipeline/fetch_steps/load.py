@@ -254,7 +254,6 @@ def _encode_fetch_cache(result: FetchResult) -> bytes:
             "content_kind": str(result.content_kind),
             "headers": {str(k): str(v) for k, v in dict(result.headers or {}).items()},
             "attempt_chain": [str(x) for x in list(result.attempt_chain or [])],
-            "quality_score": float(result.quality_score or 0.0),
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -274,7 +273,6 @@ def _decode_fetch_cache(payload: bytes, *, url: str) -> FetchResult:
         content_kind=str(obj.get("content_kind") or "unknown"),  # type: ignore[arg-type]
         headers={str(k): str(v) for k, v in dict(obj.get("headers") or {}).items()},
         attempt_chain=[str(x) for x in list(obj.get("attempt_chain") or [])],
-        quality_score=float(obj.get("quality_score") or 0.0),
     )
 
 

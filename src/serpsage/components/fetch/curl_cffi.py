@@ -74,7 +74,6 @@ class CurlCffiFetcher(FetcherBase):
                 content_kind=res.content_kind,
                 headers=dict(res.headers or {}),
                 attempt_chain=list(res.attempt_chain or []),
-                quality_score=float(res.quality_score or res.content_score),
             )
 
     @override
@@ -193,7 +192,6 @@ class CurlCffiFetcher(FetcherBase):
                 markers=tuple(self.settings.fetch.quality.blocked_markers),
             )
         )
-        quality_score = float(content_score - (0.3 if blocked else 0.0))
         span.set_attr("content_kind", content_kind)
         span.set_attr("text_chars", int(text_chars))
         span.set_attr("content_score", float(content_score))
@@ -214,7 +212,6 @@ class CurlCffiFetcher(FetcherBase):
             text_chars=int(text_chars),
             blocked=blocked,
             attempt_chain=["curl_cffi"],
-            quality_score=float(quality_score),
         )
 
     def _truncate_by_kind(

@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from serpsage import (
     Engine,
     FetchAbstractsRequest,
+    FetchContentRequest,
     FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
@@ -27,7 +28,7 @@ async def main(
     req = FetchRequest(
         urls=[url],
         crawl_mode="fallback",
-        content=True,
+        content=FetchContentRequest(depth="high"),
         abstracts=FetchAbstractsRequest(query=query) if query else None,
         overview=FetchOverviewRequest(query=query) if overview and query else None,
         others=FetchOthersRequest(max_links=100, max_image_links=50),
@@ -44,6 +45,9 @@ async def main(
 
 if __name__ == "__main__":
     out = anyio.run(
-        main, "https://exa.ai/docs/reference/search-best-practices", None, False
+        main,
+        "https://arxiv.org/abs/2307.06435",
+        None,
+        False,
     )
     print(out["fetch_result"])
