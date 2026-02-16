@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from textwrap import fill
 from typing import Literal
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from bs4.element import Comment, Doctype, NavigableString, Tag
@@ -187,6 +187,46 @@ _RE_CLASS_DEL = re.compile(
 _RE_CLASS_CODE = re.compile(r"\b(?:code|mono|monospace)\b", re.IGNORECASE)
 _RE_LANG_CLASS = re.compile(r"(?:^|\b)(?:language|lang)-([A-Za-z0-9_+#.-]+)(?:\b|$)")
 _RE_ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+_RE_HINT_TOKEN = re.compile(r"[a-z0-9]+")
+_RE_SENTENCE_PUNCT = re.compile(r"[.!?;:\u3002\uff01\uff1f\uff1b]")
+
+_COMPACT_DIV_HINT_TOKENS = {
+    "inline",
+    "badge",
+    "chip",
+    "meta",
+    "param",
+    "field",
+    "label",
+    "value",
+    "items",
+    "center",
+    "baseline",
+    "pill",
+}
+_DIV_HEADING_HINT_TOKENS = {"heading", "title", "subtitle", "section", "chapter"}
+_DIV_INLINE_BLOCKING_TAGS = {
+    "p",
+    "pre",
+    "blockquote",
+    "table",
+    "ul",
+    "ol",
+    "li",
+    "dl",
+    "dt",
+    "dd",
+    "figure",
+    "figcaption",
+    "hr",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "br",
+}
 
 _RECOVER_BLOCK_RECALL_RATIO = 0.60
 _RECOVER_MIN_SOURCE_CHARS = 80
@@ -621,6 +661,64 @@ class _ManualMarkdownConverter:
         except Exception:
             return None
 
+    def _is_same_page_fragment(self, href: str) -> bool:
+        parsed = urlparse(href)
+        if not parsed.fragment:
+            return False
+        base = urlparse(self.ctx.base_url)
+        return (
+            parsed.scheme == base.scheme
+            and parsed.netloc == base.netloc
+            and parsed.path == base.path
+            and parsed.params == base.params
+            and parsed.query == base.query
+        )
+
+    @staticmethod
+    def _hint_tokens(value: str) -> set[str]:
+        return {match.group(0) for match in _RE_HINT_TOKEN.finditer(str(value).lower())}
+
+    def _has_compact_div_hint(self, el: Tag) -> bool:
+        hints = " ".join(
+            [
+                str(el.get("id") or ""),
+                " ".join(str(item) for item in (el.get("class") or [])),
+                str(el.get("data-component-part") or ""),
+                str(el.get("data-testid") or ""),
+                str(el.get("data-element") or ""),
+                str(el.get("data-tag") or ""),
+            ]
+        )
+        tokens = self._hint_tokens(hints)
+        if not tokens:
+            return False
+        if tokens & _DIV_HEADING_HINT_TOKENS:
+            return False
+        return bool(tokens & _COMPACT_DIV_HINT_TOKENS)
+
+    @staticmethod
+    def _has_inline_blocking_descendants(el: Tag) -> bool:
+        return any(
+            isinstance(node, Tag)
+            and node is not el
+            and (node.name or "").lower() in _DIV_INLINE_BLOCKING_TAGS
+            for node in el.descendants
+        )
+
+    def _should_render_div_inline(self, el: Tag) -> bool:
+        source_text = clean_whitespace(el.get_text(" ", strip=True))
+        if not source_text:
+            return False
+        if len(source_text) > 72:
+            return False
+        if len(source_text.split()) > 12:
+            return False
+        if _RE_SENTENCE_PUNCT.search(source_text):
+            return False
+        if not self._has_compact_div_hint(el):
+            return False
+        return not self._has_inline_blocking_descendants(el)
+
     def _first_image_src(self, el: Tag) -> str:
         candidates: list[str] = []
         for key in ("src", "data-src"):
@@ -691,9 +789,14 @@ class _ManualMarkdownConverter:
         if "_noformat" in parent_tags:
             return text
         prefix, suffix, body = self._chomp(text)
+        raw_href = str(el.get("href") or "").strip()
         if not body:
             body = self._normalize_anchor_label(el.get_text(" ", strip=True))
-        href = self._safe_join(str(el.get("href") or ""))
+        href = self._safe_join(raw_href)
+        if not body and raw_href.startswith("#"):
+            return ""
+        if not body and href and self._is_same_page_fragment(href):
+            return ""
         title = str(el.get("title") or "").strip() or None
         if not body and href:
             body = href
@@ -714,6 +817,8 @@ class _ManualMarkdownConverter:
             and not title
             and not self.ctx.options.default_title
         ):
+            if self._is_same_page_fragment(href):
+                return ""
             return f"{prefix}<{href}>{suffix}"
         if self.ctx.options.default_title and not title:
             title = href
@@ -878,6 +983,8 @@ class _ManualMarkdownConverter:
         body = text.strip()
         if not body:
             return ""
+        if self._should_render_div_inline(el):
+            return " " + clean_whitespace(body) + " "
         if self.ctx.preserve_html_tags:
             return f"<div>{body}</div>"
         return f"\n\n{body}\n\n"

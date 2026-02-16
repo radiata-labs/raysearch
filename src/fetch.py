@@ -13,6 +13,7 @@ from serpsage import (
     FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
+    FetchSubpagesRequest,
     load_settings,
 )
 
@@ -31,6 +32,7 @@ async def main(
         content=FetchContentRequest(depth="high"),
         abstracts=FetchAbstractsRequest(query=query) if query else None,
         overview=FetchOverviewRequest(query=query) if overview and query else None,
+        subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="search"),
         others=FetchOthersRequest(max_links=100, max_image_links=50),
     )
     async with Engine.from_settings(settings) as engine:
@@ -38,8 +40,6 @@ async def main(
     joined_content = "\n\n".join(item.content for item in resp.results if item.content)
     return {
         "fetch_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2)
-        + "\n\n"
-        + joined_content,
     }
 
 

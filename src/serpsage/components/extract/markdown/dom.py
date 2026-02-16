@@ -27,14 +27,6 @@ _DROP_TAGS = {
 }
 _HARD_NOISE_TAGS = {"nav", "header", "footer"}
 _HARD_NOISE_ROLE = {"navigation", "banner", "contentinfo", "search"}
-_NOISE_PATTERNS = re.compile(
-    r"(cookie|consent|subscribe|signin|login|toolbar|promo|banner|share|social|"
-    r"advert|sponsor|popup|modal|dialog|pager|tracking|breadcrumb|newsletter|"
-    r"related|recommend|citation|bibliograph|extra-services|labstabs|toggle|"
-    r"search|searchbox|site-search|autocomplete|ads?|ad-|ad_|sponsored|"
-    r"promotion|promoted|marketing|outbrain|taboola)",
-    re.IGNORECASE,
-)
 _SECONDARY_PATTERNS = re.compile(
     r"(sidebar|related|recommend|comment|discussion|thread|reply|answer|faq|"
     r"supplement|appendix|toc|table-of-contents|index|more-like-this)",
@@ -45,14 +37,63 @@ _PRIMARY_HINT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 _PUNCT_RE = re.compile(r"[,.!?;:\u3002\uff01\uff1f\uff1b]")
-_SEARCH_HINT_RE = re.compile(
-    r"(search|searchbox|site-search|autocomplete|query|type to search)",
-    re.IGNORECASE,
-)
-_AD_HINT_RE = re.compile(
-    r"(ads?|ad-|ad_|sponsored|sponsor|promotion|promoted|outbrain|taboola)",
-    re.IGNORECASE,
-)
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_NOISE_IDENT_TOKENS = {
+    "cookie",
+    "consent",
+    "subscribe",
+    "signup",
+    "signin",
+    "login",
+    "toolbar",
+    "promo",
+    "share",
+    "social",
+    "popup",
+    "modal",
+    "dialog",
+    "pager",
+    "tracking",
+    "breadcrumb",
+    "newsletter",
+    "citation",
+    "bibliograph",
+    "marketing",
+    "outbrain",
+    "taboola",
+    "labstabs",
+}
+_SEARCH_HINT_TOKENS = {"searchbox", "autocomplete"}
+_SEARCH_CONTEXT_TOKENS = {
+    "box",
+    "bar",
+    "field",
+    "form",
+    "input",
+    "result",
+    "results",
+    "suggest",
+}
+_AD_STRONG_HINT_TOKENS = {
+    "advert",
+    "advertisement",
+    "sponsor",
+    "sponsored",
+    "promotion",
+    "promoted",
+    "outbrain",
+    "taboola",
+}
+_AD_CONTEXT_HINT_TOKENS = {
+    "slot",
+    "banner",
+    "unit",
+    "placement",
+    "break",
+    "container",
+    "client",
+}
+_BANNER_HINT_TOKENS = {"banner", "hero", "masthead"}
 _NOISE_DATA_ATTR_KEYS = (
     "data-testid",
     "data-test",
@@ -102,9 +143,9 @@ def cleanup_dom(
                     str(tag.get("aria-label") or ""),
                 ]
             ).strip()
-            if ident and _NOISE_PATTERNS.search(ident):
+            if ident and _looks_like_noise_ident(ident):
                 ident_sem = sem
-                if ident_sem is None and "banner" in ident.lower():
+                if ident_sem is None and _looks_like_banner_hint(ident):
                     ident_sem = "banner"
                 if ident_sem not in keep_semantic:
                     tag.decompose()
@@ -151,7 +192,7 @@ def is_noise_container(tag: Tag) -> bool:
     ident = " ".join(
         [str(tag.get("id") or ""), " ".join(tag.get("class") or [])]
     )
-    if ident and _NOISE_PATTERNS.search(ident):
+    if ident and _looks_like_noise_ident(ident):
         return True
     return _looks_like_search_or_ad(tag)
 
@@ -179,7 +220,7 @@ def score_primary_candidate(tag: Tag) -> float:
         [str(tag.get("id") or ""), " ".join(tag.get("class") or [])]
     )
     hint_bonus = 1.0 if (ident and _PRIMARY_HINT_PATTERNS.search(ident)) else 0.0
-    noise_penalty = 1.0 if (ident and _NOISE_PATTERNS.search(ident)) else 0.0
+    noise_penalty = 1.0 if (ident and _looks_like_noise_ident(ident)) else 0.0
     return (
         chars * (1.0 - min(0.94, link_density))
         + heading_count * 52
@@ -261,11 +302,55 @@ def _looks_like_search_or_ad(tag: Tag) -> bool:
             str(tag.get("name") or ""),
         ]
     ).strip()
-    if ident and (_SEARCH_HINT_RE.search(ident) or _AD_HINT_RE.search(ident)):
+    if ident and (_looks_like_search_hint(ident) or _looks_like_ad_hint(ident)):
         return True
 
     for key in _NOISE_DATA_ATTR_KEYS:
         value = str(tag.get(key) or "").strip()
-        if value and (_SEARCH_HINT_RE.search(value) or _AD_HINT_RE.search(value)):
+        key_norm = key.lower()
+        if value and key_norm.startswith("data-ad"):
+            return True
+        if value and (_looks_like_search_hint(value) or _looks_like_ad_hint(value)):
             return True
     return False
+
+
+def _tokenize_hint(value: str) -> set[str]:
+    return {match.group(0) for match in _TOKEN_RE.finditer(str(value).lower())}
+
+
+def _looks_like_noise_ident(value: str) -> bool:
+    tokens = _tokenize_hint(value)
+    if not tokens:
+        return False
+    if tokens & _NOISE_IDENT_TOKENS:
+        return True
+    return _looks_like_search_hint(value) or _looks_like_ad_hint(value)
+
+
+def _looks_like_search_hint(value: str) -> bool:
+    tokens = _tokenize_hint(value)
+    if not tokens:
+        return False
+    if tokens & _SEARCH_HINT_TOKENS:
+        return True
+    if "site" in tokens and "search" in tokens:
+        return True
+    return bool("search" in tokens and tokens & _SEARCH_CONTEXT_TOKENS)
+
+
+def _looks_like_ad_hint(value: str) -> bool:
+    tokens = _tokenize_hint(value)
+    if not tokens:
+        return False
+    if tokens & _AD_STRONG_HINT_TOKENS:
+        return True
+    if not ({"ad", "ads"} & tokens):
+        return False
+    if tokens & _AD_CONTEXT_HINT_TOKENS:
+        return True
+    return len(tokens) <= 2
+
+
+def _looks_like_banner_hint(value: str) -> bool:
+    return bool(_tokenize_hint(value) & _BANNER_HINT_TOKENS)
