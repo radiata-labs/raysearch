@@ -67,6 +67,7 @@ class Engine(WorkUnit):
                     request=req,
                     url=url,
                     url_index=idx,
+                    enable_others_and_subpages=True,
                     others=FetchStepOthers(
                         crawl_mode=req.crawl_mode,
                         crawl_timeout_s=float(req.crawl_timeout or 0.0),

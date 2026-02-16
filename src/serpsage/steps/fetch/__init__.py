@@ -5,6 +5,7 @@ from serpsage.steps.fetch.load import FetchLoadStep
 from serpsage.steps.fetch.overview import FetchOverviewStep
 from serpsage.steps.fetch.prepare import FetchPrepareStep
 from serpsage.steps.fetch.rank import FetchAbstractRankStep
+from serpsage.steps.fetch.subpages import FetchSubpageStep
 
 __all__ = [
     "FetchAbstractBuildStep",
@@ -14,4 +15,5 @@ __all__ = [
     "FetchLoadStep",
     "FetchOverviewStep",
     "FetchPrepareStep",
+    "FetchSubpageStep",
 ]

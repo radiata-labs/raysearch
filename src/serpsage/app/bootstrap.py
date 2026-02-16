@@ -27,6 +27,7 @@ from serpsage.steps.fetch import (
     FetchLoadStep,
     FetchOverviewStep,
     FetchPrepareStep,
+    FetchSubpageStep,
 )
 from serpsage.steps.search import (
     DedupeStep,
@@ -96,6 +97,16 @@ def build_engine(
     ranker: RankerBase = ov.ranker or build_ranker(rt=rt)
     llm: LLMClientBase = ov.llm or build_overview_client(rt=rt, http=shared_http_unit)
 
+    child_fetch_steps: list[StepBase[FetchStepContext]] = [
+        FetchPrepareStep(rt=rt),
+        FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
+        FetchExtractStep(rt=rt, extractor=extractor),
+        FetchAbstractBuildStep(rt=rt),
+        FetchAbstractRankStep(rt=rt, ranker=ranker),
+        FetchOverviewStep(rt=rt, llm=llm, cache=cache),
+        FetchFinalizeStep(rt=rt),
+    ]
+    child_fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=child_fetch_steps)
     fetch_steps: list[StepBase[FetchStepContext]] = [
         FetchPrepareStep(rt=rt),
         FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
@@ -103,6 +114,7 @@ def build_engine(
         FetchAbstractBuildStep(rt=rt),
         FetchAbstractRankStep(rt=rt, ranker=ranker),
         FetchOverviewStep(rt=rt, llm=llm, cache=cache),
+        FetchSubpageStep(rt=rt, fetch_runner=child_fetch_runner, ranker=ranker),
         FetchFinalizeStep(rt=rt),
     ]
     fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps)

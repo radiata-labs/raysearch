@@ -65,7 +65,7 @@ class FetchOthersResult(BaseModel):
     image_links: list[str] = Field(default_factory=list)
 
 
-class FetchResultItem(BaseModel):
+class FetchSubpagesResult(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     url: str
@@ -74,13 +74,17 @@ class FetchResultItem(BaseModel):
     abstracts: list[str]
     abstract_scores: list[float]
     overview: str | object | None = None
-    others: FetchOthersResult = Field(default_factory=FetchOthersResult)
 
     @model_validator(mode="after")
-    def _validate_abstract_alignment(self) -> FetchResultItem:
+    def _validate_abstract_alignment(self) -> FetchSubpagesResult:
         if len(self.abstracts) != len(self.abstract_scores):
             raise ValueError("abstracts and abstract_scores length mismatch")
         return self
+
+
+class FetchResultItem(FetchSubpagesResult):
+    subpages: list[FetchSubpagesResult] = Field(default_factory=list)
+    others: FetchOthersResult = Field(default_factory=FetchOthersResult)
 
 
 class FetchResponse(BaseModel):
@@ -95,6 +99,7 @@ __all__ = [
     "FetchOthersResult",
     "FetchResponse",
     "FetchResultItem",
+    "FetchSubpagesResult",
     "PageAbstract",
     "PageEnrichment",
     "ResultItem",

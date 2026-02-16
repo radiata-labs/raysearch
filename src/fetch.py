@@ -46,7 +46,7 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "https://arxiv.org/abs/2307.06435",
+        "https://exa.ai/docs/reference/get-contents",
         None,
         False,
     )

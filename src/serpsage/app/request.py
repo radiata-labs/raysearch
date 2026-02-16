@@ -134,6 +134,30 @@ class FetchOverviewRequest(BaseModel):
         return _validate_json_schema(value)
 
 
+class FetchSubpagesRequest(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    max_subpages: int | None = None
+    subpage_keywords: str | None = None
+
+    @field_validator("max_subpages")
+    @classmethod
+    def _validate_max_subpages(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if value <= 0:
+            raise ValueError("max_subpages must be > 0")
+        return value
+
+    @field_validator("subpage_keywords")
+    @classmethod
+    def _validate_subpage_keywords(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        out = str(value).strip()
+        return out or None
+
+
 class FetchRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -142,6 +166,7 @@ class FetchRequest(BaseModel):
     crawl_timeout: float | None = None
     content: bool | FetchContentRequest
     abstracts: FetchAbstractsRequest | None = None
+    subpages: FetchSubpagesRequest | None = None
     overview: FetchOverviewRequest | None = None
     others: FetchOthersRequest = Field(default_factory=FetchOthersRequest)
 
@@ -177,6 +202,7 @@ __all__ = [
     "FetchOthersRequest",
     "FetchContentRequest",
     "FetchAbstractsRequest",
+    "FetchSubpagesRequest",
     "FetchOverviewRequest",
     "SearchOverviewRequest",
     "SearchDepth",

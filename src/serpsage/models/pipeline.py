@@ -10,7 +10,12 @@ from serpsage.app.request import (
     FetchRequest,
     SearchRequest,
 )
-from serpsage.app.response import FetchOthersResult, FetchResultItem, ResultItem
+from serpsage.app.response import (
+    FetchOthersResult,
+    FetchResultItem,
+    FetchSubpagesResult,
+    ResultItem,
+)
 from serpsage.core.model_base import MutableModel
 from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
@@ -57,6 +62,7 @@ class FetchStepContext(BaseStepContext):
     url: str
     url_index: int
     others: FetchStepOthers
+    enable_others_and_subpages: bool = True
     return_content: bool = True
     content_request: FetchContentRequest = Field(default_factory=FetchContentRequest)
     content_options: ExtractContentOptions = Field(
@@ -69,6 +75,13 @@ class FetchStepContext(BaseStepContext):
     prepared_abstracts: list[PreparedAbstract] = Field(default_factory=list)
     scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
     others_result: FetchOthersResult = Field(default_factory=FetchOthersResult)
+    subpages_enabled: bool = False
+    subpages_max: int = 0
+    subpages_keywords: list[str] = Field(default_factory=list)
+    subpages_query: str = ""
+    subpages_query_tokens: list[str] = Field(default_factory=list)
+    subpages_result: list[FetchSubpagesResult] = Field(default_factory=list)
+    others_links_hidden_in_output: bool = False
     result: FetchResultItem | None = None
     fatal: bool = False
     abstract_query_tokens: list[str] | None = None

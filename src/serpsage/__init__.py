@@ -20,10 +20,11 @@ from serpsage.app.request import (
     FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
+    FetchSubpagesRequest,
     SearchOverviewRequest,
     SearchRequest,
 )
-from serpsage.app.response import FetchResponse, SearchResponse
+from serpsage.app.response import FetchResponse, FetchSubpagesResult, SearchResponse
 from serpsage.settings.load import load_settings
 from serpsage.settings.models import AppSettings
 
@@ -45,7 +46,9 @@ __all__ = [
     "FetchContentRequest",
     "FetchOverviewRequest",
     "FetchRequest",
+    "FetchSubpagesRequest",
     "FetchResponse",
+    "FetchSubpagesResult",
     "SearchOverviewRequest",
     "SearchRequest",
     "SearchResponse",

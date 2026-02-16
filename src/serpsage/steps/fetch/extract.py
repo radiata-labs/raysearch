@@ -49,8 +49,12 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             )
             return ctx
 
-        collect_links = bool(ctx.others.max_links is not None)
-        collect_images = bool(ctx.others.max_image_links is not None)
+        collect_links = bool(
+            ctx.enable_others_and_subpages and ctx.others.max_links is not None
+        )
+        collect_images = bool(
+            ctx.enable_others_and_subpages and ctx.others.max_image_links is not None
+        )
         t0 = time.monotonic()
 
         def extract() -> ExtractedDocument:
@@ -85,14 +89,20 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         extract_ms = int((time.monotonic() - t0) * 1000)
 
         ctx.extracted = extracted
-        ctx.others_result.links = _prepare_links(
-            values=[str(item.url or "") for item in list(extracted.links or [])],
-            limit=ctx.others.max_links,
-        )
-        ctx.others_result.image_links = _prepare_links(
-            values=[str(item.url or "") for item in list(extracted.image_links or [])],
-            limit=ctx.others.max_image_links,
-        )
+        if ctx.enable_others_and_subpages:
+            ctx.others_result.links = _prepare_links(
+                values=[str(item.url or "") for item in list(extracted.links or [])],
+                limit=ctx.others.max_links,
+            )
+            ctx.others_result.image_links = _prepare_links(
+                values=[
+                    str(item.url or "") for item in list(extracted.image_links or [])
+                ],
+                limit=ctx.others.max_image_links,
+            )
+        else:
+            ctx.others_result.links = []
+            ctx.others_result.image_links = []
         span.set_attr("extractor_used", str(extracted.extractor_used))
         span.set_attr("extract_ms", int(extract_ms))
         span.set_attr("content_depth", str(ctx.content_options.depth))
