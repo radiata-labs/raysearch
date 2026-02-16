@@ -14,12 +14,12 @@ from serpsage.models.pipeline import (
     FetchStepOthers,
     SearchStepContext,
 )
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.app.response import ResultItem
     from serpsage.core.runtime import Runtime
-    from serpsage.pipeline.base import RunnerBase
+    from serpsage.steps.base import RunnerBase
     from serpsage.telemetry.base import SpanBase
 
 

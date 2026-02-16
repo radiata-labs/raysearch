@@ -7,7 +7,7 @@ from serpsage.app.request import FetchContentRequest
 from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractContentOptions
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace, tokenize_for_query
 
 if TYPE_CHECKING:

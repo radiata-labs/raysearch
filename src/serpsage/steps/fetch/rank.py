@@ -6,7 +6,7 @@ from typing_extensions import override
 
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract, ScoredAbstract
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase

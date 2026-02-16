@@ -7,7 +7,7 @@ from serpsage.app.response import FetchResultItem
 from serpsage.components.extract.markdown.postprocess import finalize_markdown
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

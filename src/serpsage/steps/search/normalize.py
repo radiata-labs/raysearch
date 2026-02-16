@@ -5,7 +5,7 @@ from typing_extensions import override
 from urllib.parse import urlparse
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace, strip_html, tokenize_for_query
 
 if TYPE_CHECKING:

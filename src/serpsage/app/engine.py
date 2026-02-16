@@ -12,7 +12,7 @@ from serpsage.models.pipeline import (
     FetchStepOthers,
     SearchStepContext,
 )
-from serpsage.pipeline.base import RunnerBase
+from serpsage.steps.base import RunnerBase
 
 if TYPE_CHECKING:
     from serpsage.app.request import FetchRequest, SearchRequest

@@ -18,8 +18,8 @@ from serpsage.components import (
 from serpsage.core.runtime import Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import FetchStepContext, SearchStepContext
-from serpsage.pipeline.base import RunnerBase, StepBase
-from serpsage.pipeline.fetch_steps import (
+from serpsage.steps.base import RunnerBase, StepBase
+from serpsage.steps.fetch import (
     FetchAbstractBuildStep,
     FetchAbstractRankStep,
     FetchExtractStep,
@@ -28,7 +28,7 @@ from serpsage.pipeline.fetch_steps import (
     FetchOverviewStep,
     FetchPrepareStep,
 )
-from serpsage.pipeline.search_steps import (
+from serpsage.steps.search import (
     DedupeStep,
     FilterStep,
     NormalizeStep,

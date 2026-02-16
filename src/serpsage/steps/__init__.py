@@ -1,6 +1,6 @@
 from serpsage.models.pipeline import FetchStepContext, SearchStepContext
-from serpsage.pipeline.base import RunnerBase, StepBase
-from serpsage.pipeline.search_steps import (
+from serpsage.steps.base import RunnerBase, StepBase
+from serpsage.steps.search import (
     DedupeStep,
     FilterStep,
     NormalizeStep,

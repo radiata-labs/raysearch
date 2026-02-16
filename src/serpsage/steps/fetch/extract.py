@@ -9,7 +9,7 @@ from anyio import to_thread
 from serpsage.components.extract.markdown.postprocess import markdown_to_text
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.components.extract import ExtractorBase

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

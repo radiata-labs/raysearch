@@ -9,7 +9,7 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.fetch import FetchResult
 from serpsage.models.pipeline import FetchStepContext
-from serpsage.pipeline.base import StepBase
+from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase, FetcherBase
