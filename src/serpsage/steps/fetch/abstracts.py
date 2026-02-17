@@ -58,7 +58,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
-            max_markdown_chars=int(cfg.max_markdown_chars),
             max_abstracts=int(cfg.max_abstracts),
             min_abstract_chars=int(cfg.min_abstract_chars),
         )
@@ -70,13 +69,10 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         self,
         *,
         markdown: str,
-        max_markdown_chars: int,
         max_abstracts: int,
         min_abstract_chars: int,
     ) -> list[PreparedAbstract]:
         text = (markdown or "").strip()
-        if max_markdown_chars > 0 and len(text) > max_markdown_chars:
-            text = text[:max_markdown_chars]
         if not text:
             return []
 

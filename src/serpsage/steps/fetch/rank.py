@@ -34,7 +34,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             return ctx
 
         candidates = list(ctx.prepared_abstracts or [])
-        print(candidates)
         if not candidates:
             ctx.errors.append(
                 AppError(
