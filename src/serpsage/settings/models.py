@@ -96,7 +96,6 @@ class OverviewProfileBase(Model):
     use_model: str = "gpt-4.1-mini"
     max_abstract_chars: int = 900
     max_output_tokens: int = 600
-    max_prompt_chars: int = 32_000
     cache_ttl_s: int = 0
     self_heal_retries: int = 1
     force_language: Literal["auto", "zh", "en"] = "auto"
@@ -105,7 +104,7 @@ class OverviewProfileBase(Model):
 class SearchOverviewSettings(OverviewProfileBase):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    enabled_default: bool = True
+    enabled: bool = True
     max_sources: int = 8
     max_abstracts_per_source: int = 2
 
@@ -113,7 +112,7 @@ class SearchOverviewSettings(OverviewProfileBase):
 class FetchOverviewSettings(OverviewProfileBase):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    enabled_default: bool = False
+    enabled: bool = False
     max_abstracts: int = 6
 
 
@@ -390,4 +389,3 @@ __all__ = [
     "SearxngSettings",
     "TelemetrySettings",
 ]
-

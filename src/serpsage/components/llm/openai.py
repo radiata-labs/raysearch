@@ -7,7 +7,7 @@ from typing_extensions import override
 import openai
 from openai import AsyncOpenAI
 
-from serpsage.components.overview.base import LLMClientBase
+from serpsage.components.llm.base import LLMClientBase
 from serpsage.models.llm import ChatResult, LLMUsage
 
 if TYPE_CHECKING:

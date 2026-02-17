@@ -4,7 +4,7 @@ from serpsage.components.cache import build_cache
 from serpsage.components.extract import build_extractor
 from serpsage.components.fetch import build_fetcher
 from serpsage.components.http import build_http_client
-from serpsage.components.overview import build_overview_client
+from serpsage.components.llm import build_overview_client
 from serpsage.components.provider import build_provider
 from serpsage.components.rank import build_ranker
 from serpsage.components.rate_limit import build_rate_limiter

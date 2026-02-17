@@ -14,7 +14,7 @@ from serpsage.steps.base import StepBase
 if TYPE_CHECKING:
     from serpsage.components.extract import ExtractorBase
     from serpsage.core.runtime import Runtime
-    from serpsage.models.extract import ExtractedDocument
+    from serpsage.models.extract import ExtractedDocument, ExtractedLink
     from serpsage.telemetry.base import SpanBase
 
 
@@ -91,12 +91,21 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         ctx.extracted = extracted
         if ctx.enable_others_and_subpages:
             ctx.others_result.links = _prepare_links(
-                values=[str(item.url or "") for item in list(extracted.links or [])],
+                values=[
+                    str(item.url or "").strip().split("#")[0]
+                    for item in list(extracted.links or [])
+                ],
                 limit=ctx.others.max_links,
+            )
+            ctx.subpages.subpages_links = _prepare_subpage_links(
+                values=extracted.links,
+                exclude=[ctx.url],
+                limit=ctx.others.max_links_for_subpages,
             )
             ctx.others_result.image_links = _prepare_links(
                 values=[
-                    str(item.url or "") for item in list(extracted.image_links or [])
+                    str(item.url or "").strip()
+                    for item in list(extracted.image_links or [])
                 ],
                 limit=ctx.others.max_image_links,
             )
@@ -169,6 +178,28 @@ def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
             continue
         seen.add(url)
         out.append(url)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _prepare_subpage_links(
+    *, values: list[ExtractedLink], exclude: list[str], limit: int | None
+) -> list[ExtractedLink]:
+    if limit is None:
+        return []
+    out: list[ExtractedLink] = []
+    seen: set[str] = set()
+    max_items = max(1, int(limit))
+    for item in values:
+        url = str(item.url or "").strip().split("#")[0]
+        if not url or url in seen:
+            continue
+        if url in exclude:
+            continue
+        seen.add(url)
+        item.url = url
+        out.append(item)
         if len(out) >= max_items:
             break
     return out

@@ -41,17 +41,17 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
             return ctx
         if not ctx.enable_others_and_subpages:
             return ctx
-        if not ctx.subpages_enabled or ctx.subpages_max <= 0:
+        if not ctx.subpages.subpages_enabled or ctx.subpages.subpages_max <= 0:
             return ctx
-        candidates = list(ctx.others_result.links or [])
+        candidates = list(ctx.subpages.subpages_links or [])
         if not candidates:
             return ctx
 
         try:
             scores = await self._ranker.score_texts(
-                texts=candidates,
-                query=ctx.subpages_query,
-                query_tokens=list(ctx.subpages_query_tokens),
+                texts=[f"[{item.anchor_text}]({item.url})" for item in candidates],
+                query=ctx.subpages.subpages_query,
+                query_tokens=ctx.subpages.subpages_keywords,
             )
         except Exception as exc:  # noqa: BLE001
             ctx.errors.append(
@@ -74,7 +74,8 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
             key=lambda idx: (-_score_at(scores=scores, idx=idx), idx),
         )
         selected_urls = [
-            candidates[idx] for idx in ranked_indexes[: max(1, int(ctx.subpages_max))]
+            candidates[idx].url
+            for idx in ranked_indexes[: max(1, int(ctx.subpages.subpages_max))]
         ]
         if not selected_urls:
             return ctx

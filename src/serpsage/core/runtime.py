@@ -6,7 +6,7 @@ from pydantic import ConfigDict
 from serpsage.components.cache import CacheBase
 from serpsage.components.extract import ExtractorBase
 from serpsage.components.fetch import FetcherBase
-from serpsage.components.overview import LLMClientBase
+from serpsage.components.llm import LLMClientBase
 from serpsage.components.provider import SearchProviderBase
 from serpsage.components.rank import RankerBase
 from serpsage.components.rate_limit.basic import BasicRateLimiter

@@ -11,7 +11,9 @@ from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace, stable_json
 
 if TYPE_CHECKING:
-    from serpsage.components.cache import CacheBase, LLMClientBase
+    from serpsage.app.request import FetchOverviewRequest
+    from serpsage.components.cache import CacheBase
+    from serpsage.components.llm import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
 
@@ -37,8 +39,8 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
-        req = ctx.overview_request
-        if req is None:
+        enabled, req = self._resolve_overview_request(ctx)
+        if not enabled or req is None:
             return ctx
 
         source_items = self._build_source_items(ctx)
@@ -67,7 +69,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
             url=ctx.url,
             title=(ctx.extracted.title if ctx.extracted else "") or "",
             source_items=source_items,
-            max_prompt_chars=int(profile.max_prompt_chars),
             language_hint=str(profile.force_language or "auto"),
             mode=mode,
         )
@@ -97,12 +98,11 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         span.set_attr("overview_mode", mode)
 
         retries = max(0, int(profile.self_heal_retries))
-        cur_messages = list(messages)
         for attempt in range(retries + 1):
             try:
                 res = await self._llm.chat(
                     model=str(model_cfg.name),
-                    messages=cur_messages,
+                    messages=messages,
                     schema=schema,
                     timeout_s=float(model_cfg.timeout_s),
                 )
@@ -132,7 +132,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 return ctx
             except _SchemaMismatchError as exc:
                 if attempt < retries:
-                    cur_messages = cur_messages + [_self_heal_message()]
+                    messages = messages + [_self_heal_message()]
                     continue
                 ctx.errors.append(
                     AppError(
@@ -150,7 +150,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 return ctx
             except Exception as exc:  # noqa: BLE001
                 if attempt < retries and schema is not None:
-                    cur_messages = cur_messages + [_self_heal_message()]
+                    messages = messages + [_self_heal_message()]
                     continue
                 ctx.errors.append(
                     AppError(
@@ -168,6 +168,17 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 )
                 return ctx
         return ctx
+
+    def _resolve_overview_request(
+        self, ctx: FetchStepContext
+    ) -> tuple[bool, FetchOverviewRequest | None]:
+        raw = ctx.request.overview
+        if raw is None:
+            enabled = bool(self.settings.fetch.overview.enabled)
+            return enabled, None
+        if isinstance(raw, bool):
+            return bool(raw), None
+        return True, raw
 
     def _build_source_items(self, ctx: FetchStepContext) -> list[str]:
         abstracts = [
@@ -189,7 +200,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         url: str,
         title: str,
         source_items: list[str],
-        max_prompt_chars: int,
         language_hint: str,
         mode: str,
     ) -> list[dict[str, str]]:
@@ -222,8 +232,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 f"SOURCE_ABSTRACTS:\n{body}",
             ]
         )
-        if max_prompt_chars > 0 and len(user) > max_prompt_chars:
-            user = user[:max_prompt_chars]
         return [
             {
                 "role": "system",

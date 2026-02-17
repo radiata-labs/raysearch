@@ -42,13 +42,12 @@ search:
       step_timeout_s: 4.0
       page_timeout_s: 2.5
   overview:
-    enabled_default: true
+    enabled: true
     use_model: gpt-4.1-mini
     max_sources: 8
     max_abstracts_per_source: 2
     max_abstract_chars: 900
     max_output_tokens: 600
-    max_prompt_chars: 32000
     cache_ttl_s: 0
     self_heal_retries: 1
     force_language: auto
@@ -98,12 +97,11 @@ fetch:
     query_prefilter_window: 320
     title_boost_alpha: 0.35
   overview:
-    enabled_default: false
+    enabled: true
     use_model: gpt-4.1-mini
     max_abstracts: 6
     max_abstract_chars: 900
     max_output_tokens: 600
-    max_prompt_chars: 32000
     cache_ttl_s: 0
     self_heal_retries: 1
     force_language: auto
@@ -129,7 +127,7 @@ llm:
   models:
     - name: gpt-4.1-mini
       backend: openai
-      base_url: null
+      base_url: https://api.chatanywhere.tech/v1
       api_key: null
       model: gpt-4.1-mini
       timeout_s: 60.0

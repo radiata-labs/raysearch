@@ -3,8 +3,8 @@ from __future__ import annotations
 import importlib.util
 from typing import TYPE_CHECKING
 
-from serpsage.components.overview.base import LLMClientBase
-from serpsage.components.overview.router import RoutedLLMClient
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.llm.router import RoutedLLMClient
 
 if TYPE_CHECKING:
     from serpsage.components.http.base import HttpClientBase
@@ -33,7 +33,7 @@ def _require_api_key(model_cfg: OverviewModelSettings) -> bool:
 
 
 def build_overview_client(*, rt: Runtime, http: HttpClientBase) -> LLMClientBase:
-    from serpsage.components.overview.null import NullLLMClient
+    from serpsage.components.llm.null import NullLLMClient
 
     routes: dict[str, tuple[LLMClientBase, str]] = {}
     for model_cfg in rt.settings.llm.models:
@@ -47,7 +47,7 @@ def build_overview_client(*, rt: Runtime, http: HttpClientBase) -> LLMClientBase
                 backend=backend,
                 model_name=model_cfg.name,
             )
-            from serpsage.components.overview.openai import OpenAIClient
+            from serpsage.components.llm.openai import OpenAIClient
 
             routes[model_cfg.name] = (
                 OpenAIClient(rt=rt, http=http, model_cfg=model_cfg),
@@ -61,7 +61,7 @@ def build_overview_client(*, rt: Runtime, http: HttpClientBase) -> LLMClientBase
                 backend=backend,
                 model_name=model_cfg.name,
             )
-            from serpsage.components.overview.gemini import GeminiClient
+            from serpsage.components.llm.gemini import GeminiClient
 
             routes[model_cfg.name] = (
                 GeminiClient(rt=rt, model_cfg=model_cfg),

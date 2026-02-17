@@ -7,7 +7,7 @@ from typing_extensions import override
 from google import genai
 from google.genai import errors, types
 
-from serpsage.components.overview.base import LLMClientBase
+from serpsage.components.llm.base import LLMClientBase
 from serpsage.models.llm import ChatResult, LLMUsage
 
 if TYPE_CHECKING:

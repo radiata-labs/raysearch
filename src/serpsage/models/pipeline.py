@@ -18,7 +18,11 @@ from serpsage.app.response import (
 )
 from serpsage.core.model_base import MutableModel
 from serpsage.models.errors import AppError
-from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
+from serpsage.models.extract import (
+    ExtractContentOptions,
+    ExtractedDocument,
+    ExtractedLink,
+)
 from serpsage.models.fetch import FetchResult
 from serpsage.settings.models import AppSettings
 
@@ -40,6 +44,7 @@ class SearchStepContext(BaseStepContext):
 class FetchStepOthers(MutableModel):
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout_s: float = 0.0
+    max_links_for_subpages: int | None = None
     max_links: int | None = None
     max_image_links: int | None = None
 
@@ -54,6 +59,14 @@ class PreparedAbstract(MutableModel):
     text: str
     heading: str = ""
     position: int = 0
+
+
+class FetchSubpages(MutableModel):
+    subpages_enabled: bool = False
+    subpages_links: list[ExtractedLink] = Field(default_factory=list)
+    subpages_max: int = 0
+    subpages_query: str = ""
+    subpages_keywords: list[str] = Field(default_factory=list)
 
 
 class FetchStepContext(BaseStepContext):
@@ -75,13 +88,8 @@ class FetchStepContext(BaseStepContext):
     prepared_abstracts: list[PreparedAbstract] = Field(default_factory=list)
     scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
     others_result: FetchOthersResult = Field(default_factory=FetchOthersResult)
-    subpages_enabled: bool = False
-    subpages_max: int = 0
-    subpages_keywords: list[str] = Field(default_factory=list)
-    subpages_query: str = ""
-    subpages_query_tokens: list[str] = Field(default_factory=list)
+    subpages: FetchSubpages = Field(default_factory=FetchSubpages)
     subpages_result: list[FetchSubpagesResult] = Field(default_factory=list)
-    others_links_hidden_in_output: bool = False
     result: FetchResultItem | None = None
     fatal: bool = False
     abstract_query_tokens: list[str] | None = None

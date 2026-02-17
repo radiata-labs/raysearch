@@ -56,12 +56,6 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         if not ctx.enable_others_and_subpages:
             others_result = FetchOthersResult()
             subpages_result = []
-        elif ctx.others_links_hidden_in_output:
-            others_result = FetchOthersResult(
-                links=[],
-                image_links=list(ctx.others_result.image_links),
-            )
-            subpages_result = list(ctx.subpages_result)
         else:
             others_result = ctx.others_result
             subpages_result = list(ctx.subpages_result)

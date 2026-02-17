@@ -159,7 +159,7 @@ class SearchOverviewStep(StepBase[SearchStepContext]):
     ) -> tuple[bool, SearchOverviewRequest | None]:
         raw = ctx.request.overview
         if raw is None:
-            enabled = bool(self.settings.search.overview.enabled_default)
+            enabled = bool(self.settings.search.overview.enabled)
             return enabled, None
         if isinstance(raw, bool):
             return bool(raw), None
