@@ -19,7 +19,8 @@ _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_SEP_CELL_RE = re.compile(r"^:?-{2,}:?$")
 _INLINE_CODE_ONLY_RE = re.compile(r"^\s*`[^`]+`\s*$")
-_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[\u3002\uFF01\uFF1F!?;\uFF1B.])")
+_CJK_SENTENCE_END = {"。", "！", "？", "；", "\uFF01", "\uFF1F", "\uFF1B"}
+_GENERAL_SENTENCE_END = {"!", "?", ";"}
 
 
 class FetchAbstractBuildStep(StepBase[FetchStepContext]):
@@ -54,7 +55,9 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
             )
             return ctx
 
-        markdown = str(ctx.extracted.markdown or "")
+        markdown = str(
+            ctx.extracted.md_for_abstract or ctx.extracted.markdown or ""
+        )
         cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
@@ -141,12 +144,29 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         normalized = clean_whitespace(text or "")
         if not normalized:
             return []
-        parts = _SENTENCE_BOUNDARY_RE.split(normalized)
         out: list[str] = []
-        for part in parts:
-            sentence = clean_whitespace(part)
+        buf: list[str] = []
+        for idx, ch in enumerate(normalized):
+            buf.append(ch)
+            if ch in _CJK_SENTENCE_END or ch in _GENERAL_SENTENCE_END:
+                sentence = clean_whitespace("".join(buf))
+                if sentence:
+                    out.append(sentence)
+                buf = []
+                continue
+            if ch != ".":
+                continue
+            next_char = normalized[idx + 1] if idx + 1 < len(normalized) else ""
+            if next_char and not next_char.isspace():
+                continue
+            sentence = clean_whitespace("".join(buf))
             if sentence:
                 out.append(sentence)
+            buf = []
+
+        tail = clean_whitespace("".join(buf))
+        if tail:
+            out.append(tail)
         return out or [normalized]
 
     def _parse_table_row(self, line: str) -> str:

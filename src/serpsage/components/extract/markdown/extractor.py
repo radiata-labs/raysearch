@@ -21,6 +21,7 @@ from serpsage.components.extract.markdown.dom import (
 )
 from serpsage.components.extract.markdown.postprocess import (
     finalize_markdown,
+    markdown_to_abstract_text,
     markdown_to_text,
 )
 from serpsage.components.extract.markdown.render import (
@@ -167,30 +168,33 @@ class MarkdownExtractor(ExtractorBase):
             depth="high" if include_secondary_content else "low"
         )
         if kind == "text":
-            return self._extract_text(
+            doc = self._extract_text(
                 text=decoded,
                 include_secondary_content=(options.depth == "high"),
             )
+            return self._attach_abstract_markdown(doc)
 
         if kind != "html":
-            return ExtractedDocument(
+            doc = ExtractedDocument(
                 content_kind="binary",
                 extractor_used="binary",
                 warnings=["unsupported binary content"],
                 stats={"primary_chars": 0, "secondary_chars": 0},
             )
+            return self._attach_abstract_markdown(doc)
 
         html_doc = decoded[: int(profile.max_html_chars)]
         if content_options is None:
             if options.depth == "high":
-                return self._extract_html_full_page(
+                doc = self._extract_html_full_page(
                     html_doc=html_doc,
                     url=url,
                     profile=profile,
                     collect_links=bool(collect_links),
                     collect_images=bool(collect_images),
                 )
-            return self._extract_html(
+                return self._attach_abstract_markdown(doc)
+            doc = self._extract_html(
                 html_doc=html_doc,
                 url=url,
                 profile=profile,
@@ -198,7 +202,8 @@ class MarkdownExtractor(ExtractorBase):
                 collect_links=bool(collect_links),
                 collect_images=bool(collect_images),
             )
-        return self._extract_html_with_options(
+            return self._attach_abstract_markdown(doc)
+        doc = self._extract_html_with_options(
             html_doc=html_doc,
             url=url,
             profile=profile,
@@ -206,6 +211,7 @@ class MarkdownExtractor(ExtractorBase):
             collect_links=bool(collect_links),
             collect_images=bool(collect_images),
         )
+        return self._attach_abstract_markdown(doc)
 
     def _extract_text(
         self,
@@ -897,6 +903,15 @@ class MarkdownExtractor(ExtractorBase):
             stats=stats,
             links=links,
             image_links=image_links,
+        )
+
+    def _attach_abstract_markdown(self, doc: ExtractedDocument) -> ExtractedDocument:
+        return doc.model_copy(
+            update={
+                "md_for_abstract": markdown_to_abstract_text(
+                    str(doc.markdown or "")
+                )
+            }
         )
 
     def _assert_filtered_output_nonempty(

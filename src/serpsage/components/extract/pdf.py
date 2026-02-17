@@ -10,6 +10,7 @@ from typing_extensions import override
 from pypdf import PdfReader
 
 from serpsage.components.extract.base import ExtractorBase
+from serpsage.components.extract.markdown.postprocess import markdown_to_abstract_text
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
 from serpsage.utils import clean_whitespace
@@ -53,10 +54,12 @@ class PdfExtractor(ExtractorBase):
         if kind != "pdf":
             raise ValueError("PdfExtractor only handles PDF content")
         if not content:
-            return ExtractedDocument(
-                content_kind="pdf",
-                extractor_used="pdf:none",
-                warnings=["empty pdf content"],
+            return self._attach_abstract_markdown(
+                ExtractedDocument(
+                    content_kind="pdf",
+                    extractor_used="pdf:none",
+                    warnings=["empty pdf content"],
+                )
             )
 
         warnings: list[str] = []
@@ -75,10 +78,12 @@ class PdfExtractor(ExtractorBase):
                 warnings.append(f"pymupdf_failed:{type(exc).__name__}")
 
         if not pages_pypdf and not pages_pymupdf:
-            return ExtractedDocument(
-                content_kind="pdf",
-                extractor_used="pdf:none",
-                warnings=warnings or ["pdf extraction failed"],
+            return self._attach_abstract_markdown(
+                ExtractedDocument(
+                    content_kind="pdf",
+                    extractor_used="pdf:none",
+                    warnings=warnings or ["pdf extraction failed"],
+                )
             )
 
         chosen_pages, engine = self._pick_pages(pages_pypdf, pages_pymupdf)
@@ -101,18 +106,29 @@ class PdfExtractor(ExtractorBase):
         text_chars = len("\n\n".join(text_parts).strip())
         if text_chars < 180:
             warnings.append("very_low_text_pdf; likely scanned or encrypted")
-        return ExtractedDocument(
-            markdown=markdown,
-            title="",
-            content_kind="pdf",
-            extractor_used=f"pdf:{engine}",
-            warnings=warnings,
-            stats={
-                "pages_total": len(chosen_pages),
-                "pages_kept": pages_kept,
-                "text_chars": text_chars,
-                "engine": engine,
-            },
+        return self._attach_abstract_markdown(
+            ExtractedDocument(
+                markdown=markdown,
+                title="",
+                content_kind="pdf",
+                extractor_used=f"pdf:{engine}",
+                warnings=warnings,
+                stats={
+                    "pages_total": len(chosen_pages),
+                    "pages_kept": pages_kept,
+                    "text_chars": text_chars,
+                    "engine": engine,
+                },
+            )
+        )
+
+    def _attach_abstract_markdown(self, doc: ExtractedDocument) -> ExtractedDocument:
+        return doc.model_copy(
+            update={
+                "md_for_abstract": markdown_to_abstract_text(
+                    str(doc.markdown or "")
+                )
+            }
         )
 
     def _extract_lines_pypdf(self, content: bytes) -> list[list[str]]:

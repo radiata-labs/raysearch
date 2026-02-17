@@ -41,6 +41,7 @@ class ExtractedImageLink(FrozenModel):
 
 class ExtractedDocument(FrozenModel):
     markdown: str = ""
+    md_for_abstract: str = ""
     title: str = ""
     content_kind: Literal["html", "pdf", "text", "binary"] = "binary"
     extractor_used: str = ""

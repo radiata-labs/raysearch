@@ -184,11 +184,11 @@ class FetchAbstractSettings(Model):
 
     max_abstracts: int = 42
     min_abstract_score: float = 0.20
-    min_query_token_hits: int = 2
+    min_query_token_hits: int = 1
     default_top_k_abstracts: int = 3
     max_markdown_chars: int = 140_000
     max_segments: int = 420
-    min_abstract_chars: int = 1
+    min_abstract_chars: int = 8
     query_prefilter_window: int = 320
     title_boost_alpha: float = 0.35
 

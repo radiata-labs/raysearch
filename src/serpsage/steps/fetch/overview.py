@@ -186,6 +186,13 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         ]
         if abstracts:
             return abstracts
+        md_for_abstract = clean_whitespace(
+            ((ctx.extracted.md_for_abstract if ctx.extracted else "") or "").replace(
+                "\n", " "
+            )
+        )
+        if md_for_abstract:
+            return [md_for_abstract]
         markdown = clean_whitespace(
             ((ctx.extracted.markdown if ctx.extracted else "") or "").replace("\n", " ")
         )

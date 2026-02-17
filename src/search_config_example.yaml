@@ -93,7 +93,7 @@ fetch:
     default_top_k_abstracts: 3
     max_markdown_chars: 140000
     max_segments: 420
-    min_abstract_chars: 1
+    min_abstract_chars: 8
     query_prefilter_window: 320
     title_boost_alpha: 0.35
   overview:
@@ -176,4 +176,3 @@ cache:
 telemetry:
   enabled: true
   include_events: false
-

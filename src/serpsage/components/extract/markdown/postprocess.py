@@ -13,6 +13,13 @@ _NOISE_LINE_RE = re.compile(
 _FENCE_LINE_RE = re.compile(r"^\s*(`{3,})(.*)$")
 _TABLE_SEP_RE = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$")
 _SPECIAL_BLOCK_RE = re.compile(r"^\s*(#{1,6}\s+|>|[-*+]\s+|\d+[.)]\s+|\|)")
+_IMAGE_RE = re.compile(r"!\[[^\]]*]\([^)]+\)")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_AUTO_URL_RE = re.compile(r"<https?://[^>\s]+>", re.IGNORECASE)
+_BARE_URL_RE = re.compile(r"(?<!<)https?://\S+", re.IGNORECASE)
+_ABSTRACT_NOISE_RE = re.compile(r"^\s*(跳到主要内容|skip to main content)\s*$", re.IGNORECASE)
+_SETEXT_HEADING_LINE_RE = re.compile(r"^\s*[=-]{2,}\s*$")
+_HR_LINE_RE = re.compile(r"^\s*(?:[-*_]\s*){3,}\s*$")
 
 
 def finalize_markdown(*, markdown: str, max_chars: int) -> str:
@@ -140,6 +147,54 @@ def markdown_to_text(markdown: str) -> str:
         line = clean_whitespace(line)
         if line:
             out.append(line)
+    return "\n".join(out).strip()
+
+
+def markdown_to_abstract_text(markdown: str) -> str:
+    out: list[str] = []
+    in_code = False
+    active_fence = ""
+    for raw in markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        fence = _fence_delimiter(raw)
+        if fence:
+            if not in_code:
+                in_code = True
+                active_fence = fence
+            elif len(fence) >= len(active_fence):
+                in_code = False
+                active_fence = ""
+            continue
+        if in_code:
+            continue
+
+        line = raw.strip()
+        if not line:
+            continue
+        if _ABSTRACT_NOISE_RE.match(line):
+            continue
+        if _SETEXT_HEADING_LINE_RE.match(line):
+            continue
+        if _HR_LINE_RE.match(line):
+            continue
+        if _TABLE_SEP_RE.match(line):
+            continue
+
+        line = _MD_PREFIX_RE.sub("", line)
+        line = re.sub(r"`([^`]+)`", r"\1", line)
+        line = _IMAGE_RE.sub("", line)
+        line = _MD_LINK_RE.sub(r"\1", line)
+        line = _AUTO_URL_RE.sub("", line)
+        line = _BARE_URL_RE.sub("", line)
+        line = line.replace("\\*", "*").replace("\\_", "_")
+        line = line.replace("**", "").replace("__", "")
+        line = line.replace("|", " ")
+        line = clean_whitespace(line)
+        if not line:
+            continue
+        if _ABSTRACT_NOISE_RE.match(line):
+            continue
+        out.append(line)
+
     return "\n".join(out).strip()
 
 
@@ -381,6 +436,7 @@ def _find_unclosed_fence_start(markdown: str) -> int:
 __all__ = [
     "extract_feature_snippets",
     "finalize_markdown",
+    "markdown_to_abstract_text",
     "markdown_to_text",
     "merge_markdown",
 ]
