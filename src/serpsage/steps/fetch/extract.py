@@ -8,13 +8,14 @@ from anyio import to_thread
 
 from serpsage.components.extract.markdown.postprocess import markdown_to_text
 from serpsage.models.errors import AppError
+from serpsage.models.extract import ExtractedLink
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.components.extract import ExtractorBase
     from serpsage.core.runtime import Runtime
-    from serpsage.models.extract import ExtractedDocument, ExtractedLink
+    from serpsage.models.extract import ExtractedDocument
     from serpsage.telemetry.base import SpanBase
 
 
@@ -198,8 +199,8 @@ def _prepare_subpage_links(
         if url in exclude:
             continue
         seen.add(url)
-        item.url = url
-        out.append(item)
+        new_item = ExtractedLink(**item.model_dump() | {"url": url})
+        out.append(new_item)
         if len(out) >= max_items:
             break
     return out

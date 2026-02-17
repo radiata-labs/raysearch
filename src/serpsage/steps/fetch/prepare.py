@@ -127,7 +127,7 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                 subpages_enabled = bool(subpages_max > 0 and subpages_keywords)
                 if subpages_enabled:
                     subpages_query = ", ".join(subpages_keywords)
-            if subpages_enabled and ctx.others.max_links is None:
+            if subpages_enabled:
                 link_cap = int(self.settings.fetch.extract.link_max_count)
                 auto_links_limit = min(link_cap, max(20, int(subpages_max) * 5))
                 ctx.others.max_links_for_subpages = int(auto_links_limit)

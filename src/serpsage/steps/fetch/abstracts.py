@@ -19,7 +19,7 @@ _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_SEP_CELL_RE = re.compile(r"^:?-{2,}:?$")
 _INLINE_CODE_ONLY_RE = re.compile(r"^\s*`[^`]+`\s*$")
-_CJK_SENTENCE_END = {"。", "！", "？", "；", "\uFF01", "\uFF1F", "\uFF1B"}
+_CJK_SENTENCE_END = {"。", "！", "？", "；"}
 _GENERAL_SENTENCE_END = {"!", "?", ";"}
 
 
@@ -55,9 +55,7 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
             )
             return ctx
 
-        markdown = str(
-            ctx.extracted.md_for_abstract or ctx.extracted.markdown or ""
-        )
+        markdown = str(ctx.extracted.md_for_abstract or ctx.extracted.markdown or "")
         cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
