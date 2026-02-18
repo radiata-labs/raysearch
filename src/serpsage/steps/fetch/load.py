@@ -12,7 +12,8 @@ from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
-    from serpsage.components.cache import CacheBase, FetcherBase
+    from serpsage.components.cache import CacheBase
+    from serpsage.components.fetch import FetcherBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
 
