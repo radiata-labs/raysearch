@@ -93,7 +93,6 @@ class FetchStepContext(BaseStepContext):
     subpages_result: list[FetchSubpagesResult] = Field(default_factory=list)
     result: FetchResultItem | None = None
     fatal: bool = False
-    abstract_query_tokens: list[str] | None = None
     overview_output: str | object | None = None
     errors: list[AppError] = Field(default_factory=list)
 

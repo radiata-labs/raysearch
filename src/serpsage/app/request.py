@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SearchDepth = Literal["simple", "low", "medium", "high"]
+FetchContentDetail = Literal["concise", "standard", "full"]
 FetchContentTag = Literal[
     "header", "navigation", "banner", "body", "sidebar", "footer", "metadata"
 ]
@@ -65,7 +66,7 @@ class FetchContentRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     max_chars: int | None = None
-    depth: Literal["low", "medium", "high"] = "low"
+    detail: FetchContentDetail = "concise"
     include_html_tags: bool = False
     include_tags: list[FetchContentTag] = Field(default_factory=list)
     exclude_tags: list[FetchContentTag] = Field(default_factory=list)
@@ -92,19 +93,16 @@ class FetchContentRequest(BaseModel):
 class FetchAbstractsRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
-    query: str
+    query: str | None = None
     max_chars: int | None = None
-    top_k_abstracts: int | None = None
 
     @field_validator("query")
     @classmethod
-    def _validate_query(cls, value: str) -> str:
+    def _validate_query(cls, value: str | None) -> str | None:
         query = str(value or "").strip()
-        if not query:
-            raise ValueError("query must not be empty")
-        return query
+        return query or None
 
-    @field_validator("max_chars", "top_k_abstracts")
+    @field_validator("max_chars")
     @classmethod
     def _validate_positive_int(cls, value: int | None) -> int | None:
         if value is None:
@@ -117,16 +115,14 @@ class FetchAbstractsRequest(BaseModel):
 class FetchOverviewRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
-    query: str
+    query: str | None = None
     json_schema: object | None = None
 
     @field_validator("query")
     @classmethod
-    def _validate_query(cls, value: str) -> str:
+    def _validate_query(cls, value: str | None) -> str | None:
         query = str(value or "").strip()
-        if not query:
-            raise ValueError("query must not be empty")
-        return query
+        return query or None
 
     @field_validator("json_schema")
     @classmethod
@@ -164,10 +160,10 @@ class FetchRequest(BaseModel):
     urls: list[str]
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout: float | None = None
-    content: bool | FetchContentRequest
-    abstracts: FetchAbstractsRequest | None = None
+    content: bool | FetchContentRequest = False
+    abstracts: bool | FetchAbstractsRequest = False
     subpages: FetchSubpagesRequest | None = None
-    overview: FetchOverviewRequest | None = None
+    overview: bool | FetchOverviewRequest = False
     others: FetchOthersRequest = Field(default_factory=FetchOthersRequest)
 
     @field_validator("urls")
@@ -194,9 +190,32 @@ class FetchRequest(BaseModel):
             raise ValueError("crawl_timeout must be > 0")
         return float(value)
 
+    @model_validator(mode="after")
+    def _validate_has_action(self) -> FetchRequest:
+        content_enabled = not isinstance(self.content, bool) or bool(self.content)
+        abstracts_enabled = not isinstance(self.abstracts, bool) or bool(self.abstracts)
+        overview_enabled = not isinstance(self.overview, bool) or bool(self.overview)
+        subpages_enabled = self.subpages is not None
+        others_enabled = (
+            self.others.max_links is not None or self.others.max_image_links is not None
+        )
+        if not (
+            content_enabled
+            or abstracts_enabled
+            or overview_enabled
+            or subpages_enabled
+            or others_enabled
+        ):
+            raise ValueError(
+                "fetch request has nothing to do: enable at least one of "
+                "content/abstracts/overview/subpages/others"
+            )
+        return self
+
 
 __all__ = [
     "CrawlMode",
+    "FetchContentDetail",
     "FetchContentTag",
     "FetchRequest",
     "FetchOthersRequest",

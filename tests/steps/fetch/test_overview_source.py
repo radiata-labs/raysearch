@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import anyio
+
 from serpsage.app.bootstrap import build_runtime
 from serpsage.app.request import FetchRequest
 from serpsage.components.cache.base import CacheBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.models.extract import ExtractedDocument
 from serpsage.models.llm import ChatResult
-from serpsage.models.pipeline import FetchStepContext, FetchStepOthers
+from serpsage.models.pipeline import FetchStepContext, FetchStepOthers, ScoredAbstract
 from serpsage.settings.models import AppSettings
 from serpsage.steps.fetch.overview import FetchOverviewStep
 
@@ -25,6 +27,10 @@ class _DummyCache(CacheBase):
 
 
 class _DummyLLM(LLMClientBase):
+    def __init__(self, *, rt) -> None:
+        super().__init__(rt=rt)
+        self.last_messages: list[dict[str, str]] = []
+
     async def chat(
         self,
         *,
@@ -33,8 +39,9 @@ class _DummyLLM(LLMClientBase):
         schema: dict[str, Any] | None = None,
         timeout_s: float | None = None,
     ) -> ChatResult:
-        del model, messages, schema, timeout_s
-        return ChatResult(text="")
+        del model, schema, timeout_s
+        self.last_messages = list(messages)
+        return ChatResult(text="overview-ok")
 
 
 def _build_ctx(*, settings: AppSettings) -> FetchStepContext:
@@ -65,3 +72,31 @@ def test_overview_source_prefers_md_for_abstract_when_no_scored_abstracts() -> N
     out = step._build_source_items(ctx)
 
     assert out == ["clean abstract text second line"]
+
+
+def test_overview_query_none_uses_default_query_instruction() -> None:
+    settings = AppSettings()
+    rt = build_runtime(settings=settings)
+    llm = _DummyLLM(rt=rt)
+    step = FetchOverviewStep(rt=rt, llm=llm, cache=_DummyCache(rt=rt))
+    ctx = _build_ctx(settings=settings)
+    ctx.request = FetchRequest(
+        urls=["https://example.com"],
+        content=False,
+        overview=True,
+    )
+    ctx.extracted = ExtractedDocument(
+        title="DeepSeek V3.2",
+        markdown="raw markdown content",
+    )
+    ctx.overview_scored_abstracts = [
+        ScoredAbstract(abstract_id="S1:A1", text="scored abstract text", score=0.9)
+    ]
+
+    out = anyio.run(step.run, ctx)
+
+    assert out.overview_output == "overview-ok"
+    assert llm.last_messages
+    user_message = llm.last_messages[1]["content"]
+    assert "No explicit user query was provided." in user_message
+    assert "SOURCE_ABSTRACTS:\n[A1] scored abstract text" in user_message

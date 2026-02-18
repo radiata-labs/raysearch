@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from serpsage.app.request import (
     CrawlMode,
     FetchAbstractsRequest,
+    FetchContentDetail,
     FetchContentRequest,
     FetchOthersRequest,
     FetchOverviewRequest,
@@ -43,6 +44,7 @@ __all__ = [
     "Engine",
     "FetchOthersRequest",
     "FetchAbstractsRequest",
+    "FetchContentDetail",
     "FetchContentRequest",
     "FetchOverviewRequest",
     "FetchRequest",

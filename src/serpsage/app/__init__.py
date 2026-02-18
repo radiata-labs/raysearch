@@ -2,6 +2,7 @@ from serpsage.app.engine import Engine
 from serpsage.app.request import (
     CrawlMode,
     FetchAbstractsRequest,
+    FetchContentDetail,
     FetchContentRequest,
     FetchOthersRequest,
     FetchOverviewRequest,
@@ -17,6 +18,7 @@ __all__ = [
     "CrawlMode",
     "FetchOthersRequest",
     "FetchAbstractsRequest",
+    "FetchContentDetail",
     "FetchContentRequest",
     "FetchOverviewRequest",
     "FetchRequest",

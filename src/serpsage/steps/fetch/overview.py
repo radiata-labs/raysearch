@@ -5,13 +5,13 @@ import json
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
+from serpsage.app.request import FetchOverviewRequest
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace, stable_json
 
 if TYPE_CHECKING:
-    from serpsage.app.request import FetchOverviewRequest
     from serpsage.components.cache import CacheBase
     from serpsage.components.llm import LLMClientBase
     from serpsage.core.runtime import Runtime
@@ -173,11 +173,8 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         self, ctx: FetchStepContext
     ) -> tuple[bool, FetchOverviewRequest | None]:
         raw = ctx.request.overview
-        if raw is None:
-            enabled = bool(self.settings.fetch.overview.enabled)
-            return enabled, None
         if isinstance(raw, bool):
-            return bool(raw), None
+            return bool(raw), (FetchOverviewRequest() if raw else None)
         return True, raw
 
     def _build_source_items(self, ctx: FetchStepContext) -> list[str]:
@@ -203,7 +200,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
     def _build_messages(
         self,
         *,
-        query: str,
+        query: str | None,
         url: str,
         title: str,
         source_items: list[str],
@@ -226,6 +223,11 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
             )
         else:
             task = "Return plain text only. Do not wrap output in JSON."
+        normalized_query = clean_whitespace(query or "")
+        query_block = normalized_query or (
+            "No explicit user query was provided. Generate a neutral page overview "
+            "grounded in TITLE and SOURCE_ABSTRACTS, focusing on key facts and context."
+        )
 
         blocks = []
         for idx, item in enumerate(source_items, 1):
@@ -233,7 +235,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         body = "\n".join(blocks)
         user = "\n\n".join(
             [
-                f"QUERY:\n{query}",
+                f"QUERY:\n{query_block}",
                 f"URL:\n{url}",
                 f"TITLE:\n{title}",
                 f"SOURCE_ABSTRACTS:\n{body}",

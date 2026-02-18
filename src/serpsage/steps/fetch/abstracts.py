@@ -59,7 +59,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
-            max_abstracts=int(cfg.max_abstracts),
             min_abstract_chars=int(cfg.min_abstract_chars),
         )
         ctx.prepared_abstracts = prepared
@@ -70,7 +69,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         self,
         *,
         markdown: str,
-        max_abstracts: int,
         min_abstract_chars: int,
     ) -> list[PreparedAbstract]:
         text = (markdown or "").strip()
@@ -111,8 +109,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                         )
                     )
                     position += 1
-                if len(out) >= max(1, int(max_abstracts)):
-                    break
                 continue
 
             normalized = _LIST_PREFIX_RE.sub("", stripped)
@@ -131,10 +127,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                     )
                 )
                 position += 1
-                if len(out) >= max(1, int(max_abstracts)):
-                    break
-            if len(out) >= max(1, int(max_abstracts)):
-                break
 
         return out
 

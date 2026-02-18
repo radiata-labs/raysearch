@@ -115,7 +115,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             ctx.others_result.image_links = []
         span.set_attr("extractor_used", str(extracted.extractor_used))
         span.set_attr("extract_ms", int(extract_ms))
-        span.set_attr("content_depth", str(ctx.content_options.depth))
+        span.set_attr("content_detail", str(ctx.content_options.detail))
         span.set_attr("include_html_tags", bool(ctx.content_options.include_html_tags))
         span.set_attr("collect_links", bool(collect_links))
         span.set_attr("collect_images", bool(collect_images))

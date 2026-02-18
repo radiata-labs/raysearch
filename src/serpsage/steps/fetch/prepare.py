@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.request import FetchContentRequest
+from serpsage.app.request import (
+    FetchAbstractsRequest,
+    FetchContentRequest,
+    FetchOverviewRequest,
+)
 from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractContentOptions
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.utils import clean_whitespace, tokenize_for_query
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -43,48 +47,23 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
             )
             return ctx
 
-        abstracts_request = ctx.request.abstracts
-        if abstracts_request is not None:
-            query = clean_whitespace(abstracts_request.query or "")
-            if not query:
-                ctx.fatal = True
-                ctx.errors.append(
-                    AppError(
-                        code="fetch_abstract_rank_failed",
-                        message="abstracts.query must not be empty",
-                        details={
-                            "url": url,
-                            "url_index": ctx.url_index,
-                            "stage": "prepare",
-                            "fatal": True,
-                            "crawl_mode": ctx.others.crawl_mode,
-                        },
-                    )
-                )
-                return ctx
-            abstracts_request = abstracts_request.model_copy(update={"query": query})
-
-        overview_request = ctx.request.overview
-        if overview_request is not None:
-            overview_request = overview_request.model_copy(
-                update={"query": clean_whitespace(overview_request.query or "")}
+        raw_abstracts = ctx.request.abstracts
+        abstracts_request: FetchAbstractsRequest | None
+        if isinstance(raw_abstracts, bool):
+            abstracts_request = FetchAbstractsRequest() if raw_abstracts else None
+        else:
+            query = clean_whitespace(raw_abstracts.query or "")
+            abstracts_request = raw_abstracts.model_copy(
+                update={"query": query or None}
             )
-            if not overview_request.query:
-                ctx.fatal = True
-                ctx.errors.append(
-                    AppError(
-                        code="fetch_overview_failed",
-                        message="overview.query must not be empty",
-                        details={
-                            "url": url,
-                            "url_index": ctx.url_index,
-                            "stage": "prepare",
-                            "fatal": True,
-                            "crawl_mode": ctx.others.crawl_mode,
-                        },
-                    )
-                )
-                return ctx
+
+        raw_overview = ctx.request.overview
+        overview_request: FetchOverviewRequest | None
+        if isinstance(raw_overview, bool):
+            overview_request = FetchOverviewRequest() if raw_overview else None
+        else:
+            query = clean_whitespace(raw_overview.query or "")
+            overview_request = raw_overview.model_copy(update={"query": query or None})
 
         raw_content = ctx.request.content
         content_request: FetchContentRequest
@@ -97,17 +76,12 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
             content_request = raw_content
 
         content_options = ExtractContentOptions(
-            depth=content_request.depth,
+            detail=content_request.detail,
             include_html_tags=bool(content_request.include_html_tags),
             include_tags=list(content_request.include_tags),
             exclude_tags=list(content_request.exclude_tags),
         )
         ctx.url = url
-
-        if abstracts_request is not None:
-            abstract_query_tokens = tokenize_for_query(abstracts_request.query)
-        else:
-            abstract_query_tokens = []
 
         subpages_enabled = False
         subpages_max = 0
@@ -140,7 +114,6 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
         ctx.content_options = content_options
         ctx.abstracts_request = abstracts_request
         ctx.overview_request = overview_request
-        ctx.abstract_query_tokens = abstract_query_tokens
         ctx.subpages.subpages_enabled = bool(subpages_enabled)
         ctx.subpages.subpages_max = int(subpages_max) if subpages_enabled else 0
         ctx.subpages.subpages_keywords = list(subpages_keywords)
@@ -150,7 +123,7 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
         span.set_attr("has_content_output", bool(return_content))
         span.set_attr("has_abstracts", bool(abstracts_request is not None))
         span.set_attr("has_overview", bool(overview_request is not None))
-        span.set_attr("content_depth", str(content_request.depth))
+        span.set_attr("content_detail", str(content_request.detail))
         span.set_attr("crawl_mode", str(ctx.others.crawl_mode))
         span.set_attr("crawl_timeout_s", float(ctx.others.crawl_timeout_s))
         span.set_attr("subpages_enabled", bool(ctx.subpages.subpages_enabled))

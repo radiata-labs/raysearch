@@ -6,14 +6,14 @@ from pydantic import Field
 
 from serpsage.core.model_base import FrozenModel
 
-ExtractContentDepth = Literal["low", "medium", "high"]
+ExtractContentDetail = Literal["concise", "standard", "full"]
 ExtractContentTag = Literal[
     "header", "navigation", "banner", "body", "sidebar", "footer", "metadata"
 ]
 
 
 class ExtractContentOptions(FrozenModel):
-    depth: ExtractContentDepth = "low"
+    detail: ExtractContentDetail = "concise"
     include_html_tags: bool = False
     include_tags: list[ExtractContentTag] = Field(default_factory=list)
     exclude_tags: list[ExtractContentTag] = Field(default_factory=list)
@@ -52,7 +52,7 @@ class ExtractedDocument(FrozenModel):
 
 
 __all__ = [
-    "ExtractContentDepth",
+    "ExtractContentDetail",
     "ExtractContentOptions",
     "ExtractContentTag",
     "ExtractedDocument",

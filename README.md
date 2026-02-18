@@ -71,8 +71,8 @@ async with Engine.from_settings(settings) as engine:
             urls=["https://example.com/article"],
             crawl_mode="fallback",
             crawl_timeout=2.5,
-            content=FetchContentRequest(depth="medium"),
-            abstracts=FetchAbstractsRequest(query="benchmark results", top_k_abstracts=3),
+            content=FetchContentRequest(detail="standard"),
+            abstracts=FetchAbstractsRequest(query="benchmark results", max_chars=2400),
             subpages=FetchSubpagesRequest(
                 max_subpages=2,
                 subpage_keywords="benchmark, evaluation",
@@ -93,12 +93,15 @@ async with Engine.from_settings(settings) as engine:
   - `urls`: list of URLs, processed concurrently with stable output order
   - `crawl_mode`: `never|fallback|preferred|always`
   - `crawl_timeout`: per-URL crawler timeout in seconds
-  - `content`: `bool | FetchContentRequest` (`false` hides output markdown only; internal extraction still runs)
-  - `abstracts`: `FetchAbstractsRequest | None` (query + top-k + total-char budget)
+  - `content`: `bool | FetchContentRequest`, default `false` (`false` hides output markdown only; internal extraction still runs)
+  - `FetchContentRequest.detail`: `concise|standard|full` (mapped internally to original extraction depth behavior)
+  - `abstracts`: `bool | FetchAbstractsRequest`, default `false` (`true` means enabled with default config)
   - `subpages`: `FetchSubpagesRequest | None`
   - `subpages.max_subpages`: required to enable subpages; `None` means disabled
   - `subpages.subpage_keywords`: one string or comma-separated keywords for ranking links
-  - `overview`: `FetchOverviewRequest | None` (`query` + optional `json_schema`; output is `str | object`)
+  - `overview`: `bool | FetchOverviewRequest`, default `false` (`true` means enabled with default config)
+  - `FetchAbstractsRequest.query` / `FetchOverviewRequest.query` may be `None`; ranking query falls back to `title`, then `url`
+  - when `overview.query` is `None`, the LLM query is fixed as `总结`
   - `others.max_links` / `others.max_image_links`: optional link collection caps; omitted means no links output
   - if `subpages` is enabled but `others.max_links` is omitted, fetch internally collects links for subpage ranking and may hide those links in final `others.links`
   - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed

@@ -50,7 +50,6 @@ def test_extract_abstracts_does_not_emit_v3_dot_fragments() -> None:
 
     out = step._extract_abstracts(
         markdown=markdown,
-        max_abstracts=10,
         min_abstract_chars=1,
     )
     texts = [item.text for item in out]

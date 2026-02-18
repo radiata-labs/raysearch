@@ -165,12 +165,12 @@ class MarkdownExtractor(ExtractorBase):
             kind = "html" if decoded_kind == "html" else "text"
 
         options = content_options or ExtractContentOptions(
-            depth="high" if include_secondary_content else "low"
+            detail="full" if include_secondary_content else "concise"
         )
         if kind == "text":
             doc = self._extract_text(
                 text=decoded,
-                include_secondary_content=(options.depth == "high"),
+                include_secondary_content=(options.detail == "full"),
             )
             return self._attach_abstract_markdown(doc)
 
@@ -185,7 +185,7 @@ class MarkdownExtractor(ExtractorBase):
 
         html_doc = decoded[: int(profile.max_html_chars)]
         if content_options is None:
-            if options.depth == "high":
+            if options.detail == "full":
                 doc = self._extract_html_full_page(
                     html_doc=html_doc,
                     url=url,
@@ -198,7 +198,7 @@ class MarkdownExtractor(ExtractorBase):
                 html_doc=html_doc,
                 url=url,
                 profile=profile,
-                include_secondary_content=(options.depth == "high"),
+                include_secondary_content=(options.detail == "full"),
                 collect_links=bool(collect_links),
                 collect_images=bool(collect_images),
             )
@@ -262,7 +262,7 @@ class MarkdownExtractor(ExtractorBase):
         needs_semantic_render = bool(
             options.include_html_tags or options.include_tags or options.exclude_tags
         )
-        if options.depth == "high" and not needs_semantic_render:
+        if options.detail == "full" and not needs_semantic_render:
             return self._extract_html_full_page(
                 html_doc=html_doc,
                 url=url,
@@ -282,7 +282,7 @@ class MarkdownExtractor(ExtractorBase):
 
         include_secondary = False
         base_doc = low_doc
-        if options.depth == "high":
+        if options.detail == "full":
             include_secondary = True
             base_doc = self._extract_html(
                 html_doc=html_doc,
@@ -292,7 +292,7 @@ class MarkdownExtractor(ExtractorBase):
                 collect_links=collect_links,
                 collect_images=collect_images,
             )
-        elif options.depth == "medium":
+        elif options.detail == "standard":
             primary_chars = int(low_doc.stats.get("primary_chars", 0))
             has_non_body_intent = any(
                 tag not in {"body", "metadata"} for tag in options.include_tags
@@ -384,7 +384,7 @@ class MarkdownExtractor(ExtractorBase):
                     else 0
                 ),
                 "include_secondary_content": bool(include_secondary),
-                "content_depth": str(options.depth),
+                "content_detail": str(options.detail),
                 "include_html_tags": bool(options.include_html_tags),
                 "selected_tags": ",".join(sorted(selected_tags)),
                 "renderer_backend": str(
@@ -844,7 +844,7 @@ class MarkdownExtractor(ExtractorBase):
 
         stats: StatsMap = {
             "engine_chain": "full_page",
-            "content_depth": "high",
+            "content_detail": "full",
             "include_secondary_content": True,
             "markdown_chars": len(markdown),
             "text_chars": len(text_value),
@@ -908,9 +908,7 @@ class MarkdownExtractor(ExtractorBase):
     def _attach_abstract_markdown(self, doc: ExtractedDocument) -> ExtractedDocument:
         return doc.model_copy(
             update={
-                "md_for_abstract": markdown_to_abstract_text(
-                    str(doc.markdown or "")
-                )
+                "md_for_abstract": markdown_to_abstract_text(str(doc.markdown or ""))
             }
         )
 

@@ -60,7 +60,11 @@ class SearchFetchStep(StepBase[SearchStepContext]):
 
         work = ctx.results[:m]
         query = ctx.request.query
-        top_k = int(preset.top_abstracts_per_page)
+        top_abstracts_per_page = max(1, int(preset.top_abstracts_per_page))
+        max_abstract_chars = max(
+            1, int(self.settings.fetch.abstract.max_abstract_chars)
+        )
+        abstract_chars_budget = top_abstracts_per_page * max_abstract_chars
         step_deadline_ts = time.monotonic() + max(0.1, float(preset.step_timeout_s))
         page_timeout_s = float(preset.page_timeout_s)
         max_parallel = min(
@@ -109,9 +113,9 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                             content=True,
                             abstracts=FetchAbstractsRequest(
                                 query=query,
-                                top_k_abstracts=top_k,
+                                max_chars=abstract_chars_budget,
                             ),
-                            overview=None,
+                            overview=False,
                         ),
                         url=r.url,
                         url_index=0,

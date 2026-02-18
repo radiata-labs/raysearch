@@ -29,11 +29,9 @@ async def main(
     req = FetchRequest(
         urls=[url],
         crawl_mode="fallback",
-        content=FetchContentRequest(depth="high"),
-        abstracts=FetchAbstractsRequest(query=query, top_k_abstracts=10)
-        if query
-        else None,
-        overview=FetchOverviewRequest(query="What is DeepSeek-V3.2-Speciale?") if overview and query else None,
+        content=FetchContentRequest(detail="full"),
+        abstracts=FetchAbstractsRequest(query=query) if query else False,
+        overview=FetchOverviewRequest(query=query) if overview else False,
         subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
         others=FetchOthersRequest(max_links=100, max_image_links=50),
     )
@@ -48,6 +46,6 @@ if __name__ == "__main__":
         main,
         "https://api-docs.deepseek.com/zh-cn/news/news251201",
         "What is DeepSeek V3.2?",
-        True,
+        False,
     )
     print(out["fetch_result"])

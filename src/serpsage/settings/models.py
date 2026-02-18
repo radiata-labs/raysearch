@@ -95,7 +95,6 @@ class OverviewProfileBase(Model):
 
     use_model: str = "gpt-4.1-mini"
     max_abstract_chars: int = 900
-    max_output_tokens: int = 600
     cache_ttl_s: int = 0
     self_heal_retries: int = 1
     force_language: Literal["auto", "zh", "en"] = "auto"
@@ -111,9 +110,6 @@ class SearchOverviewSettings(OverviewProfileBase):
 
 class FetchOverviewSettings(OverviewProfileBase):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    enabled: bool = False
-    max_abstracts: int = 6
 
 
 class SearchSettings(Model):
@@ -182,14 +178,9 @@ class FetchExtractSettings(Model):
 class FetchAbstractSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    max_abstracts: int = 42
+    max_abstract_chars: int = 2000
     min_abstract_score: float = 0.20
-    min_query_token_hits: int = 1
-    default_top_k_abstracts: int = 3
-    max_markdown_chars: int = 140_000
-    max_segments: int = 420
     min_abstract_chars: int = 8
-    query_prefilter_window: int = 320
     title_boost_alpha: float = 0.35
 
 
