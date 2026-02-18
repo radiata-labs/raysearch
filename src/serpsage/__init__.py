@@ -21,8 +21,8 @@ from serpsage.app.request import (
     FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
+    FetchRequestBase,
     FetchSubpagesRequest,
-    SearchOverviewRequest,
     SearchRequest,
 )
 from serpsage.app.response import FetchResponse, FetchSubpagesResult, SearchResponse
@@ -51,7 +51,7 @@ __all__ = [
     "FetchSubpagesRequest",
     "FetchResponse",
     "FetchSubpagesResult",
-    "SearchOverviewRequest",
+    "FetchRequestBase",
     "SearchRequest",
     "SearchResponse",
     "load_settings",

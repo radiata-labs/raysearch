@@ -46,3 +46,12 @@ def test_fetch_queries_normalize_empty_to_none() -> None:
 
 def test_fetch_content_detail_default_is_concise() -> None:
     assert FetchContentRequest().detail == "concise"
+
+
+def test_fetch_request_accepts_others_none() -> None:
+    req = FetchRequest(
+        urls=["https://example.com"],
+        content=True,
+        others=None,
+    )
+    assert req.others is None

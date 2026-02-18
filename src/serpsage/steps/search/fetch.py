@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-import math
-import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
 
-from serpsage.app.request import FetchAbstractsRequest, FetchRequest
-from serpsage.app.response import PageAbstract, PageEnrichment
+from serpsage.app.request import (
+    FetchAbstractsRequest,
+    FetchOverviewRequest,
+    FetchRequest,
+)
 from serpsage.models.pipeline import (
     FetchStepContext,
     FetchStepOthers,
+    SearchFetchedCandidate,
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
-    from serpsage.app.response import ResultItem
     from serpsage.core.runtime import Runtime
     from serpsage.steps.base import RunnerBase
     from serpsage.telemetry.base import SpanBase
@@ -40,142 +41,120 @@ class SearchFetchStep(StepBase[SearchStepContext]):
     async def run_inner(
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
-        depth = ctx.request.depth
-        span.set_attr("depth", str(depth))
-        if depth == "simple":
-            return ctx
-        if not ctx.results:
-            return ctx
-
-        preset = self.settings.search.depth_profiles.get(depth)  # type: ignore[index]
-        if preset is None:
+        urls = list(ctx.candidate_urls or [])
+        if not urls:
+            ctx.fetched_candidates = []
+            ctx.results = []
+            span.set_attr("fetch_candidates", 0)
             return ctx
 
-        n = len(ctx.results)
-        target = int(math.ceil(n * float(preset.pages_ratio)))
-        m = max(int(preset.min_pages), min(int(preset.max_pages), target))
-        m = min(m, n)
-        if m <= 0:
-            return ctx
-
-        work = ctx.results[:m]
-        query = ctx.request.query
-        top_abstracts_per_page = max(1, int(preset.top_abstracts_per_page))
-        max_abstract_chars = max(
-            1, int(self.settings.fetch.abstract.max_abstract_chars)
-        )
-        abstract_chars_budget = top_abstracts_per_page * max_abstract_chars
-        step_deadline_ts = time.monotonic() + max(0.1, float(preset.step_timeout_s))
-        page_timeout_s = float(preset.page_timeout_s)
         max_parallel = min(
             max(1, int(self.settings.fetch.concurrency.global_limit)),
-            max(1, m),
+            max(1, len(urls)),
         )
         sem = anyio.Semaphore(max_parallel)
-        timeout_count = 0
-        completed_count = 0
-        rendered_count = 0
+        out: list[FetchStepContext | None] = [None] * len(urls)
 
-        async def enrich_one(r: ResultItem) -> None:
-            nonlocal timeout_count, completed_count, rendered_count
-            now = time.monotonic()
-            if now >= step_deadline_ts:
-                r.page = PageEnrichment(
-                    abstracts=[],
-                    markdown="",
-                    timing_ms={"total_ms": 0},
-                    warnings=["step deadline exceeded"],
-                    error="deadline exceeded",
-                )
-                timeout_count += 1
-                return
+        async def run_one(index: int, url: str) -> None:
             async with sem:
-                remaining_s = max(0.0, float(step_deadline_ts - time.monotonic()))
-                timeout_s = min(float(page_timeout_s), remaining_s)
-                if timeout_s <= 0:
-                    r.page = PageEnrichment(
-                        abstracts=[],
-                        markdown="",
-                        timing_ms={"total_ms": 0},
-                        warnings=["step deadline exceeded"],
-                        error="deadline exceeded",
-                    )
-                    timeout_count += 1
-                    return
-
+                req = self._build_fetch_request(ctx=ctx, url=url)
                 fetch_ctx = await self._fetch_runner.run(
                     FetchStepContext(
-                        settings=self.settings,
-                        request=FetchRequest(
-                            urls=[r.url],
-                            crawl_mode="fallback",
-                            crawl_timeout=timeout_s,
-                            content=True,
-                            abstracts=FetchAbstractsRequest(
-                                query=query,
-                                max_chars=abstract_chars_budget,
-                            ),
-                            overview=False,
-                        ),
-                        url=r.url,
-                        url_index=0,
+                        settings=ctx.settings,
+                        request=req,
+                        request_id=ctx.request_id,
+                        url=url,
+                        url_index=index,
                         others=FetchStepOthers(
-                            crawl_mode="fallback",
-                            crawl_timeout_s=timeout_s,
-                            max_links=None,
-                            max_image_links=None,
+                            crawl_mode=req.crawl_mode,
+                            crawl_timeout_s=float(req.crawl_timeout or 0.0),
+                            max_links=(
+                                req.others.max_links
+                                if req.others is not None
+                                else None
+                            ),
+                            max_image_links=(
+                                req.others.max_image_links
+                                if req.others is not None
+                                else None
+                            ),
                         ),
                     )
                 )
-                if fetch_ctx.result is not None:
-                    abstracts = [
-                        PageAbstract(text=text, score=float(score))
-                        for text, score in zip(
-                            fetch_ctx.result.abstracts,
-                            fetch_ctx.result.abstract_scores,
-                            strict=False,
-                        )
-                    ]
-                    r.page = PageEnrichment(
-                        abstracts=abstracts,
-                        markdown=fetch_ctx.result.content,
-                    )
-                    if fetch_ctx.errors:
-                        r.page.error = str(fetch_ctx.errors[0].message)
-                else:
-                    err_msg = (
-                        str(fetch_ctx.errors[0].message)
-                        if fetch_ctx.errors
-                        else "fetch failed"
-                    )
-                    r.page = PageEnrichment(
-                        abstracts=[],
-                        markdown="",
-                        timing_ms={"total_ms": 0},
-                        warnings=["fetch failed"],
-                        error=err_msg,
-                    )
-                completed_count += 1
-                if (
-                    fetch_ctx.fetch_result and fetch_ctx.fetch_result.fetch_mode
-                ) == "playwright":
-                    rendered_count += 1
-                if (r.page.error or "") in {"timeout", "deadline exceeded"}:
-                    timeout_count += 1
+                out[index] = fetch_ctx
 
         async with anyio.create_task_group() as tg:
-            for r in work:
-                tg.start_soon(enrich_one, r)
+            for index, url in enumerate(urls):
+                tg.start_soon(run_one, index, url)
 
-        span.set_attr("items_considered", int(m))
-        span.set_attr("pages_enriched", int(m))
-        span.set_attr("pages_completed", int(completed_count))
-        span.set_attr("step_budget_s", float(preset.step_timeout_s))
-        span.set_attr("page_timeout_s", float(page_timeout_s))
-        span.set_attr("pages_timeout", int(timeout_count))
-        span.set_attr("pages_rendered", int(rendered_count))
-        span.set_attr("deadline_hit", bool(time.monotonic() >= step_deadline_ts))
+        fetched_candidates: list[SearchFetchedCandidate] = []
+        for item in out:
+            if item is None:
+                continue
+            ctx.errors.extend(item.errors)
+            if item.result is None or item.fatal:
+                continue
+            main_md_for_abstract = (
+                str(item.extracted.md_for_abstract or "")
+                if item.extracted is not None
+                else ""
+            )
+            fetched_candidates.append(
+                SearchFetchedCandidate(
+                    result=item.result,
+                    main_md_for_abstract=main_md_for_abstract,
+                    subpages_md_for_abstract=list(item.subpages_md_for_abstract or []),
+                )
+            )
+
+        ctx.fetched_candidates = fetched_candidates
+        ctx.results = [candidate.result for candidate in fetched_candidates]
+        span.set_attr("fetch_candidates", int(len(urls)))
+        span.set_attr("fetch_success_count", int(len(fetched_candidates)))
+        span.set_attr(
+            "fetch_failure_count",
+            int(len(urls) - len(fetched_candidates)),
+        )
         return ctx
+
+    def _build_fetch_request(self, *, ctx: SearchStepContext, url: str) -> FetchRequest:
+        template = ctx.request.fetchs
+        search_query = ctx.request.query
+
+        abstracts = template.abstracts
+        if isinstance(abstracts, bool):
+            if abstracts:
+                abstracts_out: bool | FetchAbstractsRequest = FetchAbstractsRequest(
+                    query=search_query
+                )
+            else:
+                abstracts_out = False
+        else:
+            abstracts_query = abstracts.query or search_query
+            abstracts_out = abstracts.model_copy(update={"query": abstracts_query})
+
+        overview = template.overview
+        if isinstance(overview, bool):
+            if overview:
+                overview_out: bool | FetchOverviewRequest = FetchOverviewRequest(
+                    query=search_query
+                )
+            else:
+                overview_out = False
+        else:
+            overview_query = overview.query or search_query
+            overview_out = overview.model_copy(update={"query": overview_query})
+
+        return FetchRequest(
+            urls=[url],
+            crawl_mode=template.crawl_mode,
+            crawl_timeout=template.crawl_timeout,
+            content=template.content,
+            abstracts=abstracts_out,
+            subpages=template.subpages,
+            overview=overview_out,
+            others=template.others,
+        )
 
 
 __all__ = ["SearchFetchStep"]

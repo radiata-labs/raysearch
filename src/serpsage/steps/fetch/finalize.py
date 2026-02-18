@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.response import FetchOthersResult, FetchResultItem
+from serpsage.app.response import FetchResultItem
 from serpsage.components.extract.markdown.postprocess import finalize_markdown
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
@@ -53,11 +53,12 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         abstract_scores = [
             float(item.score) for item in list(ctx.scored_abstracts or [])
         ]
+        others_result = {}
         if not ctx.enable_others_and_subpages:
-            others_result = FetchOthersResult()
             subpages_result = []
         else:
-            others_result = ctx.others_result
+            if ctx.request.others is not None:
+                others_result = {"others": ctx.others_result}
             subpages_result = list(ctx.subpages_result)
 
         ctx.result = FetchResultItem(
@@ -66,15 +67,23 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             content=content,
             abstracts=abstracts,
             abstract_scores=abstract_scores,
-            overview=ctx.overview_output,
+            overview="" if ctx.overview_output is None else ctx.overview_output,
             subpages=subpages_result,
-            others=others_result,
+            **others_result,
         )
 
         span.set_attr("has_result", True)
         span.set_attr("abstracts_count", int(len(abstracts)))
-        span.set_attr("links_count", int(len(others_result.links)))
-        span.set_attr("image_links_count", int(len(others_result.image_links)))
+        span.set_attr(
+            "links_count",
+            int(len(others_result["others"].links)) if others_result is not None else 0,
+        )
+        span.set_attr(
+            "image_links_count",
+            int(len(others_result["others"].image_links))
+            if others_result is not None
+            else 0,
+        )
         span.set_attr("subpages_count", int(len(subpages_result)))
         span.set_attr("has_overview", bool(ctx.overview_output is not None))
         span.set_attr("has_content_output", bool(ctx.return_content))

@@ -51,7 +51,11 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             return ctx
 
         collect_links = bool(
-            ctx.enable_others_and_subpages and ctx.others.max_links is not None
+            ctx.enable_others_and_subpages
+            and (
+                ctx.others.max_links is not None
+                or ctx.others.max_links_for_subpages is not None
+            )
         )
         collect_images = bool(
             ctx.enable_others_and_subpages and ctx.others.max_image_links is not None

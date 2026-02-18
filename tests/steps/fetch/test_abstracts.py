@@ -50,7 +50,7 @@ def test_extract_abstracts_does_not_emit_v3_dot_fragments() -> None:
 
     out = step._extract_abstracts(
         markdown=markdown,
-        min_abstract_chars=1,
+        min_abstract_tokens=1,
     )
     texts = [item.text for item in out]
 
@@ -59,3 +59,37 @@ def test_extract_abstracts_does_not_emit_v3_dot_fragments() -> None:
     assert any(
         "DeepSeek-V3.2 and DeepSeek-V3.2-Speciale." in item for item in texts
     )
+
+
+def test_extract_abstracts_dedupes_repeated_text() -> None:
+    step = _build_step()
+    markdown = (
+        "Alpha is good.\n"
+        "Alpha is good.\n"
+        "- Alpha is good.\n"
+        "ALPHA IS GOOD.\n"
+    )
+
+    out = step._extract_abstracts(
+        markdown=markdown,
+        min_abstract_tokens=1,
+    )
+    texts = [item.text for item in out]
+
+    assert texts == ["Alpha is good."]
+
+
+def test_extract_abstracts_applies_min_token_threshold() -> None:
+    step = _build_step()
+    markdown = (
+        "one two three four.\n"
+        "one two three four five.\n"
+    )
+
+    out = step._extract_abstracts(
+        markdown=markdown,
+        min_abstract_tokens=4,
+    )
+    texts = [item.text for item in out]
+
+    assert texts == ["one two three four five."]

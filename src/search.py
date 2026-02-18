@@ -6,14 +6,22 @@ from typing import Any, Literal
 import anyio
 from dotenv import load_dotenv
 
-from serpsage import Engine, SearchRequest, load_settings
+from serpsage import (
+    Engine,
+    FetchAbstractsRequest,
+    FetchOthersRequest,
+    FetchRequestBase,
+    FetchSubpagesRequest,
+    SearchRequest,
+    load_settings,
+)
 
 load_dotenv()
 
 
 async def main(
     query: str,
-    depth: Literal["simple", "low", "medium", "high"] = "low",
+    depth: Literal["auto", "deep"] = "deep",
     max_results: int = 5,
 ) -> dict[str, Any]:
     settings = load_settings("src/search_config_example.yaml")
@@ -21,14 +29,20 @@ async def main(
         query=query,
         depth=depth,
         max_results=max_results,
-        # overview=False,
+        fetchs=FetchRequestBase(
+            abstracts=FetchAbstractsRequest(max_chars=400),
+            subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords=query),
+            others=FetchOthersRequest(max_links=5, max_image_links=5),
+        ),
     )
 
     async with Engine.from_settings(settings) as engine:
         resp = await engine.search(req)
 
     return {
-        "search_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2),
+        "search_result": json.dumps(
+            resp.model_dump(exclude={"telemetry"}), ensure_ascii=False, indent=2
+        ),
     }
 
 
@@ -36,7 +50,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "花谱寓話专辑有哪些歌", "high", 5)
+    out = anyio.run(main, "What is DeepSeek V3.2?", "auto", 5)
     t2 = time.time()
 
     print(out["search_result"])

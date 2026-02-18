@@ -50,10 +50,8 @@ class Engine(WorkUnit):
             ctx = await self._search_runner.run(ctx)
 
             return SearchResponse(
-                query=ctx.request.query,
-                depth=ctx.request.depth,
+                search_depth=ctx.request.depth,
                 results=ctx.results,
-                overview=ctx.overview,
                 errors=ctx.errors,
                 telemetry=self.telemetry.summary(),
             )
@@ -71,8 +69,14 @@ class Engine(WorkUnit):
                     others=FetchStepOthers(
                         crawl_mode=req.crawl_mode,
                         crawl_timeout_s=float(req.crawl_timeout or 0.0),
-                        max_links=req.others.max_links,
-                        max_image_links=req.others.max_image_links,
+                        max_links=(
+                            req.others.max_links if req.others is not None else None
+                        ),
+                        max_image_links=(
+                            req.others.max_image_links
+                            if req.others is not None
+                            else None
+                        ),
                     ),
                 )
                 for idx, url in enumerate(req.urls)

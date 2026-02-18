@@ -30,14 +30,8 @@ from serpsage.steps.fetch import (
     FetchSubpageStep,
 )
 from serpsage.steps.search import (
-    DedupeStep,
-    FilterStep,
-    NormalizeStep,
-    RankStep,
-    RerankStep,
     SearchFetchStep,
     SearchFinalizeStep,
-    SearchOverviewStep,
     SearchPrepareStep,
     SearchStep,
 )
@@ -120,15 +114,9 @@ def build_engine(
     fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps)
     search_steps: list[StepBase[SearchStepContext]] = [
         SearchPrepareStep(rt=rt),
-        SearchStep(rt=rt, provider=provider, cache=cache),
-        NormalizeStep(rt=rt),
-        FilterStep(rt=rt),
-        DedupeStep(rt=rt),
-        RankStep(rt=rt, ranker=ranker),
+        SearchStep(rt=rt, provider=provider, ranker=ranker),
         SearchFetchStep(rt=rt, fetch_runner=fetch_runner),
-        RerankStep(rt=rt),
-        SearchFinalizeStep(rt=rt),
-        SearchOverviewStep(rt=rt, llm=llm, cache=cache),
+        SearchFinalizeStep(rt=rt, ranker=ranker),
     ]
     search_runner = RunnerBase[SearchStepContext](rt=rt, steps=search_steps)
 

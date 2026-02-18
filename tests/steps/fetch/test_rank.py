@@ -44,8 +44,16 @@ def _build_ctx(*, settings: AppSettings, request: FetchRequest) -> FetchStepCont
         url_index=0,
         others=FetchStepOthers(),
         prepared_abstracts=[
-            PreparedAbstract(text="alpha", heading="h1", position=0),
-            PreparedAbstract(text="beta", heading="h2", position=1),
+            PreparedAbstract(
+                text="alpha beta gamma delta epsilon zeta eta theta iota",
+                heading="h1",
+                position=0,
+            ),
+            PreparedAbstract(
+                text="lambda mu nu xi omicron pi rho sigma tau upsilon",
+                heading="h2",
+                position=1,
+            ),
         ],
         extracted=ExtractedDocument(title="DeepSeek V3.2"),
     )
@@ -95,3 +103,30 @@ def test_rank_falls_back_to_url_when_query_and_title_missing() -> None:
 
     assert len(out.scored_abstracts) == 2
     assert "https://example.com/path" in ranker.queries
+
+
+def test_rank_filters_abstracts_shorter_than_query_token_multiple() -> None:
+    settings = AppSettings()
+    rt = build_runtime(settings=settings)
+    ranker = _DummyRanker(rt=rt)
+    step = FetchAbstractRankStep(rt=rt, ranker=ranker)
+    ctx = _build_ctx(
+        settings=settings,
+        request=FetchRequest(
+            urls=["https://example.com/path"],
+            abstracts=FetchAbstractsRequest(query="one two three four five"),
+        ),
+    )
+    ctx.prepared_abstracts = [
+        PreparedAbstract(
+            text="one two three four five six seven eight nine ten",
+            heading="h1",
+            position=0,
+        )
+    ]
+    ctx.overview_request = None
+
+    out = anyio.run(step.run, ctx)
+
+    # query has 5 tokens, so candidate must be > 10 tokens to pass.
+    assert out.scored_abstracts == []

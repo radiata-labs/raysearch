@@ -30,15 +30,18 @@ async def main(
         urls=[url],
         crawl_mode="fallback",
         content=FetchContentRequest(detail="full"),
-        abstracts=FetchAbstractsRequest(query=query) if query else False,
+        abstracts=FetchAbstractsRequest(query=query, max_chars=300) if query else False,
         overview=FetchOverviewRequest(query=query) if overview else False,
         subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
-        others=FetchOthersRequest(max_links=100, max_image_links=50),
+        others=FetchOthersRequest(max_links=5, max_image_links=5),
     )
     async with Engine.from_settings(settings) as engine:
         resp = await engine.fetch(req)
-    # joined_content = "\n\n".join(item.content for item in resp.results if item.content)
-    return {"fetch_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2)}
+    return {
+        "fetch_result": json.dumps(
+            resp.model_dump(exclude={"telemetry"}), ensure_ascii=False, indent=2
+        )
+    }
 
 
 if __name__ == "__main__":

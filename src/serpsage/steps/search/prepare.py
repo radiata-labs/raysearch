@@ -5,7 +5,7 @@ from typing_extensions import override
 
 from serpsage.models.pipeline import SearchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.utils import clean_whitespace
+from serpsage.utils.normalize import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -23,7 +23,7 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
         query = clean_whitespace(ctx.request.query or "")
-        depth = ctx.request.depth or "simple"
+        depth = ctx.request.depth or "auto"
         max_results = (
             int(ctx.request.max_results)
             if ctx.request.max_results is not None

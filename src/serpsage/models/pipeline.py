@@ -14,7 +14,6 @@ from serpsage.app.response import (
     FetchOthersResult,
     FetchResultItem,
     FetchSubpagesResult,
-    ResultItem,
 )
 from serpsage.core.model_base import MutableModel
 from serpsage.models.errors import AppError
@@ -34,10 +33,10 @@ class BaseStepContext(MutableModel):
 class SearchStepContext(BaseStepContext):
     settings: AppSettings
     request: SearchRequest
-    raw_results: list[dict[str, object]] = Field(default_factory=list)
-    results: list[ResultItem] = Field(default_factory=list)
-    query_tokens: list[str] | None = None
-    overview: str | object | None = None
+    candidate_urls: list[str] = Field(default_factory=list)
+    candidate_scores: dict[str, float] = Field(default_factory=dict)
+    fetched_candidates: list[SearchFetchedCandidate] = Field(default_factory=list)
+    results: list[FetchResultItem] = Field(default_factory=list)
     errors: list[AppError] = Field(default_factory=list)
 
 
@@ -59,6 +58,12 @@ class PreparedAbstract(MutableModel):
     text: str
     heading: str = ""
     position: int = 0
+
+
+class SearchFetchedCandidate(MutableModel):
+    result: FetchResultItem
+    main_md_for_abstract: str = ""
+    subpages_md_for_abstract: list[str] = Field(default_factory=list)
 
 
 class FetchSubpages(MutableModel):
@@ -91,6 +96,7 @@ class FetchStepContext(BaseStepContext):
     others_result: FetchOthersResult = Field(default_factory=FetchOthersResult)
     subpages: FetchSubpages = Field(default_factory=FetchSubpages)
     subpages_result: list[FetchSubpagesResult] = Field(default_factory=list)
+    subpages_md_for_abstract: list[str] = Field(default_factory=list)
     result: FetchResultItem | None = None
     fatal: bool = False
     overview_output: str | object | None = None
@@ -103,5 +109,6 @@ __all__ = [
     "FetchStepOthers",
     "PreparedAbstract",
     "ScoredAbstract",
+    "SearchFetchedCandidate",
     "SearchStepContext",
 ]

@@ -16,43 +16,10 @@ http:
 
 search:
   max_results: 16
-  min_score: 0.3
-  fuzzy_threshold: 0.88
-  include_raw: false
-  depth_profiles:
-    low:
-      pages_ratio: 0.25
-      min_pages: 1
-      max_pages: 3
-      top_abstracts_per_page: 2
-      step_timeout_s: 1.2
-      page_timeout_s: 0.9
-    medium:
-      pages_ratio: 0.50
-      min_pages: 2
-      max_pages: 6
-      top_abstracts_per_page: 3
-      step_timeout_s: 2.0
-      page_timeout_s: 1.6
-    high:
-      pages_ratio: 0.75
-      min_pages: 3
-      max_pages: 10
-      top_abstracts_per_page: 5
-      step_timeout_s: 4.0
-      page_timeout_s: 2.5
-  overview:
-    enabled: true
-    use_model: gpt-4.1-mini
-    max_sources: 8
-    max_abstracts_per_source: 2
-    max_abstract_chars: 900
-    cache_ttl_s: 0
-    self_heal_retries: 1
-    force_language: auto
+  additional_query_score_weight: 0.8
 
 fetch:
-  backend: playwright # auto|curl_cffi|playwright
+  backend: auto # auto|curl_cffi|playwright
   timeout_s: 20
   follow_redirects: true
   user_agent: serpsage-bot/4.0
@@ -88,7 +55,7 @@ fetch:
   abstract:
     max_abstract_chars: 2000
     min_abstract_score: 0.2
-    min_abstract_chars: 8
+    min_abstract_tokens: 4
     title_boost_alpha: 0.35
   overview:
     use_model: gpt-4.1-mini
@@ -140,7 +107,6 @@ llm:
 cache:
   enabled: false
   backend: sqlite # sqlite|memory|redis|mysql|sqlalchemy
-  search_ttl_s: 600
   fetch_ttl_s: 86400
   sqlite:
     db_path: serpsage_cache.sqlite3

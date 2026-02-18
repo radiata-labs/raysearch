@@ -2,7 +2,7 @@
 
 SerpSage is an async-only SERP + page intelligence engine with two first-class paths:
 
-- `Engine.search(req)`: query search pipeline (`search -> normalize -> filter -> dedupe -> rank -> fetch-enhance -> rerank -> optional overview`)
+- `Engine.search(req)`: query search pipeline (`prepare -> search(prefetch) -> fetch -> finalize`)
 - `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional abstract rank -> optional overview -> optional subpages -> finalize`)
 
 The `fetch` path is Markdown-first: output is centered on clean main-content markdown (`response.results[].content`).
@@ -64,7 +64,12 @@ settings = load_settings()
 
 async with Engine.from_settings(settings) as engine:
     search_resp = await engine.search(
-        SearchRequest(query="latest ai papers", depth="medium", max_results=8)
+        SearchRequest(
+            query="latest ai papers",
+            depth="deep",
+            max_results=8,
+            fetchs={"content": True},
+        )
     )
     fetch_resp = await engine.fetch(
         FetchRequest(
@@ -85,10 +90,10 @@ async with Engine.from_settings(settings) as engine:
 
 ## Behavior notes
 
-- `search.depth`: `simple|low|medium|high` (kept semantics)
+- `search.depth`: `auto|deep`
 - `fetch`: no depth tiers, single strategy
 - `fetch.backend`: `auto|curl_cffi|playwright` (`httpx` backend removed)
-- migration: `search.default_profile`, `search.profiles`, and `SearchRequest.profile` are removed; use `search.fuzzy_threshold`
+- migration: old search profile/overview settings are removed
 - `FetchRequest` V4 fields:
   - `urls`: list of URLs, processed concurrently with stable output order
   - `crawl_mode`: `never|fallback|preferred|always`
@@ -105,6 +110,7 @@ async with Engine.from_settings(settings) as engine:
   - `others.max_links` / `others.max_image_links`: optional link collection caps; omitted means no links output
   - if `subpages` is enabled but `others.max_links` is omitted, fetch internally collects links for subpage ranking and may hide those links in final `others.links`
   - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
-- both `search` and `fetch` support optional overview
+- `search` does not include overview generation; overview remains fetch-only
+- `search` response shape: `search_depth/results/errors/telemetry`
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering
 - `fetch.extract` uses an internal markdown renderer pipeline; no renderer backend toggle is exposed.

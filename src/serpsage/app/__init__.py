@@ -8,7 +8,6 @@ from serpsage.app.request import (
     FetchOverviewRequest,
     FetchRequest,
     FetchSubpagesRequest,
-    SearchOverviewRequest,
     SearchRequest,
 )
 from serpsage.app.response import FetchResponse, FetchSubpagesResult, SearchResponse
@@ -25,7 +24,6 @@ __all__ = [
     "FetchSubpagesRequest",
     "FetchResponse",
     "FetchSubpagesResult",
-    "SearchOverviewRequest",
     "SearchRequest",
     "SearchResponse",
 ]

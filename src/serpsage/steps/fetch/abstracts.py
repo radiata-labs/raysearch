@@ -7,7 +7,7 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract
 from serpsage.steps.base import StepBase
-from serpsage.utils import clean_whitespace
+from serpsage.utils import clean_whitespace, tokenize
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -59,7 +59,7 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
-            min_abstract_chars=int(cfg.min_abstract_chars),
+            min_abstract_tokens=int(cfg.min_abstract_tokens),
         )
         ctx.prepared_abstracts = prepared
         span.set_attr("prepared_abstracts", int(len(prepared)))
@@ -69,13 +69,14 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         self,
         *,
         markdown: str,
-        min_abstract_chars: int,
+        min_abstract_tokens: int,
     ) -> list[PreparedAbstract]:
         text = (markdown or "").strip()
         if not text:
             return []
 
         out: list[PreparedAbstract] = []
+        seen: set[str] = set()
         in_code = False
         current_heading = ""
         position = 0
@@ -100,15 +101,18 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
 
             if _TABLE_ROW_RE.match(stripped):
                 row = self._parse_table_row(stripped)
-                if row and len(row) >= max(1, int(min_abstract_chars)):
-                    out.append(
-                        PreparedAbstract(
-                            text=row,
-                            heading=current_heading,
-                            position=position,
+                if row:
+                    key = self._dedupe_key(row)
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(
+                            PreparedAbstract(
+                                text=row,
+                                heading=current_heading,
+                                position=position,
+                            )
                         )
-                    )
-                    position += 1
+                        position += 1
                 continue
 
             normalized = _LIST_PREFIX_RE.sub("", stripped)
@@ -117,8 +121,12 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                 continue
 
             for sentence in self._split_line_sentences(normalized):
-                if len(sentence) < max(1, int(min_abstract_chars)):
+                if self._token_count(sentence) <= int(min_abstract_tokens):
                     continue
+                key = self._dedupe_key(sentence)
+                if key in seen:
+                    continue
+                seen.add(key)
                 out.append(
                     PreparedAbstract(
                         text=sentence,
@@ -129,6 +137,12 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                 position += 1
 
         return out
+
+    def _dedupe_key(self, text: str) -> str:
+        return clean_whitespace(text).casefold()
+
+    def _token_count(self, text: str) -> int:
+        return len(tokenize(text))
 
     def _split_line_sentences(self, text: str) -> list[str]:
         normalized = clean_whitespace(text or "")

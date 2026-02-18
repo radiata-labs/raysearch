@@ -7,7 +7,7 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract, ScoredAbstract
 from serpsage.steps.base import StepBase
-from serpsage.utils import clean_whitespace, tokenize_for_query
+from serpsage.utils import clean_whitespace, tokenize, tokenize_for_query
 
 if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
@@ -123,6 +123,20 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         query_tokens: list[str],
         max_chars: int | None,
     ) -> list[ScoredAbstract]:
+        min_tokens = int(self.settings.fetch.abstract.min_abstract_tokens)
+        query_token_count = len(query_tokens)
+        filtered_candidates: list[PreparedAbstract] = []
+        for candidate in candidates:
+            token_count = len(tokenize(candidate.text))
+            if token_count <= min_tokens:
+                continue
+            if token_count <= (query_token_count * 2):
+                continue
+            filtered_candidates.append(candidate)
+        candidates = filtered_candidates
+        if not candidates:
+            return []
+
         base_scores = await self._ranker.score_texts(
             texts=[candidate.text for candidate in candidates],
             query=query,

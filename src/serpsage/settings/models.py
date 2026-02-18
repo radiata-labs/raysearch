@@ -9,7 +9,6 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
 
-DepthKey = Literal["low", "medium", "high"]
 ProviderBackendKey = Literal["searxng"]
 FetchBackendKey = Literal["curl_cffi", "playwright", "auto"]
 RankBackendKey = Literal["blend", "heuristic", "bm25"]
@@ -46,46 +45,6 @@ class ProviderSettings(Model):
     searxng: SearxngSettings = Field(default_factory=SearxngSettings)
 
 
-class SearchDepthProfile(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    pages_ratio: float = 0.25
-    min_pages: int = 1
-    max_pages: int = 3
-    top_abstracts_per_page: int = 2
-    step_timeout_s: float = 2.0
-    page_timeout_s: float = 1.6
-
-
-def _default_search_depth_profiles() -> dict[DepthKey, SearchDepthProfile]:
-    return {
-        "low": SearchDepthProfile(
-            pages_ratio=0.25,
-            min_pages=1,
-            max_pages=3,
-            top_abstracts_per_page=2,
-            step_timeout_s=1.2,
-            page_timeout_s=0.9,
-        ),
-        "medium": SearchDepthProfile(
-            pages_ratio=0.50,
-            min_pages=2,
-            max_pages=6,
-            top_abstracts_per_page=3,
-            step_timeout_s=2.0,
-            page_timeout_s=1.6,
-        ),
-        "high": SearchDepthProfile(
-            pages_ratio=0.75,
-            min_pages=3,
-            max_pages=10,
-            top_abstracts_per_page=5,
-            step_timeout_s=4.0,
-            page_timeout_s=2.5,
-        ),
-    }
-
-
 def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
     return {"heuristic": 1.0}
 
@@ -100,14 +59,6 @@ class OverviewProfileBase(Model):
     force_language: Literal["auto", "zh", "en"] = "auto"
 
 
-class SearchOverviewSettings(OverviewProfileBase):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    enabled: bool = True
-    max_sources: int = 8
-    max_abstracts_per_source: int = 2
-
-
 class FetchOverviewSettings(OverviewProfileBase):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
@@ -116,13 +67,15 @@ class SearchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     max_results: int = 16
-    min_score: float = 0.3
-    fuzzy_threshold: float = 0.88
-    include_raw: bool = False
-    depth_profiles: dict[DepthKey, SearchDepthProfile] = Field(
-        default_factory=_default_search_depth_profiles
-    )
-    overview: SearchOverviewSettings = Field(default_factory=SearchOverviewSettings)
+    additional_query_score_weight: float = 0.8
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> SearchSettings:
+        if int(self.max_results) <= 0:
+            raise ValueError("search.max_results must be > 0")
+        if float(self.additional_query_score_weight) <= 0:
+            raise ValueError("search.additional_query_score_weight must be > 0")
+        return self
 
 
 def _default_blocked_markers() -> list[str]:
@@ -180,7 +133,7 @@ class FetchAbstractSettings(Model):
 
     max_abstract_chars: int = 2000
     min_abstract_score: float = 0.20
-    min_abstract_chars: int = 8
+    min_abstract_tokens: int = 4
     title_boost_alpha: float = 0.35
 
 
@@ -262,7 +215,6 @@ class CacheSQLAlchemySettings(Model):
 class CacheSettings(Model):
     enabled: bool = False
     backend: CacheBackendKey = "sqlite"
-    search_ttl_s: int = 600
     fetch_ttl_s: int = 86_400
     sqlite: CacheSqliteSettings = Field(default_factory=CacheSqliteSettings)
     redis: CacheRedisSettings = Field(default_factory=CacheRedisSettings)
@@ -339,10 +291,6 @@ class AppSettings(Model):
     @model_validator(mode="after")
     def _validate_model_links(self) -> AppSettings:
         names = {m.name for m in self.llm.models}
-        if self.search.overview.use_model not in names:
-            raise ValueError(
-                "search.overview.use_model must match one of llm.models[].name"
-            )
         if self.fetch.overview.use_model not in names:
             raise ValueError(
                 "fetch.overview.use_model must match one of llm.models[].name"
@@ -356,7 +304,6 @@ __all__ = [
     "CacheRedisSettings",
     "CacheSQLAlchemySettings",
     "CacheSettings",
-    "DepthKey",
     "FetchBackendKey",
     "FetchAbstractSettings",
     "FetchConcurrencySettings",
@@ -371,8 +318,6 @@ __all__ = [
     "OverviewModelBackendKey",
     "OverviewModelSettings",
     "ProviderSettings",
-    "SearchDepthProfile",
-    "SearchOverviewSettings",
     "SearchSettings",
     "RankBlendSettings",
     "RankSettings",
