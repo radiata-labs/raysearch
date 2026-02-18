@@ -87,6 +87,7 @@ class FetchStepContext(BaseStepContext):
     extracted: ExtractedDocument | None = None
     prepared_abstracts: list[PreparedAbstract] = Field(default_factory=list)
     scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
+    overview_scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
     others_result: FetchOthersResult = Field(default_factory=FetchOthersResult)
     subpages: FetchSubpages = Field(default_factory=FetchSubpages)
     subpages_result: list[FetchSubpagesResult] = Field(default_factory=list)

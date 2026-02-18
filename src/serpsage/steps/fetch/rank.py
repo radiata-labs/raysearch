@@ -7,6 +7,7 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract, ScoredAbstract
 from serpsage.steps.base import StepBase
+from serpsage.utils import tokenize_for_query
 
 if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
@@ -49,17 +50,69 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 )
             )
             return ctx
+        top_k = int(
+            req.top_k_abstracts
+            if req.top_k_abstracts is not None
+            else self.settings.fetch.abstract.default_top_k_abstracts
+        )
+        scored_abstracts = await self._score_abstracts(
+            query=req.query,
+            candidates=candidates,
+            query_tokens=ctx.abstract_query_tokens,
+            top_k_abstracts=top_k,
+            max_chars=ctx.content_request.max_chars,
+        )
+        if not scored_abstracts:
+            ctx.errors.append(
+                AppError(
+                    code="fetch_abstract_rank_failed",
+                    message="no matching abstracts",
+                    details={
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "stage": "rank",
+                        "fatal": False,
+                        "crawl_mode": ctx.others.crawl_mode,
+                    },
+                )
+            )
+            return ctx
+        ctx.scored_abstracts = scored_abstracts
+        if ctx.overview_request is not None:
+            if ctx.overview_request.query == req.query:
+                ctx.overview_scored_abstracts = ctx.scored_abstracts
+            else:
+                overview_query_tokens = tokenize_for_query(ctx.overview_request.query)
+                ctx.overview_scored_abstracts = await self._score_abstracts(
+                    query=ctx.overview_request.query,
+                    candidates=candidates,
+                    query_tokens=overview_query_tokens,
+                    top_k_abstracts=self.settings.fetch.overview.max_abstracts,
+                    max_chars=200_000,
+                )
 
-        query = req.query
+        span.set_attr("top_k_abstracts", int(top_k))
+        span.set_attr("abstracts_kept", int(len(ctx.scored_abstracts)))
+        return ctx
+
+    async def _score_abstracts(
+        self,
+        *,
+        query: str,
+        candidates: list[PreparedAbstract],
+        query_tokens: list[str] | None,
+        top_k_abstracts: int,
+        max_chars: int | None,
+    ) -> list[ScoredAbstract]:
         base_scores = await self._ranker.score_texts(
             texts=[candidate.text for candidate in candidates],
             query=query,
-            query_tokens=list(ctx.abstract_query_tokens or []),
+            query_tokens=list(query_tokens or []),
         )
         heading_scores = await self._score_headings(
             query=query,
             candidates=candidates,
-            query_tokens=list(ctx.abstract_query_tokens or []),
+            query_tokens=list(query_tokens or []),
         )
 
         cfg = self.settings.fetch.abstract
@@ -80,33 +133,16 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             scored.append((final_score, candidate))
 
         if not scored:
-            ctx.errors.append(
-                AppError(
-                    code="fetch_abstract_rank_failed",
-                    message="no matching abstracts",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "rank",
-                        "fatal": False,
-                        "crawl_mode": ctx.others.crawl_mode,
-                    },
-                )
-            )
-            return ctx
+            return []
 
         scored.sort(key=lambda item: (-item[0], int(item[1].position)))
-        top_k = int(
-            req.top_k_abstracts
-            if req.top_k_abstracts is not None
-            else cfg.default_top_k_abstracts
-        )
+
         kept = _fit_budget(
             ranked=scored,
-            top_k_abstracts=top_k,
-            max_chars=req.max_chars,
+            top_k_abstracts=top_k_abstracts,
+            max_chars=max_chars,
         )
-        ctx.scored_abstracts = [
+        return [
             ScoredAbstract(
                 abstract_id=f"S1:A{i + 1}",
                 text=item.text,
@@ -114,10 +150,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             )
             for i, (score, item) in enumerate(kept)
         ]
-
-        span.set_attr("top_k_abstracts", int(top_k))
-        span.set_attr("abstracts_kept", int(len(ctx.scored_abstracts)))
-        return ctx
 
     async def _score_headings(
         self,

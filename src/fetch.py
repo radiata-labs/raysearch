@@ -33,7 +33,7 @@ async def main(
         abstracts=FetchAbstractsRequest(query=query, top_k_abstracts=10)
         if query
         else None,
-        overview=FetchOverviewRequest(query=query) if overview and query else None,
+        overview=FetchOverviewRequest(query="What is DeepSeek-V3.2-Speciale?") if overview and query else None,
         subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
         others=FetchOthersRequest(max_links=100, max_image_links=50),
     )

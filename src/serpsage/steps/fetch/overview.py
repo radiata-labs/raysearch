@@ -182,7 +182,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
 
     def _build_source_items(self, ctx: FetchStepContext) -> list[str]:
         abstracts = [
-            item.text for item in list(ctx.scored_abstracts or []) if item.text
+            item.text for item in list(ctx.overview_scored_abstracts or []) if item.text
         ]
         if abstracts:
             return abstracts
