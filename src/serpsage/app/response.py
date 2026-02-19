@@ -50,6 +50,7 @@ class FetchResultItem(FetchSubpagesResult):
 class FetchResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
+    request_id: str
     results: list[FetchResultItem] = Field(default_factory=list)
     errors: list[AppError] = Field(default_factory=list)
     telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
@@ -58,6 +59,7 @@ class FetchResponse(BaseModel):
 class SearchResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
+    request_id: str
     search_depth: str
     results: list[FetchResultItem] = Field(default_factory=list)
     errors: list[AppError] = Field(default_factory=list)

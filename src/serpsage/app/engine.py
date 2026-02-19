@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 import anyio
@@ -44,12 +45,17 @@ class Engine(WorkUnit):
         return build_engine(settings=settings, overrides=overrides)
 
     async def search(self, req: SearchRequest) -> SearchResponse:
-        await self.ainit()
         with self.span("engine.search"):
-            ctx = SearchStepContext(settings=self.settings, request=req)
+            request_id = uuid.uuid4().hex
+            ctx = SearchStepContext(
+                settings=self.settings,
+                request=req,
+                request_id=request_id,
+            )
             ctx = await self._search_runner.run(ctx)
 
             return SearchResponse(
+                request_id=request_id,
                 search_depth=ctx.request.depth,
                 results=ctx.output.results,
                 errors=ctx.errors,
@@ -57,12 +63,13 @@ class Engine(WorkUnit):
             )
 
     async def fetch(self, req: FetchRequest) -> FetchResponse:
-        await self.ainit()
         with self.span("engine.fetch"):
+            request_id = uuid.uuid4().hex
             contexts: list[FetchStepContext] = [
                 FetchStepContext(
                     settings=self.settings,
                     request=req,
+                    request_id=request_id,
                     url=url,
                     url_index=idx,
                     enable_others_and_subpages=True,
@@ -103,6 +110,7 @@ class Engine(WorkUnit):
             ]
             errors = [err for ctx in contexts for err in ctx.errors]
             return FetchResponse(
+                request_id=request_id,
                 results=results,
                 errors=errors,
                 telemetry=self.telemetry.summary(),
