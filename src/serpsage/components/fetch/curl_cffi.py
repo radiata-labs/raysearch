@@ -47,7 +47,7 @@ class CurlCffiFetcher(FetcherBase):
             self._session = CurlSessionFactory()
 
     @override
-    async def afetch(
+    async def _afetch_inner(
         self,
         *,
         url: str,

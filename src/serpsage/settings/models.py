@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Model(BaseModel):
@@ -141,6 +141,8 @@ class FetchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     backend: FetchBackendKey = "auto"
+    inflight_enabled: bool = True
+    inflight_timeout_s: float = 60.0
     timeout_s: float = 2.0
     follow_redirects: bool = True
     user_agent: str = "serpsage-bot/4.0"
@@ -152,6 +154,21 @@ class FetchSettings(Model):
     extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
     abstract: FetchAbstractSettings = Field(default_factory=FetchAbstractSettings)
     overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
+
+    @field_validator("inflight_timeout_s")
+    @classmethod
+    def _validate_inflight_timeout_s(cls, value: float) -> float:
+        if float(value) <= 0:
+            raise ValueError("inflight_timeout_s must be > 0")
+        return float(value)
+
+
+class RunnerSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    search_limit: int = Field(default=8, ge=1)
+    fetch_limit: int = Field(default=24, ge=1)
+    child_fetch_limit: int = Field(default=24, ge=1)
 
 
 class HeuristicRankSettings(Model):
@@ -283,6 +300,7 @@ class AppSettings(Model):
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
+    runner: RunnerSettings = Field(default_factory=RunnerSettings)
     rank: RankSettings = Field(default_factory=RankSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
@@ -318,6 +336,7 @@ __all__ = [
     "OverviewModelBackendKey",
     "OverviewModelSettings",
     "ProviderSettings",
+    "RunnerSettings",
     "SearchSettings",
     "RankBlendSettings",
     "RankSettings",

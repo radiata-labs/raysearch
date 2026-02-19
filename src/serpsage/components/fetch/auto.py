@@ -70,7 +70,7 @@ class AutoFetcher(FetcherBase):
         )
 
     @override
-    async def afetch(
+    async def _afetch_inner(
         self,
         *,
         url: str,

@@ -91,7 +91,7 @@ class PlaywrightFetcher(FetcherBase):
             self._pw = None
 
     @override
-    async def afetch(
+    async def _afetch_inner(
         self,
         *,
         url: str,
