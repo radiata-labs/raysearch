@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-import anyio
-
 from serpsage.app.request import (
     FetchAbstractsRequest,
     FetchOverviewRequest,
@@ -48,47 +46,33 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             span.set_attr("fetch_candidates", 0)
             return ctx
 
-        max_parallel = min(
-            max(1, int(self.settings.fetch.concurrency.global_limit)),
-            max(1, len(urls)),
-        )
-        sem = anyio.Semaphore(max_parallel)
-        out: list[FetchStepContext | None] = [None] * len(urls)
-
-        async def run_one(index: int, url: str) -> None:
-            async with sem:
-                req = self._build_fetch_request(ctx=ctx, url=url)
-                fetch_ctx = await self._fetch_runner.run(
-                    FetchStepContext(
-                        settings=ctx.settings,
-                        request=req,
-                        request_id=ctx.request_id,
-                        url=url,
-                        url_index=index,
-                        runtime=FetchRuntimeConfig(
-                            crawl_mode=req.crawl_mode,
-                            crawl_timeout_s=float(req.crawl_timeout or 0.0),
-                            max_links=(
-                                req.others.max_links if req.others is not None else None
-                            ),
-                            max_image_links=(
-                                req.others.max_image_links
-                                if req.others is not None
-                                else None
-                            ),
+        to_fetch: list[FetchStepContext] = []
+        for index, url in enumerate(urls):
+            req = self._build_fetch_request(ctx=ctx, url=url)
+            to_fetch.append(
+                FetchStepContext(
+                    settings=ctx.settings,
+                    request=req,
+                    request_id=ctx.request_id,
+                    url=url,
+                    url_index=index,
+                    runtime=FetchRuntimeConfig(
+                        crawl_mode=req.crawl_mode,
+                        crawl_timeout_s=float(req.crawl_timeout or 0.0),
+                        max_links=(
+                            req.others.max_links if req.others is not None else None
                         ),
-                    )
+                        max_image_links=(
+                            req.others.max_image_links if req.others is not None else None
+                        ),
+                    ),
                 )
-                out[index] = fetch_ctx
+            )
 
-        async with anyio.create_task_group() as tg:
-            for index, url in enumerate(urls):
-                tg.start_soon(run_one, index, url)
+        out = await self._fetch_runner.run_batch(to_fetch)
 
         fetched_candidates: list[SearchFetchedCandidate] = []
         for item in out:
-            if item is None:
-                continue
             ctx.errors.extend(item.errors)
             if item.output.result is None or item.fatal:
                 continue

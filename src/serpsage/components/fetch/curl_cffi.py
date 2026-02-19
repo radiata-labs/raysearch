@@ -93,8 +93,6 @@ class CurlCffiFetcher(FetcherBase):
         timeout_s: float | None = None,
     ) -> FetchAttempt:
         if self._session is None:
-            await self.ainit()
-        if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
         started = time.time()
         fetch_cfg = self.settings.fetch

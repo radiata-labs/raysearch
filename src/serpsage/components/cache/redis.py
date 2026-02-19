@@ -49,8 +49,6 @@ class RedisCache(CacheBase):
     @override
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         if self._client is None:
-            await self.on_init()
-        if self._client is None:
             raise RuntimeError("redis client is not initialized")
         raw = await self._client.get(self._redis_key(namespace=namespace, key=key))
         if raw is None:
@@ -63,8 +61,6 @@ class RedisCache(CacheBase):
     async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
         if ttl_s <= 0:
             return
-        if self._client is None:
-            await self.on_init()
         if self._client is None:
             raise RuntimeError("redis client is not initialized")
         compressed = zlib.compress(value, level=6)

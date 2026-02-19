@@ -169,6 +169,7 @@ class RunnerSettings(Model):
     search_limit: int = Field(default=8, ge=1)
     fetch_limit: int = Field(default=24, ge=1)
     child_fetch_limit: int = Field(default=24, ge=1)
+    queue_size: int = Field(default=256, ge=1)
 
 
 class HeuristicRankSettings(Model):

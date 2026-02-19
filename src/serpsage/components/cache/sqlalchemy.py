@@ -78,8 +78,6 @@ class SQLAlchemyCache(CacheBase):
     @override
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         if self._engine is None:
-            await self.on_init()
-        if self._engine is None:
             raise RuntimeError("sqlalchemy engine is not initialized")
 
         now = int(self.clock.now_ms())
@@ -110,8 +108,6 @@ class SQLAlchemyCache(CacheBase):
     async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
         if ttl_s <= 0:
             return
-        if self._engine is None:
-            await self.on_init()
         if self._engine is None:
             raise RuntimeError("sqlalchemy engine is not initialized")
 

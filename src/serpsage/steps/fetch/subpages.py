@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-import anyio
-
 from serpsage.app.request import FetchOthersRequest
 from serpsage.app.response import FetchSubpagesResult
 from serpsage.models.errors import AppError
@@ -80,77 +78,69 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         if not selected_urls:
             return ctx
 
-        max_parallel = min(
-            max(1, int(self.settings.fetch.concurrency.global_limit)),
-            max(1, len(selected_urls)),
-        )
-        sem = anyio.Semaphore(max_parallel)
+        to_fetch: list[FetchStepContext] = []
+        for index, url in enumerate(selected_urls):
+            child_request = ctx.request.model_copy(
+                update={
+                    "urls": [url],
+                    "subpages": None,
+                    "others": FetchOthersRequest(),
+                }
+            )
+            to_fetch.append(
+                FetchStepContext(
+                    settings=ctx.settings,
+                    request=child_request,
+                    request_id=ctx.request_id,
+                    url=url,
+                    url_index=index,
+                    enable_others_and_subpages=False,
+                    runtime=FetchRuntimeConfig(
+                        crawl_mode=child_request.crawl_mode,
+                        crawl_timeout_s=float(child_request.crawl_timeout or 0.0),
+                        max_links=None,
+                        max_image_links=None,
+                    ),
+                )
+            )
+
+        child_results = await self._fetch_runner.run_batch(to_fetch)
         out: list[FetchSubpagesResult | None] = [None] * len(selected_urls)
         out_md_for_abstract: list[str | None] = [None] * len(selected_urls)
         out_overview_scores: list[list[float] | None] = [None] * len(selected_urls)
-
-        async def run_one(index: int, url: str) -> None:
-            async with sem:
-                child_request = ctx.request.model_copy(
-                    update={
-                        "urls": [url],
-                        "subpages": None,
-                        "others": FetchOthersRequest(),
-                    }
+        for index, child_context in enumerate(child_results):
+            url = selected_urls[index]
+            if child_context.output.result is None:
+                message = (
+                    str(child_context.errors[0].message)
+                    if child_context.errors
+                    else "subpage fetch failed"
                 )
-                child_context = await self._fetch_runner.run(
-                    FetchStepContext(
-                        settings=ctx.settings,
-                        request=child_request,
-                        request_id=ctx.request_id,
-                        url=url,
-                        url_index=index,
-                        enable_others_and_subpages=False,
-                        runtime=FetchRuntimeConfig(
-                            crawl_mode=child_request.crawl_mode,
-                            crawl_timeout_s=float(child_request.crawl_timeout or 0.0),
-                            max_links=None,
-                            max_image_links=None,
-                        ),
+                ctx.errors.append(
+                    AppError(
+                        code="fetch_subpage_failed",
+                        message=message,
+                        details={
+                            "url": ctx.url,
+                            "url_index": ctx.url_index,
+                            "subpage_url": url,
+                            "stage": "subpages",
+                            "fatal": False,
+                            "crawl_mode": ctx.runtime.crawl_mode,
+                        },
                     )
                 )
-                if child_context.output.result is None:
-                    message = (
-                        str(child_context.errors[0].message)
-                        if child_context.errors
-                        else "subpage fetch failed"
-                    )
-                    ctx.errors.append(
-                        AppError(
-                            code="fetch_subpage_failed",
-                            message=message,
-                            details={
-                                "url": ctx.url,
-                                "url_index": ctx.url_index,
-                                "subpage_url": url,
-                                "stage": "subpages",
-                                "fatal": False,
-                                "crawl_mode": ctx.runtime.crawl_mode,
-                            },
-                        )
-                    )
-                    return
-                out[index] = _to_subpage_result(child_context.output.result)
-                out_md_for_abstract[index] = (
-                    str(child_context.artifacts.extracted.md_for_abstract or "")
-                    if child_context.artifacts.extracted is not None
-                    else ""
-                )
-                out_overview_scores[index] = [
-                    float(item.score)
-                    for item in list(
-                        child_context.artifacts.overview_scored_abstracts or []
-                    )
-                ]
-
-        async with anyio.create_task_group() as tg:
-            for index, url in enumerate(selected_urls):
-                tg.start_soon(run_one, index, url)
+                continue
+            out[index] = _to_subpage_result(child_context.output.result)
+            out_md_for_abstract[index] = (
+                str(child_context.artifacts.extracted.md_for_abstract or "")
+                if child_context.artifacts.extracted is not None
+                else ""
+            )
+            out_overview_scores[index] = [
+                float(item.score)
+                for item in list(child_context.artifacts.overview_scored_abstracts or [])
+            ]
 
         paired = [
             (item, md_text or "", overview_scores or [])

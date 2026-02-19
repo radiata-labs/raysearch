@@ -126,8 +126,6 @@ class PlaywrightFetcher(FetcherBase):
         render_reason: str | None = None,
     ) -> FetchAttempt:
         if self._browser is None or self._context is None:
-            await self.ainit()
-        if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
 
         timeout_ms = int(self.settings.fetch.render.nav_timeout_ms)

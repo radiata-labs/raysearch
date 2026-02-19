@@ -167,7 +167,7 @@ class MySQLCache(CacheBase):
     @override
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         if self._pool is None:
-            await self.on_init()
+            raise RuntimeError("mysql cache is not initialized")
         pool, sql = self._require_ready()
 
         now = int(self.clock.now_ms())
@@ -201,7 +201,7 @@ class MySQLCache(CacheBase):
         if ttl_s <= 0:
             return
         if self._pool is None:
-            await self.on_init()
+            raise RuntimeError("mysql cache is not initialized")
         pool, sql = self._require_ready()
 
         now = int(self.clock.now_ms())

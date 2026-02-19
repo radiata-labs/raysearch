@@ -100,7 +100,9 @@ def build_engine(
         FetchOverviewStep(rt=rt, llm=llm, cache=cache),
         FetchFinalizeStep(rt=rt),
     ]
-    child_fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=child_fetch_steps)
+    child_fetch_runner = RunnerBase[FetchStepContext](
+        rt=rt, steps=child_fetch_steps, kind="child_fetch"
+    )
     fetch_steps: list[StepBase[FetchStepContext]] = [
         FetchPrepareStep(rt=rt),
         FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
@@ -111,14 +113,18 @@ def build_engine(
         FetchSubpageStep(rt=rt, fetch_runner=child_fetch_runner, ranker=ranker),
         FetchFinalizeStep(rt=rt),
     ]
-    fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps)
+    fetch_runner = RunnerBase[FetchStepContext](
+        rt=rt, steps=fetch_steps, kind="fetch"
+    )
     search_steps: list[StepBase[SearchStepContext]] = [
         SearchPrepareStep(rt=rt),
         SearchStep(rt=rt, provider=provider, ranker=ranker),
         SearchFetchStep(rt=rt, fetch_runner=fetch_runner),
         SearchFinalizeStep(rt=rt, ranker=ranker),
     ]
-    search_runner = RunnerBase[SearchStepContext](rt=rt, steps=search_steps)
+    search_runner = RunnerBase[SearchStepContext](
+        rt=rt, steps=search_steps, kind="search"
+    )
 
     return Engine(
         rt=rt,

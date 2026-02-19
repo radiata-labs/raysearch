@@ -115,7 +115,6 @@ class FetcherBase(WorkUnit, ABC):
         url: str,
         timeout_s: float | None = None,
     ) -> FetchResult:
-        await self.ainit()
         if (
             not bool(self.settings.fetch.inflight_enabled)
             or _NESTED_INFLIGHT_BYPASS.get()
