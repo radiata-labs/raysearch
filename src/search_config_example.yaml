@@ -54,7 +54,7 @@ fetch:
     link_keep_hash: false
   abstract:
     max_abstract_chars: 2000
-    min_abstract_score: 0.2
+    min_abstract_score: 0.4
     min_abstract_tokens: 4
     title_boost_alpha: 0.35
   overview:

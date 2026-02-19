@@ -55,6 +55,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             return ctx
 
         abstracts_query = ""
+        raw_scored_abstracts = []
         if abstracts_req is not None:
             abstracts_query = _resolve_effective_query(
                 requested_query=abstracts_req.query,
@@ -66,13 +67,13 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 if abstracts_req.max_chars is not None
                 else int(self.settings.fetch.abstract.max_abstract_chars)
             )
-            scored_abstracts = await self._score_abstracts(
+            raw_scored_abstracts = await self._score_abstracts(
                 query=abstracts_query,
                 candidates=candidates,
                 query_tokens=tokenize_for_query(abstracts_query),
-                max_chars=abstract_budget,
             )
-            if not scored_abstracts:
+
+            if not raw_scored_abstracts:
                 ctx.errors.append(
                     AppError(
                         code="fetch_abstract_rank_failed",
@@ -87,7 +88,18 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     )
                 )
             else:
-                ctx.scored_abstracts = scored_abstracts
+                ctx.scored_abstracts = [
+                    ScoredAbstract(
+                        abstract_id=f"S1:A{i + 1}",
+                        text=item.text,
+                        score=float(score),
+                    )
+                    for i, (score, item) in enumerate(
+                        _fit_budget(
+                            ranked=raw_scored_abstracts, max_chars=abstract_budget
+                        )
+                    )
+                ]
 
         if overview_req is not None:
             overview_query = _resolve_effective_query(
@@ -99,15 +111,44 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 abstracts_req is not None
                 and bool(ctx.scored_abstracts)
                 and overview_query == abstracts_query
+                and raw_scored_abstracts
             ):
-                ctx.overview_scored_abstracts = list(ctx.scored_abstracts)
+                ctx.overview_scored_abstracts = [
+                    ScoredAbstract(
+                        abstract_id=f"S1:A{i + 1}",
+                        text=item.text,
+                        score=float(score),
+                    )
+                    for i, (score, item) in enumerate(
+                        _fit_budget(
+                            ranked=raw_scored_abstracts,
+                            max_chars=int(
+                                self.settings.fetch.overview.max_abstract_chars
+                            ),
+                        )
+                    )
+                ]
             else:
-                ctx.overview_scored_abstracts = await self._score_abstracts(
+                raw_overview_scored_abstracts = await self._score_abstracts(
                     query=overview_query,
                     candidates=candidates,
                     query_tokens=tokenize_for_query(overview_query),
-                    max_chars=int(self.settings.fetch.overview.max_abstract_chars),
                 )
+                ctx.overview_scored_abstracts = [
+                    ScoredAbstract(
+                        abstract_id=f"S1:A{i + 1}",
+                        text=item.text,
+                        score=float(score),
+                    )
+                    for i, (score, item) in enumerate(
+                        _fit_budget(
+                            ranked=raw_overview_scored_abstracts,
+                            max_chars=int(
+                                self.settings.fetch.overview.max_abstract_chars
+                            ),
+                        )
+                    )
+                ]
 
         span.set_attr("abstracts_kept", int(len(ctx.scored_abstracts)))
         span.set_attr(
@@ -121,8 +162,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         query: str,
         candidates: list[PreparedAbstract],
         query_tokens: list[str],
-        max_chars: int | None,
-    ) -> list[ScoredAbstract]:
+    ) -> list[tuple[float, PreparedAbstract]]:
         min_tokens = int(self.settings.fetch.abstract.min_abstract_tokens)
         query_token_count = len(query_tokens)
         filtered_candidates: list[PreparedAbstract] = []
@@ -170,15 +210,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
 
         scored.sort(key=lambda item: (-item[0], int(item[1].position)))
 
-        kept = _fit_budget(ranked=scored, max_chars=max_chars)
-        return [
-            ScoredAbstract(
-                abstract_id=f"S1:A{i + 1}",
-                text=item.text,
-                score=float(score),
-            )
-            for i, (score, item) in enumerate(kept)
-        ]
+        return scored
 
     async def _score_headings(
         self,

@@ -50,7 +50,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "What is DeepSeek V3.2?", "auto", 5)
+    out = anyio.run(main, "latest ai papers", "auto", 5)
     t2 = time.time()
 
     print(out["search_result"])
