@@ -64,6 +64,8 @@ class SearchFetchedCandidate(MutableModel):
     result: FetchResultItem
     main_md_for_abstract: str = ""
     subpages_md_for_abstract: list[str] = Field(default_factory=list)
+    main_overview_scores: list[float] = Field(default_factory=list)
+    subpages_overview_scores: list[list[float]] = Field(default_factory=list)
 
 
 class FetchSubpages(MutableModel):
@@ -97,6 +99,7 @@ class FetchStepContext(BaseStepContext):
     subpages: FetchSubpages = Field(default_factory=FetchSubpages)
     subpages_result: list[FetchSubpagesResult] = Field(default_factory=list)
     subpages_md_for_abstract: list[str] = Field(default_factory=list)
+    subpages_overview_scores: list[list[float]] = Field(default_factory=list)
     result: FetchResultItem | None = None
     fatal: bool = False
     overview_output: str | object | None = None

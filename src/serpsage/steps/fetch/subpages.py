@@ -87,6 +87,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         sem = anyio.Semaphore(max_parallel)
         out: list[FetchSubpagesResult | None] = [None] * len(selected_urls)
         out_md_for_abstract: list[str | None] = [None] * len(selected_urls)
+        out_overview_scores: list[list[float] | None] = [None] * len(selected_urls)
 
         async def run_one(index: int, url: str) -> None:
             async with sem:
@@ -140,18 +141,30 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                     if child_context.extracted is not None
                     else ""
                 )
+                out_overview_scores[index] = [
+                    float(item.score)
+                    for item in list(child_context.overview_scored_abstracts or [])
+                ]
 
         async with anyio.create_task_group() as tg:
             for index, url in enumerate(selected_urls):
                 tg.start_soon(run_one, index, url)
 
         paired = [
-            (item, md_text or "")
-            for item, md_text in zip(out, out_md_for_abstract, strict=False)
+            (item, md_text or "", overview_scores or [])
+            for item, md_text, overview_scores in zip(
+                out,
+                out_md_for_abstract,
+                out_overview_scores,
+                strict=False,
+            )
             if item is not None
         ]
-        ctx.subpages_result = [item for item, _ in paired]
-        ctx.subpages_md_for_abstract = [md_text for _, md_text in paired]
+        ctx.subpages_result = [item for item, _, _ in paired]
+        ctx.subpages_md_for_abstract = [md_text for _, md_text, _ in paired]
+        ctx.subpages_overview_scores = [
+            overview_scores for _, _, overview_scores in paired
+        ]
         span.set_attr("subpages_candidates_count", int(len(candidates)))
         span.set_attr("subpages_selected_count", int(len(selected_urls)))
         span.set_attr("subpages_success_count", int(len(ctx.subpages_result)))

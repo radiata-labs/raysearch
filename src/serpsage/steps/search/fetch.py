@@ -99,11 +99,20 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                 if item.extracted is not None
                 else ""
             )
+            main_overview_scores = [
+                float(scored.score)
+                for scored in list(item.overview_scored_abstracts or [])
+            ]
             fetched_candidates.append(
                 SearchFetchedCandidate(
                     result=item.result,
                     main_md_for_abstract=main_md_for_abstract,
                     subpages_md_for_abstract=list(item.subpages_md_for_abstract or []),
+                    main_overview_scores=main_overview_scores,
+                    subpages_overview_scores=[
+                        [float(score) for score in list(subpage_scores or [])]
+                        for subpage_scores in list(item.subpages_overview_scores or [])
+                    ],
                 )
             )
 

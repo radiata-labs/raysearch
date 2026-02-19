@@ -120,6 +120,7 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
         ctx.subpages.subpages_query = subpages_query if subpages_enabled else ""
         ctx.subpages_result = []
         ctx.subpages_md_for_abstract = []
+        ctx.subpages_overview_scores = []
 
         span.set_attr("has_content_output", bool(return_content))
         span.set_attr("has_abstracts", bool(abstracts_request is not None))
