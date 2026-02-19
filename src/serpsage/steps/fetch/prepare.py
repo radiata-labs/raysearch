@@ -41,7 +41,7 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "prepare",
                         "fatal": True,
-                        "crawl_mode": ctx.others.crawl_mode,
+                        "crawl_mode": ctx.runtime.crawl_mode,
                     },
                 )
             )
@@ -104,35 +104,33 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
             if subpages_enabled:
                 link_cap = int(self.settings.fetch.extract.link_max_count)
                 auto_links_limit = min(link_cap, max(20, int(subpages_max) * 5))
-                ctx.others.max_links_for_subpages = int(auto_links_limit)
+                ctx.runtime.max_links_for_subpages = int(auto_links_limit)
         else:
-            ctx.others.max_links = None
-            ctx.others.max_image_links = None
+            ctx.runtime.max_links = None
+            ctx.runtime.max_image_links = None
 
-        ctx.return_content = bool(return_content)
-        ctx.content_request = content_request
-        ctx.content_options = content_options
-        ctx.abstracts_request = abstracts_request
-        ctx.overview_request = overview_request
-        ctx.subpages.subpages_enabled = bool(subpages_enabled)
-        ctx.subpages.subpages_max = int(subpages_max) if subpages_enabled else 0
-        ctx.subpages.subpages_keywords = list(subpages_keywords)
-        ctx.subpages.subpages_query = subpages_query if subpages_enabled else ""
-        ctx.subpages_result = []
-        ctx.subpages_md_for_abstract = []
-        ctx.subpages_overview_scores = []
+        ctx.resolved.return_content = bool(return_content)
+        ctx.resolved.content_request = content_request
+        ctx.resolved.content_options = content_options
+        ctx.resolved.abstracts_request = abstracts_request
+        ctx.resolved.overview_request = overview_request
+        ctx.subpages.enabled = bool(subpages_enabled)
+        ctx.subpages.max_count = int(subpages_max) if subpages_enabled else 0
+        ctx.subpages.keywords = list(subpages_keywords)
+        ctx.subpages.query = subpages_query if subpages_enabled else ""
+        ctx.subpages.results = []
+        ctx.subpages.md_for_abstract = []
+        ctx.subpages.overview_scores = []
 
         span.set_attr("has_content_output", bool(return_content))
         span.set_attr("has_abstracts", bool(abstracts_request is not None))
         span.set_attr("has_overview", bool(overview_request is not None))
         span.set_attr("content_detail", str(content_request.detail))
-        span.set_attr("crawl_mode", str(ctx.others.crawl_mode))
-        span.set_attr("crawl_timeout_s", float(ctx.others.crawl_timeout_s))
-        span.set_attr("subpages_enabled", bool(ctx.subpages.subpages_enabled))
-        span.set_attr("subpages_max", int(ctx.subpages.subpages_max))
-        span.set_attr(
-            "subpages_keywords_count", int(len(ctx.subpages.subpages_keywords))
-        )
+        span.set_attr("crawl_mode", str(ctx.runtime.crawl_mode))
+        span.set_attr("crawl_timeout_s", float(ctx.runtime.crawl_timeout_s))
+        span.set_attr("subpages_enabled", bool(ctx.subpages.enabled))
+        span.set_attr("subpages_max", int(ctx.subpages.max_count))
+        span.set_attr("subpages_keywords_count", int(len(ctx.subpages.keywords)))
         span.set_attr("url_index", int(ctx.url_index))
         return ctx
 

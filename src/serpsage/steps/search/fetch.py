@@ -11,8 +11,8 @@ from serpsage.app.request import (
     FetchRequest,
 )
 from serpsage.models.pipeline import (
+    FetchRuntimeConfig,
     FetchStepContext,
-    FetchStepOthers,
     SearchFetchedCandidate,
     SearchStepContext,
 )
@@ -41,10 +41,10 @@ class SearchFetchStep(StepBase[SearchStepContext]):
     async def run_inner(
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
-        urls = list(ctx.candidate_urls or [])
+        urls = list(ctx.prefetch.urls or [])
         if not urls:
-            ctx.fetched_candidates = []
-            ctx.results = []
+            ctx.fetch.candidates = []
+            ctx.output.results = []
             span.set_attr("fetch_candidates", 0)
             return ctx
 
@@ -65,13 +65,11 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                         request_id=ctx.request_id,
                         url=url,
                         url_index=index,
-                        others=FetchStepOthers(
+                        runtime=FetchRuntimeConfig(
                             crawl_mode=req.crawl_mode,
                             crawl_timeout_s=float(req.crawl_timeout or 0.0),
                             max_links=(
-                                req.others.max_links
-                                if req.others is not None
-                                else None
+                                req.others.max_links if req.others is not None else None
                             ),
                             max_image_links=(
                                 req.others.max_image_links
@@ -92,32 +90,32 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             if item is None:
                 continue
             ctx.errors.extend(item.errors)
-            if item.result is None or item.fatal:
+            if item.output.result is None or item.fatal:
                 continue
             main_md_for_abstract = (
-                str(item.extracted.md_for_abstract or "")
-                if item.extracted is not None
+                str(item.artifacts.extracted.md_for_abstract or "")
+                if item.artifacts.extracted is not None
                 else ""
             )
             main_overview_scores = [
                 float(scored.score)
-                for scored in list(item.overview_scored_abstracts or [])
+                for scored in list(item.artifacts.overview_scored_abstracts or [])
             ]
             fetched_candidates.append(
                 SearchFetchedCandidate(
-                    result=item.result,
+                    result=item.output.result,
                     main_md_for_abstract=main_md_for_abstract,
-                    subpages_md_for_abstract=list(item.subpages_md_for_abstract or []),
+                    subpages_md_for_abstract=list(item.subpages.md_for_abstract or []),
                     main_overview_scores=main_overview_scores,
                     subpages_overview_scores=[
                         [float(score) for score in list(subpage_scores or [])]
-                        for subpage_scores in list(item.subpages_overview_scores or [])
+                        for subpage_scores in list(item.subpages.overview_scores or [])
                     ],
                 )
             )
 
-        ctx.fetched_candidates = fetched_candidates
-        ctx.results = [candidate.result for candidate in fetched_candidates]
+        ctx.fetch.candidates = fetched_candidates
+        ctx.output.results = [candidate.result for candidate in fetched_candidates]
         span.set_attr("fetch_candidates", int(len(urls)))
         span.set_attr("fetch_success_count", int(len(fetched_candidates)))
         span.set_attr(

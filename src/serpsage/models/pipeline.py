@@ -30,22 +30,26 @@ class BaseStepContext(MutableModel):
     request_id: str = ""
 
 
+class SearchPrefetchState(MutableModel):
+    urls: list[str] = Field(default_factory=list)
+    scores: dict[str, float] = Field(default_factory=dict)
+
+
+class SearchFetchState(MutableModel):
+    candidates: list[SearchFetchedCandidate] = Field(default_factory=list)
+
+
+class SearchOutputState(MutableModel):
+    results: list[FetchResultItem] = Field(default_factory=list)
+
+
 class SearchStepContext(BaseStepContext):
     settings: AppSettings
     request: SearchRequest
-    candidate_urls: list[str] = Field(default_factory=list)
-    candidate_scores: dict[str, float] = Field(default_factory=dict)
-    fetched_candidates: list[SearchFetchedCandidate] = Field(default_factory=list)
-    results: list[FetchResultItem] = Field(default_factory=list)
+    prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
+    fetch: SearchFetchState = Field(default_factory=SearchFetchState)
+    output: SearchOutputState = Field(default_factory=SearchOutputState)
     errors: list[AppError] = Field(default_factory=list)
-
-
-class FetchStepOthers(MutableModel):
-    crawl_mode: CrawlMode = "fallback"
-    crawl_timeout_s: float = 0.0
-    max_links_for_subpages: int | None = None
-    max_links: int | None = None
-    max_image_links: int | None = None
 
 
 class ScoredAbstract(MutableModel):
@@ -68,21 +72,15 @@ class SearchFetchedCandidate(MutableModel):
     subpages_overview_scores: list[list[float]] = Field(default_factory=list)
 
 
-class FetchSubpages(MutableModel):
-    subpages_enabled: bool = False
-    subpages_links: list[ExtractedLink] = Field(default_factory=list)
-    subpages_max: int = 0
-    subpages_query: str = ""
-    subpages_keywords: list[str] = Field(default_factory=list)
+class FetchRuntimeConfig(MutableModel):
+    crawl_mode: CrawlMode = "fallback"
+    crawl_timeout_s: float = 0.0
+    max_links_for_subpages: int | None = None
+    max_links: int | None = None
+    max_image_links: int | None = None
 
 
-class FetchStepContext(BaseStepContext):
-    settings: AppSettings
-    request: FetchRequest
-    url: str
-    url_index: int
-    others: FetchStepOthers
-    enable_others_and_subpages: bool = True
+class FetchResolvedState(MutableModel):
     return_content: bool = True
     content_request: FetchContentRequest = Field(default_factory=FetchContentRequest)
     content_options: ExtractContentOptions = Field(
@@ -90,28 +88,61 @@ class FetchStepContext(BaseStepContext):
     )
     abstracts_request: FetchAbstractsRequest | None = None
     overview_request: FetchOverviewRequest | None = None
+
+
+class FetchArtifactsState(MutableModel):
     fetch_result: FetchResult | None = None
     extracted: ExtractedDocument | None = None
     prepared_abstracts: list[PreparedAbstract] = Field(default_factory=list)
     scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
     overview_scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
-    others_result: FetchOthersResult = Field(default_factory=FetchOthersResult)
-    subpages: FetchSubpages = Field(default_factory=FetchSubpages)
-    subpages_result: list[FetchSubpagesResult] = Field(default_factory=list)
-    subpages_md_for_abstract: list[str] = Field(default_factory=list)
-    subpages_overview_scores: list[list[float]] = Field(default_factory=list)
-    result: FetchResultItem | None = None
-    fatal: bool = False
     overview_output: str | object | None = None
+
+
+class FetchSubpagesState(MutableModel):
+    enabled: bool = False
+    links: list[ExtractedLink] = Field(default_factory=list)
+    max_count: int = 0
+    query: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    results: list[FetchSubpagesResult] = Field(default_factory=list)
+    md_for_abstract: list[str] = Field(default_factory=list)
+    overview_scores: list[list[float]] = Field(default_factory=list)
+
+
+class FetchOutputState(MutableModel):
+    others: FetchOthersResult = Field(default_factory=FetchOthersResult)
+    result: FetchResultItem | None = None
+
+
+class FetchStepContext(BaseStepContext):
+    settings: AppSettings
+    request: FetchRequest
+    url: str
+    url_index: int
+    runtime: FetchRuntimeConfig
+    enable_others_and_subpages: bool = True
+    resolved: FetchResolvedState = Field(default_factory=FetchResolvedState)
+    artifacts: FetchArtifactsState = Field(default_factory=FetchArtifactsState)
+    subpages: FetchSubpagesState = Field(default_factory=FetchSubpagesState)
+    output: FetchOutputState = Field(default_factory=FetchOutputState)
+    fatal: bool = False
     errors: list[AppError] = Field(default_factory=list)
 
 
 __all__ = [
     "BaseStepContext",
+    "FetchArtifactsState",
+    "FetchOutputState",
+    "FetchResolvedState",
     "FetchStepContext",
-    "FetchStepOthers",
+    "FetchRuntimeConfig",
+    "FetchSubpagesState",
     "PreparedAbstract",
     "ScoredAbstract",
+    "SearchFetchState",
     "SearchFetchedCandidate",
+    "SearchOutputState",
+    "SearchPrefetchState",
     "SearchStepContext",
 ]

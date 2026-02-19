@@ -26,7 +26,7 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
-        if ctx.extracted is None:
+        if ctx.artifacts.extracted is None:
             ctx.fatal = True
             ctx.errors.append(
                 AppError(
@@ -37,37 +37,43 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "finalize",
                         "fatal": True,
-                        "crawl_mode": ctx.others.crawl_mode,
+                        "crawl_mode": ctx.runtime.crawl_mode,
                     },
                 )
             )
             return ctx
 
-        markdown = ctx.extracted.markdown
-        max_chars = ctx.content_request.max_chars
+        markdown = ctx.artifacts.extracted.markdown
+        max_chars = ctx.resolved.content_request.max_chars
         if max_chars is not None and max_chars > 0:
             markdown = finalize_markdown(markdown=markdown, max_chars=max_chars)
-        content = markdown if ctx.return_content else ""
+        content = markdown if ctx.resolved.return_content else ""
 
-        abstracts = [str(item.text) for item in list(ctx.scored_abstracts or [])]
+        abstracts = [
+            str(item.text) for item in list(ctx.artifacts.scored_abstracts or [])
+        ]
         abstract_scores = [
-            float(item.score) for item in list(ctx.scored_abstracts or [])
+            float(item.score) for item in list(ctx.artifacts.scored_abstracts or [])
         ]
         others_result = {}
         if not ctx.enable_others_and_subpages:
             subpages_result = []
         else:
             if ctx.request.others is not None:
-                others_result = {"others": ctx.others_result}
-            subpages_result = list(ctx.subpages_result)
+                others_result = {"others": ctx.output.others}
+            subpages_result = list(ctx.subpages.results)
 
-        ctx.result = FetchResultItem(
+        ctx.output.result = FetchResultItem(
             url=ctx.url,
-            title=str(ctx.extracted.title or ""),
+            title=str(ctx.artifacts.extracted.title or ""),
             content=content,
             abstracts=abstracts,
             abstract_scores=abstract_scores,
-            overview="" if ctx.overview_output is None else ctx.overview_output,
+            overview=(
+                ""
+                if ctx.artifacts.overview_output is None
+                else ctx.artifacts.overview_output
+            ),
             subpages=subpages_result,
             **others_result,
         )
@@ -85,8 +91,8 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             else 0,
         )
         span.set_attr("subpages_count", int(len(subpages_result)))
-        span.set_attr("has_overview", bool(ctx.overview_output is not None))
-        span.set_attr("has_content_output", bool(ctx.return_content))
+        span.set_attr("has_overview", bool(ctx.artifacts.overview_output is not None))
+        span.set_attr("has_content_output", bool(ctx.resolved.return_content))
         return ctx
 
 

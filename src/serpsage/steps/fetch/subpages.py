@@ -8,7 +8,7 @@ import anyio
 from serpsage.app.request import FetchOthersRequest
 from serpsage.app.response import FetchSubpagesResult
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import FetchStepContext, FetchStepOthers
+from serpsage.models.pipeline import FetchRuntimeConfig, FetchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
 
 if TYPE_CHECKING:
@@ -41,17 +41,17 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
             return ctx
         if not ctx.enable_others_and_subpages:
             return ctx
-        if not ctx.subpages.subpages_enabled or ctx.subpages.subpages_max <= 0:
+        if not ctx.subpages.enabled or ctx.subpages.max_count <= 0:
             return ctx
-        candidates = list(ctx.subpages.subpages_links or [])
+        candidates = list(ctx.subpages.links or [])
         if not candidates:
             return ctx
 
         try:
             scores = await self._ranker.score_texts(
                 texts=[f"[{item.anchor_text}]({item.url})" for item in candidates],
-                query=ctx.subpages.subpages_query,
-                query_tokens=ctx.subpages.subpages_keywords,
+                query=ctx.subpages.query,
+                query_tokens=ctx.subpages.keywords,
             )
         except Exception as exc:  # noqa: BLE001
             ctx.errors.append(
@@ -63,7 +63,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "subpages",
                         "fatal": False,
-                        "crawl_mode": ctx.others.crawl_mode,
+                        "crawl_mode": ctx.runtime.crawl_mode,
                     },
                 )
             )
@@ -75,7 +75,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         )
         selected_urls = [
             candidates[idx].url
-            for idx in ranked_indexes[: max(1, int(ctx.subpages.subpages_max))]
+            for idx in ranked_indexes[: max(1, int(ctx.subpages.max_count))]
         ]
         if not selected_urls:
             return ctx
@@ -106,7 +106,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                         url=url,
                         url_index=index,
                         enable_others_and_subpages=False,
-                        others=FetchStepOthers(
+                        runtime=FetchRuntimeConfig(
                             crawl_mode=child_request.crawl_mode,
                             crawl_timeout_s=float(child_request.crawl_timeout or 0.0),
                             max_links=None,
@@ -114,7 +114,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                         ),
                     )
                 )
-                if child_context.result is None:
+                if child_context.output.result is None:
                     message = (
                         str(child_context.errors[0].message)
                         if child_context.errors
@@ -130,20 +130,22 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                                 "subpage_url": url,
                                 "stage": "subpages",
                                 "fatal": False,
-                                "crawl_mode": ctx.others.crawl_mode,
+                                "crawl_mode": ctx.runtime.crawl_mode,
                             },
                         )
                     )
                     return
-                out[index] = _to_subpage_result(child_context.result)
+                out[index] = _to_subpage_result(child_context.output.result)
                 out_md_for_abstract[index] = (
-                    str(child_context.extracted.md_for_abstract or "")
-                    if child_context.extracted is not None
+                    str(child_context.artifacts.extracted.md_for_abstract or "")
+                    if child_context.artifacts.extracted is not None
                     else ""
                 )
                 out_overview_scores[index] = [
                     float(item.score)
-                    for item in list(child_context.overview_scored_abstracts or [])
+                    for item in list(
+                        child_context.artifacts.overview_scored_abstracts or []
+                    )
                 ]
 
         async with anyio.create_task_group() as tg:
@@ -160,17 +162,17 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
             )
             if item is not None
         ]
-        ctx.subpages_result = [item for item, _, _ in paired]
-        ctx.subpages_md_for_abstract = [md_text for _, md_text, _ in paired]
-        ctx.subpages_overview_scores = [
+        ctx.subpages.results = [item for item, _, _ in paired]
+        ctx.subpages.md_for_abstract = [md_text for _, md_text, _ in paired]
+        ctx.subpages.overview_scores = [
             overview_scores for _, _, overview_scores in paired
         ]
         span.set_attr("subpages_candidates_count", int(len(candidates)))
         span.set_attr("subpages_selected_count", int(len(selected_urls)))
-        span.set_attr("subpages_success_count", int(len(ctx.subpages_result)))
+        span.set_attr("subpages_success_count", int(len(ctx.subpages.results)))
         span.set_attr(
             "subpages_failure_count",
-            int(len(selected_urls) - len(ctx.subpages_result)),
+            int(len(selected_urls) - len(ctx.subpages.results)),
         )
         return ctx
 

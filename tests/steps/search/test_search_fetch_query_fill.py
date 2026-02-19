@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import anyio
 from typing_extensions import override
+
+import anyio
 
 from serpsage.app.bootstrap import build_runtime
 from serpsage.app.request import SearchRequest
@@ -9,6 +10,7 @@ from serpsage.app.response import FetchResultItem, FetchSubpagesResult
 from serpsage.models.pipeline import (
     FetchStepContext,
     ScoredAbstract,
+    SearchPrefetchState,
     SearchStepContext,
 )
 from serpsage.settings.models import AppSettings
@@ -28,13 +30,13 @@ class _CaptureFetchStep(StepBase[FetchStepContext]):
     ) -> FetchStepContext:
         del span
         self.requests.append(ctx.request)
-        ctx.overview_scored_abstracts = [
+        ctx.artifacts.overview_scored_abstracts = [
             ScoredAbstract(abstract_id="S1:A1", text="a", score=0.9),
             ScoredAbstract(abstract_id="S1:A2", text="b", score=0.8),
         ]
-        ctx.subpages_overview_scores = [[0.4]]
-        ctx.subpages_md_for_abstract = ["sub text"]
-        ctx.result = FetchResultItem(
+        ctx.subpages.overview_scores = [[0.4]]
+        ctx.subpages.md_for_abstract = ["sub text"]
+        ctx.output.result = FetchResultItem(
             url=ctx.url,
             title="",
             content="",
@@ -65,7 +67,7 @@ def test_search_fetch_fills_query_when_abstracts_and_overview_are_true() -> None
             query="what is deepseek",
             fetchs={"content": True, "abstracts": True, "overview": True},
         ),
-        candidate_urls=["https://example.com"],
+        prefetch=SearchPrefetchState(urls=["https://example.com"]),
     )
 
     anyio.run(step.run, ctx)
@@ -93,7 +95,7 @@ def test_search_fetch_fills_query_when_request_query_is_none() -> None:
                 "overview": {"query": None},
             },
         ),
-        candidate_urls=["https://example.com"],
+        prefetch=SearchPrefetchState(urls=["https://example.com"]),
     )
 
     anyio.run(step.run, ctx)
@@ -117,11 +119,11 @@ def test_search_fetch_propagates_overview_scores_for_rerank() -> None:
             query="what is deepseek",
             fetchs={"content": True, "abstracts": True, "overview": True},
         ),
-        candidate_urls=["https://example.com"],
+        prefetch=SearchPrefetchState(urls=["https://example.com"]),
     )
 
     out = anyio.run(step.run, ctx)
 
-    assert len(out.fetched_candidates) == 1
-    assert out.fetched_candidates[0].main_overview_scores == [0.9, 0.8]
-    assert out.fetched_candidates[0].subpages_overview_scores == [[0.4]]
+    assert len(out.fetch.candidates) == 1
+    assert out.fetch.candidates[0].main_overview_scores == [0.9, 0.8]
+    assert out.fetch.candidates[0].subpages_overview_scores == [[0.4]]

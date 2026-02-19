@@ -9,7 +9,7 @@ from serpsage.app.request import (
     FetchOverviewRequest,
     FetchRequest,
 )
-from serpsage.models.pipeline import FetchStepContext, FetchStepOthers
+from serpsage.models.pipeline import FetchRuntimeConfig, FetchStepContext
 from serpsage.settings.models import AppSettings
 from serpsage.steps.fetch.prepare import FetchPrepareStep
 
@@ -20,7 +20,7 @@ def _build_ctx(*, settings: AppSettings, request: FetchRequest) -> FetchStepCont
         request=request,
         url="https://example.com",
         url_index=0,
-        others=FetchStepOthers(),
+        runtime=FetchRuntimeConfig(),
     )
 
 
@@ -41,11 +41,11 @@ def test_prepare_builds_default_requests_when_switches_are_true() -> None:
     out = anyio.run(step.run, ctx)
 
     assert out.fatal is False
-    assert out.return_content is False
-    assert out.abstracts_request is not None
-    assert out.abstracts_request.query is None
-    assert out.overview_request is not None
-    assert out.overview_request.query is None
+    assert out.resolved.return_content is False
+    assert out.resolved.abstracts_request is not None
+    assert out.resolved.abstracts_request.query is None
+    assert out.resolved.overview_request is not None
+    assert out.resolved.overview_request.query is None
 
 
 def test_prepare_normalizes_blank_queries_to_none() -> None:
@@ -64,10 +64,10 @@ def test_prepare_normalizes_blank_queries_to_none() -> None:
     out = anyio.run(step.run, ctx)
 
     assert out.fatal is False
-    assert out.abstracts_request is not None
-    assert out.abstracts_request.query is None
-    assert out.overview_request is not None
-    assert out.overview_request.query is None
+    assert out.resolved.abstracts_request is not None
+    assert out.resolved.abstracts_request.query is None
+    assert out.resolved.overview_request is not None
+    assert out.resolved.overview_request.query is None
 
 
 def test_prepare_maps_content_detail_to_internal_depth() -> None:
@@ -85,5 +85,5 @@ def test_prepare_maps_content_detail_to_internal_depth() -> None:
     out = anyio.run(step.run, ctx)
 
     assert out.fatal is False
-    assert out.content_request.detail == "full"
-    assert out.content_options.detail == "full"
+    assert out.resolved.content_request.detail == "full"
+    assert out.resolved.content_options.detail == "full"

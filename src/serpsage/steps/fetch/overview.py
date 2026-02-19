@@ -54,7 +54,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "overview",
                         "fatal": False,
-                        "crawl_mode": ctx.others.crawl_mode,
+                        "crawl_mode": ctx.runtime.crawl_mode,
                     },
                 )
             )
@@ -67,7 +67,8 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         messages = self._build_messages(
             query=req.query,
             url=ctx.url,
-            title=(ctx.extracted.title if ctx.extracted else "") or "",
+            title=(ctx.artifacts.extracted.title if ctx.artifacts.extracted else "")
+            or "",
             source_items=source_items,
             language_hint=str(profile.force_language or "auto"),
             mode=mode,
@@ -91,7 +92,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 except Exception:  # noqa: BLE001
                     span.add_event("overview.cache_corrupt")
                 else:
-                    ctx.overview_output = decoded
+                    ctx.artifacts.overview_output = decoded
                     span.set_attr("cache_hit", True)
                     return ctx
         span.set_attr("cache_hit", False)
@@ -110,19 +111,23 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     output_text = clean_whitespace(res.text or "")
                     if not output_text:
                         raise ValueError("overview output is empty")
-                    ctx.overview_output = output_text
+                    ctx.artifacts.overview_output = output_text
                 else:
                     output_obj = _coerce_json_output(
                         result_data=res.data, raw_text=res.text
                     )
                     _validate_json_output(schema=schema, value=output_obj)
-                    ctx.overview_output = output_obj
-                if cache_ttl_s > 0 and cache_key and ctx.overview_output is not None:
+                    ctx.artifacts.overview_output = output_obj
+                if (
+                    cache_ttl_s > 0
+                    and cache_key
+                    and ctx.artifacts.overview_output is not None
+                ):
                     await self._cache.aset(
                         namespace="overview:fetch:v4",
                         key=cache_key,
                         value=json.dumps(
-                            ctx.overview_output,
+                            ctx.artifacts.overview_output,
                             ensure_ascii=False,
                             separators=(",", ":"),
                             sort_keys=True,
@@ -143,7 +148,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "overview",
                             "fatal": False,
-                            "crawl_mode": ctx.others.crawl_mode,
+                            "crawl_mode": ctx.runtime.crawl_mode,
                         },
                     )
                 )
@@ -162,7 +167,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "overview",
                             "fatal": False,
-                            "crawl_mode": ctx.others.crawl_mode,
+                            "crawl_mode": ctx.runtime.crawl_mode,
                         },
                     )
                 )
@@ -179,19 +184,29 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
 
     def _build_source_items(self, ctx: FetchStepContext) -> list[str]:
         abstracts = [
-            item.text for item in list(ctx.overview_scored_abstracts or []) if item.text
+            item.text
+            for item in list(ctx.artifacts.overview_scored_abstracts or [])
+            if item.text
         ]
         if abstracts:
             return abstracts
         md_for_abstract = clean_whitespace(
-            ((ctx.extracted.md_for_abstract if ctx.extracted else "") or "").replace(
-                "\n", " "
-            )
+            (
+                (
+                    ctx.artifacts.extracted.md_for_abstract
+                    if ctx.artifacts.extracted
+                    else ""
+                )
+                or ""
+            ).replace("\n", " ")
         )
         if md_for_abstract:
             return [md_for_abstract]
         markdown = clean_whitespace(
-            ((ctx.extracted.markdown if ctx.extracted else "") or "").replace("\n", " ")
+            (
+                (ctx.artifacts.extracted.markdown if ctx.artifacts.extracted else "")
+                or ""
+            ).replace("\n", " ")
         )
         if markdown:
             return [markdown]

@@ -30,14 +30,14 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         if ctx.fatal:
             return ctx
 
-        abstracts_req = ctx.abstracts_request
-        overview_req = ctx.overview_request
+        abstracts_req = ctx.resolved.abstracts_request
+        overview_req = ctx.resolved.overview_request
         span.set_attr("has_abstracts", bool(abstracts_req is not None))
         span.set_attr("has_overview", bool(overview_req is not None))
         if abstracts_req is None and overview_req is None:
             return ctx
 
-        candidates = list(ctx.prepared_abstracts or [])
+        candidates = list(ctx.artifacts.prepared_abstracts or [])
         if not candidates:
             ctx.errors.append(
                 AppError(
@@ -48,7 +48,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "rank",
                         "fatal": False,
-                        "crawl_mode": ctx.others.crawl_mode,
+                        "crawl_mode": ctx.runtime.crawl_mode,
                     },
                 )
             )
@@ -59,7 +59,9 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         if abstracts_req is not None:
             abstracts_query = _resolve_effective_query(
                 requested_query=abstracts_req.query,
-                title=(ctx.extracted.title if ctx.extracted else ""),
+                title=(
+                    ctx.artifacts.extracted.title if ctx.artifacts.extracted else ""
+                ),
                 url=ctx.url,
             )
             abstract_budget = (
@@ -83,12 +85,12 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                             "url_index": ctx.url_index,
                             "stage": "rank",
                             "fatal": False,
-                            "crawl_mode": ctx.others.crawl_mode,
+                            "crawl_mode": ctx.runtime.crawl_mode,
                         },
                     )
                 )
             else:
-                ctx.scored_abstracts = [
+                ctx.artifacts.scored_abstracts = [
                     ScoredAbstract(
                         abstract_id=f"S1:A{i + 1}",
                         text=item.text,
@@ -104,16 +106,18 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         if overview_req is not None:
             overview_query = _resolve_effective_query(
                 requested_query=overview_req.query,
-                title=(ctx.extracted.title if ctx.extracted else ""),
+                title=(
+                    ctx.artifacts.extracted.title if ctx.artifacts.extracted else ""
+                ),
                 url=ctx.url,
             )
             if (
                 abstracts_req is not None
-                and bool(ctx.scored_abstracts)
+                and bool(ctx.artifacts.scored_abstracts)
                 and overview_query == abstracts_query
                 and raw_scored_abstracts
             ):
-                ctx.overview_scored_abstracts = [
+                ctx.artifacts.overview_scored_abstracts = [
                     ScoredAbstract(
                         abstract_id=f"S1:A{i + 1}",
                         text=item.text,
@@ -134,7 +138,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     candidates=candidates,
                     query_tokens=tokenize_for_query(overview_query),
                 )
-                ctx.overview_scored_abstracts = [
+                ctx.artifacts.overview_scored_abstracts = [
                     ScoredAbstract(
                         abstract_id=f"S1:A{i + 1}",
                         text=item.text,
@@ -150,9 +154,10 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     )
                 ]
 
-        span.set_attr("abstracts_kept", int(len(ctx.scored_abstracts)))
+        span.set_attr("abstracts_kept", int(len(ctx.artifacts.scored_abstracts)))
         span.set_attr(
-            "overview_abstracts_kept", int(len(ctx.overview_scored_abstracts))
+            "overview_abstracts_kept",
+            int(len(ctx.artifacts.overview_scored_abstracts)),
         )
         return ctx
 

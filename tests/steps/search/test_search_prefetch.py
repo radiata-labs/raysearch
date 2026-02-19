@@ -69,9 +69,9 @@ def test_prefetch_applies_additional_weight_and_dedupes_by_url() -> None:
 
     out = anyio.run(step.run, ctx)
 
-    assert out.candidate_urls == ["https://a.com/x", "https://b.com/x"]
-    assert out.candidate_scores["https://a.com/x"] == 1.0
-    assert out.candidate_scores["https://c.com/x"] == 0.8
+    assert out.prefetch.urls == ["https://a.com/x", "https://b.com/x"]
+    assert out.prefetch.scores["https://a.com/x"] == 1.0
+    assert out.prefetch.scores["https://c.com/x"] == 0.8
 
 
 def test_prefetch_ignores_exclude_domains_when_include_domains_is_set() -> None:
@@ -101,4 +101,4 @@ def test_prefetch_ignores_exclude_domains_when_include_domains_is_set() -> None:
 
     out = anyio.run(step.run, ctx)
 
-    assert out.candidate_urls == ["https://news.example.com/paper"]
+    assert out.prefetch.urls == ["https://news.example.com/paper"]

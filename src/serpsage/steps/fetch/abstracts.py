@@ -35,11 +35,11 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
-        req = ctx.abstracts_request
+        req = ctx.resolved.abstracts_request
         span.set_attr("has_abstracts", bool(req is not None))
         if req is None:
             return ctx
-        if ctx.extracted is None:
+        if ctx.artifacts.extracted is None:
             ctx.errors.append(
                 AppError(
                     code="fetch_abstract_build_failed",
@@ -49,19 +49,23 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                         "url_index": ctx.url_index,
                         "stage": "abstract_build",
                         "fatal": False,
-                        "crawl_mode": ctx.others.crawl_mode,
+                        "crawl_mode": ctx.runtime.crawl_mode,
                     },
                 )
             )
             return ctx
 
-        markdown = str(ctx.extracted.md_for_abstract or ctx.extracted.markdown or "")
+        markdown = str(
+            ctx.artifacts.extracted.md_for_abstract
+            or ctx.artifacts.extracted.markdown
+            or ""
+        )
         cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
             min_abstract_tokens=int(cfg.min_abstract_tokens),
         )
-        ctx.prepared_abstracts = prepared
+        ctx.artifacts.prepared_abstracts = prepared
         span.set_attr("prepared_abstracts", int(len(prepared)))
         return ctx
 

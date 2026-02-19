@@ -6,7 +6,13 @@ from serpsage.app.bootstrap import build_runtime
 from serpsage.app.request import FetchContentRequest, FetchRequest
 from serpsage.app.response import FetchResultItem
 from serpsage.models.extract import ExtractedDocument
-from serpsage.models.pipeline import FetchStepContext, FetchStepOthers, ScoredAbstract
+from serpsage.models.pipeline import (
+    FetchArtifactsState,
+    FetchResolvedState,
+    FetchRuntimeConfig,
+    FetchStepContext,
+    ScoredAbstract,
+)
 from serpsage.settings.models import AppSettings
 from serpsage.steps.fetch.finalize import FetchFinalizeStep
 from serpsage.steps.fetch.subpages import _to_subpage_result
@@ -21,22 +27,26 @@ def test_fetch_finalize_does_not_expose_md_for_abstract() -> None:
         request=FetchRequest(urls=["https://example.com"], content=True),
         url="https://example.com",
         url_index=0,
-        others=FetchStepOthers(),
-        content_request=FetchContentRequest(),
-        extracted=ExtractedDocument(
-            title="title",
-            markdown="markdown",
-            md_for_abstract="clean markdown",
+        runtime=FetchRuntimeConfig(),
+        resolved=FetchResolvedState(
+            content_request=FetchContentRequest(),
         ),
-        scored_abstracts=[
-            ScoredAbstract(abstract_id="S1:A1", text="abs", score=0.9),
-        ],
+        artifacts=FetchArtifactsState(
+            extracted=ExtractedDocument(
+                title="title",
+                markdown="markdown",
+                md_for_abstract="clean markdown",
+            ),
+            scored_abstracts=[
+                ScoredAbstract(abstract_id="S1:A1", text="abs", score=0.9),
+            ],
+        ),
     )
 
     out = anyio.run(step.run, ctx)
 
-    assert out.result is not None
-    assert "md_for_abstract" not in out.result.model_dump()
+    assert out.output.result is not None
+    assert "md_for_abstract" not in out.output.result.model_dump()
 
 
 def test_subpage_result_does_not_expose_md_for_abstract() -> None:

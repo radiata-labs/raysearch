@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import anyio
 from typing_extensions import override
+
+import anyio
 
 from serpsage.app.bootstrap import build_runtime
 from serpsage.app.request import FetchRequest, FetchSubpagesRequest
@@ -9,8 +10,8 @@ from serpsage.app.response import FetchResultItem
 from serpsage.components.rank.base import RankerBase
 from serpsage.models.extract import ExtractedDocument, ExtractedLink
 from serpsage.models.pipeline import (
+    FetchRuntimeConfig,
     FetchStepContext,
-    FetchStepOthers,
     ScoredAbstract,
 )
 from serpsage.settings.models import AppSettings
@@ -38,20 +39,20 @@ class _ChildFetchStep(StepBase[FetchStepContext]):
     ) -> FetchStepContext:
         del span
         if ctx.url.endswith("/a"):
-            ctx.overview_scored_abstracts = [
+            ctx.artifacts.overview_scored_abstracts = [
                 ScoredAbstract(abstract_id="S1:A1", text="a1", score=0.9),
                 ScoredAbstract(abstract_id="S1:A2", text="a2", score=0.8),
             ]
         else:
-            ctx.overview_scored_abstracts = [
+            ctx.artifacts.overview_scored_abstracts = [
                 ScoredAbstract(abstract_id="S1:A1", text="b1", score=0.7),
             ]
-        ctx.extracted = ExtractedDocument(
+        ctx.artifacts.extracted = ExtractedDocument(
             title="sub",
             markdown="sub content",
             md_for_abstract="sub content",
         )
-        ctx.result = FetchResultItem(
+        ctx.output.result = FetchResultItem(
             url=ctx.url,
             title="sub",
             content="",
@@ -80,18 +81,18 @@ def test_fetch_subpages_collects_overview_scores_in_aligned_order() -> None:
         request=request,
         url="https://parent.com",
         url_index=0,
-        others=FetchStepOthers(
+        runtime=FetchRuntimeConfig(
             crawl_mode=request.crawl_mode,
             crawl_timeout_s=float(request.crawl_timeout or 0.0),
             max_links=None,
             max_image_links=None,
         ),
     )
-    ctx.subpages.subpages_enabled = True
-    ctx.subpages.subpages_max = 2
-    ctx.subpages.subpages_query = "docs"
-    ctx.subpages.subpages_keywords = ["docs"]
-    ctx.subpages.subpages_links = [
+    ctx.subpages.enabled = True
+    ctx.subpages.max_count = 2
+    ctx.subpages.query = "docs"
+    ctx.subpages.keywords = ["docs"]
+    ctx.subpages.links = [
         ExtractedLink(
             url="https://parent.com/a",
             anchor_text="A",
@@ -106,9 +107,9 @@ def test_fetch_subpages_collects_overview_scores_in_aligned_order() -> None:
 
     out = anyio.run(step.run, ctx)
 
-    assert [item.url for item in out.subpages_result] == [
+    assert [item.url for item in out.subpages.results] == [
         "https://parent.com/a",
         "https://parent.com/b",
     ]
-    assert out.subpages_overview_scores == [[0.9, 0.8], [0.7]]
-    assert "subpages_overview_scores" not in out.subpages_result[0].model_dump()
+    assert out.subpages.overview_scores == [[0.9, 0.8], [0.7]]
+    assert "subpages_overview_scores" not in out.subpages.results[0].model_dump()

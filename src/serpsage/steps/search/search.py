@@ -76,7 +76,9 @@ class SearchStep(StepBase[SearchStepContext]):
                 query_tokens=query_tokens,
             )
             for item_idx, item in enumerate(normalized):
-                score = float(base_scores[item_idx]) if item_idx < len(base_scores) else 0.0
+                score = (
+                    float(base_scores[item_idx]) if item_idx < len(base_scores) else 0.0
+                )
                 weighted_score = float(score * source_weight)
                 prev = scored_by_url.get(item.url)
                 if prev is None:
@@ -89,16 +91,18 @@ class SearchStep(StepBase[SearchStepContext]):
 
         max_results = int(req.max_results or self.settings.search.max_results)
         prefetch_limit = max(1, max_results * 2)
-        ranked = sorted(scored_by_url.items(), key=lambda item: (-item[1][0], item[1][1]))
-        ctx.candidate_urls = [url for url, _ in ranked[:prefetch_limit]]
-        ctx.candidate_scores = {url: float(meta[0]) for url, meta in ranked}
+        ranked = sorted(
+            scored_by_url.items(), key=lambda item: (-item[1][0], item[1][1])
+        )
+        ctx.prefetch.urls = [url for url, _ in ranked[:prefetch_limit]]
+        ctx.prefetch.scores = {url: float(meta[0]) for url, meta in ranked}
 
         span.set_attr("query_count", int(len(query_jobs)))
         span.set_attr("raw_result_count", int(sum(len(x) for x in raw_results)))
         span.set_attr("filtered_result_count", int(total_filtered_items))
         span.set_attr("deduped_count", int(len(scored_by_url)))
         span.set_attr("prefetch_limit", int(prefetch_limit))
-        span.set_attr("candidate_count", int(len(ctx.candidate_urls)))
+        span.set_attr("candidate_count", int(len(ctx.prefetch.urls)))
         return ctx
 
     async def _run_query(
@@ -181,9 +185,7 @@ class SearchStep(StepBase[SearchStepContext]):
         parsed = urlparse(url)
         host = parsed.netloc or parsed.path.split("/", 1)[0]
         host = host.split("@")[-1].split(":", 1)[0].strip().lower()
-        if host.startswith("www."):
-            host = host[4:]
-        return host
+        return host.removeprefix("www.")
 
     def _domain_allowed(
         self,
@@ -194,9 +196,9 @@ class SearchStep(StepBase[SearchStepContext]):
     ) -> bool:
         if include_domains:
             return any(token in domain for token in include_domains)
-        if exclude_domains and any(token in domain for token in exclude_domains):
-            return False
-        return True
+        return not (
+            exclude_domains and any(token in domain for token in exclude_domains)
+        )
 
 
 class _NormalizedResult:

@@ -6,9 +6,13 @@ from serpsage.app.bootstrap import build_runtime
 from serpsage.app.request import FetchRequest, FetchSubpagesRequest
 from serpsage.app.response import FetchSubpagesResult
 from serpsage.components.extract.base import ExtractorBase
-from serpsage.models.extract import ExtractContentOptions, ExtractedDocument, ExtractedLink
+from serpsage.models.extract import (
+    ExtractContentOptions,
+    ExtractedDocument,
+    ExtractedLink,
+)
 from serpsage.models.fetch import FetchResult
-from serpsage.models.pipeline import FetchStepContext, FetchStepOthers
+from serpsage.models.pipeline import FetchRuntimeConfig, FetchStepContext
 from serpsage.settings.models import AppSettings
 from serpsage.steps.fetch.extract import FetchExtractStep
 from serpsage.steps.fetch.finalize import FetchFinalizeStep
@@ -55,7 +59,7 @@ def _build_ctx(*, settings: AppSettings, request: FetchRequest) -> FetchStepCont
         request=request,
         url="https://example.com",
         url_index=0,
-        others=FetchStepOthers(
+        runtime=FetchRuntimeConfig(
             crawl_mode=request.crawl_mode,
             crawl_timeout_s=float(request.crawl_timeout or 0.0),
             max_links=request.others.max_links if request.others is not None else None,
@@ -82,7 +86,7 @@ def test_subpages_still_collect_links_when_others_is_none() -> None:
     ctx = _build_ctx(settings=settings, request=req)
 
     prepared = anyio.run(prepare.run, ctx)
-    prepared.fetch_result = FetchResult(
+    prepared.artifacts.fetch_result = FetchResult(
         url="https://example.com",
         status_code=200,
         content_type="text/html",
@@ -93,8 +97,8 @@ def test_subpages_still_collect_links_when_others_is_none() -> None:
     out = anyio.run(extract.run, prepared)
 
     assert extractor.collect_links_used is True
-    assert len(out.subpages.subpages_links) == 1
-    assert out.others_result.links == []
+    assert len(out.subpages.links) == 1
+    assert out.output.others.links == []
 
 
 def test_finalize_hides_others_but_keeps_subpages_when_others_is_none() -> None:
@@ -108,14 +112,14 @@ def test_finalize_hides_others_but_keeps_subpages_when_others_is_none() -> None:
         others=None,
     )
     ctx = _build_ctx(settings=settings, request=req)
-    ctx.extracted = ExtractedDocument(
+    ctx.artifacts.extracted = ExtractedDocument(
         title="title",
         markdown="main content",
         md_for_abstract="main content",
         content_kind="html",
         extractor_used="dummy",
     )
-    ctx.subpages_result = [
+    ctx.subpages.results = [
         FetchSubpagesResult(
             url="https://example.com/sub",
             title="sub",
@@ -124,11 +128,11 @@ def test_finalize_hides_others_but_keeps_subpages_when_others_is_none() -> None:
             abstract_scores=[],
         )
     ]
-    ctx.others_result.links = ["https://example.com/should-not-show"]
+    ctx.output.others.links = ["https://example.com/should-not-show"]
 
     out = anyio.run(step.run, ctx)
 
-    assert out.result is not None
-    assert len(out.result.subpages) == 1
-    assert out.result.others is None
-    assert "others" not in out.result.model_dump()
+    assert out.output.result is not None
+    assert len(out.output.result.subpages) == 1
+    assert out.output.result.others is None
+    assert "others" not in out.output.result.model_dump()

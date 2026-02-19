@@ -27,7 +27,7 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
     async def run_inner(
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
-        if not ctx.results and not ctx.fetched_candidates:
+        if not ctx.output.results and not ctx.fetch.candidates:
             span.set_attr("before_count", 0)
             span.set_attr("after_count", 0)
             return ctx
@@ -35,7 +35,9 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
         content_enabled = self._is_enabled(ctx.request.fetchs.content)
         abstracts_enabled = self._is_enabled(ctx.request.fetchs.abstracts)
         overview_enabled = self._is_enabled(ctx.request.fetchs.overview)
-        has_sort_feature = bool(content_enabled or abstracts_enabled or overview_enabled)
+        has_sort_feature = bool(
+            content_enabled or abstracts_enabled or overview_enabled
+        )
 
         include_text = [
             clean_whitespace(x).casefold() for x in (ctx.request.include_text or [])
@@ -45,8 +47,8 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
         ]
         query_tokens = tokenize_for_query(ctx.request.query) if content_enabled else []
 
-        candidates = list(ctx.fetched_candidates or [])
-        if not candidates and ctx.results:
+        candidates = list(ctx.fetch.candidates or [])
+        if not candidates and ctx.output.results:
             from serpsage.models.pipeline import SearchFetchedCandidate  # noqa: PLC0415
 
             candidates = [
@@ -54,10 +56,11 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
                     result=item,
                     main_md_for_abstract=clean_whitespace(str(item.content or "")),
                     subpages_md_for_abstract=[
-                        clean_whitespace(str(sub.content or "")) for sub in item.subpages
+                        clean_whitespace(str(sub.content or ""))
+                        for sub in item.subpages
                     ],
                 )
-                for item in ctx.results
+                for item in ctx.output.results
             ]
 
         kept: list[tuple[float, int, FetchResultItem]] = []
@@ -77,8 +80,12 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
 
             main_page_score = await self._score_page(
                 content_text=main_text,
-                abstract_scores=[float(x) for x in list(candidate.result.abstract_scores)],
-                overview_scores=[float(x) for x in list(candidate.main_overview_scores)],
+                abstract_scores=[
+                    float(x) for x in list(candidate.result.abstract_scores)
+                ],
+                overview_scores=[
+                    float(x) for x in list(candidate.main_overview_scores)
+                ],
                 content_enabled=content_enabled,
                 abstracts_enabled=abstracts_enabled,
                 overview_enabled=overview_enabled,
@@ -135,11 +142,11 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
         else:
             kept.sort(key=lambda x: x[1])
         max_results = int(ctx.request.max_results or self.settings.search.max_results)
-        ctx.results = [item for _, _, item in kept[: max(1, max_results)]]
+        ctx.output.results = [item for _, _, item in kept[: max(1, max_results)]]
 
         span.set_attr("before_count", int(len(kept) + filtered_count))
         span.set_attr("filtered_by_text", int(filtered_count))
-        span.set_attr("after_count", int(len(ctx.results)))
+        span.set_attr("after_count", int(len(ctx.output.results)))
         span.set_attr("max_results", int(max_results))
         span.set_attr("content_enabled", bool(content_enabled))
         span.set_attr("abstracts_enabled", bool(abstracts_enabled))

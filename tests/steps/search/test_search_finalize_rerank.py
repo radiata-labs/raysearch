@@ -6,7 +6,11 @@ from serpsage.app.bootstrap import build_runtime
 from serpsage.app.request import SearchRequest
 from serpsage.app.response import FetchResultItem, FetchSubpagesResult
 from serpsage.components.rank.base import RankerBase
-from serpsage.models.pipeline import SearchFetchedCandidate, SearchStepContext
+from serpsage.models.pipeline import (
+    SearchFetchedCandidate,
+    SearchFetchState,
+    SearchStepContext,
+)
 from serpsage.settings.models import AppSettings
 from serpsage.steps.search.finalize import SearchFinalizeStep
 
@@ -89,10 +93,10 @@ def _run(
     ctx = SearchStepContext(
         settings=settings,
         request=request,
-        fetched_candidates=candidates,
+        fetch=SearchFetchState(candidates=candidates),
     )
     out = anyio.run(step.run, ctx)
-    return [item.url for item in out.results]
+    return [item.url for item in out.output.results]
 
 
 def test_finalize_only_abstracts_uses_top3_avg_and_subpage_max() -> None:

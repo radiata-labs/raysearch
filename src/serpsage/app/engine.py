@@ -8,8 +8,8 @@ from serpsage.app.response import FetchResponse, SearchResponse
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import (
+    FetchRuntimeConfig,
     FetchStepContext,
-    FetchStepOthers,
     SearchStepContext,
 )
 from serpsage.steps.base import RunnerBase
@@ -51,7 +51,7 @@ class Engine(WorkUnit):
 
             return SearchResponse(
                 search_depth=ctx.request.depth,
-                results=ctx.results,
+                results=ctx.output.results,
                 errors=ctx.errors,
                 telemetry=self.telemetry.summary(),
             )
@@ -66,7 +66,7 @@ class Engine(WorkUnit):
                     url=url,
                     url_index=idx,
                     enable_others_and_subpages=True,
-                    others=FetchStepOthers(
+                    runtime=FetchRuntimeConfig(
                         crawl_mode=req.crawl_mode,
                         crawl_timeout_s=float(req.crawl_timeout or 0.0),
                         max_links=(
@@ -97,9 +97,9 @@ class Engine(WorkUnit):
                         tg.start_soon(run_one, i, item)
 
             results = [
-                ctx.result
+                ctx.output.result
                 for ctx in contexts
-                if not ctx.fatal and ctx.result is not None
+                if not ctx.fatal and ctx.output.result is not None
             ]
             errors = [err for ctx in contexts for err in ctx.errors]
             return FetchResponse(

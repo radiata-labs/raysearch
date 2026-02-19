@@ -52,12 +52,12 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             )
             return ctx
 
-        mode = str(ctx.others.crawl_mode or "fallback")
+        mode = str(ctx.runtime.crawl_mode or "fallback")
         cache_key = _cache_key(
             url=url,
             backend=str(self.settings.fetch.backend or "auto").lower(),
         )
-        timeout_s = float(ctx.others.crawl_timeout_s or 0.0) or float(
+        timeout_s = float(ctx.runtime.crawl_timeout_s or 0.0) or float(
             self.settings.fetch.timeout_s
         )
         span.set_attr("crawl_mode", mode)
@@ -187,7 +187,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                 span.set_attr("cache_hit", False)
 
         assert fetched is not None
-        ctx.fetch_result = fetched
+        ctx.artifacts.fetch_result = fetched
         span.set_attr("source", str(source or "unknown"))
         span.set_attr("status_code", int(fetched.status_code))
         span.set_attr("fetch_mode", str(fetched.fetch_mode))
@@ -211,7 +211,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             "url_index": ctx.url_index,
             "stage": stage,
             "fatal": True,
-            "crawl_mode": ctx.others.crawl_mode,
+            "crawl_mode": ctx.runtime.crawl_mode,
         }
         if source:
             details["source"] = source

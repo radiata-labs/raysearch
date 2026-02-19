@@ -10,7 +10,11 @@ from serpsage.components.cache.base import CacheBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.models.extract import ExtractedDocument
 from serpsage.models.llm import ChatResult
-from serpsage.models.pipeline import FetchStepContext, FetchStepOthers, ScoredAbstract
+from serpsage.models.pipeline import (
+    FetchRuntimeConfig,
+    FetchStepContext,
+    ScoredAbstract,
+)
 from serpsage.settings.models import AppSettings
 from serpsage.steps.fetch.overview import FetchOverviewStep
 
@@ -55,7 +59,7 @@ def _build_ctx(*, settings: AppSettings) -> FetchStepContext:
         request=request,
         url="https://example.com",
         url_index=0,
-        others=FetchStepOthers(),
+        runtime=FetchRuntimeConfig(),
     )
 
 
@@ -64,7 +68,7 @@ def test_overview_source_prefers_md_for_abstract_when_no_scored_abstracts() -> N
     rt = build_runtime(settings=settings)
     step = FetchOverviewStep(rt=rt, llm=_DummyLLM(rt=rt), cache=_DummyCache(rt=rt))
     ctx = _build_ctx(settings=settings)
-    ctx.extracted = ExtractedDocument(
+    ctx.artifacts.extracted = ExtractedDocument(
         markdown="raw markdown content",
         md_for_abstract="clean abstract text\nsecond line",
     )
@@ -85,17 +89,17 @@ def test_overview_query_none_uses_default_query_instruction() -> None:
         content=False,
         overview=True,
     )
-    ctx.extracted = ExtractedDocument(
+    ctx.artifacts.extracted = ExtractedDocument(
         title="DeepSeek V3.2",
         markdown="raw markdown content",
     )
-    ctx.overview_scored_abstracts = [
+    ctx.artifacts.overview_scored_abstracts = [
         ScoredAbstract(abstract_id="S1:A1", text="scored abstract text", score=0.9)
     ]
 
     out = anyio.run(step.run, ctx)
 
-    assert out.overview_output == "overview-ok"
+    assert out.artifacts.overview_output == "overview-ok"
     assert llm.last_messages
     user_message = llm.last_messages[1]["content"]
     assert "No explicit user query was provided." in user_message
