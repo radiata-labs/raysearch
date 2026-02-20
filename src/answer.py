@@ -24,10 +24,14 @@ async def main(
     )
     async with Engine.from_settings(settings) as engine:
         resp = await engine.answer(req)
+    resp_dict = resp.model_dump()
+    resp_dict["telemetry"]["spans"] = [
+        item for item in resp_dict["telemetry"]["spans"] if "fetch" not in item["name"]
+    ]
     return {
         "answer": resp.answer,
         "answer_result": json.dumps(
-            resp.model_dump(exclude={"telemetry"}),
+            resp_dict,
             ensure_ascii=False,
             indent=2,
         ),
@@ -38,7 +42,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "What is the valuation of SpaceX in 2025?", False, None)
+    out = anyio.run(main, "What is curl_cffi?", False, None)
     t2 = time.time()
 
     print(out["answer_result"])

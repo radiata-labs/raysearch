@@ -215,6 +215,10 @@ async def test_answer_plan_drives_search_and_uses_content_flag() -> None:
     assert "Current UTC timestamp:" in llm.calls[0]["messages"][1]["content"]
     assert "CURRENT_UTC_TIMESTAMP:" in llm.calls[1]["messages"][1]["content"]
     assert "Temporal reasoning rules:" in llm.calls[1]["messages"][0]["content"]
+    assert (
+        "Output language must strictly match QUERY language and script."
+        in llm.calls[1]["messages"][0]["content"]
+    )
     assert [call["model"] for call in llm.calls] == ["planner", "writer"]
 
 
@@ -222,7 +226,7 @@ async def test_answer_plan_drives_search_and_uses_content_flag() -> None:
 async def test_answer_plan_normalizes_depth_constraints_and_caps_results() -> None:
     settings = _make_settings()
     settings.search.max_results = 9
-    engine, _, search_step = _build_engine(
+    engine, llm, search_step = _build_engine(
         settings=settings,
         outputs=[
             ChatResult(
@@ -248,6 +252,8 @@ async def test_answer_plan_normalizes_depth_constraints_and_caps_results() -> No
     assert req.fetchs.content is False
     assert req.fetchs.subpages is None
     assert resp.citations == []
+    assert "CURRENT_UTC_TIMESTAMP:" not in llm.calls[1]["messages"][1]["content"]
+    assert "Temporal reasoning rules:" not in llm.calls[1]["messages"][0]["content"]
 
 
 @pytest.mark.anyio

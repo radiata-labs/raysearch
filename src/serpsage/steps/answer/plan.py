@@ -24,6 +24,7 @@ _ANSWER_MODE = Literal["direct", "summary"]
 @dataclass(slots=True)
 class _PlannedSearch:
     answer_mode: _ANSWER_MODE
+    freshness_intent: bool
     search_query: str
     search_depth: Literal["auto", "deep"]
     max_results: int
@@ -61,6 +62,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             )
             plan = _PlannedSearch(
                 answer_mode="summary",
+                freshness_intent=False,
                 search_query=clean_whitespace(ctx.request.query),
                 search_depth="auto",
                 max_results=min(max_results_cap, 5),
@@ -68,6 +70,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             )
 
         ctx.plan.answer_mode = str(plan.answer_mode)
+        ctx.plan.freshness_intent = bool(plan.freshness_intent)
         ctx.plan.search_query = plan.search_query
         ctx.plan.search_depth = plan.search_depth
         ctx.plan.max_results = int(plan.max_results)
@@ -78,6 +81,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         )
 
         span.set_attr("answer_mode", str(ctx.plan.answer_mode))
+        span.set_attr("freshness_intent", bool(ctx.plan.freshness_intent))
         span.set_attr("search_depth", str(ctx.plan.search_depth))
         span.set_attr("max_results", int(ctx.plan.max_results))
         span.set_attr(
@@ -166,6 +170,8 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                         "Decision policy:",
                         "- answer_mode: direct for concrete factual questions; summary for open-ended questions.",
                         "- freshness_intent: true when user asks for latest/current/now-like answers.",
+                        "- only use Current UTC timestamp/date when freshness_intent=true.",
+                        "- if freshness_intent=false, do not add date/time constraints into search_query or additional_queries.",
                         "- choose search intensity to minimize latency while preserving answer quality.",
                         "- max_results must be in [1, "
                         + str(max_results_cap)
@@ -197,7 +203,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         raw_mode = clean_whitespace(str(data.get("answer_mode") or "")).casefold()
         answer_mode: _ANSWER_MODE = "direct" if raw_mode == "direct" else "summary"
 
-        _ = _coerce_bool(data.get("freshness_intent"), default=False)
+        freshness_intent = _coerce_bool(data.get("freshness_intent"), default=False)
         optimize_query = _coerce_bool(data.get("optimize_query"), default=False)
         planned_query = clean_whitespace(str(data.get("search_query") or ""))
         search_query = (
@@ -225,6 +231,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
 
         return _PlannedSearch(
             answer_mode=answer_mode,
+            freshness_intent=freshness_intent,
             search_query=search_query,
             search_depth=search_depth,
             max_results=max_results,

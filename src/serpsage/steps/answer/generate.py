@@ -94,12 +94,14 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             if clean_whitespace(str(ctx.plan.answer_mode or "")).casefold() == "direct"
             else "summary"
         )
+        freshness_intent = bool(ctx.plan.freshness_intent)
         messages = self._build_messages(
             query=ctx.request.query,
             sources=prompt_sources,
             answer_mode=answer_mode,
             mode=mode,
             now_utc=now_utc,
+            freshness_intent=freshness_intent,
         )
         ctx.output.citations = []
 
@@ -162,6 +164,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         span.set_attr("source_pages", int(len(prompt_sources)))
         span.set_attr("source_abstract_chars", int(abstract_chars))
         span.set_attr("citation_count", int(len(ctx.output.citations)))
+        span.set_attr("freshness_intent", bool(freshness_intent))
         span.set_attr("schema_mode", bool(schema is not None))
         return ctx
 
@@ -334,6 +337,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         answer_mode: str,
         mode: str,
         now_utc: datetime,
+        freshness_intent: bool,
     ) -> list[dict[str, str]]:
         citation_rules = (
             "Citation format rule: use one citation per tag only, e.g. "
@@ -342,45 +346,51 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             "use [citation:2], do not write [ citation:2], [citation :2], or [citation: 2 ]."
         )
         quality_rules = (
-            "Quality rules:\n",
-            "1) Use the same language as QUERY.\n",
-            "2) Use only SOURCE_PAGES evidence. Do not use outside memory.\n",
-            "3) Prefer higher-score sources when choosing between claims.\n",
-            "4) If multiple sources conflict, state the conflict briefly and prefer better-supported evidence.\n",
-            "5) If evidence is weak or missing, explicitly state uncertainty.\n",
-            "6) Put citation tags immediately after the supported claim.\n",
+            "Quality rules:\n"
+            "1) Output language must strictly match QUERY language and script. "
+            "Never switch language based on SOURCE_PAGES language.\n"
+            "2) Use only SOURCE_PAGES evidence. Do not use outside memory.\n"
+            "3) Prefer higher-score sources when choosing between claims.\n"
+            "4) If multiple sources conflict, state the conflict briefly and prefer better-supported evidence.\n"
+            "5) If evidence is weak or missing, explicitly state uncertainty.\n"
+            "6) Put citation tags immediately after the supported claim.\n"
         )
         temporal_rules = (
-            "Temporal reasoning rules:\n",
-            "1) Determine whether QUERY asks for latest/current/as-of information.\n",
-            "2) If yes, choose evidence by explicit date recency (newer date wins).\n",
-            "3) Do not mix stale historical values with future projections in one direct answer.\n",
-            "4) Include a concrete time anchor in the answer, e.g. 'as of YYYY-MM' or exact date.\n",
-            "5) If only old/uncertain evidence exists, explicitly say it is the latest known as of that date.\n",
+            "Temporal reasoning rules:\n"
+            "1) Determine whether QUERY asks for latest/current/as-of information.\n"
+            "2) If yes, choose evidence by explicit date recency (newer date wins).\n"
+            "3) Do not mix stale historical values with future projections in one direct answer.\n"
+            "4) Include a concrete time anchor in the answer, e.g. 'as of YYYY-MM' or exact date.\n"
+            "5) If only old/uncertain evidence exists, explicitly say it is the latest known as of that date.\n"
         )
         if mode == "json":
             task = (
-                f"{quality_rules}\n{temporal_rules}\n"
-                "Output contract (JSON): return JSON only, no markdown fences, no extra keys. "
-                "For factual claims in string fields, include citations using [citation:x]. "
+                f"{quality_rules}\n"
+                + (f"{temporal_rules}\n" if freshness_intent else "")
+                + "Output contract (JSON): return JSON only, no markdown fences, no extra keys. "
+                + "For factual claims in string fields, include citations using [citation:x]. "
                 + citation_rules
             )
         elif answer_mode == "direct":
             task = (
-                f"{quality_rules}\n{temporal_rules}\n"
-                "Output contract (DIRECT): return plain text only. "
-                "Start with the direct answer in the first sentence. "
-                "For concrete factual queries, answer directly (e.g. Paris, $1.5 trillion). "
-                "Use at most 2 short sentences. Avoid preambles and filler. "
-                "Cite factual claims with [citation:x]. " + citation_rules
+                f"{quality_rules}\n"
+                + (f"{temporal_rules}\n" if freshness_intent else "")
+                + "Output contract (DIRECT): return plain text only. "
+                + "Start with the direct answer in the first sentence. "
+                + "For concrete factual queries, answer directly (e.g. Paris, $1.5 trillion). "
+                + "Use at most 2 short sentences. Avoid preambles and filler. "
+                + "Cite factual claims with [citation:x]. "
+                + citation_rules
             )
         else:
             task = (
-                f"{quality_rules}\n{temporal_rules}\n"
-                "Output contract (SUMMARY): return plain text only. "
-                "First give a one-sentence conclusion, then 3-6 concise key points. "
-                "Every key factual statement should include [citation:x]. "
-                "Do not add a references section. " + citation_rules
+                f"{quality_rules}\n"
+                + (f"{temporal_rules}\n" if freshness_intent else "")
+                + "Output contract (SUMMARY): return plain text only. "
+                + "First give a one-sentence conclusion, then 3-6 concise key points. "
+                + "Every key factual statement should include [citation:x]. "
+                + "Do not add a references section. "
+                + citation_rules
             )
 
         source_blocks: list[str] = []
@@ -403,15 +413,18 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                 )
             )
         source_block = "\n\n".join(source_blocks) if source_blocks else "(empty)"
-        user_content = "\n\n".join(
-            [
+        user_blocks = [
+            f"QUERY:\n{query}",
+            f"ANSWER_MODE:\n{answer_mode}",
+            f"SOURCE_PAGES:\n{source_block}",
+        ]
+        if freshness_intent:
+            user_blocks = [
                 f"CURRENT_UTC_TIMESTAMP:\n{now_utc.isoformat()}",
                 f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}",
-                f"QUERY:\n{query}",
-                f"ANSWER_MODE:\n{answer_mode}",
-                f"SOURCE_PAGES:\n{source_block}",
+                *user_blocks,
             ]
-        )
+        user_content = "\n\n".join(user_blocks)
         return [
             {
                 "role": "system",

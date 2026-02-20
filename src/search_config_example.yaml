@@ -20,10 +20,10 @@ search:
 
 answer:
   plan:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2-turbo-preview
   generate:
-    use_model: gpt-4.1-mini
-    max_abstract_chars: 3000
+    use_model: kimi-k2-turbo-preview
+    max_abstract_chars: 2000
 
 runner:
   search_limit: 8
@@ -111,6 +111,16 @@ llm:
       base_url: null
       api_key: null
       model: gemini-3-flash-preview
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      schema_strict: true
+    - name: kimi-k2-turbo-preview
+      backend: openai
+      base_url: https://api.moonshot.cn/v1
+      api_key: sk-FomXjBE7WWcub7wMCh3rTfPcu3OCsvf7g8TVMCFJLKzLvnNC
+      model: kimi-k2-turbo-preview
       timeout_s: 60.0
       max_retries: 2
       temperature: 0.0
