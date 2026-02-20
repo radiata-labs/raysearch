@@ -17,7 +17,12 @@ from serpsage.components import (
 )
 from serpsage.core.runtime import Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
-from serpsage.models.pipeline import FetchStepContext, SearchStepContext
+from serpsage.models.pipeline import (
+    AnswerStepContext,
+    FetchStepContext,
+    SearchStepContext,
+)
+from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.fetch import (
     FetchAbstractBuildStep,
@@ -113,9 +118,7 @@ def build_engine(
         FetchSubpageStep(rt=rt, fetch_runner=child_fetch_runner, ranker=ranker),
         FetchFinalizeStep(rt=rt),
     ]
-    fetch_runner = RunnerBase[FetchStepContext](
-        rt=rt, steps=fetch_steps, kind="fetch"
-    )
+    fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps, kind="fetch")
     search_steps: list[StepBase[SearchStepContext]] = [
         SearchPrepareStep(rt=rt),
         SearchStep(rt=rt, provider=provider, ranker=ranker),
@@ -125,11 +128,20 @@ def build_engine(
     search_runner = RunnerBase[SearchStepContext](
         rt=rt, steps=search_steps, kind="search"
     )
+    answer_steps: list[StepBase[AnswerStepContext]] = [
+        AnswerPlanStep(rt=rt, llm=llm),
+        AnswerSearchStep(rt=rt, search_runner=search_runner),
+        AnswerGenerateStep(rt=rt, llm=llm),
+    ]
+    answer_runner = RunnerBase[AnswerStepContext](
+        rt=rt, steps=answer_steps, kind="search"
+    )
 
     return Engine(
         rt=rt,
         search_runner=search_runner,
         fetch_runner=fetch_runner,
+        answer_runner=answer_runner,
     )
 
 

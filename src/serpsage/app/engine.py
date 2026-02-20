@@ -3,10 +3,11 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from serpsage.app.response import FetchResponse, SearchResponse
+from serpsage.app.response import AnswerResponse, FetchResponse, SearchResponse
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import (
+    AnswerStepContext,
     FetchRuntimeConfig,
     FetchStepContext,
     SearchStepContext,
@@ -14,13 +15,13 @@ from serpsage.models.pipeline import (
 from serpsage.steps.base import RunnerBase
 
 if TYPE_CHECKING:
-    from serpsage.app.request import FetchRequest, SearchRequest
+    from serpsage.app.request import AnswerRequest, FetchRequest, SearchRequest
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import AppSettings
 
 
 class Engine(WorkUnit):
-    """Async-only engine with dual paths: search + fetch."""
+    """Async-only engine with search/fetch/answer paths."""
 
     def __init__(
         self,
@@ -28,11 +29,13 @@ class Engine(WorkUnit):
         rt: Runtime,
         search_runner: RunnerBase[SearchStepContext],
         fetch_runner: RunnerBase[FetchStepContext],
+        answer_runner: RunnerBase[AnswerStepContext],
     ) -> None:
         super().__init__(rt=rt)
         self._search_runner = search_runner
         self._fetch_runner = fetch_runner
-        self.bind_deps(search_runner, fetch_runner)
+        self._answer_runner = answer_runner
+        self.bind_deps(search_runner, fetch_runner, answer_runner)
 
     @classmethod
     def from_settings(
@@ -51,7 +54,6 @@ class Engine(WorkUnit):
                 request_id=request_id,
             )
             ctx = await self._search_runner.run(ctx)
-
             return SearchResponse(
                 request_id=request_id,
                 search_depth=ctx.request.depth,
@@ -99,6 +101,23 @@ class Engine(WorkUnit):
                 request_id=request_id,
                 results=results,
                 errors=errors,
+                telemetry=self.telemetry.summary(),
+            )
+
+    async def answer(self, req: AnswerRequest) -> AnswerResponse:
+        with self.span("engine.answer"):
+            request_id = uuid.uuid4().hex
+            ctx = AnswerStepContext(
+                settings=self.settings,
+                request=req,
+                request_id=request_id,
+            )
+            ctx = await self._answer_runner.run(ctx)
+            return AnswerResponse(
+                request_id=request_id,
+                answer=ctx.output.answers,
+                citations=ctx.output.citations,
+                errors=ctx.errors,
                 telemetry=self.telemetry.summary(),
             )
 

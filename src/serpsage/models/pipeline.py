@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from serpsage.app.request import (
+    AnswerRequest,
     CrawlMode,
     FetchAbstractsRequest,
     FetchContentRequest,
@@ -11,6 +12,7 @@ from serpsage.app.request import (
     SearchRequest,
 )
 from serpsage.app.response import (
+    AnswerCitation,
     FetchOthersResult,
     FetchResultItem,
     FetchSubpagesResult,
@@ -49,6 +51,34 @@ class SearchStepContext(BaseStepContext):
     prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
     fetch: SearchFetchState = Field(default_factory=SearchFetchState)
     output: SearchOutputState = Field(default_factory=SearchOutputState)
+    errors: list[AppError] = Field(default_factory=list)
+
+
+class AnswerPlanState(MutableModel):
+    answer_mode: str = "summary"
+    search_query: str = ""
+    search_depth: str = "auto"
+    max_results: int = 1
+    additional_queries: list[str] | None = None
+
+
+class AnswerSearchState(MutableModel):
+    request: SearchRequest | None = None
+    search_depth: str = "auto"
+    results: list[FetchResultItem] = Field(default_factory=list)
+
+
+class AnswerOutputState(MutableModel):
+    answers: str | object = ""
+    citations: list[AnswerCitation] = Field(default_factory=list)
+
+
+class AnswerStepContext(BaseStepContext):
+    settings: AppSettings
+    request: AnswerRequest
+    plan: AnswerPlanState = Field(default_factory=AnswerPlanState)
+    search: AnswerSearchState = Field(default_factory=AnswerSearchState)
+    output: AnswerOutputState = Field(default_factory=AnswerOutputState)
     errors: list[AppError] = Field(default_factory=list)
 
 
@@ -131,6 +161,10 @@ class FetchStepContext(BaseStepContext):
 
 
 __all__ = [
+    "AnswerOutputState",
+    "AnswerPlanState",
+    "AnswerSearchState",
+    "AnswerStepContext",
     "BaseStepContext",
     "FetchArtifactsState",
     "FetchOutputState",

@@ -1,5 +1,6 @@
 from serpsage.app.engine import Engine
 from serpsage.app.request import (
+    AnswerRequest,
     CrawlMode,
     FetchAbstractsRequest,
     FetchContentDetail,
@@ -10,10 +11,19 @@ from serpsage.app.request import (
     FetchSubpagesRequest,
     SearchRequest,
 )
-from serpsage.app.response import FetchResponse, FetchSubpagesResult, SearchResponse
+from serpsage.app.response import (
+    AnswerCitation,
+    AnswerResponse,
+    FetchResponse,
+    FetchSubpagesResult,
+    SearchResponse,
+)
 
 __all__ = [
     "Engine",
+    "AnswerRequest",
+    "AnswerCitation",
+    "AnswerResponse",
     "CrawlMode",
     "FetchOthersRequest",
     "FetchAbstractsRequest",

@@ -78,6 +78,30 @@ class SearchSettings(Model):
         return self
 
 
+class AnswerStageSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    use_model: str = "gpt-4.1-mini"
+
+
+class AnswerGenerateSettings(AnswerStageSettings):
+    max_abstract_chars: int = 3000
+
+    @field_validator("max_abstract_chars")
+    @classmethod
+    def _validate_max_abstract_chars(cls, value: int) -> int:
+        if int(value) <= 0:
+            raise ValueError("answer.generate.max_abstract_chars must be > 0")
+        return int(value)
+
+
+class AnswerSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    plan: AnswerStageSettings = Field(default_factory=AnswerStageSettings)
+    generate: AnswerGenerateSettings = Field(default_factory=AnswerGenerateSettings)
+
+
 def _default_blocked_markers() -> list[str]:
     return [
         "cloudflare",
@@ -300,6 +324,7 @@ class AppSettings(Model):
     http: HttpSettings = Field(default_factory=HttpSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    answer: AnswerSettings = Field(default_factory=AnswerSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
     rank: RankSettings = Field(default_factory=RankSettings)
@@ -314,11 +339,22 @@ class AppSettings(Model):
             raise ValueError(
                 "fetch.overview.use_model must match one of llm.models[].name"
             )
+        if self.answer.plan.use_model not in names:
+            raise ValueError(
+                "answer.plan.use_model must match one of llm.models[].name"
+            )
+        if self.answer.generate.use_model not in names:
+            raise ValueError(
+                "answer.generate.use_model must match one of llm.models[].name"
+            )
         return self
 
 
 __all__ = [
     "AppSettings",
+    "AnswerGenerateSettings",
+    "AnswerSettings",
+    "AnswerStageSettings",
     "CacheMySQLSettings",
     "CacheRedisSettings",
     "CacheSQLAlchemySettings",

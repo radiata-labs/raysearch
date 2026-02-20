@@ -205,12 +205,8 @@ class FetchRequestBase(BaseModel):
         abstracts_enabled = not isinstance(self.abstracts, bool) or bool(self.abstracts)
         overview_enabled = not isinstance(self.overview, bool) or bool(self.overview)
         subpages_enabled = self.subpages is not None
-        others_enabled = (
-            self.others is not None
-            and (
-                self.others.max_links is not None
-                or self.others.max_image_links is not None
-            )
+        others_enabled = self.others is not None and (
+            self.others.max_links is not None or self.others.max_image_links is not None
         )
         if not (
             content_enabled
@@ -322,6 +318,27 @@ class SearchRequest(BaseModel):
         return self
 
 
+class AnswerRequest(BaseModel):
+    model_config = ConfigDict(validate_assignment=True, extra="forbid")
+
+    query: str
+    json_schema: object | None = None
+    content: bool = False
+
+    @field_validator("query")
+    @classmethod
+    def _validate_query(cls, value: str) -> str:
+        query = clean_whitespace(str(value or ""))
+        if not query:
+            raise ValueError("query must not be empty")
+        return query
+
+    @field_validator("json_schema")
+    @classmethod
+    def _validate_schema(cls, value: object | None) -> object | None:
+        return _validate_json_schema(value)
+
+
 __all__ = [
     "CrawlMode",
     "FetchContentDetail",
@@ -335,4 +352,5 @@ __all__ = [
     "FetchOverviewRequest",
     "SearchDepth",
     "SearchRequest",
+    "AnswerRequest",
 ]

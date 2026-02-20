@@ -82,12 +82,14 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         span.set_attr("abstracts_count", int(len(abstracts)))
         span.set_attr(
             "links_count",
-            int(len(others_result["others"].links)) if others_result is not None else 0,
+            int(len(others_result["others"].links))
+            if hasattr(others_result, "others")
+            else 0,
         )
         span.set_attr(
             "image_links_count",
             int(len(others_result["others"].image_links))
-            if others_result is not None
+            if hasattr(others_result, "others")
             else 0,
         )
         span.set_attr("subpages_count", int(len(subpages_result)))

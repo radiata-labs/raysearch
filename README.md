@@ -1,9 +1,10 @@
 # SerpSage
 
-SerpSage is an async-only SERP + page intelligence engine with two first-class paths:
+SerpSage is an async-only SERP + page intelligence engine with three first-class paths:
 
 - `Engine.search(req)`: query search pipeline (`prepare -> search(prefetch) -> fetch -> finalize`)
 - `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional abstract rank -> optional overview -> optional subpages -> finalize`)
+- `Engine.answer(req)`: answer pipeline (`plan search params -> search -> generate answer`)
 
 The `fetch` path is Markdown-first: output is centered on clean main-content markdown (`response.results[].content`).
 
@@ -12,6 +13,7 @@ The `fetch` path is Markdown-first: output is centered on clean main-content mar
 - `Engine`
 - `SearchRequest` / `SearchResponse`
 - `FetchRequest` / `FetchResponse`
+- `AnswerRequest` / `AnswerResponse`
 - `load_settings`
 
 ## Configuration
@@ -21,6 +23,7 @@ Top-level settings:
 - `provider`
 - `http`
 - `search`
+- `answer`
 - `fetch`
 - `rank`
 - `llm`
@@ -49,6 +52,7 @@ Runtime prerequisites:
 
 ```python
 from serpsage import (
+    AnswerRequest,
     Engine,
     FetchAbstractsRequest,
     FetchContentRequest,
@@ -86,11 +90,22 @@ async with Engine.from_settings(settings) as engine:
             others=FetchOthersRequest(max_links=20, max_image_links=10),
         )
     )
+    answer_resp = await engine.answer(
+        AnswerRequest(
+            query="What are the latest benchmark results for model X?",
+            content=True,
+        )
+    )
 ```
 
 ## Behavior notes
 
 - `search.depth`: `auto|deep`
+- `answer` planner is LLM-driven and receives current UTC time for recency-sensitive questions
+- `answer` generation consumes budgeted abstracts (`answer.generate.max_abstract_chars`, default `3000`)
+- `answer` uses `[citation:x]` markers in `answers`; only referenced pages appear in `citations`
+- `answer.citations[]` is page-level unique (`url`, `title`, optional `content`), not abstract-level
+- `AnswerRequest.content=true` enables page markdown output in search/fetch and citation `content` payload
 - `fetch`: no depth tiers, single strategy
 - `fetch.backend`: `auto|curl_cffi|playwright` (`httpx` backend removed)
 - migration: old search profile/overview settings are removed

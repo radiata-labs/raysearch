@@ -4,7 +4,8 @@ SerpSage 3.0 (async-only).
 Public API:
 - Engine: async search pipeline orchestrator
 - load_settings: load AppSettings from YAML/JSON/env
-- SearchRequest/SearchResponse + FetchRequest/FetchResponse: request/response models
+- SearchRequest/SearchResponse + FetchRequest/FetchResponse + AnswerRequest/AnswerResponse
+  request/response models
 """
 
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
 
 
 from serpsage.app.request import (
+    AnswerRequest,
     CrawlMode,
     FetchAbstractsRequest,
     FetchContentDetail,
@@ -25,7 +27,13 @@ from serpsage.app.request import (
     FetchSubpagesRequest,
     SearchRequest,
 )
-from serpsage.app.response import FetchResponse, FetchSubpagesResult, SearchResponse
+from serpsage.app.response import (
+    AnswerCitation,
+    AnswerResponse,
+    FetchResponse,
+    FetchSubpagesResult,
+    SearchResponse,
+)
 from serpsage.settings.load import load_settings
 from serpsage.settings.models import AppSettings
 
@@ -40,6 +48,9 @@ def __getattr__(name: str):
 
 __all__ = [
     "AppSettings",
+    "AnswerRequest",
+    "AnswerCitation",
+    "AnswerResponse",
     "CrawlMode",
     "Engine",
     "FetchOthersRequest",

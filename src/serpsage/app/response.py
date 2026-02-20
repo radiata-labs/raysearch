@@ -66,12 +66,40 @@ class SearchResponse(BaseModel):
     telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
+class AnswerCitation(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    id: str
+    url: str
+    title: str
+    content: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):  # type: ignore[no-untyped-def]
+        payload = handler(self)
+        if payload.get("content") is None:
+            payload.pop("content", None)
+        return payload
+
+
+class AnswerResponse(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    request_id: str
+    answer: str | object
+    citations: list[AnswerCitation] = Field(default_factory=list)
+    errors: list[AppError] = Field(default_factory=list)
+    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
+
+
 __all__ = [
     "FetchOthersResult",
     "FetchResponse",
     "FetchResultItem",
     "FetchSubpagesResult",
     "SearchResponse",
+    "AnswerCitation",
+    "AnswerResponse",
 ]
 
 FetchResultItem.model_rebuild()

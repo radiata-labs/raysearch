@@ -18,6 +18,13 @@ search:
   max_results: 16
   additional_query_score_weight: 0.8
 
+answer:
+  plan:
+    use_model: gpt-4.1-mini
+  generate:
+    use_model: gpt-4.1-mini
+    max_abstract_chars: 3000
+
 runner:
   search_limit: 8
   fetch_limit: 24
