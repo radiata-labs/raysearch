@@ -31,18 +31,6 @@ def _build_query_weights(tokens: list[str]) -> list[tuple[str, float]]:
     return result
 
 
-def _dedupe_tokens(tokens: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for tok in tokens or []:
-        normalized = normalize_text(tok)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        out.append(normalized)
-    return out
-
-
 def _compute_proximity_all_positions(
     positions_per_token: list[list[int]],
     text_length: int,

@@ -21,7 +21,6 @@ class DashScopeClient(LLMClientBase):
         super().__init__(rt=rt)
         self._model_cfg = model_cfg
         self._api_key = model_cfg.api_key
-        self._base_url = model_cfg.base_url
 
     @override
     async def chat(
