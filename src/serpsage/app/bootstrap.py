@@ -35,9 +35,11 @@ from serpsage.steps.fetch import (
     FetchSubpageStep,
 )
 from serpsage.steps.search import (
+    SearchExpandStep,
     SearchFetchStep,
     SearchFinalizeStep,
     SearchPrepareStep,
+    SearchRankStep,
     SearchStep,
 )
 from serpsage.telemetry.base import ClockBase
@@ -121,9 +123,11 @@ def build_engine(
     fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps, kind="fetch")
     search_steps: list[StepBase[SearchStepContext]] = [
         SearchPrepareStep(rt=rt),
+        SearchExpandStep(rt=rt, llm=llm),
         SearchStep(rt=rt, provider=provider, ranker=ranker),
         SearchFetchStep(rt=rt, fetch_runner=fetch_runner),
-        SearchFinalizeStep(rt=rt, ranker=ranker),
+        SearchRankStep(rt=rt, ranker=ranker),
+        SearchFinalizeStep(rt=rt),
     ]
     search_runner = RunnerBase[SearchStepContext](
         rt=rt, steps=search_steps, kind="search"

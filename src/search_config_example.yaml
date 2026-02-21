@@ -1,7 +1,7 @@
 ﻿provider:
   backend: searxng
   searxng:
-    base_url: https://searxng.lycoreco.dpdns.org/search
+    base_url: https://searx.be/search
     api_key: null
     timeout_s: 20.0
     allow_redirects: false
@@ -17,6 +17,22 @@ http:
 search:
   max_results: 16
   additional_query_score_weight: 0.8
+  deep:
+    enabled: true
+    max_expanded_queries: 6
+    rule_max_queries: 4
+    llm_max_queries: 3
+    prefetch_multiplier: 3.0
+    prefetch_max_urls: 48
+    manual_query_score_weight: 0.8
+    rule_query_score_weight: 0.75
+    llm_query_score_weight: 0.85
+    coverage_bonus_weight: 0.08
+    final_page_weight: 0.55
+    final_context_weight: 0.30
+    final_prefetch_weight: 0.15
+    expansion_model: ""
+    expansion_timeout_s: 20.0
 
 answer:
   plan:

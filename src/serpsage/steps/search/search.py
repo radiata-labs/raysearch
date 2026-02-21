@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 from urllib.parse import urlparse
@@ -7,7 +8,7 @@ from urllib.parse import urlparse
 import anyio
 
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import SearchStepContext
+from serpsage.models.pipeline import SearchQueryJob, SearchSnippetContext, SearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils.normalize import clean_whitespace, strip_html
 from serpsage.utils.tokenize import tokenize_for_query
@@ -38,28 +39,38 @@ class SearchStep(StepBase[SearchStepContext]):
     async def run_inner(
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
+        if bool(ctx.deep.aborted):
+            ctx.prefetch.urls = []
+            ctx.prefetch.scores = {}
+            ctx.fetch.candidates = []
+            ctx.output.results = []
+            span.set_attr("aborted", True)
+            span.set_attr("query_count", 0)
+            span.set_attr("candidate_count", 0)
+            return ctx
+
         req = ctx.request
-        query_jobs = self._build_query_jobs(
-            query=req.query,
-            depth=req.depth,
-            additional_queries=req.additional_queries or [],
-        )
+        query_jobs = self._resolve_query_jobs(ctx=ctx)
         if not query_jobs:
+            span.set_attr("aborted", False)
+            span.set_attr("query_count", 0)
             return ctx
 
         raw_results: list[list[dict[str, Any]]] = [[] for _ in query_jobs]
         async with anyio.create_task_group() as tg:
-            for idx, (query, _) in enumerate(query_jobs):
-                tg.start_soon(self._run_query, idx, query, raw_results, ctx)
+            for idx, job in enumerate(query_jobs):
+                tg.start_soon(self._run_query, idx, job.query, raw_results, ctx)
 
         query_tokens = tokenize_for_query(req.query)
         include_domains = list(req.include_domains or [])
         exclude_domains = list(req.exclude_domains or [])
 
         scored_by_url: dict[str, tuple[float, int]] = {}
+        hit_indexes_by_url: dict[str, set[int]] = {}
+        snippets_by_url: dict[str, dict[str, SearchSnippetContext]] = {}
         next_order = 0
         total_filtered_items = 0
-        for idx, (_, source_weight) in enumerate(query_jobs):
+        for idx, job in enumerate(query_jobs):
             normalized = self._normalize_results(
                 raw_results[idx],
                 include_domains=include_domains,
@@ -83,7 +94,7 @@ class SearchStep(StepBase[SearchStepContext]):
                 score = (
                     float(base_scores[item_idx]) if item_idx < len(base_scores) else 0.0
                 )
-                weighted_score = float(score * source_weight)
+                weighted_score = float(score * float(job.weight))
                 prev = scored_by_url.get(item.url)
                 if prev is None:
                     scored_by_url[item.url] = (weighted_score, next_order)
@@ -91,22 +102,70 @@ class SearchStep(StepBase[SearchStepContext]):
                     prev_score, prev_order = prev
                     if weighted_score > prev_score:
                         scored_by_url[item.url] = (weighted_score, prev_order)
+                hit_indexes_by_url.setdefault(item.url, set()).add(idx)
+                snippet_text = self._pick_snippet(item)
+                if snippet_text:
+                    source_context = snippets_by_url.setdefault(item.url, {})
+                    current = source_context.get(job.source)
+                    if current is None or weighted_score > float(current.score):
+                        source_context[job.source] = SearchSnippetContext(
+                            snippet=snippet_text,
+                            source_query=job.query,
+                            source_type=job.source,
+                            score=weighted_score,
+                            order=next_order,
+                        )
                 next_order += 1
 
-        max_results = int(req.max_results or self.settings.search.max_results)
-        prefetch_limit = max(1, max_results * 2)
-        ranked = sorted(
-            scored_by_url.items(), key=lambda item: (-item[1][0], item[1][1])
-        )
-        ctx.prefetch.urls = [url for url, _ in ranked[:prefetch_limit]]
-        ctx.prefetch.scores = {url: float(meta[0]) for url, meta in ranked}
+        ctx.deep.snippet_context = self._finalize_snippet_context(snippets_by_url)
+        ctx.deep.query_hit_stats = {
+            url: int(len(indexes)) for url, indexes in hit_indexes_by_url.items()
+        }
 
+        coverage_bonus_weight = (
+            float(self.settings.search.deep.coverage_bonus_weight)
+            if str(req.depth or "auto") == "deep" and bool(self.settings.search.deep.enabled)
+            else 0.0
+        )
+        ranked_with_prefetch: list[tuple[str, float, int]] = []
+        for url, (base_score, order) in scored_by_url.items():
+            query_hit_count = int(len(hit_indexes_by_url.get(url, set())))
+            bonus = (
+                float(coverage_bonus_weight * math.log1p(float(query_hit_count)))
+                if coverage_bonus_weight > 0
+                else 0.0
+            )
+            ranked_with_prefetch.append((url, float(base_score + bonus), int(order)))
+
+        max_results = int(req.max_results or self.settings.search.max_results)
+        prefetch_limit = self._resolve_prefetch_limit(
+            depth=str(req.depth or "auto"),
+            max_results=max_results,
+        )
+        ranked = sorted(
+            ranked_with_prefetch, key=lambda item: (-item[1], item[2])
+        )
+        ctx.prefetch.urls = [url for url, _, _ in ranked[:prefetch_limit]]
+        ctx.prefetch.scores = {url: float(score) for url, score, _ in ranked}
+
+        average_query_hits = (
+            float(
+                sum(len(hits) for hits in hit_indexes_by_url.values())
+                / max(1, len(hit_indexes_by_url))
+            )
+            if hit_indexes_by_url
+            else 0.0
+        )
+        span.set_attr("aborted", False)
         span.set_attr("query_count", int(len(query_jobs)))
         span.set_attr("raw_result_count", int(sum(len(x) for x in raw_results)))
         span.set_attr("filtered_result_count", int(total_filtered_items))
         span.set_attr("deduped_count", int(len(scored_by_url)))
         span.set_attr("prefetch_limit", int(prefetch_limit))
         span.set_attr("candidate_count", int(len(ctx.prefetch.urls)))
+        span.set_attr("query_coverage_urls", int(len(hit_indexes_by_url)))
+        span.set_attr("query_coverage_avg_hits", float(average_query_hits))
+        span.set_attr("coverage_bonus_weight", float(coverage_bonus_weight))
         return ctx
 
     async def _run_query(
@@ -127,18 +186,30 @@ class SearchStep(StepBase[SearchStepContext]):
                 )
             )
 
+    def _resolve_query_jobs(self, *, ctx: SearchStepContext) -> list[SearchQueryJob]:
+        req = ctx.request
+        if str(req.depth or "auto") == "deep" and list(ctx.deep.query_jobs or []):
+            return list(ctx.deep.query_jobs)
+        return self._build_query_jobs(
+            query=req.query,
+            depth=str(req.depth or "auto"),
+            additional_queries=list(req.additional_queries or []),
+        )
+
     def _build_query_jobs(
         self,
         *,
         query: str,
         depth: str,
         additional_queries: list[str],
-    ) -> list[tuple[str, float]]:
-        jobs: list[tuple[str, float]] = [(query, 1.0)]
+    ) -> list[SearchQueryJob]:
+        jobs: list[SearchQueryJob] = [
+            SearchQueryJob(query=clean_whitespace(query), weight=1.0, source="primary")
+        ]
         if depth != "deep":
             return jobs
         weight = float(self.settings.search.additional_query_score_weight)
-        seen = {query.casefold()}
+        seen = {clean_whitespace(query).casefold()}
         for raw in additional_queries:
             item = clean_whitespace(str(raw or ""))
             if not item:
@@ -147,8 +218,31 @@ class SearchStep(StepBase[SearchStepContext]):
             if key in seen:
                 continue
             seen.add(key)
-            jobs.append((item, weight))
+            jobs.append(SearchQueryJob(query=item, weight=weight, source="manual"))
         return jobs
+
+    def _resolve_prefetch_limit(self, *, depth: str, max_results: int) -> int:
+        if depth != "deep" or not bool(self.settings.search.deep.enabled):
+            return max(1, int(max_results) * 2)
+        cfg = self.settings.search.deep
+        desired = int(math.ceil(float(max_results) * float(cfg.prefetch_multiplier)))
+        return max(1, min(int(cfg.prefetch_max_urls), desired))
+
+    def _pick_snippet(self, item: _NormalizedResult) -> str:
+        snippet = clean_whitespace(item.snippet)
+        if snippet:
+            return snippet
+        return clean_whitespace(item.title)
+
+    def _finalize_snippet_context(
+        self, values: dict[str, dict[str, SearchSnippetContext]]
+    ) -> dict[str, list[SearchSnippetContext]]:
+        out: dict[str, list[SearchSnippetContext]] = {}
+        for url, grouped in values.items():
+            selected = list(grouped.values())
+            selected.sort(key=lambda item: (-float(item.score), int(item.order)))
+            out[url] = selected[:3]
+        return out
 
     def _normalize_results(
         self,

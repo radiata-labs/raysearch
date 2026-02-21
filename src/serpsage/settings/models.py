@@ -4,6 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+_DEFAULT_SEARXNG_BASE_URL = "https://searx.be/search"
+_FINAL_WEIGHT_SUM_TARGET = 1.0
+_WEIGHT_SUM_EPS = 1e-6
+
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
@@ -24,12 +28,24 @@ class RetrySettings(Model):
 
 
 class SearxngSettings(Model):
-    base_url: str = "https://searxng.lycoreco.dpdns.org/search"
+    base_url: str = _DEFAULT_SEARXNG_BASE_URL
     api_key: str | None = None
     timeout_s: float = 20.0
     allow_redirects: bool = False
     headers: dict[str, str] = Field(default_factory=dict)
     retry: RetrySettings = Field(default_factory=RetrySettings)
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str) -> str:
+        url = str(value or "").strip()
+        if not url:
+            raise ValueError("provider.searxng.base_url must be non-empty")
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise ValueError(
+                "provider.searxng.base_url must start with http:// or https://"
+            )
+        return url
 
 
 class HttpSettings(Model):
@@ -63,11 +79,72 @@ class FetchOverviewSettings(OverviewProfileBase):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
+class SearchDeepSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    enabled: bool = True
+    max_expanded_queries: int = 6
+    rule_max_queries: int = 4
+    llm_max_queries: int = 3
+    prefetch_multiplier: float = 3.0
+    prefetch_max_urls: int = 48
+    manual_query_score_weight: float = 0.8
+    rule_query_score_weight: float = 0.75
+    llm_query_score_weight: float = 0.85
+    coverage_bonus_weight: float = 0.08
+    final_page_weight: float = 0.55
+    final_context_weight: float = 0.30
+    final_prefetch_weight: float = 0.15
+    expansion_model: str = ""
+    expansion_timeout_s: float = 20.0
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> SearchDeepSettings:
+        if int(self.max_expanded_queries) < 0:
+            raise ValueError("search.deep.max_expanded_queries must be >= 0")
+        if int(self.rule_max_queries) < 0:
+            raise ValueError("search.deep.rule_max_queries must be >= 0")
+        if int(self.llm_max_queries) < 0:
+            raise ValueError("search.deep.llm_max_queries must be >= 0")
+        if float(self.prefetch_multiplier) < 1.0:
+            raise ValueError("search.deep.prefetch_multiplier must be >= 1.0")
+        if int(self.prefetch_max_urls) <= 0:
+            raise ValueError("search.deep.prefetch_max_urls must be > 0")
+        if float(self.manual_query_score_weight) < 0:
+            raise ValueError("search.deep.manual_query_score_weight must be >= 0")
+        if float(self.rule_query_score_weight) < 0:
+            raise ValueError("search.deep.rule_query_score_weight must be >= 0")
+        if float(self.llm_query_score_weight) < 0:
+            raise ValueError("search.deep.llm_query_score_weight must be >= 0")
+        if float(self.coverage_bonus_weight) < 0:
+            raise ValueError("search.deep.coverage_bonus_weight must be >= 0")
+        if float(self.final_page_weight) < 0:
+            raise ValueError("search.deep.final_page_weight must be >= 0")
+        if float(self.final_context_weight) < 0:
+            raise ValueError("search.deep.final_context_weight must be >= 0")
+        if float(self.final_prefetch_weight) < 0:
+            raise ValueError("search.deep.final_prefetch_weight must be >= 0")
+        weight_sum = (
+            float(self.final_page_weight)
+            + float(self.final_context_weight)
+            + float(self.final_prefetch_weight)
+        )
+        if abs(weight_sum - _FINAL_WEIGHT_SUM_TARGET) > _WEIGHT_SUM_EPS:
+            raise ValueError(
+                "search.deep final weights must sum to 1.0 "
+                "(final_page_weight + final_context_weight + final_prefetch_weight)"
+            )
+        if float(self.expansion_timeout_s) <= 0:
+            raise ValueError("search.deep.expansion_timeout_s must be > 0")
+        return self
+
+
 class SearchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     max_results: int = 16
     additional_query_score_weight: float = 0.8
+    deep: SearchDeepSettings = Field(default_factory=SearchDeepSettings)
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> SearchSettings:
@@ -406,6 +483,7 @@ __all__ = [
     "RankBlendSettings",
     "RankSettings",
     "RetrySettings",
+    "SearchDeepSettings",
     "SearxngSettings",
     "TelemetrySettings",
 ]

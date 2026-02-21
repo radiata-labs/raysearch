@@ -39,10 +39,18 @@ class SearchFetchStep(StepBase[SearchStepContext]):
     async def run_inner(
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
+        if bool(ctx.deep.aborted):
+            ctx.fetch.candidates = []
+            ctx.output.results = []
+            span.set_attr("aborted", True)
+            span.set_attr("fetch_candidates", 0)
+            return ctx
+
         urls = list(ctx.prefetch.urls or [])
         if not urls:
             ctx.fetch.candidates = []
             ctx.output.results = []
+            span.set_attr("aborted", False)
             span.set_attr("fetch_candidates", 0)
             return ctx
 
@@ -100,6 +108,7 @@ class SearchFetchStep(StepBase[SearchStepContext]):
 
         ctx.fetch.candidates = fetched_candidates
         ctx.output.results = [candidate.result for candidate in fetched_candidates]
+        span.set_attr("aborted", False)
         span.set_attr("fetch_candidates", int(len(urls)))
         span.set_attr("fetch_success_count", int(len(fetched_candidates)))
         span.set_attr(

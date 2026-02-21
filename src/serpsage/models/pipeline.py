@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from serpsage.app.request import (
@@ -32,6 +34,29 @@ class BaseStepContext(MutableModel):
     request_id: str = ""
 
 
+class SearchQueryJob(MutableModel):
+    query: str
+    weight: float = 1.0
+    source: Literal["primary", "manual", "rule", "llm"] = "primary"
+
+
+class SearchSnippetContext(MutableModel):
+    snippet: str
+    source_query: str
+    source_type: Literal["primary", "manual", "rule", "llm"]
+    score: float = 0.0
+    order: int = 0
+
+
+class SearchDeepState(MutableModel):
+    aborted: bool = False
+    abort_reason: str = ""
+    query_jobs: list[SearchQueryJob] = Field(default_factory=list)
+    snippet_context: dict[str, list[SearchSnippetContext]] = Field(default_factory=dict)
+    query_hit_stats: dict[str, int] = Field(default_factory=dict)
+    context_scores: dict[str, float] = Field(default_factory=dict)
+
+
 class SearchPrefetchState(MutableModel):
     urls: list[str] = Field(default_factory=list)
     scores: dict[str, float] = Field(default_factory=dict)
@@ -41,6 +66,29 @@ class SearchFetchState(MutableModel):
     candidates: list[SearchFetchedCandidate] = Field(default_factory=list)
 
 
+class SearchRankedCandidate(MutableModel):
+    result: FetchResultItem
+    final_score: float = 0.0
+    order: int = 0
+    page_score: float = 0.0
+    context_score: float = 0.0
+    prefetch_score: float = 0.0
+
+
+class SearchRankState(MutableModel):
+    candidates: list[SearchRankedCandidate] = Field(default_factory=list)
+    filtered_count: int = 0
+    sum_page_score: float = 0.0
+    sum_context_score: float = 0.0
+    sum_prefetch_score: float = 0.0
+    deep_enabled: bool = False
+    has_sort_feature: bool = False
+    max_results: int = 1
+    page_weight: float = 1.0
+    context_weight: float = 0.0
+    prefetch_weight: float = 0.0
+
+
 class SearchOutputState(MutableModel):
     results: list[FetchResultItem] = Field(default_factory=list)
 
@@ -48,8 +96,10 @@ class SearchOutputState(MutableModel):
 class SearchStepContext(BaseStepContext):
     settings: AppSettings
     request: SearchRequest
+    deep: SearchDeepState = Field(default_factory=SearchDeepState)
     prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
     fetch: SearchFetchState = Field(default_factory=SearchFetchState)
+    rank: SearchRankState = Field(default_factory=SearchRankState)
     output: SearchOutputState = Field(default_factory=SearchOutputState)
     errors: list[AppError] = Field(default_factory=list)
 
@@ -176,9 +226,14 @@ __all__ = [
     "FetchSubpagesState",
     "PreparedAbstract",
     "ScoredAbstract",
+    "SearchDeepState",
     "SearchFetchState",
     "SearchFetchedCandidate",
+    "SearchRankedCandidate",
+    "SearchRankState",
+    "SearchQueryJob",
     "SearchOutputState",
     "SearchPrefetchState",
+    "SearchSnippetContext",
     "SearchStepContext",
 ]

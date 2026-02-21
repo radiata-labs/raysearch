@@ -446,6 +446,40 @@ async def test_answer_plan_failure_falls_back_to_default_search() -> None:
 
 
 @pytest.mark.anyio
+async def test_answer_skips_generate_when_deep_search_expansion_aborts() -> None:
+    settings = _make_settings(with_custom_models=True)
+    engine, llm, _ = _build_engine(
+        settings=settings,
+        outputs=[
+            ChatResult(
+                data=_plan_payload(
+                    query="deep search query",
+                    depth="deep",
+                    additional_queries=["extra q"],
+                    answer_mode="summary",
+                )
+            ),
+            ChatResult(text="this output should not be used"),
+        ],
+        search_errors=[
+            AppError(
+                code="search_query_expansion_failed",
+                message="llm unavailable",
+                details={"stage": "search_expand"},
+            )
+        ],
+    )
+
+    async with engine:
+        resp = await engine.answer(AnswerRequest(query="deep question"))
+
+    assert resp.answer == ""
+    assert any(item.code == "search_query_expansion_failed" for item in resp.errors)
+    assert any(item.code == "answer_generate_skipped" for item in resp.errors)
+    assert [call["model"] for call in llm.calls] == ["planner"]
+
+
+@pytest.mark.anyio
 async def test_answer_schema_mode_extracts_citations_and_handles_empty() -> None:
     pytest.importorskip("jsonschema")
     schema = {

@@ -77,17 +77,40 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         self, ctx: AnswerStepContext, *, span: SpanBase
     ) -> AnswerStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
+        schema = (
+            dict(ctx.request.json_schema)
+            if isinstance(ctx.request.json_schema, dict)
+            else None
+        )
+        if any(err.code == "search_query_expansion_failed" for err in ctx.errors):
+            ctx.errors.append(
+                AppError(
+                    code="answer_generate_skipped",
+                    message="search aborted before answer generation",
+                    details={
+                        "request_id": ctx.request_id,
+                        "stage": "generate",
+                        "reason": "deep_search_aborted",
+                    },
+                )
+            )
+            ctx.output.answers = {} if schema is not None else ""
+            ctx.output.citations = []
+            span.set_attr("source_pages", 0)
+            span.set_attr("source_abstract_chars", 0)
+            span.set_attr("citation_count", 0)
+            span.set_attr("freshness_intent", bool(ctx.plan.freshness_intent))
+            span.set_attr("schema_mode", bool(schema is not None))
+            span.set_attr("skipped", True)
+            span.set_attr("skip_reason", "deep_search_aborted")
+            return ctx
+
         raw_sources = self._collect_page_sources(ctx.search.results)
         prompt_sources, abstract_chars = self._build_prompt_sources(
             sources=raw_sources,
             max_chars=int(self.settings.answer.generate.max_abstract_chars),
         )
 
-        schema = (
-            dict(ctx.request.json_schema)
-            if isinstance(ctx.request.json_schema, dict)
-            else None
-        )
         mode = "json" if schema is not None else "text"
         answer_mode = (
             "direct"
@@ -171,6 +194,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         span.set_attr("citation_count", int(len(ctx.output.citations)))
         span.set_attr("freshness_intent", bool(freshness_intent))
         span.set_attr("schema_mode", bool(schema is not None))
+        span.set_attr("skipped", False)
         return ctx
 
     def _collect_page_sources(

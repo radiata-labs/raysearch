@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.pipeline import SearchStepContext
+from serpsage.models.pipeline import SearchDeepState, SearchRankState, SearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils.normalize import clean_whitespace
 
@@ -37,6 +37,12 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
                 "max_results": max_results,
             }
         )
+        ctx.deep = SearchDeepState()
+        ctx.prefetch.urls = []
+        ctx.prefetch.scores = {}
+        ctx.fetch.candidates = []
+        ctx.rank = SearchRankState()
+        ctx.output.results = []
         span.set_attr("depth", str(depth))
         span.set_attr("max_results", int(max_results))
         return ctx

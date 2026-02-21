@@ -2,9 +2,11 @@ from serpsage.models.pipeline import AnswerStepContext, FetchStepContext, Search
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
 from serpsage.steps.search import (
+    SearchExpandStep,
     SearchFetchStep,
     SearchFinalizeStep,
     SearchPrepareStep,
+    SearchRankStep,
     SearchStep,
 )
 
@@ -16,7 +18,9 @@ __all__ = [
     "FetchStepContext",
     "RunnerBase",
     "StepBase",
+    "SearchExpandStep",
     "SearchFinalizeStep",
+    "SearchRankStep",
     "SearchPrepareStep",
     "SearchFetchStep",
     "SearchStepContext",

@@ -101,6 +101,8 @@ async with Engine.from_settings(settings) as engine:
 ## Behavior notes
 
 - `search.depth`: `auto|deep`
+- `search.depth=deep` enables mixed query expansion (manual/rule/LLM) and context-aware composite reranking
+- deep search tuning is configured by `search.deep.*` (expansion limits, weights, prefetch budget, LLM model/timeout)
 - `answer` planner is LLM-driven and receives current UTC time for recency-sensitive questions
 - `answer` generation consumes budgeted abstracts (`answer.generate.max_abstract_chars`, default `3000`)
 - `answer` uses `[citation:x]` markers in `answers`; only referenced pages appear in `citations`
@@ -126,6 +128,7 @@ async with Engine.from_settings(settings) as engine:
   - if `subpages` is enabled but `others.max_links` is omitted, fetch internally collects links for subpage ranking and may hide those links in final `others.links`
   - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
 - `search` does not include overview generation; overview remains fetch-only
+- when deep query expansion fails, search aborts with error code `search_query_expansion_failed`
 - `search` response shape: `search_depth/results/errors/telemetry`
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering
 - `fetch.extract` uses an internal markdown renderer pipeline; no renderer backend toggle is exposed.
