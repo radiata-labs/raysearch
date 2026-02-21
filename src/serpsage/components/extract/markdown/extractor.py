@@ -127,7 +127,7 @@ _PRIMARY_ROOT_SELECTORS: tuple[str, ...] = (
     ".post-content",
     ".entry-content",
 )
-_MIN_HTML_CAPTURE_CHARS = 1_800_000
+_MIN_HTML_CAPTURE_CHARS = 5_000_000
 
 
 class MarkdownExtractor(ExtractorBase):
