@@ -41,7 +41,7 @@ class SearxngSettings(Model):
         url = str(value or "").strip()
         if not url:
             raise ValueError("provider.searxng.base_url must be non-empty")
-        if not (url.startswith("http://") or url.startswith("https://")):
+        if not (url.startswith(("http://", "https://"))):
             raise ValueError(
                 "provider.searxng.base_url must start with http:// or https://"
             )

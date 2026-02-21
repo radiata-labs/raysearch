@@ -8,7 +8,11 @@ from urllib.parse import urlparse
 import anyio
 
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import SearchQueryJob, SearchSnippetContext, SearchStepContext
+from serpsage.models.pipeline import (
+    SearchQueryJob,
+    SearchSnippetContext,
+    SearchStepContext,
+)
 from serpsage.steps.base import StepBase
 from serpsage.utils.normalize import clean_whitespace, strip_html
 from serpsage.utils.tokenize import tokenize_for_query

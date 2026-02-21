@@ -12,7 +12,11 @@ from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
 from serpsage.models.llm import ChatResult
-from serpsage.models.pipeline import SearchFetchedCandidate, SearchQueryJob, SearchStepContext
+from serpsage.models.pipeline import (
+    SearchFetchedCandidate,
+    SearchQueryJob,
+    SearchStepContext,
+)
 from serpsage.settings.models import AppSettings
 from serpsage.steps.base import RunnerBase
 from serpsage.steps.search.expand import SearchExpandStep
