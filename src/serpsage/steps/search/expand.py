@@ -66,7 +66,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         """
         ctx.deep = SearchDeepState()
         req = ctx.request
-        if not self._is_deep_enabled(req_depth=str(req.depth or "auto")):
+        if not self._is_deep_enabled(req_mode=str(req.mode or "auto")):
             span.set_attr("enabled", False)
             span.set_attr("aborted", False)
             return ctx
@@ -132,8 +132,8 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         )
         return ctx
 
-    def _is_deep_enabled(self, *, req_depth: str) -> bool:
-        return req_depth == "deep" and bool(self.settings.search.deep.enabled)
+    def _is_deep_enabled(self, *, req_mode: str) -> bool:
+        return req_mode == "deep" and bool(self.settings.search.deep.enabled)
 
     def _set_expand_span_attrs(
         self,

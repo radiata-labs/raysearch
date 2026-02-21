@@ -52,13 +52,13 @@ def _build_runtime() -> Runtime:
 def _build_search_request(
     *,
     query: str,
-    depth: str = "deep",
+    mode: str = "deep",
     max_results: int = 3,
     additional_queries: list[str] | None = None,
 ) -> SearchRequest:
     return SearchRequest(
         query=query,
-        depth=depth,
+        mode=mode,
         max_results=max_results,
         additional_queries=additional_queries,
         fetchs=FetchRequestBase(content=True, abstracts=False, overview=False),
@@ -69,13 +69,13 @@ def _build_search_context(
     *,
     rt: Runtime,
     query: str,
-    depth: str = "deep",
+    mode: str = "deep",
     max_results: int = 3,
     additional_queries: list[str] | None = None,
 ) -> SearchStepContext:
     req = _build_search_request(
         query=query,
-        depth=depth,
+        mode=mode,
         max_results=max_results,
         additional_queries=additional_queries,
     )
@@ -177,7 +177,7 @@ async def test_search_expand_merges_manual_rule_and_llm_queries() -> None:
     ctx = _build_search_context(
         rt=rt,
         query="python async tutorial",
-        depth="deep",
+        mode="deep",
         additional_queries=["manual async query"],
     )
 
@@ -197,7 +197,7 @@ async def test_search_expand_llm_failure_aborts_deep_search() -> None:
     rt = _build_runtime()
     llm = _FakeLLM(rt=rt, outputs=[RuntimeError("llm unavailable")])
     step = SearchExpandStep(rt=rt, llm=llm)
-    ctx = _build_search_context(rt=rt, query="latest alpha release", depth="deep")
+    ctx = _build_search_context(rt=rt, query="latest alpha release", mode="deep")
 
     out = await step.run(ctx)
 
@@ -236,7 +236,7 @@ async def test_search_step_uses_expanded_jobs_and_collects_snippet_context() -> 
     )
     ranker = _TokenOverlapRanker(rt=rt)
     step = SearchStep(rt=rt, provider=provider, ranker=ranker)
-    ctx = _build_search_context(rt=rt, query="alpha query", depth="deep", max_results=2)
+    ctx = _build_search_context(rt=rt, query="alpha query", mode="deep", max_results=2)
     ctx.deep.query_jobs = [
         SearchQueryJob(query="alpha query", weight=1.0, source="primary"),
         SearchQueryJob(query="manual alpha", weight=0.8, source="manual"),
@@ -253,7 +253,7 @@ async def test_search_step_uses_expanded_jobs_and_collects_snippet_context() -> 
 
 
 @pytest.mark.anyio
-async def test_search_step_auto_mode_keeps_single_query_behavior() -> None:
+async def test_search_step_fast_mode_keeps_single_query_behavior() -> None:
     rt = _build_runtime()
     provider = _FakeProvider(
         rt=rt,
@@ -268,7 +268,7 @@ async def test_search_step_auto_mode_keeps_single_query_behavior() -> None:
         },
     )
     step = SearchStep(rt=rt, provider=provider, ranker=_TokenOverlapRanker(rt=rt))
-    ctx = _build_search_context(rt=rt, query="alpha query", depth="auto", max_results=1)
+    ctx = _build_search_context(rt=rt, query="alpha query", mode="fast", max_results=1)
 
     out = await step.run(ctx)
 
@@ -282,7 +282,7 @@ async def test_search_fetch_and_finalize_noop_when_deep_aborted() -> None:
     fetch_runner = RunnerBase(rt=rt, steps=[], kind="fetch")
     fetch_step = SearchFetchStep(rt=rt, fetch_runner=fetch_runner)
     finalize_step = SearchFinalizeStep(rt=rt)
-    ctx = _build_search_context(rt=rt, query="alpha beta", depth="deep")
+    ctx = _build_search_context(rt=rt, query="alpha beta", mode="deep")
     ctx.deep.aborted = True
     ctx.prefetch.urls = ["https://x.example.com"]
     ctx.output.results = [
@@ -316,7 +316,7 @@ async def test_search_finalize_deep_composite_prefers_context_score() -> None:
     ranker = _TokenOverlapRanker(rt=rt)
     rank_step = SearchRankStep(rt=rt, ranker=ranker)
     step = SearchFinalizeStep(rt=rt)
-    ctx = _build_search_context(rt=rt, query="alpha beta", depth="deep", max_results=2)
+    ctx = _build_search_context(rt=rt, query="alpha beta", mode="deep", max_results=2)
     ctx.fetch.candidates = [
         SearchFetchedCandidate(
             result=_make_result(

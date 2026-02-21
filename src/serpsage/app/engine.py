@@ -56,7 +56,7 @@ class Engine(WorkUnit):
             ctx = await self._search_runner.run(ctx)
             return SearchResponse(
                 request_id=request_id,
-                search_depth=ctx.request.depth,
+                search_mode=ctx.request.mode,
                 results=ctx.output.results,
                 errors=ctx.errors,
                 telemetry=self.telemetry.summary(),

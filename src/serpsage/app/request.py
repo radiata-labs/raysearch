@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from serpsage.utils.normalize import clean_whitespace
 
-SearchDepth = Literal["auto", "deep"]
+SearchMode = Literal["fast", "auto", "deep"]
 FetchContentDetail = Literal["concise", "standard", "full"]
 FetchContentTag = Literal[
     "header", "navigation", "banner", "body", "sidebar", "footer", "metadata"
@@ -246,7 +246,7 @@ class SearchRequest(BaseModel):
 
     query: str
     additional_queries: list[str] | None = None
-    depth: SearchDepth = "auto"
+    mode: SearchMode = "auto"
     max_results: int | None = None
     include_domains: list[str] | None = None
     exclude_domains: list[str] | None = None
@@ -305,8 +305,8 @@ class SearchRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_search_request(self) -> SearchRequest:
-        if self.depth == "auto" and self.additional_queries:
-            raise ValueError("additional_queries is only supported when depth=deep")
+        if self.mode != "deep" and self.additional_queries:
+            raise ValueError("additional_queries is only supported when mode=deep")
         include_set = set(self.include_domains or [])
         exclude_set = set(self.exclude_domains or [])
         overlap = sorted(include_set & exclude_set)
@@ -350,7 +350,7 @@ __all__ = [
     "FetchAbstractsRequest",
     "FetchSubpagesRequest",
     "FetchOverviewRequest",
-    "SearchDepth",
+    "SearchMode",
     "SearchRequest",
     "AnswerRequest",
 ]

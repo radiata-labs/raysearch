@@ -23,7 +23,7 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
         query = clean_whitespace(ctx.request.query or "")
-        depth = ctx.request.depth or "auto"
+        mode = ctx.request.mode or "auto"
         max_results = (
             int(ctx.request.max_results)
             if ctx.request.max_results is not None
@@ -33,7 +33,7 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         ctx.request = ctx.request.model_copy(
             update={
                 "query": query,
-                "depth": depth,
+                "mode": mode,
                 "max_results": max_results,
             }
         )
@@ -43,7 +43,7 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         ctx.fetch.candidates = []
         ctx.rank = SearchRankState()
         ctx.output.results = []
-        span.set_attr("depth", str(depth))
+        span.set_attr("mode", str(mode))
         span.set_attr("max_results", int(max_results))
         return ctx
 

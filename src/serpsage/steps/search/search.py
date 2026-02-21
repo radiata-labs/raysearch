@@ -128,7 +128,8 @@ class SearchStep(StepBase[SearchStepContext]):
 
         coverage_bonus_weight = (
             float(self.settings.search.deep.coverage_bonus_weight)
-            if str(req.depth or "auto") == "deep" and bool(self.settings.search.deep.enabled)
+            if str(req.mode or "auto") == "deep"
+            and bool(self.settings.search.deep.enabled)
             else 0.0
         )
         ranked_with_prefetch: list[tuple[str, float, int]] = []
@@ -143,7 +144,7 @@ class SearchStep(StepBase[SearchStepContext]):
 
         max_results = int(req.max_results or self.settings.search.max_results)
         prefetch_limit = self._resolve_prefetch_limit(
-            depth=str(req.depth or "auto"),
+            mode=str(req.mode or "auto"),
             max_results=max_results,
         )
         ranked = sorted(
@@ -192,11 +193,11 @@ class SearchStep(StepBase[SearchStepContext]):
 
     def _resolve_query_jobs(self, *, ctx: SearchStepContext) -> list[SearchQueryJob]:
         req = ctx.request
-        if str(req.depth or "auto") == "deep" and list(ctx.deep.query_jobs or []):
+        if str(req.mode or "auto") == "deep" and list(ctx.deep.query_jobs or []):
             return list(ctx.deep.query_jobs)
         return self._build_query_jobs(
             query=req.query,
-            depth=str(req.depth or "auto"),
+            mode=str(req.mode or "auto"),
             additional_queries=list(req.additional_queries or []),
         )
 
@@ -204,13 +205,13 @@ class SearchStep(StepBase[SearchStepContext]):
         self,
         *,
         query: str,
-        depth: str,
+        mode: str,
         additional_queries: list[str],
     ) -> list[SearchQueryJob]:
         jobs: list[SearchQueryJob] = [
             SearchQueryJob(query=clean_whitespace(query), weight=1.0, source="primary")
         ]
-        if depth != "deep":
+        if mode != "deep":
             return jobs
         weight = float(self.settings.search.additional_query_score_weight)
         seen = {clean_whitespace(query).casefold()}
@@ -225,8 +226,8 @@ class SearchStep(StepBase[SearchStepContext]):
             jobs.append(SearchQueryJob(query=item, weight=weight, source="manual"))
         return jobs
 
-    def _resolve_prefetch_limit(self, *, depth: str, max_results: int) -> int:
-        if depth != "deep" or not bool(self.settings.search.deep.enabled):
+    def _resolve_prefetch_limit(self, *, mode: str, max_results: int) -> int:
+        if mode != "deep" or not bool(self.settings.search.deep.enabled):
             return max(1, int(max_results) * 2)
         cfg = self.settings.search.deep
         desired = int(math.ceil(float(max_results) * float(cfg.prefetch_multiplier)))

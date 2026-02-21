@@ -156,7 +156,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
         query_tokens = tokenize_for_query(ctx.request.query) if content_enabled else []
         context_query_tokens = tokenize_for_query(ctx.request.query)
 
-        deep_enabled = str(ctx.request.depth or "auto") == "deep" and bool(
+        deep_enabled = str(ctx.request.mode or "auto") == "deep" and bool(
             ctx.settings.search.deep.enabled
         )
         deep_cfg = ctx.settings.search.deep

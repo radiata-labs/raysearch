@@ -145,7 +145,7 @@ def _build_engine(
 def _plan_payload(
     *,
     query: str = "optimized query",
-    depth: str = "auto",
+    mode: str = "auto",
     max_results: int = 5,
     additional_queries: list[str] | None = None,
     answer_mode: str = "direct",
@@ -157,7 +157,7 @@ def _plan_payload(
         "freshness_intent": freshness_intent,
         "search_query": query,
         "optimize_query": optimize_query,
-        "search_depth": depth,
+        "search_mode": mode,
         "max_results": max_results,
         "additional_queries": list(additional_queries or []),
     }
@@ -181,7 +181,7 @@ async def test_answer_plan_drives_search_and_uses_content_flag() -> None:
             ChatResult(
                 data=_plan_payload(
                     query="optimized ai benchmark query",
-                    depth="deep",
+                    mode="deep",
                     max_results=5,
                     additional_queries=["query a", "query b"],
                     answer_mode="summary",
@@ -200,7 +200,7 @@ async def test_answer_plan_drives_search_and_uses_content_flag() -> None:
 
     req = search_step.calls[0]
     assert req.query == "optimized ai benchmark query"
-    assert req.depth == "deep"
+    assert req.mode == "deep"
     assert req.max_results == 5
     assert req.additional_queries == ["query a", "query b"]
     assert req.fetchs.content is True
@@ -223,7 +223,7 @@ async def test_answer_plan_drives_search_and_uses_content_flag() -> None:
 
 
 @pytest.mark.anyio
-async def test_answer_plan_normalizes_depth_constraints_and_caps_results() -> None:
+async def test_answer_plan_normalizes_mode_constraints_and_caps_results() -> None:
     settings = _make_settings()
     settings.search.max_results = 9
     engine, llm, search_step = _build_engine(
@@ -232,7 +232,7 @@ async def test_answer_plan_normalizes_depth_constraints_and_caps_results() -> No
             ChatResult(
                 data=_plan_payload(
                     query="optimized question",
-                    depth="AUTO",
+                    mode="AUTO",
                     max_results=999,
                     additional_queries=["a", "b", "c"],
                 )
@@ -246,7 +246,7 @@ async def test_answer_plan_normalizes_depth_constraints_and_caps_results() -> No
 
     req = search_step.calls[0]
     assert req.query == "optimized question"
-    assert req.depth == "auto"
+    assert req.mode == "auto"
     assert req.max_results == 9
     assert req.additional_queries is None
     assert req.fetchs.content is False
@@ -281,7 +281,7 @@ async def test_answer_citations_are_page_level_unique_and_reference_ordered() ->
             ChatResult(
                 data=_plan_payload(
                     query="q",
-                    depth="deep",
+                    mode="deep",
                     max_results=5,
                     additional_queries=["qa"],
                     answer_mode="summary",
@@ -337,7 +337,7 @@ async def test_answer_citation_dedupes_same_page_url_fragment() -> None:
             ChatResult(
                 data=_plan_payload(
                     query="q",
-                    depth="deep",
+                    mode="deep",
                     max_results=5,
                     additional_queries=["qa"],
                     answer_mode="summary",
@@ -435,7 +435,7 @@ async def test_answer_plan_failure_falls_back_to_default_search() -> None:
 
     req = search_step.calls[0]
     assert req.query == "fallback question"
-    assert req.depth == "auto"
+    assert req.mode == "auto"
     assert req.additional_queries is None
     assert req.max_results == min(engine.settings.search.max_results, 5)
     assert any(item.code == "answer_plan_failed" for item in resp.errors)
@@ -454,7 +454,7 @@ async def test_answer_skips_generate_when_deep_search_expansion_aborts() -> None
             ChatResult(
                 data=_plan_payload(
                     query="deep search query",
-                    depth="deep",
+                    mode="deep",
                     additional_queries=["extra q"],
                     answer_mode="summary",
                 )
@@ -548,7 +548,7 @@ async def test_answer_direct_mode_hides_citation_markers() -> None:
                 data=_plan_payload(
                     query="capital of france",
                     answer_mode="direct",
-                    depth="auto",
+                    mode="auto",
                     max_results=3,
                 )
             ),
@@ -599,7 +599,7 @@ async def test_answer_expands_compound_citation_markers() -> None:
                 data=_plan_payload(
                     query="open question",
                     answer_mode="summary",
-                    depth="deep",
+                    mode="deep",
                     additional_queries=["q2"],
                 )
             ),
@@ -650,7 +650,7 @@ async def test_answer_normalizes_spaced_citation_tags() -> None:
                 data=_plan_payload(
                     query="spaced citation question",
                     answer_mode="summary",
-                    depth="deep",
+                    mode="deep",
                     additional_queries=["q2"],
                 )
             ),

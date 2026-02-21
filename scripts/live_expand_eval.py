@@ -34,7 +34,7 @@ async def main() -> None:
         for idx, query in enumerate(QUERIES, 1):
             req = SearchRequest(
                 query=query,
-                depth="deep",
+                mode="deep",
                 fetchs=FetchRequestBase(content=True, abstracts=False, overview=False),
             )
             ctx = SearchStepContext(

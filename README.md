@@ -2,7 +2,7 @@
 
 SerpSage is an async-only SERP + page intelligence engine with three first-class paths:
 
-- `Engine.search(req)`: query search pipeline (`prepare -> search(prefetch) -> fetch -> finalize`)
+- `Engine.search(req)`: query search pipeline (`prepare -> optimize(optional) -> expand(deep) -> search(prefetch) -> fetch -> rank -> finalize`)
 - `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional abstract rank -> optional overview -> optional subpages -> finalize`)
 - `Engine.answer(req)`: answer pipeline (`plan search params -> search -> generate answer`)
 
@@ -70,7 +70,7 @@ async with Engine.from_settings(settings) as engine:
     search_resp = await engine.search(
         SearchRequest(
             query="latest ai papers",
-            depth="deep",
+            mode="deep",
             max_results=8,
             fetchs={"content": True},
         )
@@ -100,8 +100,10 @@ async with Engine.from_settings(settings) as engine:
 
 ## Behavior notes
 
-- `search.depth`: `auto|deep`
-- `search.depth=deep` enables mixed query expansion (manual/rule/LLM) and context-aware composite reranking
+- `search.mode`: `fast|auto|deep`
+- `search.mode=fast` keeps old `auto` behavior (no LLM query optimization, single-query retrieval path)
+- `search.mode in {auto, deep}` enables a dedicated LLM query optimization step with explicit freshness handling
+- `search.mode=deep` additionally enables mixed query expansion (manual/rule/LLM) and context-aware composite reranking
 - deep search tuning is configured by `search.deep.*` (expansion limits, weights, prefetch budget, LLM model/timeout)
 - `answer` planner is LLM-driven and receives current UTC time for recency-sensitive questions
 - `answer` generation consumes budgeted abstracts (`answer.generate.max_abstract_chars`, default `3000`)
@@ -129,6 +131,6 @@ async with Engine.from_settings(settings) as engine:
   - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
 - `search` does not include overview generation; overview remains fetch-only
 - when deep query expansion fails, search aborts with error code `search_query_expansion_failed`
-- `search` response shape: `search_depth/results/errors/telemetry`
+- `search` response shape: `search_mode/results/errors/telemetry`
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering
 - `fetch.extract` uses an internal markdown renderer pipeline; no renderer backend toggle is exposed.

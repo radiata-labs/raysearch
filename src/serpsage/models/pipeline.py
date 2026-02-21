@@ -109,14 +109,14 @@ class AnswerPlanState(MutableModel):
     freshness_intent: bool = False
     query_language: str = "same as query"
     search_query: str = ""
-    search_depth: str = "auto"
+    search_mode: str = "auto"
     max_results: int = 1
     additional_queries: list[str] | None = None
 
 
 class AnswerSearchState(MutableModel):
     request: SearchRequest | None = None
-    search_depth: str = "auto"
+    search_mode: str = "auto"
     results: list[FetchResultItem] = Field(default_factory=list)
 
 

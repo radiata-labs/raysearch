@@ -38,6 +38,7 @@ from serpsage.steps.search import (
     SearchExpandStep,
     SearchFetchStep,
     SearchFinalizeStep,
+    SearchOptimizeStep,
     SearchPrepareStep,
     SearchRankStep,
     SearchStep,
@@ -123,6 +124,7 @@ def build_engine(
     fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps, kind="fetch")
     search_steps: list[StepBase[SearchStepContext]] = [
         SearchPrepareStep(rt=rt),
+        SearchOptimizeStep(rt=rt, llm=llm),
         SearchExpandStep(rt=rt, llm=llm),
         SearchStep(rt=rt, provider=provider, ranker=ranker),
         SearchFetchStep(rt=rt, fetch_runner=fetch_runner),

@@ -82,11 +82,11 @@ def _build_context(
     rt: Runtime,
     query: str,
     additional_queries: list[str] | None = None,
-    depth: str = "deep",
+    mode: str = "deep",
 ) -> SearchStepContext:
     req = SearchRequest(
         query=query,
-        depth=depth,
+        mode=mode,
         additional_queries=additional_queries,
         fetchs=FetchRequestBase(content=True, abstracts=False, overview=False),
     )

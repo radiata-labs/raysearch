@@ -21,13 +21,13 @@ load_dotenv()
 
 async def main(
     query: str,
-    depth: Literal["auto", "deep"] = "deep",
+    mode: Literal["fast", "auto", "deep"] = "deep",
     max_results: int = 5,
 ) -> dict[str, Any]:
     settings = load_settings("src/search_config_example.yaml")
     req = SearchRequest(
         query=query,
-        depth=depth,
+        mode=mode,
         max_results=max_results,
         fetchs=FetchRequestBase(
             abstracts=FetchAbstractsRequest(max_chars=400),
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "latest ai papers", "deep", 5)
+    out = anyio.run(main, "latest ai papers", "auto", 5)
     t2 = time.time()
 
     print(out["search_result"])

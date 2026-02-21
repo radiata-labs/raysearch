@@ -41,7 +41,7 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
     ) -> AnswerStepContext:
         search_request = self._build_search_request(ctx)
         ctx.search.request = search_request
-        ctx.search.search_depth = search_request.depth
+        ctx.search.search_mode = search_request.mode
 
         search_ctx = SearchStepContext(
             settings=ctx.settings,
@@ -66,7 +66,7 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             span.set_attr("search_error", True)
             return ctx
 
-        ctx.search.search_depth = str(search_ctx.request.depth)
+        ctx.search.search_mode = str(search_ctx.request.mode)
         ctx.search.results = list(search_ctx.output.results or [])
         ctx.errors.extend(search_ctx.errors)
         span.set_attr("results_count", int(len(ctx.search.results)))
@@ -74,18 +74,18 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         return ctx
 
     def _build_search_request(self, ctx: AnswerStepContext) -> SearchRequest:
-        depth = str(ctx.plan.search_depth or "auto")
+        mode = str(ctx.plan.search_mode or "auto")
         subpages = (
             FetchSubpagesRequest(
                 max_subpages=_DEEP_SUBPAGE_MAX,
                 subpage_keywords=ctx.plan.search_query,
             )
-            if depth == "deep"
+            if mode == "deep"
             else None
         )
         return SearchRequest(
             query=ctx.plan.search_query,
-            depth="deep" if depth == "deep" else "auto",
+            mode="deep" if mode == "deep" else "auto",
             max_results=int(ctx.plan.max_results or self.settings.search.max_results),
             additional_queries=ctx.plan.additional_queries,
             fetchs=FetchRequestBase(
