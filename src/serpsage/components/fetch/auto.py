@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from serpsage.telemetry.base import SpanBase
 
 _MIN_BYTES = 32
-_PROBE_MAX_BYTES = 220_000
+_PROBE_MAX_BYTES = 50_000
 _BLOCK_STATUSES = {401, 403, 429}
 
 

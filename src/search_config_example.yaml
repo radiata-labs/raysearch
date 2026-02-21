@@ -43,7 +43,6 @@ fetch:
   render:
     js_concurrency: 4
     nav_timeout_ms: 25000
-    wait_network_idle_ms: 220
     block_resources: true
   quality:
     min_text_chars: 220

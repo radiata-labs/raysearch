@@ -47,8 +47,8 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "https://api-docs.deepseek.com/zh-cn/news/news251201",
-        "What is DeepSeek V3.2?",
+        "https://www.zenrows.com/blog/curl-cffi",
+        "What is curl_cffi?",
         False,
     )
     print(out["fetch_result"])

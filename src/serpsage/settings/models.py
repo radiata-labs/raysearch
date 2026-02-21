@@ -125,9 +125,8 @@ class FetchConcurrencySettings(Model):
 class FetchRenderSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    js_concurrency: int = 4
+    js_concurrency: int = 12
     nav_timeout_ms: int = 8_000
-    wait_network_idle_ms: int = 800
     block_resources: bool = True
 
     @field_validator("js_concurrency")

@@ -37,7 +37,7 @@ try:
 except Exception:  # noqa: BLE001
     PLAYWRIGHT_AVAILABLE = False
 
-_BLOCK_RESOURCE_TYPES = {"image", "media", "font"}
+_BLOCK_RESOURCE_TYPES = {"image", "media", "font", "video", "websocket"}
 _BLOCK_TRACKING_RE = (
     "googletagmanager",
     "google-analytics",
@@ -148,7 +148,6 @@ class PlaywrightFetcher(FetcherBase):
         timeout_ms = int(self.settings.fetch.render.nav_timeout_ms)
         if timeout_s is not None:
             timeout_ms = min(timeout_ms, int(timeout_s * 1000))
-        wait_idle_ms = max(0, int(self.settings.fetch.render.wait_network_idle_ms))
 
         started = time.time()
         page = None
@@ -160,7 +159,6 @@ class PlaywrightFetcher(FetcherBase):
                     page=page,
                     url=url,
                     timeout_ms=timeout_ms,
-                    wait_idle_ms=wait_idle_ms,
                     span=span,
                 )
                 html = await page.content()
@@ -249,7 +247,6 @@ class PlaywrightFetcher(FetcherBase):
         page: Page,
         url: str,
         timeout_ms: int,
-        wait_idle_ms: int,
         span: SpanBase,
     ) -> tuple[int, str, dict[str, str]]:
         status = 0
@@ -274,11 +271,6 @@ class PlaywrightFetcher(FetcherBase):
             # Log the error type and continue with empty response
             navigation_error = type(exc).__name__
             span.set_attr("playwright_error_type", navigation_error)
-
-        # Wait for network idle with extended timeout for complex pages
-        if wait_idle_ms > 0:
-            with contextlib.suppress(Exception):
-                await page.wait_for_load_state("networkidle", timeout=wait_idle_ms)
 
         # If page didn't load at all, try waiting for body element
         try:

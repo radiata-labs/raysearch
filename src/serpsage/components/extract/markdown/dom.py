@@ -53,7 +53,6 @@ _NOISE_IDENT_TOKENS = {
     "modal",
     "dialog",
     "pager",
-    "tracking",
     "breadcrumb",
     "newsletter",
     "citation",
@@ -125,6 +124,9 @@ def cleanup_dom(
     for tag in list(soup.find_all(True)):
         with contextlib.suppress(Exception):
             name = (tag.name or "").lower()
+            # Never remove document roots; aggressive heuristics can otherwise nuke pages.
+            if name in {"html", "body"}:
+                continue
             role = str(tag.get("role") or "").lower()
             name_sem = _semantic_tag_for_name(name)
             role_sem = _semantic_tag_for_role(role)
