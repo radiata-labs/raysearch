@@ -95,6 +95,9 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             else "summary"
         )
         freshness_intent = bool(ctx.plan.freshness_intent)
+        query_language = clean_whitespace(
+            str(ctx.plan.query_language or "same as query")
+        )
         messages = self._build_messages(
             query=ctx.request.query,
             sources=prompt_sources,
@@ -102,6 +105,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             mode=mode,
             now_utc=now_utc,
             freshness_intent=freshness_intent,
+            query_language=query_language,
         )
         ctx.output.citations = []
 
@@ -140,6 +144,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             )
             if answer_mode == "direct":
                 ctx.output.answers = _strip_citation_markers(ctx.output.answers)
+            ctx.output.answers = _sanitize_output_value(ctx.output.answers)
         except _AnswerSchemaMismatchError as exc:
             ctx.errors.append(
                 AppError(
@@ -338,6 +343,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         mode: str,
         now_utc: datetime,
         freshness_intent: bool,
+        query_language: str,
     ) -> list[dict[str, str]]:
         citation_rules = (
             "Citation format rule: use one citation per tag only, e.g. "
@@ -347,21 +353,28 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         )
         quality_rules = (
             "Quality rules:\n"
-            "1) Output language must strictly match QUERY language and script. "
-            "Never switch language based on SOURCE_PAGES language.\n"
-            "2) Use only SOURCE_PAGES evidence. Do not use outside memory.\n"
-            "3) Prefer higher-score sources when choosing between claims.\n"
-            "4) If multiple sources conflict, state the conflict briefly and prefer better-supported evidence.\n"
-            "5) If evidence is weak or missing, explicitly state uncertainty.\n"
-            "6) Put citation tags immediately after the supported claim.\n"
+            f"1) Required output language/script: {query_language}. "
+            "Output must strictly match QUERY language/script. This is mandatory.\n"
+            "2) Never switch output language based on SOURCE_PAGES language. "
+            "When sources use other languages, translate the evidence into required output language.\n"
+            "3) Never output mixed-language sentences unless the QUERY itself is mixed-language.\n"
+            "4) Use only SOURCE_PAGES evidence. Do not use outside memory.\n"
+            "5) Prefer higher-score sources when choosing between claims.\n"
+            "6) If multiple sources conflict, state the conflict briefly and prefer better-supported evidence.\n"
+            "7) If evidence is weak or missing, explicitly state uncertainty.\n"
+            "8) Put citation tags immediately after the supported claim.\n"
+            "9) Before finalizing, self-check language compliance; if any sentence is not in required language/script, rewrite it.\n"
+            "10) Do not copy mojibake/corrupted characters (such as �, ��). If a source segment is corrupted, omit it or restate cleanly.\n"
         )
         temporal_rules = (
             "Temporal reasoning rules:\n"
             "1) Determine whether QUERY asks for latest/current/as-of information.\n"
             "2) If yes, choose evidence by explicit date recency (newer date wins).\n"
-            "3) Do not mix stale historical values with future projections in one direct answer.\n"
-            "4) Include a concrete time anchor in the answer, e.g. 'as of YYYY-MM' or exact date.\n"
-            "5) If only old/uncertain evidence exists, explicitly say it is the latest known as of that date.\n"
+            "3) For direct latest/current queries, return exactly one best-supported current value with one concrete as-of date.\n"
+            "4) Do not mix stale historical values with future projections in one direct answer.\n"
+            "5) Do not include forecasts/targets/IPO goals unless QUERY explicitly asks for forecast or target.\n"
+            "6) Include a concrete time anchor in the answer, e.g. 'as of YYYY-MM' or exact date.\n"
+            "7) If only old/uncertain evidence exists, explicitly say it is the latest known as of that date.\n"
         )
         if mode == "json":
             task = (
@@ -378,7 +391,9 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                 + "Output contract (DIRECT): return plain text only. "
                 + "Start with the direct answer in the first sentence. "
                 + "For concrete factual queries, answer directly (e.g. Paris, $1.5 trillion). "
-                + "Use at most 2 short sentences. Avoid preambles and filler. "
+                + "Use exactly 1 sentence when evidence is sufficient; at most 2 only when uncertainty must be stated. "
+                + "Do not add background, comparisons, or side facts unless QUERY asks for them. "
+                + "If QUERY asks for latest/current value (valuation/price/leader/etc.), output only the single current value with its as-of date; do not append future plans, targets, or projections. "
                 + "Cite factual claims with [citation:x]. "
                 + citation_rules
             )
@@ -594,6 +609,23 @@ def _strip_citation_markers(value: object) -> object:
 def _strip_citation_markers_in_text(text: str) -> str:
     without = _CITATION_GROUP_RE.sub("", text)
     return clean_whitespace(without)
+
+
+def _sanitize_output_value(value: object) -> object:
+    if isinstance(value, str):
+        return _sanitize_output_text(value)
+    if isinstance(value, list):
+        return [_sanitize_output_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_output_value(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _sanitize_output_value(item) for key, item in value.items()}
+    return value
+
+
+def _sanitize_output_text(text: str) -> str:
+    cleaned = text.replace("\ufffd\ufffd", "'").replace("\ufffd", "")
+    return clean_whitespace(cleaned)
 
 
 def _try_parse_json(text: str) -> object:

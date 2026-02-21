@@ -57,6 +57,7 @@ class SearchStepContext(BaseStepContext):
 class AnswerPlanState(MutableModel):
     answer_mode: str = "summary"
     freshness_intent: bool = False
+    query_language: str = "same as query"
     search_query: str = ""
     search_depth: str = "auto"
     max_results: int = 1

@@ -216,7 +216,7 @@ async def test_answer_plan_drives_search_and_uses_content_flag() -> None:
     assert "CURRENT_UTC_TIMESTAMP:" in llm.calls[1]["messages"][1]["content"]
     assert "Temporal reasoning rules:" in llm.calls[1]["messages"][0]["content"]
     assert (
-        "Output language must strictly match QUERY language and script."
+        "Output must strictly match QUERY language/script."
         in llm.calls[1]["messages"][0]["content"]
     )
     assert [call["model"] for call in llm.calls] == ["planner", "writer"]
