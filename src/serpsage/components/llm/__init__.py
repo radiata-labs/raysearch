@@ -68,8 +68,22 @@ def build_overview_client(*, rt: Runtime, http: HttpClientBase) -> LLMClientBase
                 model_cfg.model,
             )
             continue
+        if backend == "dashscope":
+            _ensure_optional_dep(
+                module_name="dashscope",
+                package_name="dashscope",
+                backend=backend,
+                model_name=model_cfg.name,
+            )
+            from serpsage.components.llm.dashscope import DashScopeClient
+
+            routes[model_cfg.name] = (
+                DashScopeClient(rt=rt, model_cfg=model_cfg),
+                model_cfg.model,
+            )
+            continue
         raise ValueError(
-            f"unsupported overview backend `{backend}`; expected openai|gemini"
+            f"unsupported overview backend `{backend}`; expected openai|gemini|dashscope"
         )
 
     if not routes:

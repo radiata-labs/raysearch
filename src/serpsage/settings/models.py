@@ -15,7 +15,7 @@ RankBackendKey = Literal["blend", "heuristic", "bm25"]
 RankBlendProviderKey = Literal["heuristic", "bm25"]
 CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
 CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
-OverviewModelBackendKey = Literal["openai", "gemini"]
+OverviewModelBackendKey = Literal["openai", "gemini", "dashscope"]
 
 
 class RetrySettings(Model):
