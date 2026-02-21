@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
 
-_MIN_BYTES = 96
+_MIN_BYTES = 32
 _PROBE_MAX_BYTES = 220_000
 _BLOCK_STATUSES = {401, 403, 429}
 
@@ -123,13 +123,16 @@ class AutoFetcher(FetcherBase):
         timeout_s: float | None,
     ) -> FetchAttempt:
         deadline_ts = time.monotonic() + self._resolve_timeout_s(timeout_s)
+        quality_cfg = self.settings.fetch.quality
         if strategy == "curl_cffi":
             attempt = await self._run_curl(
                 url=url,
                 span=span,
                 deadline_ts=deadline_ts,
             )
-            if self._is_useful(attempt):
+            # Use quality score instead of binary check for more lenient acceptance
+            score, _ = self._content_quality_score(attempt)
+            if score >= float(quality_cfg.quality_score_threshold):
                 return attempt
             raise RuntimeError(f"fetch_unusable:curl_cffi:{int(attempt.status_code)}")
 
@@ -140,7 +143,9 @@ class AutoFetcher(FetcherBase):
                 deadline_ts=deadline_ts,
                 render_reason="backend_playwright",
             )
-            if self._is_useful(attempt):
+            # Use quality score instead of binary check for more lenient acceptance
+            score, _ = self._content_quality_score(attempt)
+            if score >= float(quality_cfg.quality_score_threshold):
                 return attempt
             raise RuntimeError(f"fetch_unusable:playwright:{int(attempt.status_code)}")
 
@@ -270,6 +275,7 @@ class AutoFetcher(FetcherBase):
                     headers=browser_headers(
                         profile="browser",
                         user_agent=str(fetch_cfg.user_agent),
+                        randomize=True,  # Use random real browser UA for probing
                     ),
                     timeout=timeout,
                     follow_redirects=bool(fetch_cfg.follow_redirects),
@@ -415,11 +421,15 @@ class AutoFetcher(FetcherBase):
                     failure_reasons.append(f"content_too_short:{content_len}")
                 if attempt.content_kind in {"binary", "unknown"}:
                     failure_reasons.append(f"bad_content_kind:{attempt.content_kind}")
-                if attempt.content_kind == "html" and text_chars < int(quality.min_text_chars):
+                if attempt.content_kind == "html" and text_chars < int(
+                    quality.min_text_chars
+                ):
                     failure_reasons.append(f"low_text_chars:{text_chars}")
 
                 if failure_reasons:
-                    span.set_attr("playwright_failure_reasons", ";".join(failure_reasons))
+                    span.set_attr(
+                        "playwright_failure_reasons", ";".join(failure_reasons)
+                    )
                     psp.set_attr("failure_reasons", ";".join(failure_reasons))
 
             return attempt
@@ -448,20 +458,85 @@ class AutoFetcher(FetcherBase):
         return bool(res.blocked)
 
     def _is_useful(self, res: FetchAttempt) -> bool:
+        """Legacy method for backward compatibility.
+
+        Delegates to _content_quality_score with threshold of 0.15.
+        """
+        score, _ = self._content_quality_score(res)
+        return score >= 0.15
+
+    def _content_quality_score(self, res: FetchAttempt) -> tuple[float, list[str]]:
+        """Calculate a quality score (0.0-1.0) for fetched content.
+
+        Returns:
+            Tuple of (score, failure_reasons) where:
+            - score: 0.0 (unusable) to 1.0 (excellent)
+            - failure_reasons: List of reasons for score reduction
+
+        Scoring breakdown:
+        - HTTP status valid (200-399): Required, else 0.0
+        - Not blocked: Required, else 0.0
+        - Content length: Up to 0.25 points
+        - Text content: Up to 0.45 points
+        - Content kind recognized: Up to 0.15 points
+        - Good script ratio: Up to 0.15 points
+        """
         quality = self.settings.fetch.quality
+        reasons: list[str] = []
+
+        # Base score components
         status = int(res.status_code or 0)
+        content_len = len(res.content or b"")
+        text_chars = int(res.text_chars or 0)
+        content_score = float(res.content_score or 0.0)
+
+        score = 0.0
+
+        # Check 1: HTTP status must be 2xx or 3xx
         if status < 200 or status >= 400:
-            return False
+            reasons.append(f"bad_status:{status}")
+            return 0.0, reasons
+
+        # Check 2: Must not be blocked
         if self._is_blocked(res):
-            return False
-        if len(res.content or b"") < _MIN_BYTES:
-            return False
-        if res.content_kind in {"binary", "unknown"}:
-            return False
+            reasons.append("blocked")
+            return 0.0, reasons
+
+        # Score component 1: Content length (0.25 points max)
+        # 32 bytes = 0, 1000+ bytes = full points
+        len_ratio = min(1.0, max(0, content_len - _MIN_BYTES) / (1000 - _MIN_BYTES))
+        score += len_ratio * 0.25
+        if len_ratio < 0.3:
+            reasons.append(f"short_content:{content_len}")
+
+        # Score component 2: Text characters for HTML (0.45 points max)
+        # 100 chars = 0, 1000+ chars = full points
         if res.content_kind == "html":
-            if int(res.text_chars or 0) < int(quality.min_text_chars):
-                return False
-        return True
+            text_ratio = min(
+                1.0,
+                max(0, text_chars - int(quality.min_text_chars))
+                / (1000 - int(quality.min_text_chars)),
+            )
+            score += text_ratio * 0.45
+            if text_ratio < 0.3:
+                reasons.append(f"low_text:{text_chars}")
+        else:
+            # Non-HTML gets partial points based on content_score
+            score += content_score * 0.45
+
+        # Score component 3: Content kind recognized (0.15 points)
+        if res.content_kind not in {"binary", "unknown"}:
+            score += 0.15
+        else:
+            reasons.append(f"unknown_content_kind:{res.content_kind}")
+
+        # Score component 4: Script ratio (0.15 points max)
+        # Lower script ratio = higher score
+        script_ratio = float(res.script_ratio or 0.0)
+        script_score = max(0, 1.0 - script_ratio * 2)
+        score += script_score * 0.15
+
+        return score, reasons
 
     def _attach_attempt_chain(
         self,

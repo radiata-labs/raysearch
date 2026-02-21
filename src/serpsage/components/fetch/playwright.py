@@ -176,7 +176,7 @@ class PlaywrightFetcher(FetcherBase):
             url=final_url,
             content=body,
         )
-        text_chars, content_score, _ = estimate_text_quality(
+        text_chars, content_score, script_ratio = estimate_text_quality(
             body, content_kind=content_kind
         )
         blocked = bool(
@@ -190,6 +190,7 @@ class PlaywrightFetcher(FetcherBase):
         span.set_attr("content_kind", content_kind)
         span.set_attr("content_score", float(content_score))
         span.set_attr("text_chars", int(text_chars))
+        span.set_attr("script_ratio", float(script_ratio))
         if render_reason:
             span.set_attr("render_reason", str(render_reason))
 
@@ -207,6 +208,7 @@ class PlaywrightFetcher(FetcherBase):
             content_length_header=headers.get("content-length"),
             content_score=float(content_score),
             text_chars=int(text_chars),
+            script_ratio=float(script_ratio),
             blocked=blocked,
             render_reason=render_reason,
             attempt_chain=["playwright"],

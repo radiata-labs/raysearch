@@ -25,6 +25,7 @@ class FetchAttempt(FetchResult):
     content_length_header: str | None = None
     content_score: float = 0.0
     text_chars: int = 0
+    script_ratio: float = 0.0
     blocked: bool = False
     render_reason: str | None = None
 

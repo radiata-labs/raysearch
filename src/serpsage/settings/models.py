@@ -141,9 +141,31 @@ class FetchRenderSettings(Model):
 class FetchQualitySettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    min_text_chars: int = 220
+    min_text_chars: int = 100
     script_ratio_threshold: float = 0.35
+    quality_score_threshold: float = 0.15
     blocked_markers: list[str] = Field(default_factory=_default_blocked_markers)
+
+    @field_validator("min_text_chars")
+    @classmethod
+    def _validate_min_text_chars(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("min_text_chars must be >= 0")
+        return value
+
+    @field_validator("script_ratio_threshold")
+    @classmethod
+    def _validate_script_ratio_threshold(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("script_ratio_threshold must be between 0 and 1")
+        return value
+
+    @field_validator("quality_score_threshold")
+    @classmethod
+    def _validate_quality_score_threshold(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("quality_score_threshold must be between 0 and 1")
+        return value
 
 
 class FetchExtractSettings(Model):

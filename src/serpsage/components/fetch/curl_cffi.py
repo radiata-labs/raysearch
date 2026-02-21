@@ -123,6 +123,7 @@ class CurlCffiFetcher(FetcherBase):
                     headers=browser_headers(
                         profile="browser",
                         user_agent=str(fetch_cfg.user_agent),
+                        randomize=True,  # Use random UA for anti-fingerprinting
                     ),
                     timeout=req_timeout_s,
                     allow_redirects=bool(fetch_cfg.follow_redirects),
@@ -177,7 +178,7 @@ class CurlCffiFetcher(FetcherBase):
             url=last_url,
             content=last_body,
         )
-        text_chars, content_score, _ = estimate_text_quality(
+        text_chars, content_score, script_ratio = estimate_text_quality(
             last_body,
             content_kind=content_kind,
         )
@@ -190,6 +191,7 @@ class CurlCffiFetcher(FetcherBase):
         span.set_attr("content_kind", content_kind)
         span.set_attr("text_chars", int(text_chars))
         span.set_attr("content_score", float(content_score))
+        span.set_attr("script_ratio", float(script_ratio))
 
         return FetchAttempt(
             url=last_url,
@@ -205,6 +207,7 @@ class CurlCffiFetcher(FetcherBase):
             content_length_header=last_len_hdr,
             content_score=float(content_score),
             text_chars=int(text_chars),
+            script_ratio=float(script_ratio),
             blocked=blocked,
             attempt_chain=["curl_cffi"],
         )
