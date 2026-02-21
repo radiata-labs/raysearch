@@ -62,7 +62,8 @@ def normalize_scores(scores: list[float], cfg: HeuristicRankSettings) -> list[fl
 
     pos_vals = [float(cleaned[i]) for i in pos_idx]
     if len(pos_vals) == 1:
-        out[pos_idx[0]] = 1.0
+        # Single item: use 0.5 to be consistent with rank_scales (avoid saturating at 1.0)
+        out[pos_idx[0]] = 0.5
         return out
 
     log_vals = [math.log1p(x) for x in pos_vals]

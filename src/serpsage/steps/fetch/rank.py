@@ -175,7 +175,9 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             token_count = len(tokenize(candidate.text))
             if token_count <= min_tokens:
                 continue
-            if token_count <= (query_token_count * 2):
+            dynamic_min_tokens = max(4, query_token_count * 2)
+            dynamic_max_tokens = max(16, query_token_count * 8)
+            if token_count < dynamic_min_tokens or token_count > dynamic_max_tokens:
                 continue
             filtered_candidates.append(candidate)
         candidates = filtered_candidates

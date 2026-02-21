@@ -42,7 +42,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "What is curl_cffi?", False, None)
+    out = anyio.run(main, "curl_cffi是什么？", False, None)
     t2 = time.time()
 
     print(out["answer_result"])

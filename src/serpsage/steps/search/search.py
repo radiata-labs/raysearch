@@ -69,7 +69,11 @@ class SearchStep(StepBase[SearchStepContext]):
             if not normalized:
                 continue
 
-            docs = [f"{item.title} {item.snippet}".strip() for item in normalized]
+            # Duplicate title to boost its weight in relevance scoring
+            docs = [
+                f"{item.title} {item.title} {item.snippet}".strip()
+                for item in normalized
+            ]
             base_scores = await self._ranker.score_texts(
                 texts=docs,
                 query=req.query,
