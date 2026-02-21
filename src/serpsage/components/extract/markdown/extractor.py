@@ -127,6 +127,7 @@ _PRIMARY_ROOT_SELECTORS: tuple[str, ...] = (
     ".post-content",
     ".entry-content",
 )
+_MIN_HTML_CAPTURE_CHARS = 1_800_000
 
 
 class MarkdownExtractor(ExtractorBase):
@@ -952,7 +953,9 @@ def build_extract_profile(*, settings: AppSettings) -> ExtractProfile:
     max_markdown = int(max(8_000, cfg.max_markdown_chars))
     return ExtractProfile(
         max_markdown_chars=max_markdown,
-        max_html_chars=max_markdown * 3,
+        # Large modern pages (for example GitHub repos) can place meaningful content
+        # well after 480k chars; keep at least the fetch-layer HTML budget here.
+        max_html_chars=max(max_markdown * 3, _MIN_HTML_CAPTURE_CHARS),
         min_text_chars=max(120, int(cfg.min_text_chars)),
         min_primary_chars=max(120, int(cfg.min_primary_chars)),
         min_total_chars_with_secondary=max(

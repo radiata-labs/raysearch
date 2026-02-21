@@ -8,7 +8,10 @@
       "Bash(tail:*)",
       "mcp__ide__getDiagnostics",
       "Bash(cd D:\\\\WjjFiles\\\\code\\\\google-ai-overview-api:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(source .venv/Scripts/activate)",
+      "Bash(ruff check:*)",
+      "Bash(mypy:*)"
     ]
   }
 }

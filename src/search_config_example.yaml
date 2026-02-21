@@ -1,7 +1,7 @@
 ﻿provider:
   backend: searxng
   searxng:
-    base_url: https://searx.be/search
+    base_url: https://searxng.lycoreco.dpdns.org/search
     api_key: null
     timeout_s: 20.0
     allow_redirects: false
@@ -31,7 +31,7 @@ search:
     final_page_weight: 0.55
     final_context_weight: 0.30
     final_prefetch_weight: 0.15
-    expansion_model: ""
+    expansion_model: gpt-4.1-mini
     expansion_timeout_s: 20.0
 
 answer:
