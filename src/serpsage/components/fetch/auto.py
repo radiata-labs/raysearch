@@ -398,6 +398,30 @@ class AutoFetcher(FetcherBase):
             psp.set_attr("useful", bool(useful))
             span.set_attr("playwright_status", int(attempt.status_code or 0))
             span.set_attr("playwright_useful", bool(useful))
+
+            # Record detailed failure reasons for debugging
+            if not useful:
+                quality = self.settings.fetch.quality
+                status = int(attempt.status_code or 0)
+                content_len = len(attempt.content or b"")
+                text_chars = int(attempt.text_chars or 0)
+
+                failure_reasons: list[str] = []
+                if status < 200 or status >= 400:
+                    failure_reasons.append(f"bad_status:{status}")
+                if self._is_blocked(attempt):
+                    failure_reasons.append("blocked")
+                if content_len < _MIN_BYTES:
+                    failure_reasons.append(f"content_too_short:{content_len}")
+                if attempt.content_kind in {"binary", "unknown"}:
+                    failure_reasons.append(f"bad_content_kind:{attempt.content_kind}")
+                if attempt.content_kind == "html" and text_chars < int(quality.min_text_chars):
+                    failure_reasons.append(f"low_text_chars:{text_chars}")
+
+                if failure_reasons:
+                    span.set_attr("playwright_failure_reasons", ";".join(failure_reasons))
+                    psp.set_attr("failure_reasons", ";".join(failure_reasons))
+
             return attempt
 
     def _resolve_timeout_s(self, timeout_s: float | None) -> float:

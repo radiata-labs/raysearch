@@ -126,9 +126,16 @@ class FetchRenderSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     js_concurrency: int = 4
-    nav_timeout_ms: int = 2_500
-    wait_network_idle_ms: int = 220
+    nav_timeout_ms: int = 8_000
+    wait_network_idle_ms: int = 800
     block_resources: bool = True
+
+    @field_validator("js_concurrency")
+    @classmethod
+    def _validate_js_concurrency(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("js_concurrency must be >= 1")
+        return value
 
 
 class FetchQualitySettings(Model):

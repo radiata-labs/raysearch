@@ -5,7 +5,10 @@
       "Bash(pip install:*)",
       "Bash(vulture:*)",
       "Bash(head:*)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(cd D:\\\\WjjFiles\\\\code\\\\google-ai-overview-api:*)",
+      "Bash(python:*)"
     ]
   }
 }
