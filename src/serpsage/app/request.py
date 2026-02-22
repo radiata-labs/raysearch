@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from serpsage.utils.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 SearchMode = Literal["fast", "auto", "deep"]
 FetchContentDetail = Literal["concise", "standard", "full"]

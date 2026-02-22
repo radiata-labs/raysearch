@@ -9,7 +9,7 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import AnswerStepContext
 from serpsage.steps.base import StepBase
-from serpsage.utils.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase

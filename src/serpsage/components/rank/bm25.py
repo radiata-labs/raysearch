@@ -14,7 +14,7 @@ except Exception:  # noqa: BLE001
     BM25_AVAILABLE = False
 
 from serpsage.components.rank.base import RankerBase
-from serpsage.utils import tokenize
+from serpsage.tokenize import tokenize
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

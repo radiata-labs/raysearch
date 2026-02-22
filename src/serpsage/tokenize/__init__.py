@@ -4,9 +4,8 @@ import re
 from functools import lru_cache
 from typing import Any, cast
 
-from serpsage.utils.collections import uniq_preserve_order
-from serpsage.utils.normalize import normalize_text
-from serpsage.utils.stopwords import is_stopword
+from serpsage.tokenize.stopwords import is_stopword
+from serpsage.utils import normalize_text, uniq_preserve_order
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+")
 CJK_KANA_RUN_RE = re.compile(

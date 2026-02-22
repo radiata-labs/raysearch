@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -49,4 +49,4 @@ def filter_stopwords(words: list[str]) -> list[str]:
     return [w for w in words if w and not is_stopword(w)]
 
 
-__all__ = ["filter_stopwords", "is_stopword", "stopwords"]
+__all__ = ["stopwords", "is_stopword", "filter_stopwords"]

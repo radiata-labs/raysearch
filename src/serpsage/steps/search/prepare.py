@@ -5,7 +5,7 @@ from typing_extensions import override
 
 from serpsage.models.pipeline import SearchDeepState, SearchRankState, SearchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.utils.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

@@ -10,8 +10,8 @@ from serpsage.models.pipeline import (
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
-from serpsage.utils.normalize import clean_whitespace
-from serpsage.utils.tokenize import tokenize_for_query
+from serpsage.tokenize import tokenize_for_query
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase

@@ -7,7 +7,8 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract
 from serpsage.steps.base import StepBase
-from serpsage.utils import clean_whitespace, tokenize
+from serpsage.tokenize import tokenize
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

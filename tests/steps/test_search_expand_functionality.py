@@ -14,7 +14,7 @@ from serpsage.settings.models import AppSettings
 from serpsage.steps.search.expand import SearchExpandStep
 from serpsage.telemetry.base import ClockBase
 from serpsage.telemetry.trace import NoopTelemetry
-from serpsage.utils.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 
 @pytest.fixture

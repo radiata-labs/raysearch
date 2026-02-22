@@ -26,7 +26,7 @@ from serpsage.steps.search.rank import SearchRankStep
 from serpsage.steps.search.search import SearchStep
 from serpsage.telemetry.base import ClockBase
 from serpsage.telemetry.trace import NoopTelemetry
-from serpsage.utils.normalize import clean_whitespace
+from serpsage.utils import clean_whitespace
 
 
 @pytest.fixture
