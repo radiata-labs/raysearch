@@ -42,7 +42,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(main, "latest ai papers", False, None)
+    out = anyio.run(main, "What is qwen3.5?", False, None)
     t2 = time.time()
 
     print(out["answer_result"])

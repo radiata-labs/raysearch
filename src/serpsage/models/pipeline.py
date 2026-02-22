@@ -93,17 +93,6 @@ class SearchOutputState(MutableModel):
     results: list[FetchResultItem] = Field(default_factory=list)
 
 
-class SearchStepContext(BaseStepContext):
-    settings: AppSettings
-    request: SearchRequest
-    deep: SearchDeepState = Field(default_factory=SearchDeepState)
-    prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
-    fetch: SearchFetchState = Field(default_factory=SearchFetchState)
-    rank: SearchRankState = Field(default_factory=SearchRankState)
-    output: SearchOutputState = Field(default_factory=SearchOutputState)
-    errors: list[AppError] = Field(default_factory=list)
-
-
 class AnswerPlanState(MutableModel):
     answer_mode: str = "summary"
     freshness_intent: bool = False
@@ -112,6 +101,18 @@ class AnswerPlanState(MutableModel):
     search_mode: str = "auto"
     max_results: int = 1
     additional_queries: list[str] | None = None
+
+
+class SearchStepContext(BaseStepContext):
+    settings: AppSettings
+    request: SearchRequest
+    plan: AnswerPlanState = Field(default_factory=AnswerPlanState)
+    deep: SearchDeepState = Field(default_factory=SearchDeepState)
+    prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
+    fetch: SearchFetchState = Field(default_factory=SearchFetchState)
+    rank: SearchRankState = Field(default_factory=SearchRankState)
+    output: SearchOutputState = Field(default_factory=SearchOutputState)
+    errors: list[AppError] = Field(default_factory=list)
 
 
 class AnswerSearchState(MutableModel):

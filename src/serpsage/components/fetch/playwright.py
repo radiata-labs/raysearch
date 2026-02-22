@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import time
 from typing import TYPE_CHECKING
@@ -26,6 +27,28 @@ if TYPE_CHECKING:
 
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
+
+# Suppress "Future exception was never retrieved" warnings from Playwright
+# These occur when background page loads are interrupted by timeouts or page.close()
+_original_call_exception_handler = getattr(
+    asyncio.BaseEventLoop, "call_exception_handler", None
+)
+
+
+def _suppress_future_exception_warning(self, context):
+    """Custom exception handler to suppress Playwright future warnings."""
+    exc = context.get("exception")
+    if exc is not None:
+        exc_name = type(exc).__name__
+        # Suppress these Playwright-related warnings
+        if exc_name in {"TimeoutError", "TargetClosedError", "Error"}:
+            return
+    if _original_call_exception_handler:
+        _original_call_exception_handler(self, context)
+
+
+# Apply the custom exception handler
+asyncio.BaseEventLoop.call_exception_handler = _suppress_future_exception_warning
 
 PLAYWRIGHT_AVAILABLE = False
 _pw_factory = None
@@ -164,7 +187,10 @@ class PlaywrightFetcher(FetcherBase):
                 html = await page.content()
             finally:
                 if page is not None:
-                    await page.close()
+                    # Close page and suppress any unhandled future exceptions
+                    # from background resource loads that may still be pending
+                    with contextlib.suppress(Exception):
+                        await page.close()
 
         body = (html or "").encode("utf-8", errors="ignore")
         elapsed_ms = int((time.time() - started) * 1000)

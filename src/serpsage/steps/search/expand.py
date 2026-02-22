@@ -6,8 +6,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
+from serpsage.app.request import SearchRequest
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import SearchDeepState, SearchQueryJob, SearchStepContext
+from serpsage.models.pipeline import (
+    AnswerPlanState,
+    SearchDeepState,
+    SearchQueryJob,
+    SearchStepContext,
+)
 from serpsage.steps.base import StepBase
 from serpsage.utils.normalize import clean_whitespace
 from serpsage.utils.tokenize import tokenize_for_query
@@ -87,16 +93,29 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             return ctx
 
         deep_cfg = self.settings.search.deep
-        manual_queries = self._normalize_queries(list(req.additional_queries or []))
+
+        # Reuse additional_queries from AnswerPlanStep if available
+        plan = self._get_plan(ctx)
+        manual_queries = self._get_manual_queries(plan, req)
+
+        # Skip LLM expansion if plan already provided additional_queries
+        plan_provided_expansion = bool(plan.additional_queries)
+        if plan_provided_expansion:
+            # Plan already did the query expansion work, skip LLM expansion
+            llm_queries: list[str] = []
+            llm_elapsed_ms: int = 0
+            span.set_attr("llm_expansion_skipped", True)
+        else:
+            llm_queries, llm_elapsed_ms = await self._collect_llm_queries(
+                ctx=ctx,
+                query=primary_query,
+                max_queries=int(deep_cfg.llm_max_queries),
+                timeout_s=float(deep_cfg.expansion_timeout_s),
+            )
+
         rule_queries = self._build_rule_queries(
             query=primary_query,
             max_queries=int(deep_cfg.rule_max_queries),
-        )
-        llm_queries, llm_elapsed_ms = await self._collect_llm_queries(
-            ctx=ctx,
-            query=primary_query,
-            max_queries=int(deep_cfg.llm_max_queries),
-            timeout_s=float(deep_cfg.expansion_timeout_s),
         )
         if bool(ctx.deep.aborted):
             self._set_expand_span_attrs(
@@ -134,6 +153,19 @@ class SearchExpandStep(StepBase[SearchStepContext]):
 
     def _is_deep_enabled(self, *, req_mode: str) -> bool:
         return req_mode == "deep" and bool(self.settings.search.deep.enabled)
+
+    def _get_plan(self, ctx: SearchStepContext) -> AnswerPlanState:
+        """Get the answer plan from context."""
+        return ctx.plan
+
+    def _get_manual_queries(
+        self, plan: AnswerPlanState | None, req: SearchRequest
+    ) -> list[str]:
+        """Get manual queries from plan or request."""
+        if plan is not None and plan.additional_queries:
+            # Reuse additional_queries from plan - it already did the LLM expansion work
+            return self._normalize_queries(list(plan.additional_queries))
+        return self._normalize_queries(list(req.additional_queries or []))
 
     def _set_expand_span_attrs(
         self,

@@ -36,9 +36,9 @@ search:
 
 answer:
   plan:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2-turbo-preview
   generate:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2-turbo-preview
     max_abstract_chars: 2000
 
 runner:
@@ -58,7 +58,7 @@ fetch:
     politeness_delay_ms: 0
   render:
     js_concurrency: 4
-    nav_timeout_ms: 25000
+    nav_timeout_ms: 10000
     block_resources: true
   quality:
     min_text_chars: 220
