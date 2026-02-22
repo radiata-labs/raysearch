@@ -184,16 +184,27 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         if not candidates:
             return []
 
-        base_scores = await self._ranker.score_texts(
-            texts=[candidate.text for candidate in candidates],
+        headings: list[str] = []
+        for candidate in candidates:
+            heading = clean_whitespace(candidate.heading or "")
+            if heading and heading not in headings:
+                headings.append(heading)
+
+        combined_texts = [candidate.text for candidate in candidates] + headings
+        combined_scores = await self._ranker.score_texts(
+            texts=combined_texts,
             query=query,
             query_tokens=list(query_tokens or []),
         )
-        heading_scores = await self._score_headings(
-            query=query,
-            candidates=candidates,
-            query_tokens=list(query_tokens or []),
-        )
+        base_scores = combined_scores[: len(candidates)]
+        heading_scores = {
+            heading: (
+                float(combined_scores[len(candidates) + idx])
+                if len(candidates) + idx < len(combined_scores)
+                else 0.0
+            )
+            for idx, heading in enumerate(headings)
+        }
 
         cfg = self.settings.fetch.abstract
         alpha = float(cfg.title_boost_alpha)
@@ -218,30 +229,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         scored.sort(key=lambda item: (-item[0], int(item[1].position)))
 
         return scored
-
-    async def _score_headings(
-        self,
-        *,
-        query: str,
-        candidates: list[PreparedAbstract],
-        query_tokens: list[str],
-    ) -> dict[str, float]:
-        headings: list[str] = []
-        for candidate in candidates:
-            heading = (candidate.heading or "").strip()
-            if heading and heading not in headings:
-                headings.append(heading)
-        if not headings:
-            return {}
-        scores = await self._ranker.score_texts(
-            texts=headings,
-            query=query,
-            query_tokens=query_tokens,
-        )
-        return {
-            heading: (float(scores[idx]) if idx < len(scores) else 0.0)
-            for idx, heading in enumerate(headings)
-        }
 
 
 def _resolve_effective_query(
