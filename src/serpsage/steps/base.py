@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 from typing_extensions import override
@@ -89,13 +90,14 @@ class RunnerBase(WorkUnit, Generic[TContext]):
         self._tg: TaskGroup | None = None
 
         self._results: dict[str, TContext | Exception] = {}
-        self._result_conditions: dict[str, anyio.Condition] = {}
+        self._result_events: dict[str, anyio.Event] = {}
         self._orphan_task_ids: set[str] = set()
         self._infra_error: Exception | None = None
 
         self._seq_lock = anyio.Lock()
         self._state_lock = anyio.Lock()
         self._orphan_lock = anyio.Lock()
+        self._result_lock = self._orphan_lock
 
         self.bind_deps(*steps)
 
@@ -137,7 +139,7 @@ class RunnerBase(WorkUnit, Generic[TContext]):
             self._accepting = True
             self._infra_error = None
             self._results.clear()
-            self._result_conditions.clear()
+            self._result_events.clear()
             self._orphan_task_ids.clear()
             self._state = "running"
 
@@ -154,7 +156,7 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 self._accepting = False
                 self._infra_error = None
                 self._results.clear()
-                self._result_conditions.clear()
+                self._result_events.clear()
                 self._orphan_task_ids.clear()
                 self._state = "closed"
                 return
@@ -284,54 +286,47 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 self._infra_error = exc
             self._accepting = False
 
-        conditions_to_notify: list[anyio.Condition] = []
+        events_to_notify: list[anyio.Event] = []
         async with self._orphan_lock:
-            for task_id, condition in list(self._result_conditions.items()):
+            for task_id, event in list(self._result_events.items()):
                 self._results.setdefault(
                     task_id,
                     RuntimeError("runner infrastructure failed"),
                 )
-                conditions_to_notify.append(condition)
+                events_to_notify.append(event)
 
-        for condition in conditions_to_notify:
-            try:
-                async with condition:
-                    condition.notify_all()
-            except Exception:  # noqa: BLE001
-                pass  # Best-effort notification
+        for event in events_to_notify:
+            with suppress(Exception):
+                event.set()
 
     async def _mark_orphans(self, *, task_ids: set[str]) -> None:
         if not task_ids:
             return
-        conditions_to_notify: list[anyio.Condition] = []
+        events_to_notify: list[anyio.Event] = []
         async with self._orphan_lock:
             self._orphan_task_ids.update(task_ids)
             for task_id in task_ids:
                 if task_id not in self._results:
-                    condition = self._result_conditions.pop(task_id, None)
-                    if condition is not None:
-                        conditions_to_notify.append(condition)
+                    event = self._result_events.pop(task_id, None)
+                    if event is not None:
+                        events_to_notify.append(event)
 
-        for condition in conditions_to_notify:
-            try:
-                async with condition:
-                    condition.notify_all()
-            except Exception:  # noqa: BLE001
-                pass  # Best-effort notification
+        for event in events_to_notify:
+            with suppress(Exception):
+                event.set()
 
     async def _store_result(self, *, task_id: str, item: TContext | Exception) -> None:
-        condition: anyio.Condition | None = None
+        event: anyio.Event | None = None
 
         async with self._orphan_lock:
             if task_id in self._orphan_task_ids:
                 self._orphan_task_ids.remove(task_id)
             else:
                 self._results[task_id] = item
-                condition = self._result_conditions.get(task_id)
+            event = self._result_events.get(task_id)
 
-        if condition is not None:
-            async with condition:
-                condition.notify_all()
+        if event is not None:
+            event.set()
 
     async def _worker_loop(
         self,
@@ -380,7 +375,7 @@ class RunnerBase(WorkUnit, Generic[TContext]):
             ) from infra_error
 
         async with self._orphan_lock:
-            self._result_conditions[task_id] = anyio.Condition()
+            self._result_events[task_id] = anyio.Event()
 
         try:
             await send.send(
@@ -388,32 +383,42 @@ class RunnerBase(WorkUnit, Generic[TContext]):
             )
         except Exception as exc:  # noqa: BLE001
             async with self._orphan_lock:
-                self._result_conditions.pop(task_id, None)
+                self._result_events.pop(task_id, None)
             raise RuntimeError(
                 f"runner enqueue failed for task_id={task_id} request_id={request_id}"
             ) from exc
         return task_id
 
     async def _wait_and_get(self, *, task_id: str) -> TContext | Exception | None:
-        """Wait for result condition and atomically retrieve and cleanup."""
+        """Wait for result event and atomically retrieve and cleanup."""
+        event: anyio.Event | None = None
+        async with self._orphan_lock:
+            item = self._results.pop(task_id, None)
+            if item is not None:
+                self._result_events.pop(task_id, None)
+                return item
+            if task_id in self._orphan_task_ids:
+                self._orphan_task_ids.remove(task_id)
+                self._result_events.pop(task_id, None)
+                return None
+            event = self._result_events.get(task_id)
+
+        if event is None:
+            return None
+
+        await event.wait()
+
         async with self._state_lock:
             infra_error = self._infra_error
         if infra_error is not None:
             raise RuntimeError("runner infrastructure failed") from infra_error
 
-        condition: anyio.Condition | None = None
         async with self._orphan_lock:
-            condition = self._result_conditions.get(task_id)
-
-        if condition is None:
-            return None
-
-        async with condition:
-            await condition.wait()
-            async with self._orphan_lock:
-                item = self._results.pop(task_id, None)
-                self._result_conditions.pop(task_id, None)
-                return item
+            item = self._results.pop(task_id, None)
+            self._result_events.pop(task_id, None)
+            if task_id in self._orphan_task_ids:
+                self._orphan_task_ids.remove(task_id)
+            return item
 
     def _into_result(self, task_id: str, item: TContext | Exception) -> TContext:
         if isinstance(item, Exception):
