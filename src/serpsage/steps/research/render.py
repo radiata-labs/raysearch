@@ -76,7 +76,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         messages = _build_structured_messages(ctx, target_language=target_language)
         try:
             result = await self._llm.chat(model=model, messages=messages, schema=schema)
-            payload = result.data if result.data is not None else try_parse_json_value(result.text)
+            payload = (
+                result.data
+                if result.data is not None
+                else try_parse_json_value(result.text)
+            )
             if not isinstance(payload, dict):
                 raise TypeError("structured output must be a JSON object")
             cleaned, removed = strip_citation_markers(payload)
@@ -127,8 +131,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             raw_text = _build_markdown_fallback(ctx)
 
         index_to_url = {
-            int(source.source_id): str(source.url)
-            for source in ctx.corpus.sources
+            int(source.source_id): str(source.url) for source in ctx.corpus.sources
         }
         rewritten, invalid = replace_numeric_citations_with_urls(
             raw_text,
@@ -274,17 +277,14 @@ def _resolve_target_language(ctx: ResearchStepContext) -> str:
 
 
 def _section_template() -> str:
-    return "\n".join(
-        [
-            "## 1) <Core Conclusions>",
-            "## 2) <Key Findings>",
-            "## 3) <Evidence and Citations>",
-            "## 4) <Uncertainty and Conflicts>",
-            "## 5) <Time Anchors>",
-            "## 6) <Next Research Questions>",
-        ]
+    return (
+        "## 1) <Core Conclusions>\n"
+        "## 2) <Key Findings>\n"
+        "## 3) <Evidence and Citations>\n"
+        "## 4) <Uncertainty and Conflicts>\n"
+        "## 5) <Time Anchors>\n"
+        "## 6) <Next Research Questions>"
     )
 
 
 __all__ = ["ResearchRenderStep"]
-
