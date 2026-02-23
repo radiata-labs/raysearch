@@ -179,6 +179,120 @@ class AnswerSettings(Model):
     generate: AnswerGenerateSettings = Field(default_factory=AnswerGenerateSettings)
 
 
+class ResearchStageSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    use_model: str = ""
+
+
+class ResearchModeSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    max_rounds: int = 5
+    max_search_calls: int = 12
+    max_fetch_calls: int = 24
+    max_results_per_search: int = 6
+    max_queries_per_round: int = 3
+    max_fetch_per_round: int = 6
+    stop_confidence: float = 0.80
+    min_coverage_ratio: float = 0.80
+    max_unresolved_conflicts: int = 1
+
+    @model_validator(mode="after")
+    def _validate_limits(self) -> ResearchModeSettings:
+        if int(self.max_rounds) <= 0:
+            raise ValueError("research mode max_rounds must be > 0")
+        if int(self.max_search_calls) <= 0:
+            raise ValueError("research mode max_search_calls must be > 0")
+        if int(self.max_fetch_calls) <= 0:
+            raise ValueError("research mode max_fetch_calls must be > 0")
+        if int(self.max_results_per_search) <= 0:
+            raise ValueError("research mode max_results_per_search must be > 0")
+        if int(self.max_queries_per_round) <= 0:
+            raise ValueError("research mode max_queries_per_round must be > 0")
+        if int(self.max_fetch_per_round) <= 0:
+            raise ValueError("research mode max_fetch_per_round must be > 0")
+        if not 0.0 <= float(self.stop_confidence) <= 1.0:
+            raise ValueError("research mode stop_confidence must be between 0 and 1")
+        if not 0.0 <= float(self.min_coverage_ratio) <= 1.0:
+            raise ValueError("research mode min_coverage_ratio must be between 0 and 1")
+        if int(self.max_unresolved_conflicts) < 0:
+            raise ValueError("research mode max_unresolved_conflicts must be >= 0")
+        return self
+
+
+def _default_research_fast_mode() -> ResearchModeSettings:
+    return ResearchModeSettings(
+        max_rounds=3,
+        max_search_calls=6,
+        max_fetch_calls=12,
+        max_results_per_search=5,
+        max_queries_per_round=3,
+        max_fetch_per_round=6,
+        stop_confidence=0.72,
+        min_coverage_ratio=0.70,
+        max_unresolved_conflicts=1,
+    )
+
+
+def _default_research_standard_mode() -> ResearchModeSettings:
+    return ResearchModeSettings(
+        max_rounds=5,
+        max_search_calls=12,
+        max_fetch_calls=24,
+        max_results_per_search=6,
+        max_queries_per_round=3,
+        max_fetch_per_round=6,
+        stop_confidence=0.80,
+        min_coverage_ratio=0.80,
+        max_unresolved_conflicts=1,
+    )
+
+
+def _default_research_pro_mode() -> ResearchModeSettings:
+    return ResearchModeSettings(
+        max_rounds=8,
+        max_search_calls=24,
+        max_fetch_calls=48,
+        max_results_per_search=8,
+        max_queries_per_round=4,
+        max_fetch_per_round=8,
+        stop_confidence=0.86,
+        min_coverage_ratio=0.90,
+        max_unresolved_conflicts=0,
+    )
+
+
+class ResearchSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    tool_max_attempts: int = 3
+    llm_self_heal_retries: int = 2
+    no_progress_rounds_to_stop: int = 2
+    plan: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
+    abstract_analyze: ResearchStageSettings = Field(
+        default_factory=ResearchStageSettings
+    )
+    content_analyze: ResearchStageSettings = Field(
+        default_factory=ResearchStageSettings
+    )
+    synthesize: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
+    markdown: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
+    research_fast: ResearchModeSettings = Field(default_factory=_default_research_fast_mode)
+    research: ResearchModeSettings = Field(default_factory=_default_research_standard_mode)
+    research_pro: ResearchModeSettings = Field(default_factory=_default_research_pro_mode)
+
+    @model_validator(mode="after")
+    def _validate_runtime_limits(self) -> ResearchSettings:
+        if int(self.tool_max_attempts) <= 0:
+            raise ValueError("research.tool_max_attempts must be > 0")
+        if int(self.llm_self_heal_retries) < 0:
+            raise ValueError("research.llm_self_heal_retries must be >= 0")
+        if int(self.no_progress_rounds_to_stop) <= 0:
+            raise ValueError("research.no_progress_rounds_to_stop must be > 0")
+        return self
+
+
 def _default_blocked_markers() -> list[str]:
     return [
         "cloudflare",
@@ -430,6 +544,7 @@ class AppSettings(Model):
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
     answer: AnswerSettings = Field(default_factory=AnswerSettings)
+    research: ResearchSettings = Field(default_factory=ResearchSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
     rank: RankSettings = Field(default_factory=RankSettings)
@@ -452,7 +567,42 @@ class AppSettings(Model):
             raise ValueError(
                 "answer.generate.use_model must match one of llm.models[].name"
             )
+        _validate_optional_model_name(
+            model_name=self.research.plan.use_model,
+            names=names,
+            path="research.plan.use_model",
+        )
+        _validate_optional_model_name(
+            model_name=self.research.abstract_analyze.use_model,
+            names=names,
+            path="research.abstract_analyze.use_model",
+        )
+        _validate_optional_model_name(
+            model_name=self.research.content_analyze.use_model,
+            names=names,
+            path="research.content_analyze.use_model",
+        )
+        _validate_optional_model_name(
+            model_name=self.research.synthesize.use_model,
+            names=names,
+            path="research.synthesize.use_model",
+        )
+        _validate_optional_model_name(
+            model_name=self.research.markdown.use_model,
+            names=names,
+            path="research.markdown.use_model",
+        )
         return self
+
+
+def _validate_optional_model_name(
+    *, model_name: str, names: set[str], path: str
+) -> None:
+    token = str(model_name or "").strip()
+    if not token:
+        return
+    if token not in names:
+        raise ValueError(f"{path} must match one of llm.models[].name")
 
 
 __all__ = [
@@ -478,6 +628,9 @@ __all__ = [
     "OverviewModelBackendKey",
     "OverviewModelSettings",
     "ProviderSettings",
+    "ResearchModeSettings",
+    "ResearchSettings",
+    "ResearchStageSettings",
     "RunnerSettings",
     "SearchSettings",
     "RankBlendSettings",

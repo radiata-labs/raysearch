@@ -11,6 +11,7 @@ from serpsage.app.request import (
     FetchContentRequest,
     FetchOverviewRequest,
     FetchRequest,
+    ResearchRequest,
     SearchRequest,
 )
 from serpsage.app.response import (
@@ -213,6 +214,121 @@ class FetchStepContext(BaseStepContext):
     errors: list[AppError] = Field(default_factory=list)
 
 
+class ResearchBudgetState(MutableModel):
+    max_rounds: int = 1
+    max_search_calls: int = 1
+    max_fetch_calls: int = 1
+    max_results_per_search: int = 1
+    max_queries_per_round: int = 1
+    max_fetch_per_round: int = 1
+    stop_confidence: float = 0.80
+    min_coverage_ratio: float = 0.80
+    max_unresolved_conflicts: int = 1
+
+
+class ResearchSource(MutableModel):
+    source_id: int
+    url: str
+    title: str = ""
+    abstracts: list[str] = Field(default_factory=list)
+    content: str = ""
+    round_index: int = 0
+    parent_url: str = ""
+    is_subpage: bool = False
+
+
+class ResearchSearchJob(MutableModel):
+    query: str
+    intent: str = "coverage"
+    mode: Literal["auto", "deep"] = "auto"
+    include_domains: list[str] = Field(default_factory=list)
+    exclude_domains: list[str] = Field(default_factory=list)
+    include_text: list[str] = Field(default_factory=list)
+    exclude_text: list[str] = Field(default_factory=list)
+    expected_gain: str = ""
+
+
+class ResearchCoverageState(MutableModel):
+    total_subthemes: int = 0
+    covered_subthemes: list[str] = Field(default_factory=list)
+    coverage_ratio: float = 0.0
+
+
+class ResearchConflictState(MutableModel):
+    unresolved_topics: list[str] = Field(default_factory=list)
+    unresolved_count: int = 0
+
+
+class ResearchRuntimeState(MutableModel):
+    budget: ResearchBudgetState = Field(default_factory=ResearchBudgetState)
+    search_calls: int = 0
+    fetch_calls: int = 0
+    no_progress_rounds: int = 0
+    stop: bool = False
+    stop_reason: str = ""
+    round_index: int = 0
+
+
+class ResearchPlanState(MutableModel):
+    theme_plan: dict[str, object] = Field(default_factory=dict)
+    next_queries: list[str] = Field(default_factory=list)
+
+
+class ResearchCorpusState(MutableModel):
+    sources: list[ResearchSource] = Field(default_factory=list)
+    source_url_to_id: dict[str, int] = Field(default_factory=dict)
+    coverage_state: ResearchCoverageState = Field(default_factory=ResearchCoverageState)
+    conflict_state: ResearchConflictState = Field(default_factory=ResearchConflictState)
+
+
+class ResearchRoundWorkState(MutableModel):
+    search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
+    search_results: list[FetchResultItem] = Field(default_factory=list)
+    abstract_review: dict[str, object] = Field(default_factory=dict)
+    content_review: dict[str, object] = Field(default_factory=dict)
+    need_content_source_ids: list[int] = Field(default_factory=list)
+    next_queries: list[str] = Field(default_factory=list)
+
+
+class ResearchRoundState(MutableModel):
+    round_index: int = 0
+    query_strategy: str = ""
+    queries: list[str] = Field(default_factory=list)
+    search_job_count: int = 0
+    result_count: int = 0
+    new_source_ids: list[int] = Field(default_factory=list)
+    need_content_source_ids: list[int] = Field(default_factory=list)
+    abstract_summary: str = ""
+    content_summary: str = ""
+    confidence: float = 0.0
+    coverage_ratio: float = 0.0
+    unresolved_conflicts: int = 0
+    critical_gaps: int = 0
+    progress: bool = False
+    next_queries: list[str] = Field(default_factory=list)
+    stop_reason: str = ""
+    stop: bool = False
+
+
+class ResearchOutputState(MutableModel):
+    content: str = ""
+    structured: object | None = None
+
+
+class ResearchStepContext(BaseStepContext):
+    settings: AppSettings
+    request: ResearchRequest
+    runtime: ResearchRuntimeState = Field(default_factory=ResearchRuntimeState)
+    plan: ResearchPlanState = Field(default_factory=ResearchPlanState)
+    corpus: ResearchCorpusState = Field(default_factory=ResearchCorpusState)
+    work: ResearchRoundWorkState = Field(default_factory=ResearchRoundWorkState)
+    rounds: list[ResearchRoundState] = Field(default_factory=list)
+    current_round: ResearchRoundState | None = None
+    notes: list[str] = Field(default_factory=list)
+    output: ResearchOutputState = Field(default_factory=ResearchOutputState)
+    errors: list[AppError] = Field(default_factory=list)
+
+
 __all__ = [
     "AnswerOutputState",
     "AnswerPlanState",
@@ -226,6 +342,18 @@ __all__ = [
     "FetchRuntimeConfig",
     "FetchSubpagesState",
     "PreparedAbstract",
+    "ResearchConflictState",
+    "ResearchCorpusState",
+    "ResearchBudgetState",
+    "ResearchCoverageState",
+    "ResearchOutputState",
+    "ResearchPlanState",
+    "ResearchRoundState",
+    "ResearchRoundWorkState",
+    "ResearchRuntimeState",
+    "ResearchSearchJob",
+    "ResearchSource",
+    "ResearchStepContext",
     "ScoredAbstract",
     "SearchDeepState",
     "SearchFetchState",

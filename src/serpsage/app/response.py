@@ -92,6 +92,16 @@ class AnswerResponse(BaseModel):
     telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
+class ResearchResponse(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    request_id: str
+    content: str
+    structured: object | None = None
+    errors: list[AppError] = Field(default_factory=list)
+    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
+
+
 __all__ = [
     "FetchOthersResult",
     "FetchResponse",
@@ -100,6 +110,7 @@ __all__ = [
     "SearchResponse",
     "AnswerCitation",
     "AnswerResponse",
+    "ResearchResponse",
 ]
 
 FetchResultItem.model_rebuild()

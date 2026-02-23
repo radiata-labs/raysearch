@@ -20,6 +20,7 @@ from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import (
     AnswerStepContext,
     FetchStepContext,
+    ResearchStepContext,
     SearchStepContext,
 )
 from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
@@ -33,6 +34,18 @@ from serpsage.steps.fetch import (
     FetchOverviewStep,
     FetchPrepareStep,
     FetchSubpageStep,
+)
+from serpsage.steps.research import (
+    ResearchAbstractStep,
+    ResearchContentStep,
+    ResearchDecideStep,
+    ResearchFinalizeStep,
+    ResearchLoopStep,
+    ResearchPlanStep,
+    ResearchPrepareStep,
+    ResearchRenderStep,
+    ResearchSearchStep,
+    ResearchThemeStep,
 )
 from serpsage.steps.search import (
     SearchExpandStep,
@@ -142,12 +155,38 @@ def build_engine(
     answer_runner = RunnerBase[AnswerStepContext](
         rt=rt, steps=answer_steps, kind="search"
     )
+    research_round_steps: list[StepBase[ResearchStepContext]] = [
+        ResearchPlanStep(rt=rt, llm=llm),
+        ResearchSearchStep(rt=rt, search_runner=search_runner),
+        ResearchAbstractStep(rt=rt, llm=llm),
+        ResearchContentStep(rt=rt, llm=llm),
+        ResearchDecideStep(rt=rt),
+    ]
+    research_round_runner = RunnerBase[ResearchStepContext](
+        rt=rt,
+        steps=research_round_steps,
+        kind="search",
+    )
+    research_steps: list[StepBase[ResearchStepContext]] = [
+        ResearchPrepareStep(rt=rt),
+        ResearchThemeStep(rt=rt, llm=llm),
+        ResearchLoopStep(
+            rt=rt,
+            round_runner=research_round_runner,
+        ),
+        ResearchRenderStep(rt=rt, llm=llm),
+        ResearchFinalizeStep(rt=rt),
+    ]
+    research_runner = RunnerBase[ResearchStepContext](
+        rt=rt, steps=research_steps, kind="search"
+    )
 
     return Engine(
         rt=rt,
         search_runner=search_runner,
         fetch_runner=fetch_runner,
         answer_runner=answer_runner,
+        research_runner=research_runner,
     )
 
 

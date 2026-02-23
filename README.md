@@ -1,10 +1,11 @@
 # SerpSage
 
-SerpSage is an async-only SERP + page intelligence engine with three first-class paths:
+SerpSage is an async-only SERP + page intelligence engine with four first-class paths:
 
 - `Engine.search(req)`: query search pipeline (`prepare -> optimize(optional) -> expand(deep) -> search(prefetch) -> fetch -> rank -> finalize`)
 - `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional abstract rank -> optional overview -> optional subpages -> finalize`)
 - `Engine.answer(req)`: answer pipeline (`plan search params -> search -> generate answer`)
+- `Engine.research(req)`: research pipeline (`multi-round search -> fetch -> abstract/content analysis -> markdown + structured`)
 
 The `fetch` path is Markdown-first: output is centered on clean main-content markdown (`response.results[].content`).
 
@@ -14,6 +15,7 @@ The `fetch` path is Markdown-first: output is centered on clean main-content mar
 - `SearchRequest` / `SearchResponse`
 - `FetchRequest` / `FetchResponse`
 - `AnswerRequest` / `AnswerResponse`
+- `ResearchRequest` / `ResearchResponse`
 - `load_settings`
 
 ## Configuration
@@ -24,6 +26,7 @@ Top-level settings:
 - `http`
 - `search`
 - `answer`
+- `research`
 - `fetch`
 - `rank`
 - `llm`
@@ -60,6 +63,7 @@ from serpsage import (
     FetchOverviewRequest,
     FetchRequest,
     FetchSubpagesRequest,
+    ResearchRequest,
     SearchRequest,
     load_settings,
 )
@@ -96,6 +100,13 @@ async with Engine.from_settings(settings) as engine:
             content=True,
         )
     )
+    research_resp = await engine.research(
+        ResearchRequest(
+            search_mode="research-pro",
+            themes="Latest open-source coding LLM benchmark landscape",
+            json_schema=None,
+        )
+    )
 ```
 
 ## Behavior notes
@@ -108,6 +119,10 @@ async with Engine.from_settings(settings) as engine:
 - `answer` planner is LLM-driven and receives current UTC time for recency-sensitive questions
 - `answer` generation consumes budgeted abstracts (`answer.generate.max_abstract_chars`, default `3000`)
 - `answer` uses `[citation:x]` markers in `answers`; only referenced pages appear in `citations`
+- `research` request is simplified to `search_mode/themes/json_schema`
+- `research` supports three modes: `research-fast|research|research-pro`
+- `research` always returns standardized markdown (`content`) and optional structured output (`structured`)
+- `research` model output uses `[citation:x]`, then post-processing rewrites to `[citation:url]`
 - `answer.citations[]` is page-level unique (`url`, `title`, optional `content`), not abstract-level
 - `AnswerRequest.content=true` enables page markdown output in search/fetch and citation `content` payload
 - `fetch`: no depth tiers, single strategy

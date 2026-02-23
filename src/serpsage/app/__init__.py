@@ -9,6 +9,8 @@ from serpsage.app.request import (
     FetchOverviewRequest,
     FetchRequest,
     FetchSubpagesRequest,
+    ResearchRequest,
+    ResearchSearchMode,
     SearchRequest,
 )
 from serpsage.app.response import (
@@ -16,6 +18,7 @@ from serpsage.app.response import (
     AnswerResponse,
     FetchResponse,
     FetchSubpagesResult,
+    ResearchResponse,
     SearchResponse,
 )
 
@@ -36,4 +39,7 @@ __all__ = [
     "FetchSubpagesResult",
     "SearchRequest",
     "SearchResponse",
+    "ResearchSearchMode",
+    "ResearchRequest",
+    "ResearchResponse",
 ]

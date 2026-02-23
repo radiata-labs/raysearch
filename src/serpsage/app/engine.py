@@ -3,19 +3,30 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from serpsage.app.response import AnswerResponse, FetchResponse, SearchResponse
+from serpsage.app.response import (
+    AnswerResponse,
+    FetchResponse,
+    ResearchResponse,
+    SearchResponse,
+)
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import (
     AnswerStepContext,
     FetchRuntimeConfig,
     FetchStepContext,
+    ResearchStepContext,
     SearchStepContext,
 )
 from serpsage.steps.base import RunnerBase
 
 if TYPE_CHECKING:
-    from serpsage.app.request import AnswerRequest, FetchRequest, SearchRequest
+    from serpsage.app.request import (
+        AnswerRequest,
+        FetchRequest,
+        ResearchRequest,
+        SearchRequest,
+    )
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import AppSettings
 
@@ -30,12 +41,23 @@ class Engine(WorkUnit):
         search_runner: RunnerBase[SearchStepContext],
         fetch_runner: RunnerBase[FetchStepContext],
         answer_runner: RunnerBase[AnswerStepContext],
+        research_runner: RunnerBase[ResearchStepContext] | None = None,
     ) -> None:
         super().__init__(rt=rt)
         self._search_runner = search_runner
         self._fetch_runner = fetch_runner
         self._answer_runner = answer_runner
-        self.bind_deps(search_runner, fetch_runner, answer_runner)
+        self._research_runner = research_runner or RunnerBase[ResearchStepContext](
+            rt=rt,
+            steps=[],
+            kind="search",
+        )
+        self.bind_deps(
+            search_runner,
+            fetch_runner,
+            answer_runner,
+            self._research_runner,
+        )
 
     @classmethod
     def from_settings(
@@ -117,6 +139,23 @@ class Engine(WorkUnit):
                 request_id=request_id,
                 answer=ctx.output.answers,
                 citations=ctx.output.citations,
+                errors=ctx.errors,
+                telemetry=self.telemetry.summary(),
+            )
+
+    async def research(self, req: ResearchRequest) -> ResearchResponse:
+        with self.span("engine.research"):
+            request_id = uuid.uuid4().hex
+            ctx = ResearchStepContext(
+                settings=self.settings,
+                request=req,
+                request_id=request_id,
+            )
+            ctx = await self._research_runner.run(ctx)
+            return ResearchResponse(
+                request_id=request_id,
+                content=ctx.output.content,
+                structured=ctx.output.structured,
                 errors=ctx.errors,
                 telemetry=self.telemetry.summary(),
             )

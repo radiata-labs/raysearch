@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from serpsage.utils import clean_whitespace
 
 SearchMode = Literal["fast", "auto", "deep"]
+ResearchSearchMode = Literal["research-fast", "research", "research-pro"]
 FetchContentDetail = Literal["concise", "standard", "full"]
 FetchContentTag = Literal[
     "header", "navigation", "banner", "body", "sidebar", "footer", "metadata"
@@ -339,6 +340,27 @@ class AnswerRequest(BaseModel):
         return _validate_json_schema(value)
 
 
+class ResearchRequest(BaseModel):
+    model_config = ConfigDict(validate_assignment=True, extra="forbid")
+
+    search_mode: ResearchSearchMode = "research"
+    themes: str
+    json_schema: object | None = None
+
+    @field_validator("themes")
+    @classmethod
+    def _validate_themes(cls, value: str) -> str:
+        themes = clean_whitespace(str(value or ""))
+        if not themes:
+            raise ValueError("themes must not be empty")
+        return themes
+
+    @field_validator("json_schema")
+    @classmethod
+    def _validate_schema(cls, value: object | None) -> object | None:
+        return _validate_json_schema(value)
+
+
 __all__ = [
     "CrawlMode",
     "FetchContentDetail",
@@ -353,4 +375,6 @@ __all__ = [
     "SearchMode",
     "SearchRequest",
     "AnswerRequest",
+    "ResearchSearchMode",
+    "ResearchRequest",
 ]

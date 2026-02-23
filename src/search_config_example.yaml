@@ -41,6 +41,51 @@ answer:
     use_model: gpt-4.1-mini
     max_abstract_chars: 2000
 
+research:
+  tool_max_attempts: 3
+  llm_self_heal_retries: 2
+  no_progress_rounds_to_stop: 2
+  plan:
+    use_model: kimi-k2.5
+  abstract_analyze:
+    use_model: kimi-k2.5
+  content_analyze:
+    use_model: kimi-k2.5
+  synthesize:
+    use_model: kimi-k2.5
+  markdown:
+    use_model: kimi-k2.5
+  research_fast:
+    max_rounds: 3
+    max_search_calls: 6
+    max_fetch_calls: 12
+    max_results_per_search: 5
+    max_queries_per_round: 3
+    max_fetch_per_round: 6
+    stop_confidence: 0.72
+    min_coverage_ratio: 0.70
+    max_unresolved_conflicts: 1
+  research:
+    max_rounds: 5
+    max_search_calls: 12
+    max_fetch_calls: 24
+    max_results_per_search: 6
+    max_queries_per_round: 3
+    max_fetch_per_round: 6
+    stop_confidence: 0.80
+    min_coverage_ratio: 0.80
+    max_unresolved_conflicts: 1
+  research_pro:
+    max_rounds: 8
+    max_search_calls: 24
+    max_fetch_calls: 48
+    max_results_per_search: 8
+    max_queries_per_round: 4
+    max_fetch_per_round: 8
+    stop_confidence: 0.86
+    min_coverage_ratio: 0.90
+    max_unresolved_conflicts: 0
+
 runner:
   search_limit: 8
   fetch_limit: 24
@@ -131,11 +176,21 @@ llm:
       temperature: 0.0
       headers: {}
       schema_strict: true
-    - name: kimi-k2-turbo-preview
+    - name: kimi-k2-0905-preview
       backend: openai
       base_url: https://api.moonshot.cn/v1
       api_key: sk-FomXjBE7WWcub7wMCh3rTfPcu3OCsvf7g8TVMCFJLKzLvnNC
-      model: kimi-k2-turbo-preview
+      model: kimi-k2-0905-preview
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      schema_strict: true
+    - name: kimi-k2.5
+      backend: openai
+      base_url: https://coding.dashscope.aliyuncs.com/v1
+      api_key: sk-sp-896f874fbb1e432f84733214e0c38297
+      model: kimi-k2.5
       timeout_s: 60.0
       max_retries: 2
       temperature: 0.0

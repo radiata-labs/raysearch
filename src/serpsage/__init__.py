@@ -25,6 +25,8 @@ from serpsage.app.request import (
     FetchRequest,
     FetchRequestBase,
     FetchSubpagesRequest,
+    ResearchRequest,
+    ResearchSearchMode,
     SearchRequest,
 )
 from serpsage.app.response import (
@@ -32,6 +34,7 @@ from serpsage.app.response import (
     AnswerResponse,
     FetchResponse,
     FetchSubpagesResult,
+    ResearchResponse,
     SearchResponse,
 )
 from serpsage.settings.load import load_settings
@@ -65,5 +68,8 @@ __all__ = [
     "FetchRequestBase",
     "SearchRequest",
     "SearchResponse",
+    "ResearchSearchMode",
+    "ResearchRequest",
+    "ResearchResponse",
     "load_settings",
 ]
