@@ -3,13 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.models.pipeline import ResearchStepContext
+from serpsage.models.errors import AppError
+from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
-    add_error,
-    build_content_packet,
     chat_json,
-    language_name,
     merge_strings,
     normalize_strings,
     resolve_research_model,
@@ -39,12 +37,12 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
 
         source_ids = list(ctx.work.need_content_source_ids or [])
         if not source_ids:
-            ctx.work.content_review = _empty_review()
+            ctx.work.content_review = self._empty_review()
             span.set_attr("round_index", int(ctx.current_round.round_index))
             span.set_attr("content_source_ids", 0)
             return ctx
 
-        packet = build_content_packet(
+        packet = self._build_content_packet(
             sources=ctx.corpus.sources,
             source_ids=source_ids,
             max_chars=9000,
@@ -121,30 +119,31 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             payload = await chat_json(
                 llm=self._llm,
                 model=model,
-                messages=_build_content_messages(ctx=ctx, packet=packet),
+                messages=self._build_content_messages(ctx=ctx, packet=packet),
                 schema=schema,
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
         except Exception as exc:  # noqa: BLE001
-            add_error(
-                ctx,
-                code="research_content_review_failed",
-                message=str(exc),
-                details={"round_index": int(ctx.current_round.round_index)},
+            ctx.errors.append(
+                AppError(
+                    code="research_content_review_failed",
+                    message=str(exc),
+                    details={"round_index": int(ctx.current_round.round_index)},
+                )
             )
-            payload = _empty_review()
+            payload = self._empty_review()
 
         ctx.work.content_review = payload
         findings = normalize_strings(payload.get("resolved_findings"), limit=8)
         if findings:
             ctx.current_round.content_summary = " | ".join(findings[:3])
             ctx.notes.extend(findings[:3])
-        adjustment = _normalize_adjustment(payload.get("confidence_adjustment"))
+        adjustment = self._normalize_adjustment(payload.get("confidence_adjustment"))
         ctx.current_round.confidence = min(
             1.0,
             max(0.0, float(ctx.current_round.confidence) + adjustment),
         )
-        unresolved_count = _count_unresolved(payload.get("conflict_resolutions"))
+        unresolved_count = self._count_unresolved(payload.get("conflict_resolutions"))
         ctx.current_round.unresolved_conflicts = min(
             int(ctx.current_round.unresolved_conflicts),
             int(unresolved_count),
@@ -169,94 +168,119 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         span.set_attr("content_source_ids", int(len(source_ids)))
         span.set_attr("packet_chars", int(len(packet)))
         span.set_attr("confidence", float(ctx.current_round.confidence))
-        span.set_attr(
-            "unresolved_conflicts", int(ctx.current_round.unresolved_conflicts)
-        )
+        span.set_attr("unresolved_conflicts", int(ctx.current_round.unresolved_conflicts))
         return ctx
 
+    def _build_content_messages(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        packet: str,
+    ) -> list[dict[str, str]]:
+        out_lang = ctx.plan.output_language or "en"
+        out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Role: Evidence Arbiter (Full-Content Stage) and Critical Reasoning Instructor.\n"
+                    "Mission: Resolve contradictions and upgrade reliability using selected full-page content.\n"
+                    "Instruction Priority:\n"
+                    "P1) Schema correctness.\n"
+                    "P2) Conflict arbitration quality.\n"
+                    "P3) Language consistency.\n"
+                    "Hard Constraints:\n"
+                    "1) Use only SOURCE_CONTENT_PACKET.\n"
+                    "2) Provide explicit conflict decisions with reasons.\n"
+                    "3) If uncertainty remains, list concrete remaining gaps.\n"
+                    "4) Keep next queries targeted and non-redundant.\n"
+                    "5) Free-text fields must be in the required output language.\n"
+                    "6) Return JSON only and match schema exactly.\n"
+                    "Allowed Evidence:\n"
+                    "- Theme, theme plan, abstract review, selected content packet.\n"
+                    "Failure Policy:\n"
+                    "- If evidence is insufficient, avoid overclaiming and lower confidence.\n"
+                    "Quality Checklist:\n"
+                    "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"THEME:\n{ctx.request.themes}\n\n"
+                    f"ROUND_INDEX:\n{round_index}\n\n"
+                    "LANGUAGE_POLICY:\n"
+                    f"- required_output_language={out_lang} ({out_lang_name})\n"
+                    "- Keep all free-text fields in the required output language.\n\n"
+                    f"THEME_PLAN:\n{ctx.plan.theme_plan}\n\n"
+                    f"ABSTRACT_REVIEW:\n{ctx.work.abstract_review}\n\n"
+                    f"SOURCE_CONTENT_PACKET:\n{packet}\n\n"
+                    "Arbitration rubric:\n"
+                    "- resolved: one side is sufficiently better supported by evidence.\n"
+                    "- unresolved: both sides remain plausible with no decisive tie-break.\n"
+                    "- insufficient: current evidence cannot adjudicate the claim."
+                ),
+            },
+        ]
 
-def _build_content_messages(
-    *, ctx: ResearchStepContext, packet: str
-) -> list[dict[str, str]]:
-    out_lang = ctx.plan.output_language or "en"
-    out_lang_name = language_name(out_lang)
-    round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
-    return [
-        {
-            "role": "system",
-            "content": (
-                "Role: Evidence Arbiter (Full-Content Stage) and Critical Reasoning Instructor.\n"
-                "Mission: Resolve contradictions and upgrade reliability using selected full-page content.\n"
-                "Instruction Priority:\n"
-                "P1) Schema correctness.\n"
-                "P2) Conflict arbitration quality.\n"
-                "P3) Language consistency.\n"
-                "Hard Constraints:\n"
-                "1) Use only SOURCE_CONTENT_PACKET.\n"
-                "2) Provide explicit conflict decisions with reasons.\n"
-                "3) If uncertainty remains, list concrete remaining gaps.\n"
-                "4) Keep next queries targeted and non-redundant.\n"
-                "5) Free-text fields must be in the required output language.\n"
-                "6) Return JSON only and match schema exactly.\n"
-                "Allowed Evidence:\n"
-                "- Theme, theme plan, abstract review, selected content packet.\n"
-                "Failure Policy:\n"
-                "- If evidence is insufficient, avoid overclaiming and lower confidence.\n"
-                "Quality Checklist:\n"
-                "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"THEME:\n{ctx.request.themes}\n\n"
-                f"ROUND_INDEX:\n{round_index}\n\n"
-                "LANGUAGE_POLICY:\n"
-                f"- required_output_language={out_lang} ({out_lang_name})\n"
-                "- Keep all free-text fields in the required output language.\n\n"
-                f"THEME_PLAN:\n{ctx.plan.theme_plan}\n\n"
-                f"ABSTRACT_REVIEW:\n{ctx.work.abstract_review}\n\n"
-                f"SOURCE_CONTENT_PACKET:\n{packet}\n\n"
-                "Arbitration rubric:\n"
-                "- resolved: one side is sufficiently better supported by evidence.\n"
-                "- unresolved: both sides remain plausible with no decisive tie-break.\n"
-                "- insufficient: current evidence cannot adjudicate the claim."
-            ),
-        },
-    ]
+    def _empty_review(self) -> dict[str, object]:
+        return {
+            "resolved_findings": [],
+            "conflict_resolutions": [],
+            "remaining_gaps": [],
+            "confidence_adjustment": 0.0,
+            "next_query_strategy": "coverage",
+            "next_queries": [],
+            "stop": False,
+        }
 
+    def _normalize_adjustment(self, raw: object) -> float:
+        try:
+            value = float(raw)  # type: ignore[arg-type]
+        except Exception:  # noqa: S112
+            return 0.0
+        return min(1.0, max(-1.0, value))
 
-def _empty_review() -> dict[str, object]:
-    return {
-        "resolved_findings": [],
-        "conflict_resolutions": [],
-        "remaining_gaps": [],
-        "confidence_adjustment": 0.0,
-        "next_query_strategy": "coverage",
-        "next_queries": [],
-        "stop": False,
-    }
+    def _count_unresolved(self, raw: object) -> int:
+        if not isinstance(raw, list):
+            return 0
+        total = 0
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            status = clean_whitespace(str(item.get("status") or "")).casefold()
+            if status == "unresolved":
+                total += 1
+        return total
 
-
-def _normalize_adjustment(raw: object) -> float:
-    try:
-        value = float(raw)  # type: ignore[arg-type]
-    except Exception:  # noqa: S112
-        return 0.0
-    return min(1.0, max(-1.0, value))
-
-
-def _count_unresolved(raw: object) -> int:
-    if not isinstance(raw, list):
-        return 0
-    total = 0
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        status = clean_whitespace(str(item.get("status") or "")).casefold()
-        if status == "unresolved":
-            total += 1
-    return total
+    def _build_content_packet(
+        self,
+        *,
+        sources: list[ResearchSource],
+        source_ids: list[int],
+        max_chars: int,
+    ) -> str:
+        wanted = set(source_ids)
+        blocks: list[str] = []
+        for source in sorted(sources, key=lambda item: item.source_id):
+            if source.source_id not in wanted:
+                continue
+            content = clean_whitespace(str(source.content or ""))
+            if len(content) > max_chars:
+                content = content[:max_chars]
+            blocks.append(
+                "\n".join(
+                    [
+                        f"[citation:{source.source_id}]",
+                        f"url={source.url}",
+                        f"title={clean_whitespace(source.title)}",
+                        "content:",
+                        content or "(empty)",
+                    ]
+                )
+            )
+        return "\n\n".join(blocks)
 
 
 __all__ = ["ResearchContentStep"]

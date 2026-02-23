@@ -34,5 +34,5 @@ async def main(
 
 
 if __name__ == "__main__":
-    out = anyio.run(main, "latest open-source coding LLM benchmark landscape", "research-pro", None)
+    out = anyio.run(main, "latest open-source coding LLM benchmark landscape", "research-fast", None)
     print(out["research_result"])

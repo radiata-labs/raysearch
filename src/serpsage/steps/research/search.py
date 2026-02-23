@@ -10,11 +10,17 @@ from serpsage.app.request import (
     FetchSubpagesRequest,
     SearchRequest,
 )
-from serpsage.models.pipeline import ResearchStepContext, SearchStepContext
+from serpsage.app.response import FetchResultItem, FetchSubpagesResult
+from serpsage.models.errors import AppError
+from serpsage.models.pipeline import (
+    ResearchSource,
+    ResearchStepContext,
+    SearchStepContext,
+)
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
-    add_error,
-    upsert_source_from_fetch_result,
+    merge_strings,
+    normalize_strings,
 )
 
 if TYPE_CHECKING:
@@ -65,9 +71,13 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 fetchs=FetchRequestBase(
                     crawl_mode="fallback",
                     content=FetchContentRequest(detail="full"),
-                    abstracts=FetchAbstractsRequest(query=ctx.request.themes, max_chars=2200),
+                    abstracts=FetchAbstractsRequest(
+                        query=ctx.request.themes, max_chars=2200
+                    ),
                     subpages=FetchSubpagesRequest(
-                        max_subpages=max(1, min(4, int(ctx.runtime.budget.max_fetch_per_round))),
+                        max_subpages=max(
+                            1, min(4, int(ctx.runtime.budget.max_fetch_per_round))
+                        ),
                         subpage_keywords=None,
                     ),
                     overview=False,
@@ -93,7 +103,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             all_results.extend(results)
             per_round_fetch_calls += int(len(results))
             for result in results:
-                source_ids = upsert_source_from_fetch_result(
+                source_ids = self._upsert_source_from_fetch_result(
                     ctx=ctx,
                     result=result,
                     round_index=ctx.current_round.round_index,
@@ -109,15 +119,16 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx.runtime.fetch_calls += int(per_round_fetch_calls)
 
         if int(ctx.runtime.fetch_calls) > int(ctx.runtime.budget.max_fetch_calls):
-            add_error(
-                ctx,
-                code="research_fetch_budget_soft_exceeded",
-                message="search pipeline returned more fetched pages than logical budget",
-                details={
-                    "fetch_calls": int(ctx.runtime.fetch_calls),
-                    "max_fetch_calls": int(ctx.runtime.budget.max_fetch_calls),
-                    "round_index": int(ctx.current_round.round_index),
-                },
+            ctx.errors.append(
+                AppError(
+                    code="research_fetch_budget_soft_exceeded",
+                    message="search pipeline returned more fetched pages than logical budget",
+                    details={
+                        "fetch_calls": int(ctx.runtime.fetch_calls),
+                        "max_fetch_calls": int(ctx.runtime.budget.max_fetch_calls),
+                        "round_index": int(ctx.current_round.round_index),
+                    },
+                )
             )
 
         span.set_attr("round_index", int(ctx.current_round.round_index))
@@ -128,6 +139,100 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         span.set_attr("fetch_calls", int(ctx.runtime.fetch_calls))
         return ctx
 
+    def _upsert_source_from_fetch_result(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        result: FetchResultItem,
+        round_index: int,
+    ) -> list[int]:
+        created: list[int] = []
+        source_id, is_new = self._upsert_source(
+            ctx=ctx,
+            url=str(result.url),
+            title=str(result.title),
+            abstracts=list(result.abstracts or []),
+            content=str(result.content or ""),
+            round_index=round_index,
+            parent_url="",
+            is_subpage=False,
+        )
+        if is_new:
+            created.append(source_id)
+
+        for sub in list(result.subpages or []):
+            sub_id, sub_is_new = self._upsert_source_from_subpage(
+                ctx=ctx,
+                parent_url=str(result.url),
+                sub=sub,
+                round_index=round_index,
+            )
+            if sub_is_new:
+                created.append(sub_id)
+        return created
+
+    def _upsert_source_from_subpage(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        parent_url: str,
+        sub: FetchSubpagesResult,
+        round_index: int,
+    ) -> tuple[int, bool]:
+        return self._upsert_source(
+            ctx=ctx,
+            url=str(sub.url),
+            title=str(sub.title),
+            abstracts=list(sub.abstracts or []),
+            content=str(sub.content or ""),
+            round_index=round_index,
+            parent_url=parent_url,
+            is_subpage=True,
+        )
+
+    def _upsert_source(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        url: str,
+        title: str,
+        abstracts: list[str],
+        content: str,
+        round_index: int,
+        parent_url: str,
+        is_subpage: bool,
+    ) -> tuple[int, bool]:
+        existing = ctx.corpus.source_url_to_id.get(url)
+        if existing is not None:
+            for source in ctx.corpus.sources:
+                if source.source_id != existing:
+                    continue
+                if not source.title and title:
+                    source.title = title
+                source.abstracts = merge_strings(
+                    list(source.abstracts),
+                    normalize_strings(abstracts, limit=32),
+                    limit=32,
+                )
+                if not source.content and content:
+                    source.content = content
+                return existing, False
+
+        source_id = len(ctx.corpus.sources) + 1
+        ctx.corpus.sources.append(
+            ResearchSource(
+                source_id=source_id,
+                url=url,
+                title=title,
+                abstracts=normalize_strings(abstracts, limit=32),
+                content=content,
+                round_index=round_index,
+                parent_url=parent_url,
+                is_subpage=bool(is_subpage),
+            )
+        )
+        ctx.corpus.source_url_to_id[url] = source_id
+        return source_id, True
+
 
 __all__ = ["ResearchSearchStep"]
-
