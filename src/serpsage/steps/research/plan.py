@@ -12,6 +12,7 @@ from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
     add_error,
     chat_json,
+    language_name,
     merge_strings,
     normalize_strings,
     resolve_research_model,
@@ -127,7 +128,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         payload: dict[str, Any] = {}
         try:
             payload = await chat_json(
-                ctx=ctx,
                 llm=self._llm,
                 model=model,
                 messages=_build_plan_messages(ctx=ctx, candidate_queries=candidate_queries),
@@ -231,23 +231,30 @@ def _build_plan_messages(
     candidate_queries: list[str],
 ) -> list[dict[str, str]]:
     budget = ctx.runtime.budget
+    out_lang = ctx.plan.output_language or "en"
+    out_lang_name = language_name(out_lang)
     return [
         {
             "role": "system",
             "content": (
-                "Role: Principal Research Planner.\n"
-                "Mission: Generate the next round of search jobs for a multi-round research loop.\n"
+                "Role: Principal Research Planner and Evidence Operations Lead.\n"
+                "Mission: Generate high-information, low-overlap search jobs for the next research round.\n"
+                "Instruction Priority:\n"
+                "P1) Schema correctness and budget adherence.\n"
+                "P2) Evidence gain per query.\n"
+                "P3) Output language consistency.\n"
                 "Hard Constraints:\n"
                 "1) Minimize overlap between jobs while maximizing information gain.\n"
                 "2) Respect remaining budget and prioritize unresolved evidence gaps.\n"
                 "3) Use deep mode only when higher recall or conflict verification is needed.\n"
-                "4) Return JSON only; no markdown or explanations.\n"
+                "4) Free-text fields must be in the required output language.\n"
+                "5) Return JSON only; no markdown or explanations.\n"
                 "Allowed Evidence:\n"
                 "- User theme, theme plan, previous round summaries, candidate queries.\n"
                 "Failure Policy:\n"
                 "- If uncertain, produce fewer but higher-value jobs.\n"
                 "Quality Checklist:\n"
-                "- Distinct intent per job, explicit expected gain, no near duplicates."
+                "- Distinct intent per job, explicit expected gain, no near duplicates, conflict-aware targeting."
             ),
         },
         {
@@ -255,17 +262,24 @@ def _build_plan_messages(
             "content": (
                 f"THEME:\n{ctx.request.themes}\n\n"
                 f"ROUND_INDEX:\n{ctx.runtime.round_index}\n\n"
+                "LANGUAGE_POLICY:\n"
+                f"- required_output_language={out_lang} ({out_lang_name})\n"
+                "- Keep textual fields in the required output language.\n\n"
                 f"THEME_PLAN:\n{ctx.plan.theme_plan}\n\n"
                 f"PREVIOUS_ROUNDS:\n{[r.model_dump() for r in ctx.rounds[-3:]]}\n\n"
                 f"CANDIDATE_QUERIES:\n{candidate_queries}\n\n"
                 "BUDGET_REMAINING:\n"
                 f"- search_calls_remaining={max(0, budget.max_search_calls - ctx.runtime.search_calls)}\n"
                 f"- fetch_calls_remaining={max(0, budget.max_fetch_calls - ctx.runtime.fetch_calls)}\n"
-                f"- max_queries_this_round={budget.max_queries_per_round}\n"
+                f"- max_queries_this_round={budget.max_queries_per_round}\n\n"
+                "Job design rubric:\n"
+                "- coverage: close missing subtheme coverage.\n"
+                "- deepen: improve depth on high-value evidence branches.\n"
+                "- verify: target contradiction resolution and tie-break evidence.\n"
+                "- refresh: prioritize latest authoritative updates."
             ),
         },
     ]
 
 
 __all__ = ["ResearchPlanStep"]
-

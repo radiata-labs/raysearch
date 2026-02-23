@@ -19,7 +19,9 @@ _CITATION_SINGLE_RE = re.compile(
 )
 
 
-def resolve_research_model(*, ctx: ResearchStepContext, stage: str, fallback: str) -> str:
+def resolve_research_model(
+    *, ctx: ResearchStepContext, stage: str, fallback: str
+) -> str:
     settings = ctx.settings
     if stage == "plan":
         token = clean_whitespace(settings.research.plan.use_model or "")
@@ -38,7 +40,6 @@ def resolve_research_model(*, ctx: ResearchStepContext, stage: str, fallback: st
 
 async def chat_json(
     *,
-    ctx: ResearchStepContext,
     llm,
     model: str,
     messages: list[dict[str, str]],
@@ -51,7 +52,11 @@ async def chat_json(
     for _ in range(attempts):
         try:
             result = await llm.chat(model=model, messages=payload, schema=schema)
-            raw = result.data if result.data is not None else try_parse_json_value(result.text)
+            raw = (
+                result.data
+                if result.data is not None
+                else try_parse_json_value(result.text)
+            )
             if isinstance(raw, dict):
                 return raw
             raise TypeError("LLM JSON output must be an object")
@@ -235,11 +240,19 @@ def upsert_source(
     return source_id, True
 
 
-def build_abstract_packet(*, sources: list[ResearchSource], max_abstracts_per_source: int = 5) -> str:
+def build_abstract_packet(
+    *, sources: list[ResearchSource], max_abstracts_per_source: int = 5
+) -> str:
     blocks: list[str] = []
     for source in sorted(sources, key=lambda item: item.source_id):
-        abstracts = [clean_whitespace(x) for x in source.abstracts[:max_abstracts_per_source] if clean_whitespace(x)]
-        abstract_lines = "\n".join(f"- {item}" for item in abstracts) if abstracts else "- (none)"
+        abstracts = [
+            clean_whitespace(x)
+            for x in source.abstracts[:max_abstracts_per_source]
+            if clean_whitespace(x)
+        ]
+        abstract_lines = (
+            "\n".join(f"- {item}" for item in abstracts) if abstracts else "- (none)"
+        )
         blocks.append(
             "\n".join(
                 [
@@ -255,7 +268,9 @@ def build_abstract_packet(*, sources: list[ResearchSource], max_abstracts_per_so
     return "\n\n".join(blocks)
 
 
-def build_content_packet(*, sources: list[ResearchSource], source_ids: list[int], max_chars: int = 6000) -> str:
+def build_content_packet(
+    *, sources: list[ResearchSource], source_ids: list[int], max_chars: int = 6000
+) -> str:
     wanted = set(source_ids)
     blocks: list[str] = []
     for source in sorted(sources, key=lambda item: item.source_id):
@@ -341,9 +356,16 @@ def normalize_markdown(text: str) -> str:
     return out.strip()
 
 
-def add_error(ctx: ResearchStepContext, *, code: str, message: str, details: dict[str, Any]) -> None:
+def add_error(
+    ctx: ResearchStepContext, *, code: str, message: str, details: dict[str, Any]
+) -> None:
     ctx.errors.append(AppError(code=code, message=message, details=details))
 
 
 def normalize_search_text(value: str) -> str:
     return clean_whitespace(strip_html(str(value or "")))
+
+
+def language_name(code: str) -> str:
+    token = clean_whitespace(code)
+    return token or "unspecified"

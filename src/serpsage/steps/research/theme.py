@@ -12,6 +12,7 @@ from serpsage.steps.research.utils import (
     normalize_strings,
     resolve_research_model,
 )
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
@@ -35,6 +36,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             "type": "object",
             "additionalProperties": False,
             "required": [
+                "detected_input_language",
                 "core_question",
                 "subthemes",
                 "evidence_targets",
@@ -43,6 +45,11 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "seed_queries",
             ],
             "properties": {
+                "detected_input_language": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 48,
+                },
                 "core_question": {"type": "string"},
                 "subthemes": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
                 "evidence_targets": {
@@ -71,7 +78,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         payload: dict[str, Any] = {}
         try:
             payload = await chat_json(
-                ctx=ctx,
                 llm=self._llm,
                 model=model,
                 messages=messages,
@@ -86,6 +92,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 details={},
             )
 
+        input_language = clean_whitespace(str(payload.get("detected_input_language") or ""))
+        if not input_language:
+            input_language = "same as user input language"
+        ctx.plan.input_language = input_language
+        ctx.plan.output_language = input_language
+
         subthemes = normalize_strings(payload.get("subthemes"), limit=12)
         seed_queries = normalize_strings(
             payload.get("seed_queries"),
@@ -99,6 +111,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             "evidence_targets": normalize_strings(payload.get("evidence_targets"), limit=12),
             "risk_conflicts": normalize_strings(payload.get("risk_conflicts"), limit=10),
             "initial_strategy": str(payload.get("initial_strategy") or "balanced"),
+            "input_language": input_language,
+            "output_language": input_language,
         }
         ctx.plan.next_queries = merge_strings(
             seed_queries,
@@ -109,9 +123,14 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.notes.append(
             f"Theme plan built with {len(subthemes)} subthemes and {len(ctx.plan.next_queries)} seed queries."
         )
+        ctx.notes.append(
+            f"Output language fixed to {ctx.plan.output_language}."
+        )
 
         span.set_attr("subthemes", int(len(subthemes)))
         span.set_attr("seed_queries", int(len(ctx.plan.next_queries)))
+        span.set_attr("input_language", str(ctx.plan.input_language))
+        span.set_attr("output_language", str(ctx.plan.output_language))
         return ctx
 
 
@@ -121,20 +140,28 @@ def _build_theme_messages(ctx: ResearchStepContext) -> list[dict[str, str]]:
         {
             "role": "system",
             "content": (
-                "Role: Senior Research Architect.\n"
-                "Mission: Convert the user theme into an executable research blueprint.\n"
+                "Role: Senior Research Architect and Curriculum Designer.\n"
+                "Mission: Convert the user theme into a rigorous, executable research curriculum.\n"
+                "Instruction Priority:\n"
+                "P1) Schema correctness.\n"
+                "P2) Evidence-seeking quality and decomposition precision.\n"
+                "P3) Output language consistency.\n"
                 "Hard Constraints:\n"
+                "0) Detect the language of THEME and set detected_input_language accordingly.\n"
                 "1) Every subtheme must be externally verifiable by search evidence.\n"
-                "2) Seed queries must be concrete and non-overlapping.\n"
+                "2) Seed queries must be concrete, non-overlapping, and high-yield.\n"
                 "3) Prioritize factual discoverability over rhetorical phrasing.\n"
-                "4) Do not output markdown or commentary. JSON only.\n"
+                "4) Avoid generic terms unless paired with disambiguating qualifiers.\n"
+                "5) Free-text fields must be written in the detected_input_language.\n"
+                "6) Do not output markdown or commentary. JSON only.\n"
                 "Allowed Evidence:\n"
-                "- User theme and search mode only.\n"
+                "- User theme, search mode, and budget hints only.\n"
                 "Failure Policy:\n"
                 "- If the theme is broad, decompose into measurable subthemes.\n"
-                "- If ambiguity exists, represent alternatives in risk_conflicts.\n"
+                "- If ambiguity exists, represent alternatives in risk_conflicts with explicit wording.\n"
+                "- If the theme is underspecified, bias toward broader coverage in seed queries.\n"
                 "Quality Checklist:\n"
-                "- High coverage, low query redundancy, explicit evidence targets."
+                "- High coverage, low query redundancy, explicit evidence targets, testable subthemes."
             ),
         },
         {
@@ -142,17 +169,26 @@ def _build_theme_messages(ctx: ResearchStepContext) -> list[dict[str, str]]:
             "content": (
                 f"THEME:\n{ctx.request.themes}\n\n"
                 f"SEARCH_MODE:\n{ctx.request.search_mode}\n\n"
+                "LANGUAGE_POLICY:\n"
+                "- First infer language from THEME.\n"
+                "- Then keep all free-text fields in that same language.\n"
+                "- Use a precise language tag (e.g., en, zh-CN, es, fr, de, ja, ar).\n\n"
                 "BUDGET_HINTS:\n"
                 f"- max_rounds={budget.max_rounds}\n"
                 f"- max_search_calls={budget.max_search_calls}\n"
                 f"- max_queries_per_round={budget.max_queries_per_round}\n\n"
                 "Required Output Schema Notes:\n"
+                "- detected_input_language: language tag string\n"
                 "- core_question: one sentence\n"
                 "- subthemes: prioritized list\n"
                 "- evidence_targets: source types to seek\n"
                 "- risk_conflicts: likely contradiction axes\n"
                 "- initial_strategy: coverage-first|balanced|depth-first\n"
-                "- seed_queries: practical search queries"
+                "- seed_queries: practical search queries\n\n"
+                "Anti-patterns to avoid:\n"
+                "- Rephrasing the same query with superficial word swaps.\n"
+                "- Subthemes that cannot be validated by web evidence.\n"
+                "- Vague risk statements without a concrete contradiction dimension."
             ),
         },
     ]
@@ -163,4 +199,3 @@ ResearchThemePlanStep = ResearchThemeStep
 
 
 __all__ = ["ResearchThemeStep", "ResearchThemePlanStep"]
-

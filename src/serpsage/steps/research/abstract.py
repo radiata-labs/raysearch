@@ -9,6 +9,7 @@ from serpsage.steps.research.utils import (
     add_error,
     build_abstract_packet,
     chat_json,
+    language_name,
     merge_strings,
     normalize_source_ids,
     normalize_strings,
@@ -61,7 +62,11 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "stop",
             ],
             "properties": {
-                "findings": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                "findings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 20,
+                },
                 "evidence_grades": {
                     "type": "array",
                     "maxItems": 24,
@@ -135,7 +140,6 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         payload: dict[str, Any]
         try:
             payload = await chat_json(
-                ctx=ctx,
                 llm=self._llm,
                 model=model,
                 messages=_build_abstract_messages(ctx=ctx, packet=packet),
@@ -152,7 +156,9 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             payload = _empty_review()
 
         ctx.work.abstract_review = payload
-        need_content_ids = normalize_source_ids(payload.get("need_content_source_ids"), limit=20)
+        need_content_ids = normalize_source_ids(
+            payload.get("need_content_source_ids"), limit=20
+        )
         ctx.work.need_content_source_ids = need_content_ids
         ctx.current_round.need_content_source_ids = need_content_ids
 
@@ -162,9 +168,15 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             ctx.current_round.abstract_summary = " | ".join(findings[:3])
         ctx.current_round.confidence = _normalize_confidence(payload.get("confidence"))
         ctx.current_round.query_strategy = clean_whitespace(
-            str(payload.get("next_query_strategy") or ctx.current_round.query_strategy or "mixed")
+            str(
+                payload.get("next_query_strategy")
+                or ctx.current_round.query_strategy
+                or "mixed"
+            )
         )
-        covered_subthemes = normalize_strings(payload.get("covered_subthemes"), limit=16)
+        covered_subthemes = normalize_strings(
+            payload.get("covered_subthemes"), limit=16
+        )
         if covered_subthemes:
             ctx.corpus.coverage_state.covered_subthemes = merge_strings(
                 list(ctx.corpus.coverage_state.covered_subthemes),
@@ -178,8 +190,12 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             1.0,
             float(len(ctx.corpus.coverage_state.covered_subthemes)) / float(total),
         )
-        ctx.current_round.coverage_ratio = float(ctx.corpus.coverage_state.coverage_ratio)
-        unresolved_topics = _extract_unresolved_topics(payload.get("conflict_arbitration"))
+        ctx.current_round.coverage_ratio = float(
+            ctx.corpus.coverage_state.coverage_ratio
+        )
+        unresolved_topics = _extract_unresolved_topics(
+            payload.get("conflict_arbitration")
+        )
         ctx.corpus.conflict_state.unresolved_topics = unresolved_topics
         ctx.corpus.conflict_state.unresolved_count = int(len(unresolved_topics))
         ctx.current_round.unresolved_conflicts = int(len(unresolved_topics))
@@ -187,7 +203,10 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             len(normalize_strings(payload.get("critical_gaps"), limit=20))
         )
         ctx.work.next_queries = merge_strings(
-            normalize_strings(payload.get("next_queries"), limit=int(ctx.runtime.budget.max_queries_per_round)),
+            normalize_strings(
+                payload.get("next_queries"),
+                limit=int(ctx.runtime.budget.max_queries_per_round),
+            ),
             [],
             limit=int(ctx.runtime.budget.max_queries_per_round),
         )
@@ -197,39 +216,58 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         span.set_attr("need_content_ids", int(len(need_content_ids)))
         span.set_attr("confidence", float(ctx.current_round.confidence))
         span.set_attr("coverage_ratio", float(ctx.current_round.coverage_ratio))
-        span.set_attr("unresolved_conflicts", int(ctx.current_round.unresolved_conflicts))
+        span.set_attr(
+            "unresolved_conflicts", int(ctx.current_round.unresolved_conflicts)
+        )
         return ctx
 
 
-def _build_abstract_messages(*, ctx: ResearchStepContext, packet: str) -> list[dict[str, str]]:
+def _build_abstract_messages(
+    *, ctx: ResearchStepContext, packet: str
+) -> list[dict[str, str]]:
+    out_lang = ctx.plan.output_language or "en"
+    out_lang_name = language_name(out_lang)
+    round_index = ctx.current_round.round_index if ctx.current_round else 0
     return [
         {
             "role": "system",
             "content": (
-                "Role: Evidence Analyst (Abstract-First).\n"
-                "Mission: Assess evidence quality and coverage using abstracts only.\n"
+                "Role: Evidence Analyst (Abstract-First) and Methodology Instructor.\n"
+                "Mission: Evaluate evidence quality, theme coverage, and uncertainty using abstracts only.\n"
+                "Instruction Priority:\n"
+                "P1) Schema correctness.\n"
+                "P2) Evidence-grounded reasoning and conflict transparency.\n"
+                "P3) Language consistency.\n"
                 "Hard Constraints:\n"
                 "1) Use only SOURCE_ABSTRACT_PACKET.\n"
                 "2) Distinguish observations from inferences.\n"
                 "3) Identify unresolved conflicts and critical evidence gaps.\n"
                 "4) Select source IDs for full-content arbitration only when necessary.\n"
-                "5) Return JSON only, exactly matching schema.\n"
+                "5) Free-text fields must be in the required output language.\n"
+                "6) Return JSON only, exactly matching schema.\n"
                 "Allowed Evidence:\n"
                 "- Theme, theme plan, round summaries, abstract packet.\n"
                 "Failure Policy:\n"
                 "- If evidence is weak, lower confidence and propose targeted next queries.\n"
                 "Quality Checklist:\n"
-                "- Coverage progression, conflict clarity, economical content escalation."
+                "- Coverage progression, conflict clarity, economical content escalation, calibrated confidence."
             ),
         },
         {
             "role": "user",
             "content": (
                 f"THEME:\n{ctx.request.themes}\n\n"
-                f"ROUND_INDEX:\n{ctx.current_round.round_index}\n\n"
+                f"ROUND_INDEX:\n{round_index}\n\n"
+                "LANGUAGE_POLICY:\n"
+                f"- required_output_language={out_lang} ({out_lang_name})\n"
+                "- Keep all free-text fields in the required output language.\n\n"
                 f"THEME_PLAN:\n{ctx.plan.theme_plan}\n\n"
                 f"PREVIOUS_ROUNDS:\n{[r.model_dump() for r in ctx.rounds[-3:]]}\n\n"
-                f"SOURCE_ABSTRACT_PACKET:\n{packet}\n"
+                f"SOURCE_ABSTRACT_PACKET:\n{packet}\n\n"
+                "Grading rubric guidance:\n"
+                "- Grade A: direct, specific, and internally coherent evidence.\n"
+                "- Grade B: relevant but partial or weakly specific evidence.\n"
+                "- Grade C: low specificity, low trustworthiness, or high ambiguity."
             ),
         },
     ]
@@ -253,7 +291,10 @@ def _empty_review() -> dict[str, object]:
 
 def _normalize_confidence(raw: object) -> float:
     try:
-        value = float(raw)
+        if isinstance(raw, (int, float, str)):
+            value = float(raw)
+        else:
+            return 0.0
     except Exception:  # noqa: S112
         return 0.0
     return min(1.0, max(0.0, value))
@@ -282,4 +323,3 @@ def _extract_unresolved_topics(raw: object) -> list[str]:
 
 
 __all__ = ["ResearchAbstractStep"]
-

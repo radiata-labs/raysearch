@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 class ExtractorBase(WorkUnit, ABC):
     @abstractmethod
-    def extract(
+    async def extract(
         self,
         *,
         url: str,

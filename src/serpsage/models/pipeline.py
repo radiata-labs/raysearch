@@ -272,6 +272,8 @@ class ResearchRuntimeState(MutableModel):
 class ResearchPlanState(MutableModel):
     theme_plan: dict[str, object] = Field(default_factory=dict)
     next_queries: list[str] = Field(default_factory=list)
+    input_language: str = ""
+    output_language: str = ""
 
 
 class ResearchCorpusState(MutableModel):

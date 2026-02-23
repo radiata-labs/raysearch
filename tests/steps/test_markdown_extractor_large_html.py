@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from serpsage.components.extract.markdown.extractor import (
     MarkdownExtractor,
     build_extract_profile,
@@ -30,7 +32,8 @@ def test_build_extract_profile_keeps_large_html_capture_floor() -> None:
     assert profile.max_html_chars >= 1_800_000
 
 
-def test_markdown_extractor_full_detail_keeps_tail_content_for_large_html() -> None:
+@pytest.mark.anyio
+async def test_markdown_extractor_full_detail_keeps_tail_content_for_large_html() -> None:
     extractor = _build_extractor()
     tail_text = (
         "This section contains meaningful repository content for machine learning "
@@ -46,7 +49,7 @@ def test_markdown_extractor_full_detail_keeps_tail_content_for_large_html() -> N
         "</article></main></body></html>"
     )
 
-    doc = extractor.extract(
+    doc = await extractor.extract(
         url="https://example.com/repo",
         content=html_doc.encode("utf-8"),
         content_type="text/html",

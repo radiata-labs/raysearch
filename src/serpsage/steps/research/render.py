@@ -10,6 +10,7 @@ from serpsage.steps.research.utils import (
     add_error,
     build_abstract_packet,
     build_round_notes,
+    language_name,
     normalize_markdown,
     replace_numeric_citations_with_urls,
     resolve_research_model,
@@ -35,20 +36,27 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     async def run_inner(
         self, ctx: ResearchStepContext, *, span: SpanBase
     ) -> ResearchStepContext:
+        target_language = _resolve_target_language(ctx)
         schema = (
             dict(ctx.request.json_schema)
             if isinstance(ctx.request.json_schema, dict)
             else None
         )
         if schema is not None:
-            await self._render_structured(ctx=ctx, schema=schema)
+            await self._render_structured(
+                ctx=ctx,
+                schema=schema,
+                target_language=target_language,
+            )
             span.set_attr("mode", "structured")
+            span.set_attr("target_language", target_language)
             span.set_attr("content_chars", int(len(ctx.output.content)))
             span.set_attr("has_structured", bool(ctx.output.structured is not None))
             return ctx
 
-        await self._render_markdown(ctx=ctx)
+        await self._render_markdown(ctx=ctx, target_language=target_language)
         span.set_attr("mode", "markdown")
+        span.set_attr("target_language", target_language)
         span.set_attr("content_chars", int(len(ctx.output.content)))
         span.set_attr("has_structured", False)
         return ctx
@@ -58,13 +66,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         *,
         ctx: ResearchStepContext,
         schema: dict[str, Any],
+        target_language: str,
     ) -> None:
         model = resolve_research_model(
             ctx=ctx,
             stage="synthesize",
             fallback=self.settings.answer.generate.use_model,
         )
-        messages = _build_structured_messages(ctx)
+        messages = _build_structured_messages(ctx, target_language=target_language)
         try:
             result = await self._llm.chat(model=model, messages=messages, schema=schema)
             payload = result.data if result.data is not None else try_parse_json_value(result.text)
@@ -91,13 +100,18 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             ctx.output.structured = fallback
             ctx.output.content = json.dumps(fallback, ensure_ascii=False, indent=2)
 
-    async def _render_markdown(self, *, ctx: ResearchStepContext) -> None:
+    async def _render_markdown(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        target_language: str,
+    ) -> None:
         model = resolve_research_model(
             ctx=ctx,
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
-        messages = _build_markdown_messages(ctx)
+        messages = _build_markdown_messages(ctx, target_language=target_language)
         raw_text = ""
         try:
             result = await self._llm.chat(model=model, messages=messages, schema=None)
@@ -131,18 +145,28 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx.output.content = normalize_markdown(rewritten)
 
 
-def _build_structured_messages(ctx: ResearchStepContext) -> list[dict[str, str]]:
+def _build_structured_messages(
+    ctx: ResearchStepContext,
+    *,
+    target_language: str,
+) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
             "content": (
                 "Role: Senior Research Synthesizer.\n"
                 "Mission: Convert multi-round evidence into a strict JSON object matching schema.\n"
+                "Instruction Priority:\n"
+                "P1) Schema validity.\n"
+                "P2) Factual precision.\n"
+                "P3) Target language consistency.\n"
                 "Hard Constraints:\n"
                 "1) Output must validate the provided schema.\n"
                 "2) Do not include citation markers.\n"
                 "3) Do not include markdown, comments, or additional keys.\n"
                 "4) Separate verified facts from uncertainty in textual fields.\n"
+                "5) Write all natural-language string values in TARGET_OUTPUT_LANGUAGE.\n"
+                "6) Keep URLs, IDs, numbers, and entity names unchanged where appropriate.\n"
                 "Allowed Evidence:\n"
                 "- Theme plan, round notes, source abstracts.\n"
                 "Failure Policy:\n"
@@ -156,6 +180,7 @@ def _build_structured_messages(ctx: ResearchStepContext) -> list[dict[str, str]]
             "content": "\n\n".join(
                 [
                     f"THEME:\n{ctx.request.themes}",
+                    f"TARGET_OUTPUT_LANGUAGE:\n{target_language} ({language_name(target_language)})",
                     f"THEME_PLAN:\n{ctx.plan.theme_plan}",
                     f"ROUND_NOTES:\n{build_round_notes(ctx)}",
                     f"SOURCES:\n{build_abstract_packet(sources=ctx.corpus.sources)}",
@@ -165,25 +190,31 @@ def _build_structured_messages(ctx: ResearchStepContext) -> list[dict[str, str]]
     ]
 
 
-def _build_markdown_messages(ctx: ResearchStepContext) -> list[dict[str, str]]:
+def _build_markdown_messages(
+    ctx: ResearchStepContext,
+    *,
+    target_language: str,
+) -> list[dict[str, str]]:
+    section_template = _section_template()
     return [
         {
             "role": "system",
             "content": (
-                "Role: Research Report Writer.\n"
-                "Mission: Produce a standardized markdown report grounded in provided evidence.\n"
+                "Role: Research Report Writer and Academic Style Instructor.\n"
+                "Mission: Produce a standardized markdown report grounded strictly in provided evidence.\n"
+                "Instruction Priority:\n"
+                "P1) Section-template compliance.\n"
+                "P2) Evidence traceability.\n"
+                "P3) Target language consistency.\n"
                 "Hard Constraints:\n"
-                "1) Output exactly six sections in this order:\n"
-                "## 1) Core Conclusions\n"
-                "## 2) Key Findings\n"
-                "## 3) Evidence and Citations\n"
-                "## 4) Uncertainty and Conflicts\n"
-                "## 5) Time Anchors\n"
-                "## 6) Next Research Questions\n"
-                "2) Use [citation:x] markers for factual claims, x is source_id.\n"
-                "3) Distinguish direct evidence from inference.\n"
-                "4) Keep claims conservative when evidence is weak.\n"
-                "5) Return markdown only.\n"
+                "1) Output exactly six sections in this order with six numbered level-2 headings:\n"
+                f"{section_template}\n"
+                "2) Translate each heading title to TARGET_OUTPUT_LANGUAGE while keeping numbering and heading level.\n"
+                "3) Use [citation:x] markers for factual claims, x is source_id.\n"
+                "4) Distinguish direct evidence from inference.\n"
+                "5) Keep claims conservative when evidence is weak.\n"
+                "6) Write all natural-language text in TARGET_OUTPUT_LANGUAGE.\n"
+                "7) Return markdown only.\n"
                 "Allowed Evidence:\n"
                 "- Theme plan, round notes, source abstracts.\n"
                 "Failure Policy:\n"
@@ -197,6 +228,7 @@ def _build_markdown_messages(ctx: ResearchStepContext) -> list[dict[str, str]]:
             "content": "\n\n".join(
                 [
                     f"THEME:\n{ctx.request.themes}",
+                    f"TARGET_OUTPUT_LANGUAGE:\n{target_language} ({language_name(target_language)})",
                     f"THEME_PLAN:\n{ctx.plan.theme_plan}",
                     f"ROUND_NOTES:\n{build_round_notes(ctx)}",
                     f"SOURCES:\n{build_abstract_packet(sources=ctx.corpus.sources)}",
@@ -230,6 +262,26 @@ def _build_markdown_fallback(ctx: ResearchStepContext) -> str:
             "- Findings are grounded in the pages fetched during this run.",
             "## 6) Next Research Questions",
             "- Which unresolved claims need authoritative primary-source verification?",
+        ]
+    )
+
+
+def _resolve_target_language(ctx: ResearchStepContext) -> str:
+    token = str(ctx.plan.output_language or ctx.plan.input_language or "").strip()
+    if token:
+        return token
+    return "same as user input language"
+
+
+def _section_template() -> str:
+    return "\n".join(
+        [
+            "## 1) <Core Conclusions>",
+            "## 2) <Key Findings>",
+            "## 3) <Evidence and Citations>",
+            "## 4) <Uncertainty and Conflicts>",
+            "## 5) <Time Anchors>",
+            "## 6) <Next Research Questions>",
         ]
     )
 

@@ -129,9 +129,10 @@ def _fetch_item(url: str) -> FetchResultItem:
     )
 
 
-def _theme_output() -> ChatResult:
+def _theme_output(*, detected_input_language: str = "en") -> ChatResult:
     return ChatResult(
         data={
+            "detected_input_language": detected_input_language,
             "core_question": "What is the state of theme x?",
             "subthemes": ["subtheme-a"],
             "evidence_targets": ["official source"],
@@ -485,6 +486,38 @@ async def test_research_invalid_citation_index_records_error_and_removes_marker(
         resp = await engine.research(ResearchRequest(search_mode="research-fast", themes="theme x"))
     assert "[citation:99]" not in resp.content
     assert any(item.code == "research_invalid_citation" for item in resp.errors)
+
+
+@pytest.mark.anyio
+async def test_research_language_follows_theme_llm_detection() -> None:
+    chinese_markdown = "\n\n".join(
+        [
+            "## 1) 核心结论",
+            "A [citation:1]",
+            "## 2) 关键发现",
+            "- B",
+            "## 3) 证据与引用",
+            "- C [citation:1]",
+            "## 4) 不确定性与冲突",
+            "- 无",
+            "## 5) 时间锚点",
+            "- 现在",
+            "## 6) 后续研究问题",
+            "- 下一步",
+        ]
+    )
+    engine, _ = _build_engine(
+        llm_outputs=[
+            _theme_output(detected_input_language="zh"),
+            _plan_output(),
+            _abstract_output(stop=True, confidence=0.95, covered=["subtheme-a"], next_queries=[]),
+            ChatResult(text=chinese_markdown),
+        ]
+    )
+    async with engine:
+        resp = await engine.research(ResearchRequest(search_mode="research-fast", themes="theme x"))
+    assert "## 1) 核心结论" in resp.content
+    assert "[citation:https://a.example.com]" in resp.content
 
 
 def test_research_total_stepbase_classes_is_10() -> None:

@@ -4,8 +4,6 @@ import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from anyio import to_thread
-
 from serpsage.components.extract.markdown.postprocess import markdown_to_text
 from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractedLink
@@ -15,7 +13,6 @@ from serpsage.steps.base import StepBase
 if TYPE_CHECKING:
     from serpsage.components.extract import ExtractorBase
     from serpsage.core.runtime import Runtime
-    from serpsage.models.extract import ExtractedDocument
     from serpsage.telemetry.base import SpanBase
 
 
@@ -62,9 +59,9 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         )
         t0 = time.monotonic()
 
-        def extract() -> ExtractedDocument:
+        try:
             assert ctx.artifacts.fetch_result is not None
-            return self._extractor.extract(
+            extracted = await self._extractor.extract(
                 url=ctx.artifacts.fetch_result.url,
                 content=ctx.artifacts.fetch_result.content,
                 content_type=ctx.artifacts.fetch_result.content_type,
@@ -72,9 +69,6 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                 collect_links=collect_links,
                 collect_images=collect_images,
             )
-
-        try:
-            extracted = await to_thread.run_sync(extract)
         except Exception as exc:  # noqa: BLE001
             ctx.fatal = True
             ctx.errors.append(

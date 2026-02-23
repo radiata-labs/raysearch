@@ -136,7 +136,7 @@ class MarkdownExtractor(ExtractorBase):
         self._profile = build_extract_profile(settings=self.settings)
 
     @override
-    def extract(
+    async def extract(
         self,
         *,
         url: str,

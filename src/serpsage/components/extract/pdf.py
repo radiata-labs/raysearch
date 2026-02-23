@@ -2,12 +2,17 @@
 
 import re
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+import anyio
+from anyio import to_thread
 from pypdf import PdfReader
+from pypdf.errors import (
+    PdfReadError,
+    PdfStreamError,
+)
 
 from serpsage.components.extract.base import ExtractorBase
 from serpsage.components.extract.markdown.postprocess import markdown_to_abstract_text
@@ -34,7 +39,7 @@ class PdfExtractor(ExtractorBase):
         super().__init__(rt=rt)
 
     @override
-    def extract(
+    async def extract(
         self,
         *,
         url: str,
@@ -67,13 +72,13 @@ class PdfExtractor(ExtractorBase):
         pages_pymupdf: list[list[str]] = []
 
         try:
-            pages_pypdf = self._extract_lines_pypdf(content)
+            pages_pypdf = await self._extract_lines_pypdf(content)
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"pypdf_failed:{type(exc).__name__}")
 
         if PYMUPDF_AVAILABLE:
             try:
-                pages_pymupdf = self._extract_lines_pymupdf(content)
+                pages_pymupdf = await self._extract_lines_pymupdf(content)
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"pymupdf_failed:{type(exc).__name__}")
 
@@ -125,49 +130,110 @@ class PdfExtractor(ExtractorBase):
     def _attach_abstract_markdown(self, doc: ExtractedDocument) -> ExtractedDocument:
         return doc.model_copy(
             update={
-                "md_for_abstract": markdown_to_abstract_text(
-                    str(doc.markdown or "")
-                )
+                "md_for_abstract": markdown_to_abstract_text(str(doc.markdown or ""))
             }
         )
 
-    def _extract_lines_pypdf(self, content: bytes) -> list[list[str]]:
-        reader = PdfReader(BytesIO(content))
-        pages = list(reader.pages)
+    async def _extract_lines_pypdf(
+        self,
+        content: bytes,
+        *,
+        timeout_per_page: float = 5.0,
+        total_timeout: float = 30.0,
+    ) -> list[list[str]]:
+        """Extract text from PDF using pypdf.
+
+        Uses async threading for non-blocking I/O with configurable timeouts.
+        """
+        # Import pypdf errors for specific exception handling
+
+        try:
+            reader = PdfReader(BytesIO(content))
+            pages = list(reader.pages)
+        except (PdfReadError, PdfStreamError) as exc:
+            raise ValueError(f"Invalid or corrupted PDF: {type(exc).__name__}") from exc
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            raise ValueError(f"Failed to read PDF: {type(exc).__name__}") from exc
+
         if not pages:
             return []
 
         def _read_page(i: int) -> tuple[int, list[str]]:
             page = pages[i]
             raw = page.extract_text() or ""
+            raw = str(raw)  # Ensure raw is str type for split()
             lines = [
                 clean_whitespace(x) for x in _LINE_SPLIT_RE.split(raw) if x.strip()
             ]
             return i, lines
 
+        # For small PDFs, extract sequentially
         if len(pages) <= 3:
-            return [_read_page(i)[1] for i in range(len(pages))]
+            results = []
+            for i in range(len(pages)):
+                result = await to_thread.run_sync(_read_page, i)
+                results.append(result)
+            return [r[1] for r in results]
 
         out: list[list[str]] = [[] for _ in range(len(pages))]
-        workers = min(6, len(pages))
-        with ThreadPoolExecutor(max_workers=max(2, workers)) as pool:
-            for idx, lines in pool.map(_read_page, range(len(pages))):
+
+        # For larger PDFs, use parallel extraction with total timeout
+        try:
+            with anyio.fail_after(total_timeout):
+                async with anyio.create_task_group() as tg:
+                    results_dict: dict[int, list[str]] = {}
+
+                    async def extract_page(i: int) -> None:
+                        idx, lines = await to_thread.run_sync(_read_page, i)
+                        results_dict[idx] = lines
+
+                    for i in range(len(pages)):
+                        tg.start_soon(extract_page, i)
+
+            for idx, lines in results_dict.items():
                 out[idx] = lines
+        except TimeoutError:
+            # If parallel extraction times out, fall back to sequential with per-page timeout
+            for i in range(len(pages)):
+                try:
+                    with anyio.fail_after(timeout_per_page):
+                        idx, lines = await to_thread.run_sync(_read_page, i)
+                        out[idx] = lines
+                except (TimeoutError, Exception):  # noqa: BLE001
+                    out[i] = []
+        except Exception:  # noqa: BLE001
+            # If parallel extraction fails for other reasons, fall back to sequential with per-page timeout
+            for i in range(len(pages)):
+                try:
+                    with anyio.fail_after(timeout_per_page):
+                        idx, lines = await to_thread.run_sync(_read_page, i)
+                        out[idx] = lines
+                except (TimeoutError, Exception):  # noqa: BLE001
+                    out[i] = []
         return out
 
-    def _extract_lines_pymupdf(self, content: bytes) -> list[list[str]]:
-        if not PYMUPDF_AVAILABLE or fitz is None:
-            return []
-        doc = fitz.open(stream=content, filetype="pdf")
-        pages: list[list[str]] = []
-        for page in doc:
-            raw = page.get_text("text") or ""
-            lines = [
-                clean_whitespace(x) for x in _LINE_SPLIT_RE.split(raw) if x.strip()
-            ]
-            pages.append(lines)
-        doc.close()
-        return pages
+    async def _extract_lines_pymupdf(self, content: bytes) -> list[list[str]]:
+        """Extract text from PDF using PyMuPDF (fitz)."""
+
+        def _do_extract() -> list[list[str]]:
+            if not PYMUPDF_AVAILABLE or fitz is None:
+                return []
+            doc = fitz.open(stream=content, filetype="pdf")
+            pages: list[list[str]] = []
+            for page in doc:
+                raw = str(
+                    page.get_text("text") or ""
+                )  # Ensure raw is str type for split()
+                lines = [
+                    clean_whitespace(x) for x in _LINE_SPLIT_RE.split(raw) if x.strip()
+                ]
+                pages.append(lines)
+            doc.close()
+            return pages
+
+        return await to_thread.run_sync(_do_extract)
 
     def _pick_pages(
         self,

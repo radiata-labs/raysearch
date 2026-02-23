@@ -27,7 +27,7 @@ class AutoExtractor(ExtractorBase):
         self.bind_deps(markdown_extractor, pdf_extractor)
 
     @override
-    def extract(
+    async def extract(
         self,
         *,
         url: str,
@@ -44,7 +44,7 @@ class AutoExtractor(ExtractorBase):
             content=content,
         )
         if kind == "pdf":
-            return self._pdf_extractor.extract(
+            return await self._pdf_extractor.extract(
                 url=url,
                 content=content,
                 content_type=content_type,
@@ -53,7 +53,7 @@ class AutoExtractor(ExtractorBase):
                 collect_links=collect_links,
                 collect_images=collect_images,
             )
-        return self._markdown_extractor.extract(
+        return await self._markdown_extractor.extract(
             url=url,
             content=content,
             content_type=content_type,
