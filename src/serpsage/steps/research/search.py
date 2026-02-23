@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -117,6 +118,53 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx.current_round.new_source_ids = list(new_source_ids)
         ctx.runtime.search_calls += int(len(jobs))
         ctx.runtime.fetch_calls += int(per_round_fetch_calls)
+        for idx, result in enumerate(all_results, start=1):
+            print(
+                "[research.search.result]",
+                json.dumps(
+                    {
+                        "round_index": int(ctx.current_round.round_index),
+                        "result_index": int(idx),
+                        "url": str(result.url),
+                        "title": str(result.title or ""),
+                        "abstracts_count": int(len(result.abstracts or [])),
+                        "content_chars": int(len(str(result.content or ""))),
+                        "subpages_count": int(len(result.subpages or [])),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            for sub_idx, sub in enumerate(result.subpages or [], start=1):
+                print(
+                    "[research.search.subpage]",
+                    json.dumps(
+                        {
+                            "round_index": int(ctx.current_round.round_index),
+                            "result_index": int(idx),
+                            "subpage_index": int(sub_idx),
+                            "url": str(sub.url),
+                            "title": str(sub.title or ""),
+                            "abstracts_count": int(len(sub.abstracts or [])),
+                            "content_chars": int(len(str(sub.content or ""))),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+        print(
+            "[research.search]",
+            json.dumps(
+                {
+                    "round_index": int(ctx.current_round.round_index),
+                    "queries": list(ctx.current_round.queries),
+                    "search_job_count": int(len(jobs)),
+                    "result_count": int(len(all_results)),
+                    "new_source_ids": list(new_source_ids),
+                    "search_calls": int(ctx.runtime.search_calls),
+                    "fetch_calls": int(ctx.runtime.fetch_calls),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
         if int(ctx.runtime.fetch_calls) > int(ctx.runtime.budget.max_fetch_calls):
             ctx.errors.append(

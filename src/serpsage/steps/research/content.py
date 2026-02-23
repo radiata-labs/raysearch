@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
@@ -32,12 +34,24 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
     async def run_inner(
         self, ctx: ResearchStepContext, *, span: SpanBase
     ) -> ResearchStepContext:
+        now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
 
         source_ids = list(ctx.work.need_content_source_ids or [])
         if not source_ids:
             ctx.work.content_review = self._empty_review()
+            print(
+                "[research.content]",
+                json.dumps(
+                    {
+                        "round_index": int(ctx.current_round.round_index),
+                        "selected_source_ids": [],
+                        "content_review": ctx.work.content_review,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
             span.set_attr("round_index", int(ctx.current_round.round_index))
             span.set_attr("content_source_ids", 0)
             return ctx
@@ -119,7 +133,11 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             payload = await chat_json(
                 llm=self._llm,
                 model=model,
-                messages=self._build_content_messages(ctx=ctx, packet=packet),
+                messages=self._build_content_messages(
+                    ctx=ctx,
+                    packet=packet,
+                    now_utc=now_utc,
+                ),
                 schema=schema,
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
@@ -169,6 +187,22 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         span.set_attr("packet_chars", int(len(packet)))
         span.set_attr("confidence", float(ctx.current_round.confidence))
         span.set_attr("unresolved_conflicts", int(ctx.current_round.unresolved_conflicts))
+        print(
+            "[research.content]",
+            json.dumps(
+                {
+                    "round_index": int(ctx.current_round.round_index),
+                    "selected_source_ids": source_ids,
+                    "packet_chars": int(len(packet)),
+                    "confidence": float(ctx.current_round.confidence),
+                    "unresolved_conflicts": int(ctx.current_round.unresolved_conflicts),
+                    "critical_gaps": int(ctx.current_round.critical_gaps),
+                    "next_queries": list(ctx.work.next_queries),
+                    "content_review": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
         return ctx
 
     def _build_content_messages(
@@ -176,6 +210,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         *,
         ctx: ResearchStepContext,
         packet: str,
+        now_utc: datetime,
     ) -> list[dict[str, str]]:
         out_lang = ctx.plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
@@ -193,14 +228,17 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "Hard Constraints:\n"
                     "1) Use only SOURCE_CONTENT_PACKET.\n"
                     "2) Provide explicit conflict decisions with reasons.\n"
-                    "3) If uncertainty remains, list concrete remaining gaps.\n"
-                    "4) Keep next queries targeted and non-redundant.\n"
-                    "5) Free-text fields must be in the required output language.\n"
-                    "6) Return JSON only and match schema exactly.\n"
+                    "3) Prefer content-backed conclusions over abstract-level assumptions.\n"
+                    "4) If uncertainty remains, list concrete remaining gaps.\n"
+                    "5) Keep next queries targeted and non-redundant.\n"
+                    "6) For recency-sensitive claims, explicitly account for publication/update time relevance.\n"
+                    "7) Free-text fields must be in the required output language.\n"
+                    "8) resolved_findings should be information-dense: include decision implication and constraint when available.\n"
+                    "9) Return JSON only and match schema exactly.\n"
                     "Allowed Evidence:\n"
                     "- Theme, theme plan, abstract review, selected content packet.\n"
                     "Failure Policy:\n"
-                    "- If evidence is insufficient, avoid overclaiming and lower confidence.\n"
+                    "- If evidence is insufficient or stale for recency intent, avoid overclaiming and lower confidence.\n"
                     "Quality Checklist:\n"
                     "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency."
                 ),
@@ -210,6 +248,12 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"THEME:\n{ctx.request.themes}\n\n"
                     f"ROUND_INDEX:\n{round_index}\n\n"
+                    "TIME_CONTEXT:\n"
+                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
+                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
+                    "TEMPORAL_POLICY:\n"
+                    "- Resolve relative time expressions against current_utc_date.\n"
+                    "- If latest/current intent exists, prefer the most recent trustworthy evidence and flag stale content.\n\n"
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep all free-text fields in the required output language.\n\n"
@@ -219,7 +263,11 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "Arbitration rubric:\n"
                     "- resolved: one side is sufficiently better supported by evidence.\n"
                     "- unresolved: both sides remain plausible with no decisive tie-break.\n"
-                    "- insufficient: current evidence cannot adjudicate the claim."
+                    "- insufficient: current evidence cannot adjudicate the claim.\n\n"
+                    "Output depth rubric:\n"
+                    "- Prefer specific, decision-useful findings over generic statements.\n"
+                    "- Capture trade-offs and boundary conditions when relevant.\n"
+                    "- Keep confidence_adjustment calibrated to evidence strength."
                 ),
             },
         ]

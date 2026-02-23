@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
@@ -33,6 +35,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
     async def run_inner(
         self, ctx: ResearchStepContext, *, span: SpanBase
     ) -> ResearchStepContext:
+        now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
 
@@ -40,6 +43,18 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         if not sources:
             ctx.work.abstract_review = self._empty_review()
             ctx.work.need_content_source_ids = []
+            print(
+                "[research.abstract]",
+                json.dumps(
+                    {
+                        "round_index": int(ctx.current_round.round_index),
+                        "source_count": 0,
+                        "abstract_review": ctx.work.abstract_review,
+                        "need_content_source_ids": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            )
             return ctx
 
         packet = build_abstract_packet(sources=sources, max_abstracts_per_source=5)
@@ -140,7 +155,11 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             payload = await chat_json(
                 llm=self._llm,
                 model=model,
-                messages=self._build_abstract_messages(ctx=ctx, packet=packet),
+                messages=self._build_abstract_messages(
+                    ctx=ctx,
+                    packet=packet,
+                    now_utc=now_utc,
+                ),
                 schema=schema,
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
@@ -215,6 +234,24 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         span.set_attr("confidence", float(ctx.current_round.confidence))
         span.set_attr("coverage_ratio", float(ctx.current_round.coverage_ratio))
         span.set_attr("unresolved_conflicts", int(ctx.current_round.unresolved_conflicts))
+        print(
+            "[research.abstract]",
+            json.dumps(
+                {
+                    "round_index": int(ctx.current_round.round_index),
+                    "source_count": int(len(sources)),
+                    "packet_chars": int(len(packet)),
+                    "need_content_source_ids": need_content_ids,
+                    "confidence": float(ctx.current_round.confidence),
+                    "coverage_ratio": float(ctx.current_round.coverage_ratio),
+                    "unresolved_conflicts": int(ctx.current_round.unresolved_conflicts),
+                    "critical_gaps": int(ctx.current_round.critical_gaps),
+                    "next_queries": list(ctx.work.next_queries),
+                    "abstract_review": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
         return ctx
 
     def _build_abstract_messages(
@@ -222,6 +259,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         *,
         ctx: ResearchStepContext,
         packet: str,
+        now_utc: datetime,
     ) -> list[dict[str, str]]:
         out_lang = ctx.plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
@@ -240,13 +278,15 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "1) Use only SOURCE_ABSTRACT_PACKET.\n"
                     "2) Distinguish observations from inferences.\n"
                     "3) Identify unresolved conflicts and critical evidence gaps.\n"
-                    "4) Select source IDs for full-content arbitration only when necessary.\n"
-                    "5) Free-text fields must be in the required output language.\n"
-                    "6) Return JSON only, exactly matching schema.\n"
+                    "4) Select source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
+                    "5) Evaluate temporal relevance for recency-sensitive claims.\n"
+                    "6) Free-text fields must be in the required output language.\n"
+                    "7) Return JSON only, exactly matching schema.\n"
+                    "8) Abstract evidence is provisional: avoid final certainty when content verification is still needed.\n"
                     "Allowed Evidence:\n"
                     "- Theme, theme plan, round summaries, abstract packet.\n"
                     "Failure Policy:\n"
-                    "- If evidence is weak, lower confidence and propose targeted next queries.\n"
+                    "- If evidence is weak or temporally stale for a recency query, lower confidence and propose targeted next queries.\n"
                     "Quality Checklist:\n"
                     "- Coverage progression, conflict clarity, economical content escalation, calibrated confidence."
                 ),
@@ -256,6 +296,13 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"THEME:\n{ctx.request.themes}\n\n"
                     f"ROUND_INDEX:\n{round_index}\n\n"
+                    "TIME_CONTEXT:\n"
+                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
+                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
+                    "TEMPORAL_POLICY:\n"
+                    "- If THEME or prior plans indicate latest/current intent, judge whether each abstract is fresh enough.\n"
+                    "- Treat relative time words (today/this month/this year/recent/latest) against current_utc_date.\n"
+                    "- For stale evidence under recency intent, request follow-up queries in next_queries.\n\n"
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep all free-text fields in the required output language.\n\n"
@@ -265,7 +312,11 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "Grading rubric guidance:\n"
                     "- Grade A: direct, specific, and internally coherent evidence.\n"
                     "- Grade B: relevant but partial or weakly specific evidence.\n"
-                    "- Grade C: low specificity, low trustworthiness, or high ambiguity."
+                    "- Grade C: low specificity, low trustworthiness, or high ambiguity.\n\n"
+                    "Escalation rubric for need_content_source_ids:\n"
+                    "- Include IDs for sources tied to key conclusions, major conflicts, or model-selection decisions.\n"
+                    "- Include IDs when abstract wording is vague but potentially important.\n"
+                    "- Include IDs when evidence freshness is uncertain for latest/current requests."
                 ),
             },
         ]

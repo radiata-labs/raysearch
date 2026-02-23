@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -29,6 +30,23 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
         span.set_attr("stop_reason", str(ctx.runtime.stop_reason or ""))
         span.set_attr("has_content", bool(ctx.output.content))
         span.set_attr("has_structured", bool(ctx.output.structured is not None))
+        print(
+            "[research.finalize]",
+            json.dumps(
+                {
+                    "rounds": int(len(ctx.rounds)),
+                    "search_calls": int(ctx.runtime.search_calls),
+                    "fetch_calls": int(ctx.runtime.fetch_calls),
+                    "sources": int(len(ctx.corpus.sources)),
+                    "stop": bool(ctx.runtime.stop),
+                    "stop_reason": str(ctx.runtime.stop_reason or ""),
+                    "errors": [item.model_dump() for item in ctx.errors],
+                    "content": str(ctx.output.content),
+                    "structured": ctx.output.structured,
+                },
+                ensure_ascii=False,
+            ),
+        )
         return ctx
 
 

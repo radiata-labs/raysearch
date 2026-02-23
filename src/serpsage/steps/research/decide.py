@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -117,8 +118,27 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         span.set_attr("no_progress_rounds", int(ctx.runtime.no_progress_rounds))
         span.set_attr("stop", bool(stop))
         span.set_attr("stop_reason", stop_reason)
+        print(
+            "[research.decide]",
+            json.dumps(
+                {
+                    "round_index": int(round_state.round_index),
+                    "model_stop": bool(model_stop),
+                    "confidence_ok": bool(confidence_ok),
+                    "coverage_ok": bool(coverage_ok),
+                    "conflict_ok": bool(conflict_ok),
+                    "gaps_ok": bool(gaps_ok),
+                    "multi_signal_stop": bool(multi_signal_stop),
+                    "progress": bool(progress),
+                    "no_progress_rounds": int(ctx.runtime.no_progress_rounds),
+                    "next_queries": list(next_queries),
+                    "stop": bool(stop),
+                    "stop_reason": str(stop_reason),
+                },
+                ensure_ascii=False,
+            ),
+        )
         return ctx
 
 
 __all__ = ["ResearchDecideStep"]
-

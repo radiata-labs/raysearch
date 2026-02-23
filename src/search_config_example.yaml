@@ -46,15 +46,15 @@ research:
   llm_self_heal_retries: 2
   no_progress_rounds_to_stop: 2
   plan:
-    use_model: kimi-k2.5
+    use_model: gpt-4.1-mini
   abstract_analyze:
-    use_model: kimi-k2.5
+    use_model: gpt-4.1-mini
   content_analyze:
-    use_model: kimi-k2.5
+    use_model: gpt-4.1-mini
   synthesize:
-    use_model: kimi-k2.5
+    use_model: gpt-4.1-mini
   markdown:
-    use_model: kimi-k2.5
+    use_model: gpt-4.1-mini
   research_fast:
     max_rounds: 3
     max_search_calls: 6

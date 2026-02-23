@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
@@ -36,6 +38,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     async def run_inner(
         self, ctx: ResearchStepContext, *, span: SpanBase
     ) -> ResearchStepContext:
+        now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.runtime.stop:
             span.set_attr("skipped", True)
             return ctx
@@ -130,7 +133,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 llm=self._llm,
                 model=model,
                 messages=self._build_plan_messages(
-                    ctx=ctx, candidate_queries=candidate_queries
+                    ctx=ctx,
+                    candidate_queries=candidate_queries,
+                    now_utc=now_utc,
                 ),
                 schema=schema,
                 retries=int(self.settings.research.llm_self_heal_retries),
@@ -157,6 +162,21 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ctx.current_round.stop = True
             ctx.current_round.stop_reason = "no_queries"
             ctx.rounds.append(ctx.current_round)
+            print(
+                "[research.plan]",
+                json.dumps(
+                    {
+                        "round_index": int(round_index),
+                        "candidate_queries": candidate_queries,
+                        "query_strategy": str(ctx.current_round.query_strategy),
+                        "raw_model_payload": payload,
+                        "search_jobs": [],
+                        "stop": True,
+                        "stop_reason": "no_queries",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
             span.set_attr("stopped", True)
             span.set_attr("reason", "no_queries")
             return ctx
@@ -164,6 +184,19 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx.work.search_jobs = jobs
         ctx.current_round.queries = [job.query for job in jobs]
         ctx.current_round.search_job_count = int(len(jobs))
+        print(
+            "[research.plan]",
+            json.dumps(
+                {
+                    "round_index": int(round_index),
+                    "candidate_queries": candidate_queries,
+                    "query_strategy": str(ctx.current_round.query_strategy),
+                    "search_jobs": [job.model_dump() for job in jobs],
+                    "raw_model_payload": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
         span.set_attr("round_index", int(round_index))
         span.set_attr("strategy", str(ctx.current_round.query_strategy))
         span.set_attr("search_jobs", int(len(jobs)))
@@ -231,6 +264,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         *,
         ctx: ResearchStepContext,
         candidate_queries: list[str],
+        now_utc: datetime,
     ) -> list[dict[str, str]]:
         budget = ctx.runtime.budget
         out_lang = ctx.plan.output_language or "en"
@@ -250,7 +284,10 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "2) Respect remaining budget and prioritize unresolved evidence gaps.\n"
                     "3) Use deep mode only when higher recall or conflict verification is needed.\n"
                     "4) Free-text fields must be in the required output language.\n"
-                    "5) Return JSON only; no markdown or explanations.\n"
+                    "5) Temporal grounding: interpret relative time words against current UTC date.\n"
+                    "6) If recency intent exists, include explicit temporal constraints in query text.\n"
+                    "7) For high-impact claims, prioritize authoritative evidence routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
+                    "8) Return JSON only; no markdown or explanations.\n"
                     "Allowed Evidence:\n"
                     "- User theme, theme plan, previous round summaries, candidate queries.\n"
                     "Failure Policy:\n"
@@ -264,6 +301,13 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"THEME:\n{ctx.request.themes}\n\n"
                     f"ROUND_INDEX:\n{ctx.runtime.round_index}\n\n"
+                    "TIME_CONTEXT:\n"
+                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
+                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
+                    "TEMPORAL_POLICY:\n"
+                    "- If theme/round context asks for latest/current/today/now/as of/this year/month/week, queries must include concrete temporal anchors.\n"
+                    "- When no recency intent is present, avoid over-constraining by date.\n"
+                    "- Prefer fresh/authoritative sources for recency queries.\n\n"
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep textual fields in the required output language.\n\n"

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import ResearchStepContext
+from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
     build_abstract_packet,
@@ -19,7 +20,10 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
 
-_CITATION_RE = re.compile(r"\[\s*citation\s*:\s*([^\]]+?)\s*\]", re.IGNORECASE)
+_CITATION_RE = re.compile(
+    r"\[\s*(?:citation|cite|ref|reference|[\u4e00-\u9fff]{1,4})\s*(?:[:\uFF1A])\s*([^\]]+?)\s*\]",
+    re.IGNORECASE,
+)
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
@@ -34,6 +38,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     async def run_inner(
         self, ctx: ResearchStepContext, *, span: SpanBase
     ) -> ResearchStepContext:
+        now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         target_language = self._resolve_target_language(ctx)
         schema = (
             dict(ctx.request.json_schema)
@@ -45,6 +50,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 ctx=ctx,
                 schema=schema,
                 target_language=target_language,
+                now_utc=now_utc,
             )
             span.set_attr("mode", "structured")
             span.set_attr("target_language", target_language)
@@ -52,7 +58,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             span.set_attr("has_structured", bool(ctx.output.structured is not None))
             return ctx
 
-        await self._render_markdown(ctx=ctx, target_language=target_language)
+        await self._render_markdown(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+        )
         span.set_attr("mode", "markdown")
         span.set_attr("target_language", target_language)
         span.set_attr("content_chars", int(len(ctx.output.content)))
@@ -65,6 +75,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         schema: dict[str, Any],
         target_language: str,
+        now_utc: datetime,
     ) -> None:
         model = resolve_research_model(
             ctx=ctx,
@@ -72,7 +83,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.generate.use_model,
         )
         messages = self._build_structured_messages(
-            ctx, target_language=target_language
+            ctx,
+            target_language=target_language,
+            now_utc=now_utc,
         )
         try:
             result = await self._llm.chat(model=model, messages=messages, schema=schema)
@@ -94,6 +107,18 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 )
             ctx.output.structured = cleaned
             ctx.output.content = json.dumps(cleaned, ensure_ascii=False, indent=2)
+            print(
+                "[research.render.structured]",
+                json.dumps(
+                    {
+                        "target_language": target_language,
+                        "removed_citation_markers": int(removed),
+                        "structured": ctx.output.structured,
+                        "content": ctx.output.content,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
         except Exception as exc:  # noqa: BLE001
             ctx.errors.append(
                 AppError(
@@ -105,19 +130,36 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             fallback: dict[str, object] = {}
             ctx.output.structured = fallback
             ctx.output.content = json.dumps(fallback, ensure_ascii=False, indent=2)
+            print(
+                "[research.render.structured]",
+                json.dumps(
+                    {
+                        "target_language": target_language,
+                        "error": str(exc),
+                        "structured": ctx.output.structured,
+                        "content": ctx.output.content,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
 
     async def _render_markdown(
         self,
         *,
         ctx: ResearchStepContext,
         target_language: str,
+        now_utc: datetime,
     ) -> None:
         model = resolve_research_model(
             ctx=ctx,
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
-        messages = self._build_markdown_messages(ctx, target_language=target_language)
+        messages = self._build_markdown_messages(
+            ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+        )
         raw_text = ""
         try:
             result = await self._llm.chat(model=model, messages=messages, schema=None)
@@ -149,15 +191,37 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 )
             )
         ctx.output.structured = None
-        ctx.output.content = self._normalize_markdown(rewritten)
+        denoised = self._reduce_citation_noise(rewritten)
+        ctx.output.content = self._normalize_markdown(denoised)
+        print(
+            "[research.render.markdown]",
+            json.dumps(
+                {
+                    "target_language": target_language,
+                    "invalid_citation_indexes": invalid,
+                    "content": ctx.output.content,
+                },
+                ensure_ascii=False,
+            ),
+        )
 
     def _build_structured_messages(
         self,
         ctx: ResearchStepContext,
         *,
         target_language: str,
+        now_utc: datetime,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
+        selected_sources = self._select_sources_for_render(ctx, max_sources=12)
+        abstract_packet = build_abstract_packet(
+            sources=selected_sources,
+            max_abstracts_per_source=1,
+        )
+        content_packet = self._build_render_content_packet(
+            sources=selected_sources,
+            max_chars=5200,
+        )
         return [
             {
                 "role": "system",
@@ -174,13 +238,21 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "3) Do not include markdown, comments, or additional keys.\n"
                     "4) Separate verified facts from uncertainty in textual fields.\n"
                     "5) Write all natural-language string values in TARGET_OUTPUT_LANGUAGE.\n"
-                    "6) Keep URLs, IDs, numbers, and entity names unchanged where appropriate.\n"
+                    "6) Temporal claims must be interpreted against CURRENT_UTC_DATE.\n"
+                    "7) Keep URLs, IDs, numbers, and entity names unchanged where appropriate.\n"
+                    "8) Evidence priority: SOURCE_CONTENT_PACKET > SOURCE_ABSTRACT_PACKET.\n"
+                    "9) If SOURCE_CONTENT_PACKET is non-empty, decisive fields must be derived from it.\n"
+                    "10) SOURCE_ABSTRACT_PACKET is supplementary only; never let it override conflicting content evidence.\n"
+                    "11) Prefer richer, decision-useful detail over terse summaries.\n"
+                    "12) For key decision fields, include scope, constraints, and confidence qualifiers when evidence supports them.\n"
                     "Allowed Evidence:\n"
-                    "- Theme plan, round notes, source abstracts.\n"
+                    "- Theme plan, round notes, source content packet, source abstract packet.\n"
                     "Failure Policy:\n"
-                    "- If evidence is insufficient for a field, use conservative neutral values.\n"
+                    "- If content evidence is insufficient for a field, use conservative neutral/tentative values.\n"
+                    "- Do not invent facts to fill schema fields.\n"
                     "Quality Checklist:\n"
-                    "- Internal consistency, factual precision, no overclaiming."
+                    "- Internal consistency, factual precision, no overclaiming, content-first grounding.\n"
+                    "- Fill schema fields with substantive content when evidence exists; avoid shallow placeholders."
                 ),
             },
             {
@@ -188,10 +260,21 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": "\n\n".join(
                     [
                         f"THEME:\n{ctx.request.themes}",
+                        f"CURRENT_UTC_TIMESTAMP:\n{now_utc.isoformat()}",
+                        f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}",
                         f"TARGET_OUTPUT_LANGUAGE:\n{target_language} ({target_language_name})",
+                        "OUTPUT_DEPTH_POLICY:\n"
+                        "- Prefer complete and informative field values over minimal wording.\n"
+                        "- Include boundaries/assumptions where uncertainty matters.\n"
+                        "- Preserve nuanced distinctions instead of flattening into generic phrases.\n",
+                        "EVIDENCE_POLICY:\n"
+                        "- SOURCE_CONTENT_PACKET is the primary evidence base.\n"
+                        "- Use SOURCE_ABSTRACT_PACKET only as supplemental context.\n"
+                        "- If content and abstract disagree, follow content and mark uncertainty if needed.\n",
                         f"THEME_PLAN:\n{ctx.plan.theme_plan}",
                         f"ROUND_NOTES:\n{self._build_round_notes(ctx)}",
-                        f"SOURCES:\n{build_abstract_packet(sources=ctx.corpus.sources)}",
+                        f"SOURCE_CONTENT_PACKET:\n{content_packet}",
+                        f"SOURCE_ABSTRACT_PACKET:\n{abstract_packet}",
                     ]
                 ),
             },
@@ -202,9 +285,19 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         *,
         target_language: str,
+        now_utc: datetime,
     ) -> list[dict[str, str]]:
         section_template = self._section_template()
         target_language_name = clean_whitespace(target_language) or "unspecified"
+        selected_sources = self._select_sources_for_render(ctx, max_sources=12)
+        abstract_packet = build_abstract_packet(
+            sources=selected_sources,
+            max_abstracts_per_source=1,
+        )
+        content_packet = self._build_render_content_packet(
+            sources=selected_sources,
+            max_chars=5200,
+        )
         return [
             {
                 "role": "system",
@@ -219,17 +312,28 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "1) Output exactly six sections in this order with six numbered level-2 headings:\n"
                     f"{section_template}\n"
                     "2) Translate each heading title to TARGET_OUTPUT_LANGUAGE while keeping numbering and heading level.\n"
-                    "3) Use [citation:x] markers for factual claims, x is source_id.\n"
-                    "4) Distinguish direct evidence from inference.\n"
-                    "5) Keep claims conservative when evidence is weak.\n"
-                    "6) Write all natural-language text in TARGET_OUTPUT_LANGUAGE.\n"
-                    "7) Return markdown only.\n"
+                    "3) Citation token is language-invariant and must be exactly [citation:x] with ASCII colon.\n"
+                    "4) Never translate citation token into local-language labels. Any non-[citation:x] label is invalid.\n"
+                    "5) Use citations sparsely: cite only high-value factual claims, not every sentence.\n"
+                    "6) Limit citation density: at most one citation cluster per sentence and avoid repeating the same marker in the same paragraph.\n"
+                    "7) Prefer SOURCE_CONTENT_PACKET over SOURCE_ABSTRACT_PACKET for claim construction.\n"
+                    "8) If content and abstract conflict, prefer content.\n"
+                    "9) If SOURCE_CONTENT_PACKET is non-empty, major conclusions in sections 1/2/4 must be grounded in content evidence.\n"
+                    "10) If only abstracts support a claim and full content is missing/weak, label the claim as tentative.\n"
+                    "11) Distinguish direct evidence from inference.\n"
+                    "12) Keep claims conservative when evidence is weak.\n"
+                    "13) Resolve relative time expressions against CURRENT_UTC_DATE.\n"
+                    "14) Write all natural-language text in TARGET_OUTPUT_LANGUAGE.\n"
+                    "15) Return markdown only.\n"
+                    "16) Ensure each section is substantively developed; avoid one-line placeholder sections.\n"
+                    "17) For key claims, include context, rationale, and practical implication when evidence allows.\n"
+                    "18) Prefer information density: synthesize mechanisms, trade-offs, and boundary conditions, not just outcomes.\n"
                     "Allowed Evidence:\n"
-                    "- Theme plan, round notes, source abstracts.\n"
+                    "- Theme plan, round notes, source content packet, source abstract packet.\n"
                     "Failure Policy:\n"
                     "- If uncertain, state uncertainty explicitly and avoid fabricated detail.\n"
                     "Quality Checklist:\n"
-                    "- Traceability, coherence, balanced confidence, explicit gaps."
+                    "- Traceability, coherence, balanced confidence, explicit gaps, low citation noise, strict citation token format."
                 ),
             },
             {
@@ -237,17 +341,28 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": "\n\n".join(
                     [
                         f"THEME:\n{ctx.request.themes}",
+                        f"CURRENT_UTC_TIMESTAMP:\n{now_utc.isoformat()}",
+                        f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}",
                         f"TARGET_OUTPUT_LANGUAGE:\n{target_language} ({target_language_name})",
+                        "OUTPUT_DEPTH_POLICY:\n"
+                        "- Prefer detailed, information-dense writing over terse summaries.\n"
+                        "- Expand key findings with mechanisms, constraints, and trade-offs.\n"
+                        "- Include explicit uncertainty boundaries and realistic next investigation paths.\n",
+                        "EVIDENCE_POLICY:\n"
+                        "- Primary factual support must come from SOURCE_CONTENT_PACKET.\n"
+                        "- SOURCE_ABSTRACT_PACKET can be used only for supplemental context.\n"
+                        "- If content evidence exists for a topic, do not let abstract-only statements dominate that topic.\n",
                         f"THEME_PLAN:\n{ctx.plan.theme_plan}",
                         f"ROUND_NOTES:\n{self._build_round_notes(ctx)}",
-                        f"SOURCES:\n{build_abstract_packet(sources=ctx.corpus.sources)}",
+                        f"SOURCE_CONTENT_PACKET:\n{content_packet}",
+                        f"SOURCE_ABSTRACT_PACKET:\n{abstract_packet}",
                     ]
                 ),
             },
         ]
 
     def _build_markdown_fallback(self, ctx: ResearchStepContext) -> str:
-        top = list(ctx.corpus.sources[:6])
+        top = self._select_sources_for_render(ctx, max_sources=6)
         evidence_lines = [f"- {s.title or s.url} [citation:{s.source_id}]" for s in top]
         if not evidence_lines:
             evidence_lines = ["- No valid source was collected."]
@@ -326,7 +441,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             raw = (match.group(1) or "").strip()
             if not raw:
                 return ""
-            tokens = [part.strip() for part in re.split(r"[,\s;|]+", raw) if part.strip()]
+            tokens = [
+                part.strip()
+                for part in re.split(r"[,\s;|\u3001\uFF0C]+", raw)
+                if part.strip()
+            ]
             replaced: list[str] = []
             for token in tokens:
                 lower = token.casefold()
@@ -346,6 +465,28 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
         rewritten = _CITATION_RE.sub(repl, str(text or ""))
         return rewritten, sorted(set(invalid))
+
+    def _reduce_citation_noise(self, text: str) -> str:
+        lines: list[str] = []
+        for line in str(text or "").splitlines():
+            seen: set[str] = set()
+            kept = 0
+            parts: list[str] = []
+            cursor = 0
+            for match in _CITATION_RE.finditer(line):
+                parts.append(line[cursor : match.start()])
+                token = clean_whitespace(match.group(1) or "")
+                norm = token.casefold()
+                if token and norm not in seen and kept < 1:
+                    seen.add(norm)
+                    kept += 1
+                    parts.append(f"[citation:{token}]")
+                cursor = match.end()
+            parts.append(line[cursor:])
+            merged = "".join(parts)
+            merged = re.sub(r"[ \t]{2,}", " ", merged).rstrip()
+            lines.append(merged)
+        return "\n".join(lines)
 
     def _normalize_markdown(self, text: str) -> str:
         content = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -395,6 +536,60 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             if 0 <= start < end:
                 return json.loads(raw[start : end + 1])
             raise
+
+    def _select_sources_for_render(
+        self,
+        ctx: ResearchStepContext,
+        *,
+        max_sources: int,
+    ) -> list[ResearchSource]:
+        with_content = [
+            item for item in ctx.corpus.sources if clean_whitespace(str(item.content or ""))
+        ]
+        with_content.sort(
+            key=lambda item: (
+                int(item.round_index),
+                len(clean_whitespace(str(item.content or ""))),
+                int(item.source_id),
+            ),
+            reverse=True,
+        )
+        if with_content:
+            return list(with_content[:max_sources])
+
+        fallback = sorted(
+            ctx.corpus.sources,
+            key=lambda item: (int(item.round_index), int(item.source_id)),
+            reverse=True,
+        )
+        return list(fallback[:max_sources])
+
+    def _build_render_content_packet(
+        self,
+        *,
+        sources: list[ResearchSource],
+        max_chars: int,
+    ) -> str:
+        blocks: list[str] = []
+        for source in sources:
+            content = clean_whitespace(str(source.content or ""))
+            if not content:
+                continue
+            if len(content) > max_chars:
+                content = content[:max_chars]
+            blocks.append(
+                "\n".join(
+                    [
+                        f"[citation:{source.source_id}]",
+                        f"url={source.url}",
+                        f"title={clean_whitespace(source.title)}",
+                        f"round_index={int(source.round_index)}",
+                        "content:",
+                        content,
+                    ]
+                )
+            )
+        return "\n\n".join(blocks) if blocks else "- (none)"
 
 
 __all__ = ["ResearchRenderStep"]

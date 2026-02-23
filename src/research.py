@@ -34,5 +34,5 @@ async def main(
 
 
 if __name__ == "__main__":
-    out = anyio.run(main, "latest open-source coding LLM benchmark landscape", "research-fast", None)
+    out = anyio.run(main, "我应该选择qwen3.5还是glm4.7作为我vibe coding的模型", "research-fast", None)
     print(out["research_result"])

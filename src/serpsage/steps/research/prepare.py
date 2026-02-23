@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -68,6 +69,17 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         span.set_attr("max_rounds", int(ctx.runtime.budget.max_rounds))
         span.set_attr("max_search_calls", int(ctx.runtime.budget.max_search_calls))
         span.set_attr("max_fetch_calls", int(ctx.runtime.budget.max_fetch_calls))
+        print(
+            "[research.prepare]",
+            json.dumps(
+                {
+                    "search_mode": mode,
+                    "themes": themes,
+                    "budget": ctx.runtime.budget.model_dump(),
+                },
+                ensure_ascii=False,
+            ),
+        )
         return ctx
 
     def _resolve_profile(self, mode: str) -> ResearchModeSettings:
@@ -79,4 +91,3 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchPrepareStep"]
-

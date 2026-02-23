@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
@@ -32,12 +34,14 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     async def run_inner(
         self, ctx: ResearchStepContext, *, span: SpanBase
     ) -> ResearchStepContext:
+        now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         schema: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
             "required": [
                 "detected_input_language",
                 "core_question",
+                "multi_level_questions",
                 "subthemes",
                 "evidence_targets",
                 "risk_conflicts",
@@ -51,6 +55,11 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "maxLength": 48,
                 },
                 "core_question": {"type": "string"},
+                "multi_level_questions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 24,
+                },
                 "subthemes": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
                 "evidence_targets": {
                     "type": "array",
@@ -74,7 +83,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
-        messages = self._build_theme_messages(ctx)
+        messages = self._build_theme_messages(ctx, now_utc=now_utc)
         payload: dict[str, Any] = {}
         try:
             payload = await chat_json(
@@ -99,7 +108,16 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.plan.input_language = input_language
         ctx.plan.output_language = input_language
 
+        multi_level_questions = normalize_strings(
+            payload.get("multi_level_questions"),
+            limit=24,
+        )
         subthemes = normalize_strings(payload.get("subthemes"), limit=12)
+        if not subthemes and multi_level_questions:
+            subthemes = self._extract_subthemes_from_multi_level(
+                multi_level_questions,
+                limit=12,
+            )
         seed_queries = normalize_strings(
             payload.get("seed_queries"),
             limit=max(6, int(ctx.runtime.budget.max_queries_per_round) * 3),
@@ -108,6 +126,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             seed_queries = [ctx.request.themes]
         ctx.plan.theme_plan = {
             "core_question": str(payload.get("core_question") or ctx.request.themes),
+            "multi_level_questions": multi_level_questions,
             "subthemes": subthemes,
             "evidence_targets": normalize_strings(payload.get("evidence_targets"), limit=12),
             "risk_conflicts": normalize_strings(payload.get("risk_conflicts"), limit=10),
@@ -132,10 +151,22 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         span.set_attr("seed_queries", int(len(ctx.plan.next_queries)))
         span.set_attr("input_language", str(ctx.plan.input_language))
         span.set_attr("output_language", str(ctx.plan.output_language))
+        print(
+            "[research.theme]",
+            json.dumps(
+                {
+                    "detected_input_language": ctx.plan.input_language,
+                    "theme_plan": ctx.plan.theme_plan,
+                    "next_queries": ctx.plan.next_queries,
+                    "raw_model_payload": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
         return ctx
 
     def _build_theme_messages(
-        self, ctx: ResearchStepContext
+        self, ctx: ResearchStepContext, *, now_utc: datetime
     ) -> list[dict[str, str]]:
         budget = ctx.runtime.budget
         return [
@@ -150,12 +181,18 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "P3) Output language consistency.\n"
                     "Hard Constraints:\n"
                     "0) Detect the language of THEME and set detected_input_language accordingly.\n"
-                    "1) Every subtheme must be externally verifiable by search evidence.\n"
-                    "2) Seed queries must be concrete, non-overlapping, and high-yield.\n"
-                    "3) Prioritize factual discoverability over rhetorical phrasing.\n"
-                    "4) Avoid generic terms unless paired with disambiguating qualifiers.\n"
-                    "5) Free-text fields must be written in the detected_input_language.\n"
-                    "6) Do not output markdown or commentary. JSON only.\n"
+                    "1) Build a multi-level question tree, not a flat list.\n"
+                    "2) multi_level_questions must include at least L1/L2 levels and optionally L3 verification checks.\n"
+                    "3) Every subtheme must be externally verifiable by search evidence.\n"
+                    "4) Seed queries must be concrete, non-overlapping, and high-yield.\n"
+                    "5) Seed queries must jointly cover different levels of the question tree.\n"
+                    "6) Prioritize factual discoverability over rhetorical phrasing.\n"
+                    "7) Avoid generic terms unless paired with disambiguating qualifiers.\n"
+                    "8) Free-text fields must be written in the detected_input_language.\n"
+                    "9) For each major branch, include at least one verification-oriented question.\n"
+                    "10) Seed queries should prioritize authoritative and content-rich evidence paths (official docs, primary data, technical reports, standards, reputable benchmarks).\n"
+                    "11) For comparative themes, explicitly include head-to-head and scenario-specific questions.\n"
+                    "12) Do not output markdown or commentary. JSON only.\n"
                     "Allowed Evidence:\n"
                     "- User theme, search mode, and budget hints only.\n"
                     "Failure Policy:\n"
@@ -175,6 +212,14 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "- First infer language from THEME.\n"
                     "- Then keep all free-text fields in that same language.\n"
                     "- Use a precise language tag (e.g., en, zh-CN, es, fr, de, ja, ar).\n\n"
+                    "TIME_CONTEXT:\n"
+                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
+                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
+                    "TEMPORAL_POLICY:\n"
+                    "- If THEME explicitly asks for recency (latest/current/today/now/as of/this year/month/week), treat recency as mandatory.\n"
+                    "- When recency is mandatory, seed_queries must include explicit time anchors or freshness qualifiers.\n"
+                    "- Resolve relative time words against current_utc_date and avoid ambiguous temporal phrasing.\n"
+                    "- If THEME does not request recency, do not force unnecessary date constraints.\n\n"
                     "BUDGET_HINTS:\n"
                     f"- max_rounds={budget.max_rounds}\n"
                     f"- max_search_calls={budget.max_search_calls}\n"
@@ -182,18 +227,51 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "Required Output Schema Notes:\n"
                     "- detected_input_language: language tag string\n"
                     "- core_question: one sentence\n"
+                    "- multi_level_questions: hierarchical list using explicit level prefixes (e.g., L1:, L2:, L3:)\n"
                     "- subthemes: prioritized list\n"
                     "- evidence_targets: source types to seek\n"
                     "- risk_conflicts: likely contradiction axes\n"
                     "- initial_strategy: coverage-first|balanced|depth-first\n"
                     "- seed_queries: practical search queries\n\n"
+                    "Question-tree depth guidance:\n"
+                    "- L1: strategic decision questions.\n"
+                    "- L2: evidence dimensions (performance, cost, risk, ecosystem, maintainability, recency).\n"
+                    "- L3: verification checks and tie-break questions.\n\n"
                     "Anti-patterns to avoid:\n"
                     "- Rephrasing the same query with superficial word swaps.\n"
+                    "- Flat decomposition without level structure.\n"
                     "- Subthemes that cannot be validated by web evidence.\n"
                     "- Vague risk statements without a concrete contradiction dimension."
                 ),
             },
         ]
+
+    def _extract_subthemes_from_multi_level(
+        self,
+        values: list[str],
+        *,
+        limit: int,
+    ) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            item = clean_whitespace(raw)
+            if not item:
+                continue
+            normalized = item
+            if ":" in normalized:
+                _, tail = normalized.split(":", 1)
+                normalized = clean_whitespace(tail)
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(normalized)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
 
 
 # Backward-compatible alias.
