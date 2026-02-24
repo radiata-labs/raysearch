@@ -43,6 +43,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         multi_signal_stop = bool(
             model_stop and confidence_ok and coverage_ok and conflict_ok and gaps_ok
         )
+        corpus_score_gain = float(round_state.corpus_score_gain)
 
         if ctx.rounds:
             prev = ctx.rounds[-1]
@@ -51,9 +52,10 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 or float(round_state.coverage_ratio) > float(prev.coverage_ratio)
                 or int(round_state.unresolved_conflicts)
                 < int(prev.unresolved_conflicts)
+                or corpus_score_gain > 0.0
             )
         else:
-            progress = bool(round_state.new_source_ids)
+            progress = bool(round_state.new_source_ids or corpus_score_gain > 0.0)
         round_state.progress = bool(progress)
 
         if progress:

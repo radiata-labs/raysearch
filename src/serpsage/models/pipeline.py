@@ -234,11 +234,18 @@ class ResearchBudgetState(MutableModel):
 class ResearchSource(MutableModel):
     source_id: int
     url: str
+    canonical_url: str = ""
+    url_version: int = 1
     title: str = ""
     abstracts: list[str] = Field(default_factory=list)
     content: str = ""
     round_index: int = 0
     is_subpage: bool = False
+    seen_count: int = 1
+    ingest_query: str = ""
+    ingest_intent: str = ""
+    content_fingerprint: str = ""
+    score: float = 0.0
 
 
 class ResearchSearchJob(MutableModel):
@@ -312,6 +319,9 @@ class ResearchPlanState(MutableModel):
 class ResearchCorpusState(MutableModel):
     sources: list[ResearchSource] = Field(default_factory=list)
     source_url_to_id: dict[str, int] = Field(default_factory=dict)
+    source_url_to_ids: dict[str, list[int]] = Field(default_factory=dict)
+    ranked_source_ids: list[int] = Field(default_factory=list)
+    source_scores: dict[int, float] = Field(default_factory=dict)
     coverage_state: ResearchCoverageState = Field(default_factory=ResearchCoverageState)
 
 
@@ -331,6 +341,9 @@ class ResearchRoundState(MutableModel):
     queries: list[str] = Field(default_factory=list)
     result_count: int = 0
     new_source_ids: list[int] = Field(default_factory=list)
+    new_version_source_ids: list[int] = Field(default_factory=list)
+    context_source_ids: list[int] = Field(default_factory=list)
+    corpus_score_gain: float = 0.0
     abstract_summary: str = ""
     content_summary: str = ""
     confidence: float = 0.0

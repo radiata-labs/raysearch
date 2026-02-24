@@ -11,6 +11,10 @@ from serpsage.models.research import (
     AbstractOutputPayload,
 )
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.search import (
+    pick_sources_by_ids,
+    select_context_source_ids,
+)
 from serpsage.steps.research.utils import (
     build_abstract_packet,
     chat_pydantic,
@@ -42,7 +46,26 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
 
-        sources = list(ctx.corpus.sources)
+        all_sources = list(ctx.corpus.sources)
+        if not all_sources:
+            ctx.work.abstract_review = self._empty_review()
+            ctx.work.need_content_source_ids = []
+            ctx.current_round.context_source_ids = []
+            return ctx
+
+        corpus_cfg = ctx.settings.research.corpus
+        context_source_ids = select_context_source_ids(
+            ctx=ctx,
+            round_index=int(ctx.current_round.round_index),
+            topk=int(corpus_cfg.abstract_context_topk),
+            new_result_target_ratio=float(corpus_cfg.new_result_target_ratio),
+            min_history_sources=int(corpus_cfg.min_history_sources),
+        )
+        ctx.current_round.context_source_ids = list(context_source_ids)
+        sources = pick_sources_by_ids(
+            sources=all_sources,
+            source_ids=context_source_ids,
+        )
         if not sources:
             ctx.work.abstract_review = self._empty_review()
             ctx.work.need_content_source_ids = []
@@ -133,6 +156,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         )
 
         span.set_attr("round_index", int(ctx.current_round.round_index))
+        span.set_attr("context_source_ids", int(len(context_source_ids)))
         span.set_attr("need_content_ids", int(len(need_content_ids)))
         span.set_attr("confidence", float(ctx.current_round.confidence))
         span.set_attr(

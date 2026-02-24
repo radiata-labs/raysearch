@@ -11,6 +11,10 @@ from serpsage.models.research import (
     ContentOutputPayload,
 )
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.search import (
+    pick_sources_by_ids,
+    sort_source_ids_by_score,
+)
 from serpsage.steps.research.utils import (
     chat_pydantic,
     merge_strings,
@@ -41,15 +45,31 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
 
+        cfg = ctx.settings.research.corpus
         source_ids = list(ctx.work.need_content_source_ids or [])
+        if not source_ids:
+            source_ids = list(ctx.current_round.context_source_ids or [])
+        source_ids = sort_source_ids_by_score(
+            ctx=ctx,
+            source_ids=source_ids,
+        )[: max(1, int(cfg.content_context_topk))]
         if not source_ids:
             ctx.work.content_review = self._empty_review()
             span.set_attr("round_index", int(ctx.current_round.round_index))
             span.set_attr("content_source_ids", 0)
             return ctx
 
-        packet = self._build_content_packet(
+        selected_sources = pick_sources_by_ids(
             sources=ctx.corpus.sources,
+            source_ids=source_ids,
+        )
+        if not selected_sources:
+            ctx.work.content_review = self._empty_review()
+            span.set_attr("round_index", int(ctx.current_round.round_index))
+            span.set_attr("content_source_ids", 0)
+            return ctx
+        packet = self._build_content_packet(
+            sources=selected_sources,
             source_ids=source_ids,
             max_chars=9000,
         )

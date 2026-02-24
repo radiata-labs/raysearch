@@ -253,6 +253,55 @@ class ResearchParallelSettings(Model):
         return self
 
 
+class ResearchCorpusSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    abstract_context_topk: int = 18
+    content_context_topk: int = 10
+    subreport_context_topk: int = 12
+    new_result_target_ratio: float = 0.60
+    min_history_sources: int = 3
+    score_weight_newness: float = 0.45
+    score_weight_relevance: float = 0.30
+    score_weight_depth: float = 0.15
+    score_weight_stability: float = 0.10
+
+    @model_validator(mode="after")
+    def _validate_corpus_limits(self) -> ResearchCorpusSettings:
+        if int(self.abstract_context_topk) <= 0:
+            raise ValueError("research.corpus.abstract_context_topk must be > 0")
+        if int(self.content_context_topk) <= 0:
+            raise ValueError("research.corpus.content_context_topk must be > 0")
+        if int(self.subreport_context_topk) <= 0:
+            raise ValueError("research.corpus.subreport_context_topk must be > 0")
+        if int(self.min_history_sources) <= 0:
+            raise ValueError("research.corpus.min_history_sources must be > 0")
+        if not 0.0 <= float(self.new_result_target_ratio) <= 1.0:
+            raise ValueError(
+                "research.corpus.new_result_target_ratio must be between 0 and 1"
+            )
+        if float(self.score_weight_newness) < 0:
+            raise ValueError("research.corpus.score_weight_newness must be >= 0")
+        if float(self.score_weight_relevance) < 0:
+            raise ValueError("research.corpus.score_weight_relevance must be >= 0")
+        if float(self.score_weight_depth) < 0:
+            raise ValueError("research.corpus.score_weight_depth must be >= 0")
+        if float(self.score_weight_stability) < 0:
+            raise ValueError("research.corpus.score_weight_stability must be >= 0")
+        weight_sum = (
+            float(self.score_weight_newness)
+            + float(self.score_weight_relevance)
+            + float(self.score_weight_depth)
+            + float(self.score_weight_stability)
+        )
+        if abs(weight_sum - _FINAL_WEIGHT_SUM_TARGET) > _WEIGHT_SUM_EPS:
+            raise ValueError(
+                "research.corpus score weights must sum to 1.0 "
+                "(newness + relevance + depth + stability)"
+            )
+        return self
+
+
 def _default_research_fast_mode() -> ResearchModeSettings:
     return ResearchModeSettings(
         max_rounds=3,
@@ -303,6 +352,7 @@ class ResearchSettings(Model):
     no_progress_rounds_to_stop: int = 2
     models: ResearchModelsSettings = Field(default_factory=ResearchModelsSettings)
     parallel: ResearchParallelSettings = Field(default_factory=ResearchParallelSettings)
+    corpus: ResearchCorpusSettings = Field(default_factory=ResearchCorpusSettings)
     research_fast: ResearchModeSettings = Field(default_factory=_default_research_fast_mode)
     research: ResearchModeSettings = Field(default_factory=_default_research_standard_mode)
     research_pro: ResearchModeSettings = Field(default_factory=_default_research_pro_mode)
@@ -655,6 +705,7 @@ __all__ = [
     "ProviderSettings",
     "ResearchModelsSettings",
     "ResearchModeSettings",
+    "ResearchCorpusSettings",
     "ResearchParallelSettings",
     "ResearchSettings",
     "RunnerSettings",

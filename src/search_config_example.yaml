@@ -51,6 +51,16 @@ research:
     bonus_ratio: 0.3
     baseline_query_width: 1
     bonus_query_width: 2
+  corpus:
+    abstract_context_topk: 18
+    content_context_topk: 10
+    subreport_context_topk: 12
+    new_result_target_ratio: 0.6
+    min_history_sources: 3
+    score_weight_newness: 0.45
+    score_weight_relevance: 0.3
+    score_weight_depth: 0.15
+    score_weight_stability: 0.1
   models:
     plan: kimi-k2.5
     abstract_analyze: kimi-k2.5

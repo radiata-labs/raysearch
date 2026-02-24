@@ -8,6 +8,10 @@ from typing_extensions import override
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.search import (
+    pick_sources_by_ids,
+    select_context_source_ids,
+)
 from serpsage.steps.research.utils import resolve_research_model
 from serpsage.utils import clean_whitespace
 
@@ -307,27 +311,45 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         *,
         max_sources: int,
     ) -> list[ResearchSource]:
-        with_content = [
-            (item, self._normalize_block_text(str(item.content or "")))
-            for item in ctx.corpus.sources
-        ]
-        with_content = [(item, content) for item, content in with_content if content]
-        with_content.sort(
-            key=lambda pair: (
-                int(pair[0].round_index),
-                len(pair[1]),
-                int(pair[0].source_id),
+        limit = max(
+            1,
+            min(
+                int(max_sources),
+                int(ctx.settings.research.corpus.subreport_context_topk),
             ),
-            reverse=True,
         )
-        if with_content:
-            return [item for item, _ in with_content[:max_sources]]
+        latest_round_index = 0
+        if ctx.rounds:
+            latest_round_index = int(ctx.rounds[-1].round_index)
+        elif ctx.current_round is not None:
+            latest_round_index = int(ctx.current_round.round_index)
+        else:
+            latest_round_index = max(
+                (int(item.round_index) for item in ctx.corpus.sources),
+                default=0,
+            )
+        selected_ids = select_context_source_ids(
+            ctx=ctx,
+            round_index=latest_round_index,
+            topk=limit,
+            new_result_target_ratio=float(
+                ctx.settings.research.corpus.new_result_target_ratio
+            ),
+            min_history_sources=int(ctx.settings.research.corpus.min_history_sources),
+        )
+        if selected_ids:
+            selected = pick_sources_by_ids(
+                sources=ctx.corpus.sources,
+                source_ids=selected_ids,
+            )
+            if selected:
+                return selected
         fallback = sorted(
             ctx.corpus.sources,
             key=lambda item: (int(item.round_index), int(item.source_id)),
             reverse=True,
         )
-        return list(fallback[:max_sources])
+        return list(fallback[:limit])
 
     def _normalize_block_text(self, text: str) -> str:
         return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
