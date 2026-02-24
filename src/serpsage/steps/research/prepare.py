@@ -98,6 +98,17 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         ctx.notes = []
         ctx.output = ResearchOutputState(content="", structured=None)
 
+        print(
+            (
+                "[research][prepare] "
+                f"request_id={ctx.request_id} "
+                f"mode={mode} "
+                f"max_rounds={int(profile.max_rounds)} "
+                f"max_search_calls={int(profile.max_search_calls)} "
+                f"theme={themes}"
+            ),
+            flush=True,
+        )
         span.set_attr("search_mode", mode)
         return ctx
 

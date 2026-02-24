@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -157,6 +158,17 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                         "round_index": int(ctx.current_round.round_index),
                     },
                 )
+            )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_fetch_budget_soft_exceeded "
+                    f"request_id={ctx.request_id} "
+                    f"round_index={int(ctx.current_round.round_index)} "
+                    f"fetch_calls={int(ctx.runtime.fetch_calls)} "
+                    f"max_fetch_calls={int(ctx.runtime.budget.max_fetch_calls)}"
+                ),
+                stacklevel=1,
             )
 
         span.set_attr("round_index", int(ctx.current_round.round_index))
@@ -785,3 +797,4 @@ __all__ = [
     "sort_source_ids_by_score",
     "synchronize_corpus_indexes",
 ]
+

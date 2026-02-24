@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -79,6 +80,15 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     details={},
                 )
             )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_theme_plan_failed "
+                    f"request_id={ctx.request_id} "
+                    f"error={str(exc)}"
+                ),
+                stacklevel=1,
+            )
 
         input_language = clean_whitespace(str(payload.detected_input_language or ""))
         if not input_language:
@@ -151,6 +161,17 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         ctx.notes.append(f"Output language fixed to {ctx.plan.output_language}.")
 
+        print(
+            (
+                "[research][theme] "
+                f"request_id={ctx.request_id} "
+                f"core_question={ctx.plan.core_question} "
+                f"question_cards={len(cards)} "
+                f"subthemes={len(subthemes)} "
+                f"next_queries={len(ctx.plan.next_queries)}"
+            ),
+            flush=True,
+        )
         span.set_attr("question_cards", int(len(cards)))
         return ctx
 
@@ -489,3 +510,4 @@ ResearchThemePlanStep = ResearchThemeStep
 
 
 __all__ = ["ResearchThemeStep", "ResearchThemePlanStep"]
+

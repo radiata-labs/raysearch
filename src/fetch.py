@@ -47,8 +47,8 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "https://www.zenrows.com/blog/curl-cffi",
-        "What is curl_cffi?",
+        "https://llm-stats.com/models/compare/glm-5-vs-kimi-k2.5",
+        None,
         False,
     )
     print(out["fetch_result"])

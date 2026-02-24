@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -101,6 +102,16 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     message=str(exc),
                     details={"round_index": int(ctx.current_round.round_index)},
                 )
+            )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_content_review_failed "
+                    f"request_id={ctx.request_id} "
+                    f"round_index={int(ctx.current_round.round_index)} "
+                    f"error={str(exc)}"
+                ),
+                stacklevel=1,
             )
             payload = self._empty_review()
 
@@ -315,3 +326,4 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchContentStep"]
+

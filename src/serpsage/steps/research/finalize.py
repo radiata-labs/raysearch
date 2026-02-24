@@ -25,6 +25,18 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
         span.set_attr("stop_reason", str(ctx.runtime.stop_reason or ""))
         span.set_attr("has_content", bool(ctx.output.content))
         span.set_attr("has_structured", bool(ctx.output.structured is not None))
+        print(
+            (
+                "[research][finalize] "
+                f"request_id={ctx.request_id} "
+                f"stop={bool(ctx.runtime.stop)} "
+                f"stop_reason={str(ctx.runtime.stop_reason or 'n/a')} "
+                f"content_chars={int(len(str(ctx.output.content or '')))} "
+                f"has_structured={bool(ctx.output.structured is not None)} "
+                f"errors={int(len(ctx.errors))}"
+            ),
+            flush=True,
+        )
         return ctx
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -76,6 +77,15 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                     message=str(exc),
                     details={},
                 )
+            )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_render_subreport_failed "
+                    f"request_id={ctx.request_id} "
+                    f"error={str(exc)}"
+                ),
+                stacklevel=1,
             )
         if not raw_text.strip():
             raw_text = self._build_subreport_fallback(ctx)
@@ -372,3 +382,4 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchSubreportStep"]
+

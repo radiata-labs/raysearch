@@ -444,6 +444,17 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> ResearchTrackResult:
         rendered = await self._render_step.run(track_ctx)
         latest = self._latest_round(rendered)
+        print(
+            (
+                "[research][loop][subreport] "
+                f"request_id={rendered.request_id} "
+                f"question_id={card.question_id} "
+                f"rounds={int(len(rendered.rounds))} "
+                f"stop_reason={clean_whitespace(rendered.runtime.stop_reason or '') or 'n/a'} "
+                f"subreport_chars={int(len(str(rendered.output.content or '')))}"
+            ),
+            flush=True,
+        )
         return ResearchTrackResult(
             question_id=card.question_id,
             question=card.question,

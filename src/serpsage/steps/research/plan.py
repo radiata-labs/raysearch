@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -107,6 +108,16 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     message=str(exc),
                     details={"round_index": round_index},
                 )
+            )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_round_plan_failed "
+                    f"request_id={ctx.request_id} "
+                    f"round_index={int(round_index)} "
+                    f"error={str(exc)}"
+                ),
+                stacklevel=1,
             )
 
         strategy = clean_whitespace(str(payload.query_strategy or "mixed"))
@@ -313,3 +324,4 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchPlanStep"]
+

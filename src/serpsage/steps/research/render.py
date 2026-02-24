@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -47,6 +48,16 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 target_language=target_language,
                 now_utc=now_utc,
             )
+            print(
+                (
+                    "[research][render] "
+                    f"request_id={ctx.request_id} "
+                    "mode=final_markdown "
+                    f"track_results={int(len(ctx.parallel.track_results))} "
+                    f"content_chars={int(len(str(ctx.output.content or '')))}"
+                ),
+                flush=True,
+            )
             span.set_attr("mode", "final_markdown")
             span.set_attr("has_structured", False)
             return ctx
@@ -56,6 +67,16 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             schema=schema,
             target_language=target_language,
             now_utc=now_utc,
+        )
+        print(
+            (
+                "[research][render] "
+                f"request_id={ctx.request_id} "
+                "mode=final_structured "
+                f"track_results={int(len(ctx.parallel.track_results))} "
+                f"has_structured={bool(ctx.output.structured is not None)}"
+            ),
+            flush=True,
         )
         span.set_attr("mode", "final_structured")
         span.set_attr("has_structured", bool(ctx.output.structured is not None))
@@ -127,6 +148,15 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     details={},
                 )
             )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_render_architect_failed "
+                    f"request_id={ctx.request_id} "
+                    f"error={str(exc)}"
+                ),
+                stacklevel=1,
+            )
             raise RuntimeError("research architect render failed") from exc
 
     async def _run_writers(
@@ -165,6 +195,15 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     message=str(exc),
                     details={},
                 )
+            )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_render_writer_failed "
+                    f"request_id={ctx.request_id} "
+                    f"error={str(exc)}"
+                ),
+                stacklevel=1,
             )
             raise RuntimeError("research writer render failed") from exc
         return outputs
@@ -228,6 +267,15 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     message=str(exc),
                     details={},
                 )
+            )
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_render_structured_failed "
+                    f"request_id={ctx.request_id} "
+                    f"error={str(exc)}"
+                ),
+                stacklevel=1,
             )
             raise RuntimeError("research structured render failed") from exc
         ctx.output.structured = payload
@@ -583,3 +631,4 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchRenderStep"]
+
