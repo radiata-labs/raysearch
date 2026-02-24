@@ -139,7 +139,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                 schema=schema,
             )
             if schema is None:
-                answer_text = clean_whitespace(result.text or "")
+                answer_text = str(result.text or "")
                 normalized_answer = _expand_compound_citation_markers(answer_text)
                 ctx.output.answers = normalized_answer
                 citation_indexes = _extract_citation_indexes(normalized_answer)
@@ -252,12 +252,13 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         if not key:
             return page_order, abstract_order
 
+        normalized_title = clean_whitespace(title)
         source = sources_by_key.get(key)
         if source is None:
             source = _PageSource(
                 key=key,
                 url=clean_url,
-                title=clean_whitespace(title),
+                title=normalized_title,
                 content=str(content or ""),
                 first_order=page_order,
             )
@@ -265,8 +266,8 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             seen_abstracts[key] = set()
             page_order += 1
         else:
-            if not source.title and clean_whitespace(title):
-                source.title = clean_whitespace(title)
+            if not source.title and normalized_title:
+                source.title = normalized_title
             if not source.content and content:
                 source.content = str(content)
 
@@ -632,7 +633,7 @@ def _strip_citation_markers(value: object) -> object:
 
 def _strip_citation_markers_in_text(text: str) -> str:
     without = _CITATION_GROUP_RE.sub("", text)
-    return clean_whitespace(without)
+    return without.strip()
 
 
 def _sanitize_output_value(value: object) -> object:
@@ -649,7 +650,7 @@ def _sanitize_output_value(value: object) -> object:
 
 def _sanitize_output_text(text: str) -> str:
     cleaned = text.replace("\ufffd\ufffd", "'").replace("\ufffd", "")
-    return clean_whitespace(cleaned)
+    return cleaned.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def _try_parse_json(text: str) -> object:

@@ -108,8 +108,8 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     timeout_s=float(model_cfg.timeout_s),
                 )
                 if schema is None:
-                    output_text = clean_whitespace(res.text or "")
-                    if not output_text:
+                    output_text = str(res.text or "")
+                    if not output_text.strip():
                         raise ValueError("overview output is empty")
                     ctx.artifacts.overview_output = output_text
                 else:
@@ -268,7 +268,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
 def _coerce_json_output(*, result_data: object | None, raw_text: str) -> object:
     if result_data is not None:
         return result_data
-    text = clean_whitespace(raw_text or "")
+    text = str(raw_text or "").strip()
     if not text:
         raise ValueError("json output is empty")
     return json.loads(text)

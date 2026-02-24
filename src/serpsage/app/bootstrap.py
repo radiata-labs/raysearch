@@ -45,6 +45,7 @@ from serpsage.steps.research import (
     ResearchPrepareStep,
     ResearchRenderStep,
     ResearchSearchStep,
+    ResearchSubreportStep,
     ResearchThemeStep,
 )
 from serpsage.steps.search import (
@@ -173,6 +174,7 @@ def build_engine(
         ResearchLoopStep(
             rt=rt,
             round_runner=research_round_runner,
+            render_step=ResearchSubreportStep(rt=rt, llm=llm),
         ),
         ResearchRenderStep(rt=rt, llm=llm),
         ResearchFinalizeStep(rt=rt),

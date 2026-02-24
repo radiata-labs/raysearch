@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+
+from pydantic import BaseModel
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.utils import clean_whitespace
+
+if TYPE_CHECKING:
+    from serpsage.components.llm.base import LLMClientBase
+
+ChatMessage: TypeAlias = dict[str, str]
+TModel = TypeVar("TModel", bound=BaseModel)
 
 
 def resolve_research_model(
@@ -26,39 +34,28 @@ def resolve_research_model(
     return token or fallback
 
 
-async def chat_json(
+async def chat_pydantic(
     *,
-    llm,
+    llm: LLMClientBase,
     model: str,
-    messages: list[dict[str, str]],
-    schema: dict[str, Any],
+    messages: list[ChatMessage],
+    schema_model: type[TModel],
     retries: int,
-) -> dict[str, Any]:
+    schema_json: dict[str, Any] | None = None,
+) -> TModel:
     attempts = max(1, int(retries) + 1)
     payload = list(messages)
     last_exc: Exception | None = None
+    schema = (
+        dict(schema_json)
+        if isinstance(schema_json, dict)
+        else schema_model.model_json_schema()
+    )
     for _ in range(attempts):
         try:
             result = await llm.chat(model=model, messages=payload, schema=schema)
-            if result.data is not None:
-                raw = result.data
-            else:
-                text = str(result.text or "")
-                if not text:
-                    raw = {}
-                else:
-                    try:
-                        raw = json.loads(text)
-                    except json.JSONDecodeError:
-                        start = text.find("{")
-                        end = text.rfind("}")
-                        if 0 <= start < end:
-                            raw = json.loads(text[start : end + 1])
-                        else:
-                            raise
-            if isinstance(raw, dict):
-                return raw
-            raise TypeError("LLM JSON output must be an object")
+            raw = _decode_json_payload(result.data, result.text)
+            return schema_model.model_validate(raw)
         except Exception as exc:  # noqa: BLE001
             last_exc = exc if isinstance(exc, Exception) else Exception(str(exc))
             payload = payload + [
@@ -111,15 +108,31 @@ def merge_strings(*groups: list[str], limit: int) -> list[str]:
     return out
 
 
+def _decode_json_payload(data: object | None, text: str) -> object:
+    if data is not None:
+        return data
+    raw_text = str(text or "")
+    if not raw_text:
+        return {}
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        start = raw_text.find("{")
+        end = raw_text.rfind("}")
+        if 0 <= start < end:
+            return json.loads(raw_text[start : end + 1])
+        raise
+
+
 def build_abstract_packet(
     *, sources: list[ResearchSource], max_abstracts_per_source: int = 5
 ) -> str:
     blocks: list[str] = []
     for source in sorted(sources, key=lambda item: item.source_id):
         abstracts = [
-            clean_whitespace(x)
+            token
             for x in source.abstracts[:max_abstracts_per_source]
-            if clean_whitespace(x)
+            if (token := clean_whitespace(x))
         ]
         abstract_lines = (
             "\n".join(f"- {item}" for item in abstracts) if abstracts else "- (none)"
@@ -127,7 +140,7 @@ def build_abstract_packet(
         blocks.append(
             "\n".join(
                 [
-                    f"[citation:{source.source_id}]",
+                    f"source_id={source.source_id}",
                     f"url={source.url}",
                     f"title={clean_whitespace(source.title)}",
                     f"is_subpage={str(bool(source.is_subpage)).lower()}",

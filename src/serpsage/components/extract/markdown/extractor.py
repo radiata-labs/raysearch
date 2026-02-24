@@ -221,9 +221,9 @@ class MarkdownExtractor(ExtractorBase):
         include_secondary_content: bool,
     ) -> ExtractedDocument:
         lines = [
-            clean_whitespace(line)
+            cleaned
             for line in text.splitlines()
-            if clean_whitespace(line)
+            if (cleaned := clean_whitespace(line))
         ]
         markdown = finalize_markdown(
             markdown="\n\n".join(lines),
@@ -1432,11 +1432,11 @@ def _clip_markdown_with_signal(
 
 def _pick_signal_anchors(signal_text: str) -> tuple[str, str] | None:
     paragraphs = [
-        clean_whitespace(part)
+        cleaned
         for part in re.split(
             r"\n\s*\n", signal_text.replace("\r\n", "\n").replace("\r", "\n")
         )
-        if clean_whitespace(part)
+        if (cleaned := clean_whitespace(part))
     ]
     candidates = [p for p in paragraphs if _is_content_paragraph(p)]
     if len(candidates) < 2:
@@ -1449,7 +1449,9 @@ def _pick_signal_anchors(signal_text: str) -> tuple[str, str] | None:
             end = para
             break
 
-    if clean_whitespace(start).lower() == clean_whitespace(end).lower():
+    start_key = clean_whitespace(start).lower()
+    end_key = clean_whitespace(end).lower()
+    if start_key == end_key:
         return None
     return start, end
 

@@ -26,6 +26,11 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
         span.set_attr("search_calls", int(ctx.runtime.search_calls))
         span.set_attr("fetch_calls", int(ctx.runtime.fetch_calls))
         span.set_attr("sources", int(len(ctx.corpus.sources)))
+        span.set_attr("tracks", int(len(ctx.parallel.track_results)))
+        span.set_attr("global_search_used", int(ctx.parallel.global_search_used))
+        span.set_attr("global_search_budget", int(ctx.parallel.global_search_budget))
+        span.set_attr("global_fetch_used", int(ctx.parallel.global_fetch_used))
+        span.set_attr("global_fetch_budget", int(ctx.parallel.global_fetch_budget))
         span.set_attr("stop", bool(ctx.runtime.stop))
         span.set_attr("stop_reason", str(ctx.runtime.stop_reason or ""))
         span.set_attr("has_content", bool(ctx.output.content))
@@ -38,6 +43,11 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                     "search_calls": int(ctx.runtime.search_calls),
                     "fetch_calls": int(ctx.runtime.fetch_calls),
                     "sources": int(len(ctx.corpus.sources)),
+                    "tracks": int(len(ctx.parallel.track_results)),
+                    "global_search_used": int(ctx.parallel.global_search_used),
+                    "global_search_budget": int(ctx.parallel.global_search_budget),
+                    "global_fetch_used": int(ctx.parallel.global_fetch_used),
+                    "global_fetch_budget": int(ctx.parallel.global_fetch_budget),
                     "stop": bool(ctx.runtime.stop),
                     "stop_reason": str(ctx.runtime.stop_reason or ""),
                     "errors": [item.model_dump() for item in ctx.errors],
@@ -51,4 +61,3 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchFinalizeStep"]
-

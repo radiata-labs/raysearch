@@ -221,6 +221,42 @@ class ResearchModeSettings(Model):
         return self
 
 
+class ResearchParallelSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    question_card_cap: int = 6
+    budget_multiplier: float = 2.0
+    bonus_ratio: float = 0.30
+    baseline_query_width: int = 1
+    bonus_query_width: int = 2
+    focus_min_term_overlap: int = 1
+    focus_min_overlap_ratio: float = 0.20
+
+    @model_validator(mode="after")
+    def _validate_parallel_limits(self) -> ResearchParallelSettings:
+        if int(self.question_card_cap) <= 0:
+            raise ValueError("research.parallel.question_card_cap must be > 0")
+        if float(self.budget_multiplier) <= 0:
+            raise ValueError("research.parallel.budget_multiplier must be > 0")
+        if not 0.0 <= float(self.bonus_ratio) <= 1.0:
+            raise ValueError("research.parallel.bonus_ratio must be between 0 and 1")
+        if int(self.baseline_query_width) <= 0:
+            raise ValueError("research.parallel.baseline_query_width must be > 0")
+        if int(self.bonus_query_width) <= 0:
+            raise ValueError("research.parallel.bonus_query_width must be > 0")
+        if int(self.bonus_query_width) < int(self.baseline_query_width):
+            raise ValueError(
+                "research.parallel.bonus_query_width must be >= baseline_query_width"
+            )
+        if int(self.focus_min_term_overlap) <= 0:
+            raise ValueError("research.parallel.focus_min_term_overlap must be > 0")
+        if not 0.0 <= float(self.focus_min_overlap_ratio) <= 1.0:
+            raise ValueError(
+                "research.parallel.focus_min_overlap_ratio must be between 0 and 1"
+            )
+        return self
+
+
 def _default_research_fast_mode() -> ResearchModeSettings:
     return ResearchModeSettings(
         max_rounds=3,
@@ -278,6 +314,7 @@ class ResearchSettings(Model):
     )
     synthesize: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
     markdown: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
+    parallel: ResearchParallelSettings = Field(default_factory=ResearchParallelSettings)
     research_fast: ResearchModeSettings = Field(default_factory=_default_research_fast_mode)
     research: ResearchModeSettings = Field(default_factory=_default_research_standard_mode)
     research_pro: ResearchModeSettings = Field(default_factory=_default_research_pro_mode)
@@ -629,6 +666,7 @@ __all__ = [
     "OverviewModelSettings",
     "ProviderSettings",
     "ResearchModeSettings",
+    "ResearchParallelSettings",
     "ResearchSettings",
     "ResearchStageSettings",
     "RunnerSettings",

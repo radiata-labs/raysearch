@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -8,6 +9,7 @@ from serpsage.models.pipeline import (
     ResearchBudgetState,
     ResearchCorpusState,
     ResearchOutputState,
+    ResearchParallelState,
     ResearchPlanState,
     ResearchRoundWorkState,
     ResearchRuntimeState,
@@ -35,6 +37,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         mode = str(ctx.request.search_mode or "research")
         themes = clean_whitespace(ctx.request.themes or "")
         profile = self._resolve_profile(mode)
+        parallel = self.settings.research.parallel
 
         ctx.request = ctx.request.model_copy(update={"search_mode": mode, "themes": themes})
         ctx.runtime = ResearchRuntimeState(
@@ -56,7 +59,38 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             stop_reason="",
             round_index=0,
         )
-        ctx.plan = ResearchPlanState(theme_plan={}, next_queries=[themes])
+        global_search_budget = max(
+            1,
+            int(
+                math.ceil(
+                    float(profile.max_search_calls)
+                    * float(parallel.budget_multiplier)
+                )
+            ),
+        )
+        global_fetch_budget = max(
+            1,
+            int(
+                math.ceil(
+                    float(profile.max_fetch_calls)
+                    * float(parallel.budget_multiplier)
+                )
+            ),
+        )
+        ctx.plan = ResearchPlanState(
+            theme_plan={},
+            next_queries=[themes],
+            core_question=themes,
+            question_cards=[],
+        )
+        ctx.parallel = ResearchParallelState(
+            question_cards=[],
+            track_results=[],
+            global_search_budget=global_search_budget,
+            global_fetch_budget=global_fetch_budget,
+            global_search_used=0,
+            global_fetch_used=0,
+        )
         ctx.corpus = ResearchCorpusState()
         ctx.work = ResearchRoundWorkState()
         ctx.rounds = []
@@ -69,6 +103,8 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         span.set_attr("max_rounds", int(ctx.runtime.budget.max_rounds))
         span.set_attr("max_search_calls", int(ctx.runtime.budget.max_search_calls))
         span.set_attr("max_fetch_calls", int(ctx.runtime.budget.max_fetch_calls))
+        span.set_attr("global_search_budget", int(ctx.parallel.global_search_budget))
+        span.set_attr("global_fetch_budget", int(ctx.parallel.global_fetch_budget))
         print(
             "[research.prepare]",
             json.dumps(
@@ -76,6 +112,10 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                     "search_mode": mode,
                     "themes": themes,
                     "budget": ctx.runtime.budget.model_dump(),
+                    "parallel_budget": {
+                        "global_search_budget": int(ctx.parallel.global_search_budget),
+                        "global_fetch_budget": int(ctx.parallel.global_fetch_budget),
+                    },
                 },
                 ensure_ascii=False,
             ),

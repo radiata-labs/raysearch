@@ -436,22 +436,19 @@ class SearchRankStep(StepBase[SearchStepContext]):
         result = candidate.result
         docs: list[str] = []
         snippets = list(ctx.deep.snippet_context.get(str(result.url), []))
-        docs.extend(
-            clean_whitespace(str(item.snippet or ""))
-            for item in snippets
-            if clean_whitespace(str(item.snippet or ""))
-        )
-        docs.extend(
-            clean_whitespace(str(item))
-            for item in list(result.abstracts or [])
-            if clean_whitespace(str(item))
-        )
+        for item in snippets:
+            snippet_text = clean_whitespace(str(item.snippet or ""))
+            if snippet_text:
+                docs.append(snippet_text)
+        for item in list(result.abstracts or []):
+            abstract_text = clean_whitespace(str(item))
+            if abstract_text:
+                docs.append(abstract_text)
         for subpage in list(result.subpages or []):
-            docs.extend(
-                clean_whitespace(str(item))
-                for item in list(subpage.abstracts or [])
-                if clean_whitespace(str(item))
-            )
+            for item in list(subpage.abstracts or []):
+                abstract_text = clean_whitespace(str(item))
+                if abstract_text:
+                    docs.append(abstract_text)
         return docs[:_MAX_CONTEXT_DOCS]
 
     def _score_page_with_prefetched_content(

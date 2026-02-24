@@ -113,7 +113,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     if source_id not in new_source_ids:
                         new_source_ids.append(source_id)
 
-        ctx.work.search_results = all_results
         ctx.current_round.result_count = int(len(all_results))
         ctx.current_round.new_source_ids = list(new_source_ids)
         ctx.runtime.search_calls += int(len(jobs))
@@ -202,7 +201,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             abstracts=list(result.abstracts or []),
             content=str(result.content or ""),
             round_index=round_index,
-            parent_url="",
             is_subpage=False,
         )
         if is_new:
@@ -211,7 +209,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         for sub in list(result.subpages or []):
             sub_id, sub_is_new = self._upsert_source_from_subpage(
                 ctx=ctx,
-                parent_url=str(result.url),
                 sub=sub,
                 round_index=round_index,
             )
@@ -223,7 +220,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         self,
         *,
         ctx: ResearchStepContext,
-        parent_url: str,
         sub: FetchSubpagesResult,
         round_index: int,
     ) -> tuple[int, bool]:
@@ -234,7 +230,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             abstracts=list(sub.abstracts or []),
             content=str(sub.content or ""),
             round_index=round_index,
-            parent_url=parent_url,
             is_subpage=True,
         )
 
@@ -247,7 +242,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         abstracts: list[str],
         content: str,
         round_index: int,
-        parent_url: str,
         is_subpage: bool,
     ) -> tuple[int, bool]:
         existing = ctx.corpus.source_url_to_id.get(url)
@@ -275,7 +269,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 abstracts=normalize_strings(abstracts, limit=32),
                 content=content,
                 round_index=round_index,
-                parent_url=parent_url,
                 is_subpage=bool(is_subpage),
             )
         )

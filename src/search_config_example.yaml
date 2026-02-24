@@ -45,16 +45,24 @@ research:
   tool_max_attempts: 3
   llm_self_heal_retries: 2
   no_progress_rounds_to_stop: 2
+  parallel:
+    question_card_cap: 6
+    budget_multiplier: 2.0
+    bonus_ratio: 0.3
+    baseline_query_width: 1
+    bonus_query_width: 2
+    focus_min_term_overlap: 1
+    focus_min_overlap_ratio: 0.2
   plan:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2.5
   abstract_analyze:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2.5
   content_analyze:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2.5
   synthesize:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2.5
   markdown:
-    use_model: gpt-4.1-mini
+    use_model: kimi-k2.5
   research_fast:
     max_rounds: 3
     max_search_calls: 6

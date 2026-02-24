@@ -5,12 +5,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
     build_abstract_packet,
-    chat_json,
+    chat_pydantic,
     merge_strings,
     normalize_strings,
     resolve_research_model,
@@ -21,6 +23,45 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
+
+
+class _AbstractEvidenceGradePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    source_id: int = Field(ge=1)
+    grade: str
+    reason: str
+
+
+class _AbstractConflictPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    topic: str
+    status: str
+    source_ids: list[int] = Field(default_factory=list, max_length=8)
+    decision: str
+
+
+class _AbstractOutputPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    findings: list[str] = Field(default_factory=list, max_length=20)
+    evidence_grades: list[_AbstractEvidenceGradePayload] = Field(
+        default_factory=list,
+        max_length=24,
+    )
+    conflict_arbitration: list[_AbstractConflictPayload] = Field(
+        default_factory=list,
+        max_length=16,
+    )
+    covered_subthemes: list[str] = Field(default_factory=list, max_length=16)
+    coverage_delta: float = 0.0
+    critical_gaps: list[str] = Field(default_factory=list, max_length=12)
+    confidence: float = 0.0
+    need_content_source_ids: list[int] = Field(default_factory=list, max_length=20)
+    next_query_strategy: str = "coverage"
+    next_queries: list[str] = Field(default_factory=list, max_length=8)
+    stop: bool = False
 
 
 class ResearchAbstractStep(StepBase[ResearchStepContext]):
@@ -58,101 +99,14 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             return ctx
 
         packet = build_abstract_packet(sources=sources, max_abstracts_per_source=5)
-        schema: dict[str, Any] = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "findings",
-                "evidence_grades",
-                "conflict_arbitration",
-                "covered_subthemes",
-                "coverage_delta",
-                "critical_gaps",
-                "confidence",
-                "need_content_source_ids",
-                "next_query_strategy",
-                "next_queries",
-                "stop",
-            ],
-            "properties": {
-                "findings": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 20,
-                },
-                "evidence_grades": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["source_id", "grade", "reason"],
-                        "properties": {
-                            "source_id": {"type": "integer", "minimum": 1},
-                            "grade": {"type": "string", "enum": ["A", "B", "C"]},
-                            "reason": {"type": "string"},
-                        },
-                    },
-                },
-                "conflict_arbitration": {
-                    "type": "array",
-                    "maxItems": 16,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["topic", "status", "source_ids", "decision"],
-                        "properties": {
-                            "topic": {"type": "string"},
-                            "status": {
-                                "type": "string",
-                                "enum": ["resolved", "unresolved", "insufficient"],
-                            },
-                            "source_ids": {
-                                "type": "array",
-                                "items": {"type": "integer", "minimum": 1},
-                                "maxItems": 8,
-                            },
-                            "decision": {"type": "string"},
-                        },
-                    },
-                },
-                "covered_subthemes": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 16,
-                },
-                "coverage_delta": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "critical_gaps": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 12,
-                },
-                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "need_content_source_ids": {
-                    "type": "array",
-                    "items": {"type": "integer", "minimum": 1},
-                    "maxItems": 20,
-                },
-                "next_query_strategy": {
-                    "type": "string",
-                    "enum": ["coverage", "deepen", "verify", "refresh", "stop-ready"],
-                },
-                "next_queries": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": int(ctx.runtime.budget.max_queries_per_round),
-                },
-                "stop": {"type": "boolean"},
-            },
-        }
         model = resolve_research_model(
             ctx=ctx,
             stage="abstract",
             fallback=self.settings.answer.generate.use_model,
         )
-        payload: dict[str, Any]
+        payload = self._empty_review()
         try:
-            payload = await chat_json(
+            payload = await chat_pydantic(
                 llm=self._llm,
                 model=model,
                 messages=self._build_abstract_messages(
@@ -160,8 +114,11 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     packet=packet,
                     now_utc=now_utc,
                 ),
-                schema=schema,
+                schema_model=_AbstractOutputPayload,
                 retries=int(self.settings.research.llm_self_heal_retries),
+                schema_json=self._build_abstract_schema(
+                    max_queries=int(ctx.runtime.budget.max_queries_per_round)
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             ctx.errors.append(
@@ -173,27 +130,26 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             )
             payload = self._empty_review()
 
-        ctx.work.abstract_review = payload
+        ctx.work.abstract_review = payload.model_dump()
         need_content_ids = self._normalize_source_ids(
-            payload.get("need_content_source_ids"),
+            payload.need_content_source_ids,
             limit=20,
         )
         ctx.work.need_content_source_ids = need_content_ids
-        ctx.current_round.need_content_source_ids = need_content_ids
 
-        findings = normalize_strings(payload.get("findings"), limit=8)
+        findings = normalize_strings(payload.findings, limit=8)
         if findings:
             ctx.notes.extend(findings[:3])
             ctx.current_round.abstract_summary = " | ".join(findings[:3])
-        ctx.current_round.confidence = self._normalize_confidence(payload.get("confidence"))
+        ctx.current_round.confidence = self._normalize_confidence(payload.confidence)
         ctx.current_round.query_strategy = clean_whitespace(
             str(
-                payload.get("next_query_strategy")
+                payload.next_query_strategy
                 or ctx.current_round.query_strategy
                 or "mixed"
             )
         )
-        covered_subthemes = normalize_strings(payload.get("covered_subthemes"), limit=16)
+        covered_subthemes = normalize_strings(payload.covered_subthemes, limit=16)
         if covered_subthemes:
             ctx.corpus.coverage_state.covered_subthemes = merge_strings(
                 list(ctx.corpus.coverage_state.covered_subthemes),
@@ -204,24 +160,20 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         total = max(1, int(ctx.corpus.coverage_state.total_subthemes or 0))
         if total <= 0:
             total = max(1, len(ctx.corpus.coverage_state.covered_subthemes))
-        ctx.corpus.coverage_state.coverage_ratio = min(
+        coverage_ratio = min(
             1.0,
             float(len(ctx.corpus.coverage_state.covered_subthemes)) / float(total),
         )
-        ctx.current_round.coverage_ratio = float(ctx.corpus.coverage_state.coverage_ratio)
+        ctx.current_round.coverage_ratio = float(coverage_ratio)
 
-        unresolved_topics = self._extract_unresolved_topics(
-            payload.get("conflict_arbitration")
-        )
-        ctx.corpus.conflict_state.unresolved_topics = unresolved_topics
-        ctx.corpus.conflict_state.unresolved_count = int(len(unresolved_topics))
+        unresolved_topics = self._extract_unresolved_topics(payload.conflict_arbitration)
         ctx.current_round.unresolved_conflicts = int(len(unresolved_topics))
         ctx.current_round.critical_gaps = int(
-            len(normalize_strings(payload.get("critical_gaps"), limit=20))
+            len(normalize_strings(payload.critical_gaps, limit=20))
         )
         ctx.work.next_queries = merge_strings(
             normalize_strings(
-                payload.get("next_queries"),
+                payload.next_queries,
                 limit=int(ctx.runtime.budget.max_queries_per_round),
             ),
             [],
@@ -247,7 +199,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "unresolved_conflicts": int(ctx.current_round.unresolved_conflicts),
                     "critical_gaps": int(ctx.current_round.critical_gaps),
                     "next_queries": list(ctx.work.next_queries),
-                    "abstract_review": payload,
+                    "abstract_review": payload.model_dump(),
                 },
                 ensure_ascii=False,
             ),
@@ -263,6 +215,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
     ) -> list[dict[str, str]]:
         out_lang = ctx.plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
         round_index = ctx.current_round.round_index if ctx.current_round else 0
         return [
             {
@@ -276,13 +229,14 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "P3) Language consistency.\n"
                     "Hard Constraints:\n"
                     "1) Use only SOURCE_ABSTRACT_PACKET.\n"
-                    "2) Distinguish observations from inferences.\n"
-                    "3) Identify unresolved conflicts and critical evidence gaps.\n"
-                    "4) Select source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
-                    "5) Evaluate temporal relevance for recency-sensitive claims.\n"
-                    "6) Free-text fields must be in the required output language.\n"
-                    "7) Return JSON only, exactly matching schema.\n"
-                    "8) Abstract evidence is provisional: avoid final certainty when content verification is still needed.\n"
+                    "2) Keep analysis scoped to CORE_QUESTION and its evidence dimensions.\n"
+                    "3) Distinguish observations from inferences.\n"
+                    "4) Identify unresolved conflicts and critical evidence gaps.\n"
+                    "5) Select source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
+                    "6) Evaluate temporal relevance for recency-sensitive claims.\n"
+                    "7) Free-text fields must be in the required output language.\n"
+                    "8) Return JSON only, exactly matching schema.\n"
+                    "9) Abstract evidence is provisional: avoid final certainty when content verification is still needed.\n"
                     "Allowed Evidence:\n"
                     "- Theme, theme plan, round summaries, abstract packet.\n"
                     "Failure Policy:\n"
@@ -295,6 +249,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "role": "user",
                 "content": (
                     f"THEME:\n{ctx.request.themes}\n\n"
+                    f"CORE_QUESTION:\n{core_question}\n\n"
                     f"ROUND_INDEX:\n{round_index}\n\n"
                     "TIME_CONTEXT:\n"
                     f"- current_utc_timestamp={now_utc.isoformat()}\n"
@@ -321,20 +276,91 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             },
         ]
 
-    def _empty_review(self) -> dict[str, object]:
+    def _build_abstract_schema(self, *, max_queries: int) -> dict[str, Any]:
         return {
-            "findings": [],
-            "evidence_grades": [],
-            "conflict_arbitration": [],
-            "covered_subthemes": [],
-            "coverage_delta": 0.0,
-            "critical_gaps": [],
-            "confidence": 0.0,
-            "need_content_source_ids": [],
-            "next_query_strategy": "coverage",
-            "next_queries": [],
-            "stop": False,
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "findings",
+                "evidence_grades",
+                "conflict_arbitration",
+                "covered_subthemes",
+                "coverage_delta",
+                "critical_gaps",
+                "confidence",
+                "need_content_source_ids",
+                "next_query_strategy",
+                "next_queries",
+                "stop",
+            ],
+            "properties": {
+                "findings": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {"type": "string"},
+                },
+                "evidence_grades": {
+                    "type": "array",
+                    "maxItems": 24,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["source_id", "grade", "reason"],
+                        "properties": {
+                            "source_id": {"type": "integer", "minimum": 1},
+                            "grade": {"type": "string"},
+                            "reason": {"type": "string"},
+                        },
+                    },
+                },
+                "conflict_arbitration": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["topic", "status", "source_ids", "decision"],
+                        "properties": {
+                            "topic": {"type": "string"},
+                            "status": {"type": "string"},
+                            "source_ids": {
+                                "type": "array",
+                                "maxItems": 8,
+                                "items": {"type": "integer", "minimum": 1},
+                            },
+                            "decision": {"type": "string"},
+                        },
+                    },
+                },
+                "covered_subthemes": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {"type": "string"},
+                },
+                "coverage_delta": {"type": "number"},
+                "critical_gaps": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {"type": "string"},
+                },
+                "confidence": {"type": "number"},
+                "need_content_source_ids": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {"type": "integer", "minimum": 1},
+                },
+                "next_query_strategy": {"type": "string"},
+                "next_queries": {
+                    "type": "array",
+                    "maxItems": max(1, int(max_queries)),
+                    "items": {"type": "string"},
+                },
+                "stop": {"type": "boolean"},
+            },
         }
+
+    def _empty_review(self) -> _AbstractOutputPayload:
+        return _AbstractOutputPayload()
 
     def _normalize_confidence(self, raw: object) -> float:
         try:
@@ -346,18 +372,17 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             return 0.0
         return min(1.0, max(0.0, value))
 
-    def _extract_unresolved_topics(self, raw: object) -> list[str]:
-        if not isinstance(raw, list):
-            return []
+    def _extract_unresolved_topics(
+        self,
+        raw: list[_AbstractConflictPayload],
+    ) -> list[str]:
         out: list[str] = []
         seen: set[str] = set()
         for item in raw:
-            if not isinstance(item, dict):
-                continue
-            status = clean_whitespace(str(item.get("status") or "")).casefold()
+            status = clean_whitespace(item.status).casefold()
             if status != "unresolved":
                 continue
-            topic = clean_whitespace(str(item.get("topic") or ""))
+            topic = clean_whitespace(item.topic)
             if not topic:
                 continue
             key = topic.casefold()
@@ -367,9 +392,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             out.append(topic)
         return out
 
-    def _normalize_source_ids(self, raw: object, *, limit: int) -> list[int]:
-        if not isinstance(raw, list):
-            return []
+    def _normalize_source_ids(self, raw: list[int], *, limit: int) -> list[int]:
         out: list[int] = []
         seen: set[int] = set()
         for item in raw:

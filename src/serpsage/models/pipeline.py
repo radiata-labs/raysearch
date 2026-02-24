@@ -233,7 +233,6 @@ class ResearchSource(MutableModel):
     abstracts: list[str] = Field(default_factory=list)
     content: str = ""
     round_index: int = 0
-    parent_url: str = ""
     is_subpage: bool = False
 
 
@@ -248,15 +247,42 @@ class ResearchSearchJob(MutableModel):
     expected_gain: str = ""
 
 
+class ResearchQuestionCard(MutableModel):
+    question_id: str
+    question: str
+    priority: int = 3
+    seed_queries: list[str] = Field(default_factory=list)
+    evidence_focus: list[str] = Field(default_factory=list)
+    expected_gain: str = ""
+
+
+class ResearchTrackResult(MutableModel):
+    question_id: str
+    question: str
+    stop_reason: str = ""
+    rounds: int = 0
+    search_calls: int = 0
+    fetch_calls: int = 0
+    confidence: float = 0.0
+    coverage_ratio: float = 0.0
+    unresolved_conflicts: int = 0
+    subreport_markdown: str = ""
+    key_findings: list[str] = Field(default_factory=list)
+    errors: list[AppError] = Field(default_factory=list)
+
+
+class ResearchParallelState(MutableModel):
+    question_cards: list[ResearchQuestionCard] = Field(default_factory=list)
+    track_results: list[ResearchTrackResult] = Field(default_factory=list)
+    global_search_budget: int = 0
+    global_fetch_budget: int = 0
+    global_search_used: int = 0
+    global_fetch_used: int = 0
+
+
 class ResearchCoverageState(MutableModel):
     total_subthemes: int = 0
     covered_subthemes: list[str] = Field(default_factory=list)
-    coverage_ratio: float = 0.0
-
-
-class ResearchConflictState(MutableModel):
-    unresolved_topics: list[str] = Field(default_factory=list)
-    unresolved_count: int = 0
 
 
 class ResearchRuntimeState(MutableModel):
@@ -274,18 +300,18 @@ class ResearchPlanState(MutableModel):
     next_queries: list[str] = Field(default_factory=list)
     input_language: str = ""
     output_language: str = ""
+    core_question: str = ""
+    question_cards: list[ResearchQuestionCard] = Field(default_factory=list)
 
 
 class ResearchCorpusState(MutableModel):
     sources: list[ResearchSource] = Field(default_factory=list)
     source_url_to_id: dict[str, int] = Field(default_factory=dict)
     coverage_state: ResearchCoverageState = Field(default_factory=ResearchCoverageState)
-    conflict_state: ResearchConflictState = Field(default_factory=ResearchConflictState)
 
 
 class ResearchRoundWorkState(MutableModel):
     search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
-    search_results: list[FetchResultItem] = Field(default_factory=list)
     abstract_review: dict[str, object] = Field(default_factory=dict)
     content_review: dict[str, object] = Field(default_factory=dict)
     need_content_source_ids: list[int] = Field(default_factory=list)
@@ -296,10 +322,8 @@ class ResearchRoundState(MutableModel):
     round_index: int = 0
     query_strategy: str = ""
     queries: list[str] = Field(default_factory=list)
-    search_job_count: int = 0
     result_count: int = 0
     new_source_ids: list[int] = Field(default_factory=list)
-    need_content_source_ids: list[int] = Field(default_factory=list)
     abstract_summary: str = ""
     content_summary: str = ""
     confidence: float = 0.0
@@ -322,6 +346,7 @@ class ResearchStepContext(BaseStepContext):
     request: ResearchRequest
     runtime: ResearchRuntimeState = Field(default_factory=ResearchRuntimeState)
     plan: ResearchPlanState = Field(default_factory=ResearchPlanState)
+    parallel: ResearchParallelState = Field(default_factory=ResearchParallelState)
     corpus: ResearchCorpusState = Field(default_factory=ResearchCorpusState)
     work: ResearchRoundWorkState = Field(default_factory=ResearchRoundWorkState)
     rounds: list[ResearchRoundState] = Field(default_factory=list)
@@ -344,18 +369,20 @@ __all__ = [
     "FetchRuntimeConfig",
     "FetchSubpagesState",
     "PreparedAbstract",
-    "ResearchConflictState",
     "ResearchCorpusState",
     "ResearchBudgetState",
     "ResearchCoverageState",
     "ResearchOutputState",
+    "ResearchParallelState",
     "ResearchPlanState",
+    "ResearchQuestionCard",
     "ResearchRoundState",
     "ResearchRoundWorkState",
     "ResearchRuntimeState",
     "ResearchSearchJob",
     "ResearchSource",
     "ResearchStepContext",
+    "ResearchTrackResult",
     "ScoredAbstract",
     "SearchDeepState",
     "SearchFetchState",
