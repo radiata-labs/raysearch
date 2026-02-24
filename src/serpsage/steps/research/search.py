@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -117,53 +116,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx.current_round.new_source_ids = list(new_source_ids)
         ctx.runtime.search_calls += int(len(jobs))
         ctx.runtime.fetch_calls += int(per_round_fetch_calls)
-        for idx, result in enumerate(all_results, start=1):
-            print(
-                "[research.search.result]",
-                json.dumps(
-                    {
-                        "round_index": int(ctx.current_round.round_index),
-                        "result_index": int(idx),
-                        "url": str(result.url),
-                        "title": str(result.title or ""),
-                        "abstracts_count": int(len(result.abstracts or [])),
-                        "content_chars": int(len(str(result.content or ""))),
-                        "subpages_count": int(len(result.subpages or [])),
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-            for sub_idx, sub in enumerate(result.subpages or [], start=1):
-                print(
-                    "[research.search.subpage]",
-                    json.dumps(
-                        {
-                            "round_index": int(ctx.current_round.round_index),
-                            "result_index": int(idx),
-                            "subpage_index": int(sub_idx),
-                            "url": str(sub.url),
-                            "title": str(sub.title or ""),
-                            "abstracts_count": int(len(sub.abstracts or [])),
-                            "content_chars": int(len(str(sub.content or ""))),
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-        print(
-            "[research.search]",
-            json.dumps(
-                {
-                    "round_index": int(ctx.current_round.round_index),
-                    "queries": list(ctx.current_round.queries),
-                    "search_job_count": int(len(jobs)),
-                    "result_count": int(len(all_results)),
-                    "new_source_ids": list(new_source_ids),
-                    "search_calls": int(ctx.runtime.search_calls),
-                    "fetch_calls": int(ctx.runtime.fetch_calls),
-                },
-                ensure_ascii=False,
-            ),
-        )
 
         if int(ctx.runtime.fetch_calls) > int(ctx.runtime.budget.max_fetch_calls):
             ctx.errors.append(
@@ -179,11 +131,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             )
 
         span.set_attr("round_index", int(ctx.current_round.round_index))
-        span.set_attr("jobs", int(len(jobs)))
         span.set_attr("results", int(len(all_results)))
-        span.set_attr("new_source_ids", int(len(new_source_ids)))
-        span.set_attr("search_calls", int(ctx.runtime.search_calls))
-        span.set_attr("fetch_calls", int(ctx.runtime.fetch_calls))
         return ctx
 
     def _upsert_source_from_fetch_result(
@@ -246,18 +194,24 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
     ) -> tuple[int, bool]:
         existing = ctx.corpus.source_url_to_id.get(url)
         if existing is not None:
-            for source in ctx.corpus.sources:
+            for idx, source in enumerate(ctx.corpus.sources):
                 if source.source_id != existing:
                     continue
-                if not source.title and title:
-                    source.title = title
-                source.abstracts = merge_strings(
-                    list(source.abstracts),
-                    normalize_strings(abstracts, limit=32),
-                    limit=32,
+                # Create new source object instead of mutating existing one
+                new_source = ResearchSource(
+                    source_id=source.source_id,
+                    url=source.url,
+                    title=source.title or title or "",
+                    abstracts=merge_strings(
+                        list(source.abstracts),
+                        normalize_strings(abstracts, limit=32),
+                        limit=32,
+                    ),
+                    content=source.content or content or "",
+                    round_index=source.round_index,
+                    is_subpage=source.is_subpage,
                 )
-                if not source.content and content:
-                    source.content = content
+                ctx.corpus.sources[idx] = new_source
                 return existing, False
 
         source_id = len(ctx.corpus.sources) + 1

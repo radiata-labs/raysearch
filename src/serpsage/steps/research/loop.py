@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import (
+    ResearchBudgetState,
     ResearchQuestionCard,
     ResearchRuntimeState,
     ResearchStepContext,
@@ -103,32 +103,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 for question_id in active_ids
                 if allocations[question_id].search_grant > 0
             ]
-            print(
-                "[research.loop] cycle_plan",
-                json.dumps(
-                    {
-                        "cycle": int(cycle),
-                        "active_tracks": active_ids,
-                        "scores": scores,
-                        "allocations": {
-                            key: {
-                                "search_grant": int(value.search_grant),
-                                "fetch_grant": int(value.fetch_grant),
-                                "max_queries_per_round": int(
-                                    value.max_queries_per_round
-                                ),
-                                "bonus": bool(value.bonus),
-                            }
-                            for key, value in allocations.items()
-                        },
-                        "global_search_used": int(ctx.parallel.global_search_used),
-                        "global_search_budget": int(ctx.parallel.global_search_budget),
-                        "global_fetch_used": int(ctx.parallel.global_fetch_used),
-                        "global_fetch_budget": int(ctx.parallel.global_fetch_budget),
-                    },
-                    ensure_ascii=False,
-                ),
-            )
 
             if not runnable_ids:
                 await self._force_stop_tracks(
@@ -181,22 +155,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                         track_ctx=out,
                     )
                     finalized.add(question_id)
-                print(
-                    "[research.loop] cycle_track_end",
-                    json.dumps(
-                        {
-                            "cycle": int(cycle),
-                            "question_id": question_id,
-                            "search_delta": int(delta_search),
-                            "fetch_delta": int(delta_fetch),
-                            "track_search_calls": int(out.runtime.search_calls),
-                            "track_fetch_calls": int(out.runtime.fetch_calls),
-                            "track_stop": bool(out.runtime.stop),
-                            "track_stop_reason": str(out.runtime.stop_reason or ""),
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
 
             if self._global_budget_exhausted(ctx):
                 remaining = [
@@ -248,26 +206,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
 
         span.set_attr("tracks_total", int(len(cards)))
         span.set_attr("tracks_finished", int(len(ctx.parallel.track_results)))
-        span.set_attr("global_search_used", int(ctx.parallel.global_search_used))
-        span.set_attr("global_search_budget", int(ctx.parallel.global_search_budget))
-        span.set_attr("global_fetch_used", int(ctx.parallel.global_fetch_used))
-        span.set_attr("global_fetch_budget", int(ctx.parallel.global_fetch_budget))
         span.set_attr("stop_reason", str(ctx.runtime.stop_reason or ""))
-        print(
-            "[research.loop] finished",
-            json.dumps(
-                {
-                    "tracks_total": int(len(cards)),
-                    "tracks_finished": int(len(ctx.parallel.track_results)),
-                    "global_search_used": int(ctx.parallel.global_search_used),
-                    "global_search_budget": int(ctx.parallel.global_search_budget),
-                    "global_fetch_used": int(ctx.parallel.global_fetch_used),
-                    "global_fetch_budget": int(ctx.parallel.global_fetch_budget),
-                    "stop_reason": str(ctx.runtime.stop_reason or ""),
-                },
-                ensure_ascii=False,
-            ),
-        )
         return ctx
 
     def _resolve_question_cards(
@@ -454,7 +393,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         *,
         track_ctx: ResearchStepContext,
         alloc: _TrackAllocation,
-        base_budget,
+        base_budget: ResearchBudgetState,
     ) -> None:
         search_grant = max(0, int(alloc.search_grant))
         fetch_grant = max(1, int(alloc.fetch_grant))
@@ -505,7 +444,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> ResearchTrackResult:
         rendered = await self._render_step.run(track_ctx)
         latest = self._latest_round(rendered)
-        result = ResearchTrackResult(
+        return ResearchTrackResult(
             question_id=card.question_id,
             question=card.question,
             stop_reason=clean_whitespace(rendered.runtime.stop_reason or ""),
@@ -521,24 +460,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             key_findings=self._extract_key_findings(rendered),
             errors=[item.model_copy(deep=True) for item in rendered.errors],
         )
-        print(
-            "[research.loop] track_finalized",
-            json.dumps(
-                {
-                    "question_id": result.question_id,
-                    "question": result.question,
-                    "stop_reason": result.stop_reason,
-                    "rounds": int(result.rounds),
-                    "search_calls": int(result.search_calls),
-                    "fetch_calls": int(result.fetch_calls),
-                    "confidence": float(result.confidence),
-                    "coverage_ratio": float(result.coverage_ratio),
-                    "unresolved_conflicts": int(result.unresolved_conflicts),
-                },
-                ensure_ascii=False,
-            ),
-        )
-        return result
 
     def _extract_key_findings(self, track_ctx: ResearchStepContext) -> list[str]:
         out: list[str] = []

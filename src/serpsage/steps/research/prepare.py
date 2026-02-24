@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -15,6 +14,7 @@ from serpsage.models.pipeline import (
     ResearchRuntimeState,
     ResearchStepContext,
 )
+from serpsage.models.research import ResearchThemePlan
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
@@ -39,7 +39,9 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         profile = self._resolve_profile(mode)
         parallel = self.settings.research.parallel
 
-        ctx.request = ctx.request.model_copy(update={"search_mode": mode, "themes": themes})
+        ctx.request = ctx.request.model_copy(
+            update={"search_mode": mode, "themes": themes}
+        )
         ctx.runtime = ResearchRuntimeState(
             budget=ResearchBudgetState(
                 max_rounds=int(profile.max_rounds),
@@ -63,8 +65,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             1,
             int(
                 math.ceil(
-                    float(profile.max_search_calls)
-                    * float(parallel.budget_multiplier)
+                    float(profile.max_search_calls) * float(parallel.budget_multiplier)
                 )
             ),
         )
@@ -72,13 +73,12 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             1,
             int(
                 math.ceil(
-                    float(profile.max_fetch_calls)
-                    * float(parallel.budget_multiplier)
+                    float(profile.max_fetch_calls) * float(parallel.budget_multiplier)
                 )
             ),
         )
         ctx.plan = ResearchPlanState(
-            theme_plan={},
+            theme_plan=ResearchThemePlan(),
             next_queries=[themes],
             core_question=themes,
             question_cards=[],
@@ -99,27 +99,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         ctx.output = ResearchOutputState(content="", structured=None)
 
         span.set_attr("search_mode", mode)
-        span.set_attr("themes_chars", int(len(themes)))
-        span.set_attr("max_rounds", int(ctx.runtime.budget.max_rounds))
-        span.set_attr("max_search_calls", int(ctx.runtime.budget.max_search_calls))
-        span.set_attr("max_fetch_calls", int(ctx.runtime.budget.max_fetch_calls))
-        span.set_attr("global_search_budget", int(ctx.parallel.global_search_budget))
-        span.set_attr("global_fetch_budget", int(ctx.parallel.global_fetch_budget))
-        print(
-            "[research.prepare]",
-            json.dumps(
-                {
-                    "search_mode": mode,
-                    "themes": themes,
-                    "budget": ctx.runtime.budget.model_dump(),
-                    "parallel_budget": {
-                        "global_search_budget": int(ctx.parallel.global_search_budget),
-                        "global_fetch_budget": int(ctx.parallel.global_fetch_budget),
-                    },
-                },
-                ensure_ascii=False,
-            ),
-        )
         return ctx
 
     def _resolve_profile(self, mode: str) -> ResearchModeSettings:

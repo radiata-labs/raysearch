@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchQuestionCard, ResearchStepContext
+from serpsage.models.research import (
+    ResearchThemePlan,
+    ResearchThemePlanCard,
+    ThemeOutputPayload,
+    ThemeQuestionCardPayload,
+)
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
     chat_pydantic,
@@ -22,33 +25,6 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
-
-
-class _ThemeQuestionCardPayload(BaseModel):
-    model_config = ConfigDict(extra="ignore", validate_assignment=True)
-
-    question: str
-    priority: int = Field(default=3, ge=1, le=5)
-    seed_queries: list[str] = Field(default_factory=list, max_length=8)
-    evidence_focus: list[str] = Field(default_factory=list, max_length=8)
-    expected_gain: str = ""
-
-
-class _ThemeOutputPayload(BaseModel):
-    model_config = ConfigDict(extra="ignore", validate_assignment=True)
-
-    detected_input_language: str = "same as user input language"
-    core_question: str = ""
-    multi_level_questions: list[str] = Field(default_factory=list, max_length=24)
-    subthemes: list[str] = Field(default_factory=list, max_length=12)
-    evidence_targets: list[str] = Field(default_factory=list, max_length=12)
-    risk_conflicts: list[str] = Field(default_factory=list, max_length=10)
-    initial_strategy: str = "balanced"
-    seed_queries: list[str] = Field(default_factory=list, max_length=12)
-    question_cards: list[_ThemeQuestionCardPayload] = Field(
-        default_factory=list,
-        max_length=24,
-    )
 
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
@@ -71,7 +47,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
-        payload = _ThemeOutputPayload(
+        payload = ThemeOutputPayload(
             detected_input_language="same as user input language",
             core_question=ctx.request.themes,
             multi_level_questions=[],
@@ -91,7 +67,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     now_utc=now_utc,
                     card_cap=card_cap,
                 ),
-                schema_model=_ThemeOutputPayload,
+                schema_model=ThemeOutputPayload,
                 retries=int(self.settings.research.llm_self_heal_retries),
                 schema_json=self._build_theme_schema(card_cap=card_cap),
             )
@@ -107,7 +83,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         input_language = clean_whitespace(str(payload.detected_input_language or ""))
         if not input_language:
             input_language = "same as user input language"
-        core_question = clean_whitespace(str(payload.core_question or ctx.request.themes))
+        core_question = clean_whitespace(
+            str(payload.core_question or ctx.request.themes)
+        )
         if not core_question:
             core_question = ctx.request.themes
         multi_level_questions = normalize_strings(
@@ -139,17 +117,27 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.plan.core_question = core_question
         ctx.plan.question_cards = [item.model_copy(deep=True) for item in cards]
         ctx.parallel.question_cards = [item.model_copy(deep=True) for item in cards]
-        ctx.plan.theme_plan = {
-            "core_question": core_question,
-            "multi_level_questions": multi_level_questions,
-            "subthemes": subthemes,
-            "evidence_targets": normalize_strings(payload.evidence_targets, limit=12),
-            "risk_conflicts": normalize_strings(payload.risk_conflicts, limit=10),
-            "initial_strategy": str(payload.initial_strategy or "balanced"),
-            "input_language": input_language,
-            "output_language": input_language,
-            "question_cards": [card.model_dump() for card in cards],
-        }
+        ctx.plan.theme_plan = ResearchThemePlan(
+            core_question=core_question,
+            multi_level_questions=multi_level_questions,
+            subthemes=subthemes,
+            evidence_targets=normalize_strings(payload.evidence_targets, limit=12),
+            risk_conflicts=normalize_strings(payload.risk_conflicts, limit=10),
+            initial_strategy=str(payload.initial_strategy or "balanced"),
+            input_language=input_language,
+            output_language=input_language,
+            question_cards=[
+                ResearchThemePlanCard(
+                    question_id=card.question_id,
+                    question=card.question,
+                    priority=card.priority,
+                    seed_queries=list(card.seed_queries),
+                    evidence_focus=list(card.evidence_focus),
+                    expected_gain=card.expected_gain,
+                )
+                for card in cards
+            ],
+        )
         primary_seeds = list(cards[0].seed_queries) if cards else []
         ctx.plan.next_queries = merge_strings(
             seed_queries,
@@ -161,30 +149,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.notes.append(
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
         )
-        ctx.notes.append(
-            f"Output language fixed to {ctx.plan.output_language}."
-        )
+        ctx.notes.append(f"Output language fixed to {ctx.plan.output_language}.")
 
         span.set_attr("question_cards", int(len(cards)))
-        span.set_attr("card_cap", int(card_cap))
-        span.set_attr("subthemes", int(len(subthemes)))
-        span.set_attr("seed_queries", int(len(ctx.plan.next_queries)))
-        span.set_attr("input_language", str(ctx.plan.input_language))
-        span.set_attr("output_language", str(ctx.plan.output_language))
-        print(
-            "[research.theme]",
-            json.dumps(
-                {
-                    "detected_input_language": ctx.plan.input_language,
-                    "core_question": ctx.plan.core_question,
-                    "question_cards": [card.model_dump() for card in cards],
-                    "theme_plan": ctx.plan.theme_plan,
-                    "next_queries": ctx.plan.next_queries,
-                    "raw_model_payload": payload.model_dump(),
-                },
-                ensure_ascii=False,
-            ),
-        )
         return ctx
 
     def _build_theme_messages(
@@ -393,7 +360,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
 
     def _normalize_question_cards(
         self,
-        raw: list[_ThemeQuestionCardPayload],
+        raw: list[ThemeQuestionCardPayload],
         *,
         core_question: str,
         card_cap: int,
@@ -467,7 +434,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     question_id=f"q{len(out) + 1}",
                     question=question,
                     priority=3,
-                    seed_queries=merge_strings([question], [core_question], limit=seed_limit),
+                    seed_queries=merge_strings(
+                        [question], [core_question], limit=seed_limit
+                    ),
                     evidence_focus=[],
                     expected_gain="Increase topic coverage.",
                 )

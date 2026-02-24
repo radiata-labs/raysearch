@@ -5,10 +5,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
+import anyio
+
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchStepContext, ResearchTrackResult
+from serpsage.models.research import RenderArchitectOutput, RenderArchitectSectionPlan
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.utils import resolve_research_model
+from serpsage.steps.research.utils import chat_pydantic, resolve_research_model
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
@@ -37,76 +40,161 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             if isinstance(ctx.request.json_schema, dict)
             else None
         )
-        if schema is not None:
-            await self._render_final_structured(
+
+        if schema is None:
+            await self._render_markdown_architect_writer(
                 ctx=ctx,
-                schema=schema,
                 target_language=target_language,
                 now_utc=now_utc,
             )
-            span.set_attr("mode", "final_structured")
-            span.set_attr("target_language", target_language)
-            span.set_attr("content_chars", int(len(ctx.output.content)))
-            span.set_attr("has_structured", bool(ctx.output.structured is not None))
+            span.set_attr("mode", "final_markdown")
+            span.set_attr("has_structured", False)
             return ctx
 
-        await self._render_final_markdown(
+        await self._render_structured_once(
             ctx=ctx,
+            schema=schema,
             target_language=target_language,
             now_utc=now_utc,
         )
-        span.set_attr("mode", "final_markdown")
-        span.set_attr("target_language", target_language)
-        span.set_attr("content_chars", int(len(ctx.output.content)))
-        span.set_attr("has_structured", False)
+        span.set_attr("mode", "final_structured")
+        span.set_attr("has_structured", bool(ctx.output.structured is not None))
         return ctx
 
-    async def _render_final_markdown(
+    async def _render_markdown_architect_writer(
         self,
         *,
         ctx: ResearchStepContext,
         target_language: str,
         now_utc: datetime,
     ) -> None:
+        context_packet = self._build_final_context_packet(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+        )
+        architect_output = await self._run_architect(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+            context_packet=context_packet,
+        )
+        writer_outputs = await self._run_writers(
+            ctx=ctx,
+            architect_output=architect_output,
+            target_language=target_language,
+            now_utc=now_utc,
+            context_packet=context_packet,
+        )
+        assembled = self._assemble_markdown_from_sections(
+            ctx=ctx,
+            architect_output=architect_output,
+            writer_outputs=writer_outputs,
+        )
+        ctx.output.structured = None
+        ctx.output.content = self._normalize_markdown(assembled)
+
+    async def _run_architect(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        target_language: str,
+        now_utc: datetime,
+        context_packet: str,
+    ) -> RenderArchitectOutput:
+        model = resolve_research_model(
+            ctx=ctx,
+            stage="synthesize",
+            fallback=self.settings.answer.generate.use_model,
+        )
+        try:
+            return await chat_pydantic(
+                llm=self._llm,
+                model=model,
+                messages=self._build_architect_messages(
+                    target_language=target_language,
+                    now_utc=now_utc,
+                    context_packet=context_packet,
+                ),
+                schema_model=RenderArchitectOutput,
+                retries=int(self.settings.research.llm_self_heal_retries),
+            )
+        except Exception as exc:  # noqa: BLE001
+            ctx.errors.append(
+                AppError(
+                    code="research_render_architect_failed",
+                    message=str(exc),
+                    details={},
+                )
+            )
+            raise RuntimeError("research architect render failed") from exc
+
+    async def _run_writers(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        architect_output: RenderArchitectOutput,
+        target_language: str,
+        now_utc: datetime,
+        context_packet: str,
+    ) -> list[str]:
         model = resolve_research_model(
             ctx=ctx,
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
-        messages = self._build_final_markdown_messages(
-            ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
-        raw_text = ""
+        outputs = [""] * len(architect_output.sections)
         try:
-            result = await self._llm.chat(model=model, messages=messages, schema=None)
-            raw_text = str(result.text or "")
+            async with anyio.create_task_group() as tg:
+                for index, section in enumerate(architect_output.sections):
+                    tg.start_soon(
+                        self._run_writer_for_section,
+                        model,
+                        target_language,
+                        now_utc,
+                        context_packet,
+                        architect_output,
+                        section,
+                        outputs,
+                        index,
+                    )
         except Exception as exc:  # noqa: BLE001
             ctx.errors.append(
                 AppError(
-                    code="research_render_markdown_failed",
+                    code="research_render_writer_failed",
                     message=str(exc),
                     details={},
                 )
             )
-        if not raw_text.strip():
-            raw_text = self._build_final_markdown_fallback(ctx)
-        ctx.output.structured = None
-        ctx.output.content = self._normalize_markdown(raw_text)
-        print(
-            "[research.render.final_markdown]",
-            json.dumps(
-                {
-                    "target_language": target_language,
-                    "track_count": int(len(ctx.parallel.track_results)),
-                    "content": ctx.output.content,
-                },
-                ensure_ascii=False,
-            ),
-        )
+            raise RuntimeError("research writer render failed") from exc
+        return outputs
 
-    async def _render_final_structured(
+    async def _run_writer_for_section(
+        self,
+        model: str,
+        target_language: str,
+        now_utc: datetime,
+        context_packet: str,
+        architect_output: RenderArchitectOutput,
+        section: RenderArchitectSectionPlan,
+        outputs: list[str],
+        index: int,
+    ) -> None:
+        messages = self._build_writer_messages(
+            target_language=target_language,
+            now_utc=now_utc,
+            context_packet=context_packet,
+            architect_output=architect_output,
+            section=section,
+        )
+        try:
+            result = await self._llm.chat(model=model, messages=messages, schema=None)
+        except Exception as exc:  # noqa: BLE001
+            section_label = section.section_id or section.subhead or f"section-{index}"
+            raise RuntimeError(f"writer section failed: {section_label}") from exc
+        outputs[index] = str(result.text or "")
+
+    async def _render_structured_once(
         self,
         *,
         ctx: ResearchStepContext,
@@ -133,20 +221,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             )
             if not isinstance(payload, dict):
                 raise TypeError("structured output must be a JSON object")
-            ctx.output.structured = payload
-            ctx.output.content = json.dumps(payload, ensure_ascii=False, indent=2)
-            print(
-                "[research.render.final_structured]",
-                json.dumps(
-                    {
-                        "target_language": target_language,
-                        "track_count": int(len(ctx.parallel.track_results)),
-                        "structured": payload,
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-            return
         except Exception as exc:  # noqa: BLE001
             ctx.errors.append(
                 AppError(
@@ -155,70 +229,77 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     details={},
                 )
             )
-        fallback: dict[str, object] = {}
-        ctx.output.structured = fallback
-        ctx.output.content = json.dumps(fallback, ensure_ascii=False, indent=2)
-        print(
-            "[research.render.final_structured]",
-            json.dumps(
-                {
-                    "target_language": target_language,
-                    "track_count": int(len(ctx.parallel.track_results)),
-                    "structured": fallback,
-                },
-                ensure_ascii=False,
-            ),
-        )
+            raise RuntimeError("research structured render failed") from exc
+        ctx.output.structured = payload
+        ctx.output.content = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    def _build_final_markdown_messages(
+    def _build_architect_messages(
         self,
-        ctx: ResearchStepContext,
         *,
         target_language: str,
         now_utc: datetime,
+        context_packet: str,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
-        context_packet = self._build_final_context_packet(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
         return [
             {
                 "role": "system",
                 "content": (
-                    "Role: Theme-Level Research Synthesis Instructor.\n"
-                    "Mission: Produce one final report for THEME from multi-track evidence.\n"
+                    "Role: Architect of the final theme report.\n"
+                    "Identity: Senior research writing instructor and report architect.\n"
+                    "Mission: Produce a strict section blueprint (JSON only) for a high-information markdown report.\n"
                     "Instruction Priority:\n"
-                    "P1) Theme-level decision quality.\n"
-                    "P2) Cross-track synthesis completeness.\n"
-                    "P3) Language consistency and readability.\n"
-                    "Step-by-step method:\n"
-                    "1) Answer the core theme question directly in a concise opening.\n"
-                    "2) Synthesize across tracks: consensus, conflicts, uncertainty boundaries, and implications.\n"
-                    "3) Provide integrated conclusions and bounded recommendations.\n"
-                    "4) Avoid per-track mini-report repetition.\n"
-                    "Hard Constraints:\n"
-                    "1) You are writing one theme-level final report, not per-track mini reports.\n"
-                    "2) Use FINAL_CONTEXT_PACKET as the primary evidence context.\n"
-                    "3) Keep report centered on THEME and FINAL_CONTEXT_PACKET.render_objective.\n"
-                    "4) Do not include citation tokens.\n"
-                    "5) Resolve relative time words against CURRENT_UTC_DATE.\n"
-                    "6) Output markdown only.\n"
-                    "7) No citation tokens. Markdown only.\n"
-                    "Table Policy:\n"
-                    "1) Table is optional, not required.\n"
-                    "2) Use a table only when it improves clarity over prose.\n"
-                    "3) Do not create decorative or placeholder tables.\n"
-                    "4) Use a table only when comparison fields are stable and directly comparable.\n"
-                    "5) If data is sparse or non-comparable, use prose/bullets instead of forcing a table.\n"
-                    "Output Contract:\n"
-                    "- Include: direct answer, integrated evidence synthesis, uncertainty boundaries, and implications.\n"
-                    "- Keep high information density without rigid formatting.\n"
+                    "P1) Structural correctness for final assembly: schema-valid output, strict role ordering, and executable section contracts.\n"
+                    "P2) Logical progression quality: enforce General-Body-General and a clear reasoning staircase in body sections.\n"
+                    "P3) Multi-angle analytical coverage: technology, cost, risk, timeliness, scenario fit, constraints, and decision impact.\n"
+                    "P4) Evidence-grounded scope control: reduce breadth when evidence is weak; never invent structure based on assumptions.\n"
+                    "Execution protocol (follow internally, do not print reasoning):\n"
+                    "Phase A - Frame the problem:\n"
+                    "1) Extract the core question, decision target, and uncertainty boundaries from FINAL_CONTEXT_PACKET.\n"
+                    "2) Determine which analytical angles are mandatory: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"
+                    "3) If evidence is thin, narrow scope instead of inventing topics.\n"
+                    "Phase B - Design macro structure:\n"
+                    "1) Use strict General-Body-General structure.\n"
+                    "2) Exactly one opening section first, exactly one closing section last.\n"
+                    "3) Create 3-8 body sections between them to total 5-10 sections.\n"
+                    "Phase C - Build body progression ladder:\n"
+                    "1) Body sections must be progressive and interlocked, never parallel repetition.\n"
+                    "2) Preferred reasoning staircase: mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (adapt to theme).\n"
+                    "3) Each body section must answer a distinct analytical question and prepare the next section.\n"
+                    "Phase D - Define section contracts:\n"
+                    "1) For each section provide concrete subhead, section_role, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
+                    "2) writing_boundaries must explicitly block topic drift and unsupported claims.\n"
+                    "3) must_cover_points must be actionable and specific, not generic slogans.\n"
+                    "Hard Constraints (must):\n"
+                    "1) Output JSON only and match schema exactly; no markdown, no prose, no commentary.\n"
+                    "2) Output 5-10 section plans total.\n"
+                    "3) Exactly one opening section at index 1, exactly one closing section at last index.\n"
+                    "4) All intermediate sections must be body sections.\n"
+                    "5) section_role values must be exactly one of: opening, body, closing.\n"
+                    "6) Enforce strict General-Body-General structure in final ordering.\n"
+                    "7) Body sections must be logically progressive and interlocked; no parallel repetition.\n"
+                    "8) Body progression must generally follow mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (theme-adaptive).\n"
+                    "9) Subheads must be concrete, non-overlapping, high-information, and non-synonymous.\n"
+                    "10) Subheads must represent what will be analyzed, not decorative labels.\n"
+                    "11) Each section must include scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
+                    "12) scope_requirements and must_cover_points must be specific and executable, not abstract slogans.\n"
+                    "13) writing_boundaries must explicitly prevent topic drift and unsupported claims.\n"
+                    "14) Opening section must establish objective, scope boundaries, and reading map.\n"
+                    "15) Closing section must synthesize tradeoffs, decision implications, and execution priorities.\n"
+                    "16) Across body sections, ensure multi-angle coverage where relevant: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"
+                    "17) Keep plan strictly grounded in FINAL_CONTEXT_PACKET; do not fabricate assumptions.\n"
+                    "18) If evidence is sparse, reduce section breadth or section count; do not invent pseudo-coverage.\n"
+                    "19) Keep language concise but high-information in every field.\n"
+                    "20) No duplicate section intent across sections.\n"
                     "Self-checklist:\n"
-                    "- Did I synthesize across tracks instead of listing them one by one?\n"
-                    "- Did I keep conclusions bounded by uncertainty?\n"
-                    "- Did I avoid forcing table output?"
+                    "- Does the section order strictly satisfy opening -> body... -> closing?\n"
+                    "- Are all body sections in a clear reasoning staircase rather than side-by-side repetition?\n"
+                    "- Is each section contract directly writable by a Writer without reinterpretation?\n"
+                    "- Are multi-angle viewpoints distributed across body sections?\n"
+                    "- Do subheads avoid overlap and generic wording?\n"
+                    "- Do writing_boundaries clearly block drift and overclaiming?\n"
+                    "- Is the closing truly integrative rather than a summary copy?\n"
+                    "- Is the output strictly valid JSON with no extra narrative?"
                 ),
             },
             {
@@ -226,6 +307,102 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    "ARCHITECT_TASK:\n"
+                    "- Plan only, no narrative writing.\n"
+                    "- Design a section structure that supports very rich, high-density writing.\n"
+                    "- Ensure middle sections form a clear reasoning staircase with multi-angle coverage.\n"
+                    "- Build section contracts that a Writer can execute directly without reinterpretation.\n"
+                    "- Do not output explanations; output schema JSON only.\n\n"
+                    f"FINAL_CONTEXT_PACKET_JSON:\n{context_packet}"
+                ),
+            },
+        ]
+
+    def _build_writer_messages(
+        self,
+        *,
+        target_language: str,
+        now_utc: datetime,
+        context_packet: str,
+        architect_output: RenderArchitectOutput,
+        section: RenderArchitectSectionPlan,
+    ) -> list[dict[str, str]]:
+        target_language_name = clean_whitespace(target_language) or "unspecified"
+        section_packet = json.dumps(section.model_dump(), ensure_ascii=False, indent=2)
+        all_section_plan = json.dumps(
+            architect_output.model_dump(), ensure_ascii=False, indent=2
+        )
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Role: Writer for one architected section.\n"
+                    "Identity: Expert analyst and writing coach for high-density technical reports.\n"
+                    "Mission: Write exactly one section markdown fragment with maximal information density.\n"
+                    "Instruction Priority:\n"
+                    "P1) Contract fidelity: strictly follow CURRENT_SECTION_PLAN_JSON scope_requirements, writing_boundaries, and must_cover_points.\n"
+                    "P2) Analytical depth and completeness: deliver rich, concrete, decision-useful content with high information density.\n"
+                    "P3) Representation quality: use tables/LaTeX/Mermaid when applicable with strong explanatory framing.\n"
+                    "P4) Markdown discipline: allow only ### and deeper headings, and output fragment-only markdown.\n"
+                    "Execution protocol (follow internally, do not print reasoning):\n"
+                    "Phase A - Decode section contract:\n"
+                    "1) Treat CURRENT_SECTION_PLAN_JSON as binding spec.\n"
+                    "2) Convert scope_requirements + must_cover_points into a compact internal outline.\n"
+                    "3) Treat writing_boundaries as hard exclusions.\n"
+                    "Phase B - Select and organize evidence:\n"
+                    "1) Pull only relevant evidence from FINAL_CONTEXT_PACKET.\n"
+                    "2) Prioritize evidence that supports cross-source synthesis, tradeoff reasoning, and decisions.\n"
+                    "3) Mark uncertainty boundaries where evidence is incomplete or conflicting.\n"
+                    "Phase C - Compose high-information prose:\n"
+                    "1) Every paragraph must add new information; avoid paraphrase loops and generic filler.\n"
+                    "2) Use explicit transitions: premise -> evidence -> inference -> implication.\n"
+                    "3) Keep strong logical flow from explanation to judgment to action.\n"
+                    "Phase D - Advanced representations:\n"
+                    "1) Prefer tables for comparisons and data-heavy analysis.\n"
+                    "2) For every table, include dense context before the table and equally dense analysis/summary after the table.\n"
+                    "3) Use LaTeX for formulas and quantitative relationships when involved.\n"
+                    "4) For process/workflow content, first describe in natural language, then provide Mermaid.\n"
+                    "Phase E - Final quality pass:\n"
+                    "1) Ensure strict alignment with section boundaries; do not drift to unrelated topics.\n"
+                    "2) Ensure concrete conclusions and bounded recommendations are evidence-grounded.\n"
+                    "3) Ensure clarity under high density: no vague claims, no rhetorical padding.\n"
+                    "Hard Constraints (must):\n"
+                    "1) Write exactly one section fragment for CURRENT_SECTION_PLAN_JSON; never write other sections.\n"
+                    "2) Follow scope_requirements, writing_boundaries, must_cover_points exactly.\n"
+                    "3) Keep strict topic focus; no unrelated expansions.\n"
+                    "4) Ensure content is rich, complete, and high-information; avoid filler and paraphrase loops.\n"
+                    "5) Use explicit reasoning chain: premise -> evidence -> inference -> implication.\n"
+                    "6) Prefer tables for comparison/data-heavy reasoning.\n"
+                    "7) For each table, include equally dense analysis before and after the table.\n"
+                    "8) Do not output decorative tables with low analytical value.\n"
+                    "9) Quantitative relationships/formulas must be written in LaTeX when involved.\n"
+                    "10) For process/workflow content, first provide natural-language explanation, then Mermaid.\n"
+                    "11) Markdown heading rule: only ### and deeper headings are allowed (####, #####, ######).\n"
+                    "12) Never output # or ## headings.\n"
+                    "13) Keep wording precise; avoid vague terms without analytical support.\n"
+                    "14) Include uncertainty boundaries when evidence is incomplete or conflicting.\n"
+                    "15) Do not overclaim beyond evidence available in FINAL_CONTEXT_PACKET.\n"
+                    "16) No citation tokens and no pseudo-citation placeholders.\n"
+                    "17) No meta commentary, no process narration, no wrappers.\n"
+                    "18) Output markdown fragment only.\n"
+                    "Self-checklist:\n"
+                    "- Did I cover every must_cover_point with concrete analysis?\n"
+                    "- Did I respect every writing_boundary and avoid drift?\n"
+                    "- Is each paragraph adding net-new information?\n"
+                    "- If I used a table, did I provide dense explanation before and after it?\n"
+                    "- If formulas were needed, did I use LaTeX correctly?\n"
+                    "- If workflow was discussed, did I provide language-first then Mermaid?\n"
+                    "- Did I avoid # and ## headings entirely?\n"
+                    "- Is the fragment decision-useful, evidence-grounded, and uncertainty-aware?"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
+                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    f"ARCHITECT_REPORT_PLAN_JSON:\n{all_section_plan}\n\n"
+                    f"CURRENT_SECTION_PLAN_JSON:\n{section_packet}\n\n"
                     f"FINAL_CONTEXT_PACKET_JSON:\n{context_packet}"
                 ),
             },
@@ -250,14 +427,26 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": (
                     "Role: Structured Research Synthesizer.\n"
                     "Mission: Build one JSON object for THEME from FINAL_CONTEXT_PACKET.\n"
+                    "Identity: Senior structured-output instructor.\n"
+                    "Mission: Build one JSON object for THEME from FINAL_CONTEXT_PACKET in a single pass.\n"
                     "Instruction Priority:\n"
                     "P1) Schema validity.\n"
                     "P2) Theme-aligned synthesis quality.\n"
                     "P3) Language consistency.\n"
-                    "Step-by-step method:\n"
-                    "1) Read FINAL_CONTEXT_PACKET and identify the core theme answer.\n"
-                    "2) Merge cross-track evidence into schema-required fields.\n"
-                    "3) Preserve uncertainty and unresolved conflicts explicitly.\n"
+                    "Execution protocol (follow internally, do not print reasoning):\n"
+                    "Phase A - Schema-first planning:\n"
+                    "1) Enumerate required fields and value types from provided schema.\n"
+                    "2) Map each required field to evidence in FINAL_CONTEXT_PACKET before writing.\n"
+                    "3) If evidence is absent, return bounded/empty-safe values that remain schema-valid.\n"
+                    "Phase B - Evidence synthesis:\n"
+                    "1) Identify direct answers, consensus, conflicts, and uncertainty boundaries.\n"
+                    "2) Merge cross-track evidence into concise, non-redundant field values.\n"
+                    "3) Keep claims proportional to evidence strength.\n"
+                    "Phase C - Serialization discipline:\n"
+                    "1) Output must strictly validate the schema.\n"
+                    "2) Keep free-text in TARGET_OUTPUT_LANGUAGE.\n"
+                    "3) Do not include markdown, code fences, citation tokens, or commentary.\n"
+                    "4) Resolve relative time expressions against CURRENT_UTC_DATE.\n"
                     "Hard Constraints:\n"
                     "1) Output must strictly validate provided schema.\n"
                     "2) Use FINAL_CONTEXT_PACKET as the main evidence basis.\n"
@@ -281,41 +470,26 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             },
         ]
 
-    def _build_final_markdown_fallback(self, ctx: ResearchStepContext) -> str:
-        findings = self._collect_final_findings(ctx.parallel.track_results)
-        if not findings:
-            findings = ["No stable cross-track finding was extracted."]
-        sections = [
-            f"## Final Report: {ctx.request.themes}",
-            "This report consolidates all sub-question tracks into one theme-focused synthesis.",
-            "### Consolidated findings",
-            "\n".join(f"- {item}" for item in findings[:8]),
-            "### Track overview",
-            "\n".join(
-                [
-                    "- Track-level comparison is summarized in prose to avoid forced table formatting.",
-                    *[
-                        (
-                            f"- {item.question}: "
-                            f"rounds={int(item.rounds)}, "
-                            f"confidence={float(item.confidence):.2f}, "
-                            f"coverage={float(item.coverage_ratio):.2f}, "
-                            f"stop_reason={item.stop_reason or 'n/a'}"
-                        )
-                        for item in ctx.parallel.track_results
-                    ],
-                ]
-            ),
-        ]
-        sections.extend(
-            [
-                "### Remaining risks and next actions",
-                "- Unresolved conflicts can still affect final certainty; target disputed claims with dedicated verification queries.",
-                "### Final synthesis",
-                "Current evidence supports a coherent but bounded conclusion, and confidence should be interpreted with explicit uncertainty boundaries.",
-            ]
-        )
-        return "\n\n".join(sections)
+    def _assemble_markdown_from_sections(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        architect_output: RenderArchitectOutput,
+        writer_outputs: list[str],
+    ) -> str:
+        parts: list[str] = [f"# {ctx.request.themes}"]
+        objective = str(architect_output.report_objective or "").strip()
+        if objective:
+            parts.append(objective)
+        for section_plan, section_content in zip(
+            architect_output.sections,
+            writer_outputs,
+            strict=False,
+        ):
+            subhead = clean_whitespace(section_plan.subhead or section_plan.section_id)
+            parts.append(f"## {subhead or 'Section'}")
+            parts.append(str(section_content or "").strip())
+        return "\n\n".join(parts).strip()
 
     def _build_final_context_packet(
         self,
@@ -331,7 +505,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "utc_timestamp": now_utc.isoformat(),
                 "utc_date": now_utc.date().isoformat(),
             },
-            "theme_plan": dict(ctx.plan.theme_plan),
+            "theme_plan": ctx.plan.theme_plan.model_dump(),
             "question_cards": [
                 item.model_dump() for item in ctx.parallel.question_cards
             ],
@@ -374,23 +548,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             }
             for item in track_results
         ]
-
-    def _collect_final_findings(
-        self, track_results: list[ResearchTrackResult]
-    ) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in track_results:
-            for finding in item.key_findings:
-                text = clean_whitespace(finding)
-                if not text:
-                    continue
-                key = text.casefold()
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append(text)
-        return out
 
     def _try_parse_json_value(self, text: str) -> object:
         raw = str(text or "")

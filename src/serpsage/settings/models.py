@@ -179,10 +179,14 @@ class AnswerSettings(Model):
     generate: AnswerGenerateSettings = Field(default_factory=AnswerGenerateSettings)
 
 
-class ResearchStageSettings(Model):
+class ResearchModelsSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    use_model: str = ""
+    plan: str = ""
+    abstract_analyze: str = ""
+    content_analyze: str = ""
+    synthesize: str = ""
+    markdown: str = ""
 
 
 class ResearchModeSettings(Model):
@@ -229,8 +233,6 @@ class ResearchParallelSettings(Model):
     bonus_ratio: float = 0.30
     baseline_query_width: int = 1
     bonus_query_width: int = 2
-    focus_min_term_overlap: int = 1
-    focus_min_overlap_ratio: float = 0.20
 
     @model_validator(mode="after")
     def _validate_parallel_limits(self) -> ResearchParallelSettings:
@@ -247,12 +249,6 @@ class ResearchParallelSettings(Model):
         if int(self.bonus_query_width) < int(self.baseline_query_width):
             raise ValueError(
                 "research.parallel.bonus_query_width must be >= baseline_query_width"
-            )
-        if int(self.focus_min_term_overlap) <= 0:
-            raise ValueError("research.parallel.focus_min_term_overlap must be > 0")
-        if not 0.0 <= float(self.focus_min_overlap_ratio) <= 1.0:
-            raise ValueError(
-                "research.parallel.focus_min_overlap_ratio must be between 0 and 1"
             )
         return self
 
@@ -305,15 +301,7 @@ class ResearchSettings(Model):
     tool_max_attempts: int = 3
     llm_self_heal_retries: int = 2
     no_progress_rounds_to_stop: int = 2
-    plan: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
-    abstract_analyze: ResearchStageSettings = Field(
-        default_factory=ResearchStageSettings
-    )
-    content_analyze: ResearchStageSettings = Field(
-        default_factory=ResearchStageSettings
-    )
-    synthesize: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
-    markdown: ResearchStageSettings = Field(default_factory=ResearchStageSettings)
+    models: ResearchModelsSettings = Field(default_factory=ResearchModelsSettings)
     parallel: ResearchParallelSettings = Field(default_factory=ResearchParallelSettings)
     research_fast: ResearchModeSettings = Field(default_factory=_default_research_fast_mode)
     research: ResearchModeSettings = Field(default_factory=_default_research_standard_mode)
@@ -605,29 +593,29 @@ class AppSettings(Model):
                 "answer.generate.use_model must match one of llm.models[].name"
             )
         _validate_optional_model_name(
-            model_name=self.research.plan.use_model,
+            model_name=self.research.models.plan,
             names=names,
-            path="research.plan.use_model",
+            path="research.models.plan",
         )
         _validate_optional_model_name(
-            model_name=self.research.abstract_analyze.use_model,
+            model_name=self.research.models.abstract_analyze,
             names=names,
-            path="research.abstract_analyze.use_model",
+            path="research.models.abstract_analyze",
         )
         _validate_optional_model_name(
-            model_name=self.research.content_analyze.use_model,
+            model_name=self.research.models.content_analyze,
             names=names,
-            path="research.content_analyze.use_model",
+            path="research.models.content_analyze",
         )
         _validate_optional_model_name(
-            model_name=self.research.synthesize.use_model,
+            model_name=self.research.models.synthesize,
             names=names,
-            path="research.synthesize.use_model",
+            path="research.models.synthesize",
         )
         _validate_optional_model_name(
-            model_name=self.research.markdown.use_model,
+            model_name=self.research.models.markdown,
             names=names,
-            path="research.markdown.use_model",
+            path="research.models.markdown",
         )
         return self
 
@@ -665,10 +653,10 @@ __all__ = [
     "OverviewModelBackendKey",
     "OverviewModelSettings",
     "ProviderSettings",
+    "ResearchModelsSettings",
     "ResearchModeSettings",
     "ResearchParallelSettings",
     "ResearchSettings",
-    "ResearchStageSettings",
     "RunnerSettings",
     "SearchSettings",
     "RankBlendSettings",

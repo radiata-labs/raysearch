@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
+from serpsage.models.research import (
+    ContentConflictPayload,
+    ContentOutputPayload,
+)
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
     chat_pydantic,
@@ -22,30 +23,6 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
-
-
-class _ContentConflictPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    topic: str
-    status: str
-    source_ids: list[int] = Field(default_factory=list, max_length=8)
-    reason: str
-
-
-class _ContentOutputPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    resolved_findings: list[str] = Field(default_factory=list, max_length=20)
-    conflict_resolutions: list[_ContentConflictPayload] = Field(
-        default_factory=list,
-        max_length=16,
-    )
-    remaining_gaps: list[str] = Field(default_factory=list, max_length=12)
-    confidence_adjustment: float = 0.0
-    next_query_strategy: str = "coverage"
-    next_queries: list[str] = Field(default_factory=list, max_length=8)
-    stop: bool = False
 
 
 class ResearchContentStep(StepBase[ResearchStepContext]):
@@ -66,18 +43,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
 
         source_ids = list(ctx.work.need_content_source_ids or [])
         if not source_ids:
-            ctx.work.content_review = self._empty_review().model_dump()
-            print(
-                "[research.content]",
-                json.dumps(
-                    {
-                        "round_index": int(ctx.current_round.round_index),
-                        "selected_source_ids": [],
-                        "content_review": ctx.work.content_review,
-                    },
-                    ensure_ascii=False,
-                ),
-            )
+            ctx.work.content_review = self._empty_review()
             span.set_attr("round_index", int(ctx.current_round.round_index))
             span.set_attr("content_source_ids", 0)
             return ctx
@@ -102,7 +68,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     packet=packet,
                     now_utc=now_utc,
                 ),
-                schema_model=_ContentOutputPayload,
+                schema_model=ContentOutputPayload,
                 retries=int(self.settings.research.llm_self_heal_retries),
                 schema_json=self._build_content_schema(
                     max_queries=int(ctx.runtime.budget.max_queries_per_round)
@@ -118,7 +84,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             )
             payload = self._empty_review()
 
-        ctx.work.content_review = payload.model_dump()
+        ctx.work.content_review = payload
         findings = normalize_strings(payload.resolved_findings, limit=8)
         if findings:
             ctx.current_round.content_summary = " | ".join(findings[:3])
@@ -150,24 +116,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
 
         span.set_attr("round_index", int(ctx.current_round.round_index))
         span.set_attr("content_source_ids", int(len(source_ids)))
-        span.set_attr("packet_chars", int(len(packet)))
         span.set_attr("confidence", float(ctx.current_round.confidence))
-        span.set_attr("unresolved_conflicts", int(ctx.current_round.unresolved_conflicts))
-        print(
-            "[research.content]",
-            json.dumps(
-                {
-                    "round_index": int(ctx.current_round.round_index),
-                    "selected_source_ids": source_ids,
-                    "packet_chars": int(len(packet)),
-                    "confidence": float(ctx.current_round.confidence),
-                    "unresolved_conflicts": int(ctx.current_round.unresolved_conflicts),
-                    "critical_gaps": int(ctx.current_round.critical_gaps),
-                    "next_queries": list(ctx.work.next_queries),
-                    "content_review": payload.model_dump(),
-                },
-                ensure_ascii=False,
-            ),
+        span.set_attr(
+            "unresolved_conflicts", int(ctx.current_round.unresolved_conflicts)
         )
         return ctx
 
@@ -195,14 +146,15 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "Hard Constraints:\n"
                     "1) Use only SOURCE_CONTENT_PACKET.\n"
                     "2) Keep every judgment aligned to CORE_QUESTION; do not branch into a new standalone topic.\n"
-                    "3) Provide explicit conflict decisions with reasons and evidence boundaries.\n"
+                    "3) Mark conflict status conservatively as resolved, unresolved, or insufficient.\n"
                     "4) Prefer direct content evidence over abstract-level assumptions.\n"
                     "5) If uncertainty remains, list concrete remaining gaps.\n"
-                    "6) Keep next queries targeted and non-redundant.\n"
+                    "6) next_queries must remain strictly focused on CORE_QUESTION and non-redundant.\n"
                     "7) For recency-sensitive claims, explicitly account for publication/update-time relevance.\n"
                     "8) Free-text fields must be in the required output language.\n"
                     "9) resolved_findings should be information-dense: include implication, condition, and edge-case when available.\n"
-                    "10) Return JSON only and match schema exactly.\n"
+                    "10) If no valid focused next query exists, return next_queries as an empty array.\n"
+                    "11) Return JSON only and match schema exactly.\n"
                     "Allowed Evidence:\n"
                     "- Theme, theme plan, abstract review, selected content packet.\n"
                     "Failure Policy:\n"
@@ -223,12 +175,13 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     f"- current_utc_date={now_utc.date().isoformat()}\n\n"
                     "TEMPORAL_POLICY:\n"
                     "- Resolve relative time expressions against current_utc_date.\n"
-                    "- If latest/current intent exists, prefer the most recent trustworthy evidence and flag stale content.\n\n"
+                    "- If latest/current intent exists, prefer the most recent trustworthy evidence and flag stale content.\n"
+                    "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep all free-text fields in the required output language.\n\n"
-                    f"THEME_PLAN:\n{ctx.plan.theme_plan}\n\n"
-                    f"ABSTRACT_REVIEW:\n{ctx.work.abstract_review}\n\n"
+                    f"THEME_PLAN:\n{ctx.plan.theme_plan.model_dump()}\n\n"
+                    f"ABSTRACT_REVIEW:\n{ctx.work.abstract_review.model_dump()}\n\n"
                     f"SOURCE_CONTENT_PACKET:\n{packet}\n\n"
                     "Arbitration rubric:\n"
                     "- resolved: one side is sufficiently better supported by evidence.\n"
@@ -267,16 +220,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
-                        "required": ["topic", "status", "source_ids", "reason"],
+                        "required": ["status"],
                         "properties": {
-                            "topic": {"type": "string"},
                             "status": {"type": "string"},
-                            "source_ids": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "integer", "minimum": 1},
-                            },
-                            "reason": {"type": "string"},
                         },
                     },
                 },
@@ -296,8 +242,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             },
         }
 
-    def _empty_review(self) -> _ContentOutputPayload:
-        return _ContentOutputPayload()
+    def _empty_review(self) -> ContentOutputPayload:
+        return ContentOutputPayload()
 
     def _normalize_adjustment(self, raw: object) -> float:
         try:
@@ -306,7 +252,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             return 0.0
         return min(1.0, max(-1.0, value))
 
-    def _count_unresolved(self, raw: list[_ContentConflictPayload]) -> int:
+    def _count_unresolved(self, raw: list[ContentConflictPayload]) -> int:
         total = 0
         for item in raw:
             status = clean_whitespace(item.status).casefold()

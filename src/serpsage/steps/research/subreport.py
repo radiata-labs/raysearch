@@ -41,8 +41,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             now_utc=now_utc,
         )
         span.set_attr("mode", "subreport")
-        span.set_attr("target_language", target_language)
-        span.set_attr("content_chars", int(len(ctx.output.content)))
         span.set_attr("has_structured", False)
         return ctx
 
@@ -79,17 +77,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             raw_text = self._build_subreport_fallback(ctx)
         ctx.output.structured = None
         ctx.output.content = self._normalize_markdown(raw_text)
-        print(
-            "[research.render.subreport]",
-            json.dumps(
-                {
-                    "core_question": ctx.plan.core_question,
-                    "target_language": target_language,
-                    "content": ctx.output.content,
-                },
-                ensure_ascii=False,
-            ),
-        )
 
     def _build_subreport_messages(
         self,
@@ -221,7 +208,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 "utc_timestamp": now_utc.isoformat(),
                 "utc_date": now_utc.date().isoformat(),
             },
-            "theme_plan": dict(ctx.plan.theme_plan),
+            "theme_plan": ctx.plan.theme_plan.model_dump(),
             "round_trajectory": self._build_round_trajectory_packet(ctx),
             "source_evidence": self._build_source_evidence_packet(selected_sources),
             "notes": self._collect_recent_notes(ctx, limit=12),

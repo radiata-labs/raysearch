@@ -28,6 +28,11 @@ from serpsage.models.extract import (
     ExtractedLink,
 )
 from serpsage.models.fetch import FetchResult
+from serpsage.models.research import (
+    AbstractOutputPayload,
+    ContentOutputPayload,
+    ResearchThemePlan,
+)
 from serpsage.settings.models import AppSettings
 
 
@@ -296,7 +301,7 @@ class ResearchRuntimeState(MutableModel):
 
 
 class ResearchPlanState(MutableModel):
-    theme_plan: dict[str, object] = Field(default_factory=dict)
+    theme_plan: ResearchThemePlan = Field(default_factory=ResearchThemePlan)
     next_queries: list[str] = Field(default_factory=list)
     input_language: str = ""
     output_language: str = ""
@@ -312,8 +317,10 @@ class ResearchCorpusState(MutableModel):
 
 class ResearchRoundWorkState(MutableModel):
     search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
-    abstract_review: dict[str, object] = Field(default_factory=dict)
-    content_review: dict[str, object] = Field(default_factory=dict)
+    abstract_review: AbstractOutputPayload = Field(
+        default_factory=AbstractOutputPayload
+    )
+    content_review: ContentOutputPayload = Field(default_factory=ContentOutputPayload)
     need_content_source_ids: list[int] = Field(default_factory=list)
     next_queries: list[str] = Field(default_factory=list)
 

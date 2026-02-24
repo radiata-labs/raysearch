@@ -51,18 +51,12 @@ research:
     bonus_ratio: 0.3
     baseline_query_width: 1
     bonus_query_width: 2
-    focus_min_term_overlap: 1
-    focus_min_overlap_ratio: 0.2
-  plan:
-    use_model: kimi-k2.5
-  abstract_analyze:
-    use_model: kimi-k2.5
-  content_analyze:
-    use_model: kimi-k2.5
-  synthesize:
-    use_model: kimi-k2.5
-  markdown:
-    use_model: kimi-k2.5
+  models:
+    plan: kimi-k2.5
+    abstract_analyze: kimi-k2.5
+    content_analyze: kimi-k2.5
+    synthesize: kimi-k2.5
+    markdown: kimi-k2.5
   research_fast:
     max_rounds: 3
     max_search_calls: 6

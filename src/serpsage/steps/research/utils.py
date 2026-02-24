@@ -18,19 +18,15 @@ TModel = TypeVar("TModel", bound=BaseModel)
 def resolve_research_model(
     *, ctx: ResearchStepContext, stage: str, fallback: str
 ) -> str:
-    settings = ctx.settings
-    if stage == "plan":
-        token = clean_whitespace(settings.research.plan.use_model or "")
-    elif stage == "abstract":
-        token = clean_whitespace(settings.research.abstract_analyze.use_model or "")
-    elif stage == "content":
-        token = clean_whitespace(settings.research.content_analyze.use_model or "")
-    elif stage == "synthesize":
-        token = clean_whitespace(settings.research.synthesize.use_model or "")
-    elif stage == "markdown":
-        token = clean_whitespace(settings.research.markdown.use_model or "")
-    else:
-        token = ""
+    model_settings = ctx.settings.research.models
+    stage_to_model = {
+        "plan": model_settings.plan,
+        "abstract": model_settings.abstract_analyze,
+        "content": model_settings.content_analyze,
+        "synthesize": model_settings.synthesize,
+        "markdown": model_settings.markdown,
+    }
+    token = clean_whitespace(stage_to_model.get(stage, ""))
     return token or fallback
 
 

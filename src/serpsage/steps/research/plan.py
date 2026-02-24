@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import json
-import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import (
     ResearchRoundState,
     ResearchSearchJob,
     ResearchStepContext,
+)
+from serpsage.models.research import (
+    AbstractOutputPayload,
+    ContentOutputPayload,
+    PlanOutputPayload,
+    PlanSearchJobPayload,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
@@ -27,26 +29,6 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
-
-
-class _PlanSearchJobPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    query: str
-    intent: str = "coverage"
-    mode: str = "auto"
-    include_domains: list[str] = Field(default_factory=list, max_length=8)
-    exclude_domains: list[str] = Field(default_factory=list, max_length=8)
-    include_text: list[str] = Field(default_factory=list, max_length=8)
-    exclude_text: list[str] = Field(default_factory=list, max_length=8)
-    expected_gain: str = ""
-
-
-class _PlanOutputPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    query_strategy: str = "mixed"
-    search_jobs: list[_PlanSearchJobPayload] = Field(default_factory=list, max_length=8)
 
 
 class ResearchPlanStep(StepBase[ResearchStepContext]):
@@ -84,8 +66,8 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx.runtime.round_index = round_index
         ctx.current_round = ResearchRoundState(round_index=round_index)
         ctx.work.search_jobs = []
-        ctx.work.abstract_review = {}
-        ctx.work.content_review = {}
+        ctx.work.abstract_review = AbstractOutputPayload()
+        ctx.work.content_review = ContentOutputPayload()
         ctx.work.need_content_source_ids = []
         ctx.work.next_queries = []
 
@@ -103,7 +85,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
-        payload = _PlanOutputPayload(query_strategy="mixed", search_jobs=[])
+        payload = PlanOutputPayload(query_strategy="mixed", search_jobs=[])
         try:
             payload = await chat_pydantic(
                 llm=self._llm,
@@ -114,7 +96,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     core_question=core_question,
                     now_utc=now_utc,
                 ),
-                schema_model=_PlanOutputPayload,
+                schema_model=PlanOutputPayload,
                 retries=int(self.settings.research.llm_self_heal_retries),
                 schema_json=self._build_plan_schema(),
             )
@@ -140,11 +122,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             job_limit=job_limit,
             fallback_queries=candidate_queries,
         )
-        jobs = self._apply_core_question_guard(
-            jobs=jobs,
-            core_question=core_question,
-            job_limit=job_limit,
-        )
 
         if not jobs:
             ctx.runtime.stop = True
@@ -152,50 +129,19 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ctx.current_round.stop = True
             ctx.current_round.stop_reason = "no_queries"
             ctx.rounds.append(ctx.current_round)
-            print(
-                "[research.plan]",
-                json.dumps(
-                    {
-                        "round_index": int(round_index),
-                        "core_question": core_question,
-                        "candidate_queries": candidate_queries,
-                        "query_strategy": str(ctx.current_round.query_strategy),
-                        "raw_model_payload": payload.model_dump(),
-                        "search_jobs": [],
-                        "stop": True,
-                        "stop_reason": "no_queries",
-                    },
-                    ensure_ascii=False,
-                ),
-            )
             span.set_attr("stopped", True)
             span.set_attr("reason", "no_queries")
             return ctx
 
         ctx.work.search_jobs = jobs
         ctx.current_round.queries = [job.query for job in jobs]
-        print(
-            "[research.plan]",
-            json.dumps(
-                {
-                    "round_index": int(round_index),
-                    "core_question": core_question,
-                    "candidate_queries": candidate_queries,
-                    "query_strategy": str(ctx.current_round.query_strategy),
-                    "search_jobs": [job.model_dump() for job in jobs],
-                    "raw_model_payload": payload.model_dump(),
-                },
-                ensure_ascii=False,
-            ),
-        )
         span.set_attr("round_index", int(round_index))
-        span.set_attr("strategy", str(ctx.current_round.query_strategy))
         span.set_attr("search_jobs", int(len(jobs)))
         return ctx
 
     def _normalize_jobs(
         self,
-        raw: list[_PlanSearchJobPayload],
+        raw: list[PlanSearchJobPayload],
         *,
         job_limit: int,
         fallback_queries: list[str],
@@ -277,11 +223,13 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "6) Temporal grounding: interpret relative time words against current UTC date.\n"
                     "7) If recency intent exists, include explicit temporal constraints in query text.\n"
                     "8) For high-impact claims, prioritize authoritative evidence routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
-                    "9) Return JSON only; no markdown or explanations.\n"
+                    "9) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
+                    "10) Return JSON only; no markdown or explanations.\n"
                     "Allowed Evidence:\n"
                     "- User theme, theme plan, previous round summaries, candidate queries.\n"
                     "Failure Policy:\n"
                     "- If uncertain, produce fewer but higher-value jobs.\n"
+                    "- If all candidate queries are off-topic relative to CORE_QUESTION, return search_jobs as an empty array.\n"
                     "Quality Checklist:\n"
                     "- Distinct intent per job, explicit expected gain, no near duplicates, conflict-aware targeting."
                 ),
@@ -302,7 +250,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep textual fields in the required output language.\n\n"
-                    f"THEME_PLAN:\n{ctx.plan.theme_plan}\n\n"
+                    f"THEME_PLAN:\n{ctx.plan.theme_plan.model_dump()}\n\n"
                     f"PREVIOUS_ROUNDS:\n{[r.model_dump() for r in ctx.rounds[-3:]]}\n\n"
                     f"CANDIDATE_QUERIES:\n{candidate_queries}\n\n"
                     "BUDGET_REMAINING:\n"
@@ -362,95 +310,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 },
             },
         }
-
-    def _apply_core_question_guard(
-        self,
-        *,
-        jobs: list[ResearchSearchJob],
-        core_question: str,
-        job_limit: int,
-    ) -> list[ResearchSearchJob]:
-        if not jobs:
-            return []
-        kept: list[ResearchSearchJob] = []
-        rejected: list[str] = []
-        for item in jobs:
-            if self._is_query_focused(item.query, core_question):
-                kept.append(item)
-                if len(kept) >= max(1, int(job_limit)):
-                    break
-                continue
-            rejected.append(item.query)
-
-        if kept:
-            return kept
-        if job_limit <= 0:
-            return []
-        rewritten = self._rewrite_query_for_core_question(
-            core_question=core_question,
-            rejected_queries=rejected,
-        )
-        return [
-            ResearchSearchJob(
-                query=rewritten,
-                intent="coverage",
-                mode="auto",
-                expected_gain="Recover focus on the core question after off-topic drift.",
-            )
-        ]
-
-    def _rewrite_query_for_core_question(
-        self,
-        *,
-        core_question: str,
-        rejected_queries: list[str],
-    ) -> str:
-        core = clean_whitespace(core_question)
-        if not core:
-            return ""
-        core_terms = self._extract_terms(core)
-        aux_hint = ""
-        for query in rejected_queries:
-            for term in self._extract_terms(query):
-                if term in core_terms or len(term) <= 1:
-                    continue
-                aux_hint = term
-                break
-            if aux_hint:
-                break
-        if not aux_hint:
-            return core
-        return clean_whitespace(f"{core} {aux_hint}")
-
-    def _is_query_focused(self, query: str, core_question: str) -> bool:
-        query_text = clean_whitespace(query).casefold()
-        core_text = clean_whitespace(core_question).casefold()
-        if not query_text or not core_text:
-            return False
-        if core_text in query_text or query_text in core_text:
-            return True
-        query_terms = self._extract_terms(query_text)
-        core_terms = self._extract_terms(core_text)
-        if not query_terms or not core_terms:
-            return False
-        overlap = len(query_terms & core_terms)
-        core_ratio = overlap / max(1, len(core_terms))
-        query_ratio = overlap / max(1, len(query_terms))
-        cfg = self.settings.research.parallel
-        return overlap >= int(cfg.focus_min_term_overlap) and (
-            core_ratio >= float(cfg.focus_min_overlap_ratio)
-            or query_ratio >= float(cfg.focus_min_overlap_ratio)
-        )
-
-    def _extract_terms(self, text: str) -> set[str]:
-        cleaned = clean_whitespace(text).casefold()
-        terms = {item for item in re.findall(r"[a-z0-9]+", cleaned) if item}
-        for token in re.findall(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]+", cleaned):
-            if not token:
-                continue
-            terms.add(token)
-            terms.update(ch for ch in token if ch.strip())
-        return terms
 
 
 __all__ = ["ResearchPlanStep"]
