@@ -86,7 +86,11 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 fetchs=FetchRequestBase(
                     crawl_mode="fallback",
                     crawl_timeout=30.0,
-                    content=FetchContentRequest(detail="full"),
+                    content=FetchContentRequest(
+                        detail="full",
+                        include_markdown_links=False,
+                        include_html_tags=False,
+                    ),
                     abstracts=FetchAbstractsRequest(
                         query=ctx.request.themes, max_chars=2200
                     ),
@@ -799,4 +803,3 @@ __all__ = [
     "sort_source_ids_by_score",
     "synchronize_corpus_indexes",
 ]
-

@@ -93,6 +93,7 @@ class FetchContentRequest(BaseModel):
 
     max_chars: int | None = None
     detail: FetchContentDetail = "concise"
+    include_markdown_links: bool = False
     include_html_tags: bool = False
     include_tags: list[FetchContentTag] = Field(default_factory=list)
     exclude_tags: list[FetchContentTag] = Field(default_factory=list)

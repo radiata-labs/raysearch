@@ -43,7 +43,11 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             )
             return ctx
 
-        markdown = ctx.artifacts.extracted.markdown
+        markdown = (
+            ctx.artifacts.extracted.markdown
+            if ctx.resolved.content_request.include_markdown_links
+            else ctx.artifacts.extracted.md_for_abstract
+        )
         max_chars = ctx.resolved.content_request.max_chars
         if max_chars is not None and max_chars > 0:
             markdown = finalize_markdown(markdown=markdown, max_chars=max_chars)
