@@ -10,6 +10,7 @@ import anyio
 from anyio.abc import ObjectReceiveStream, ObjectSendStream, TaskGroup
 
 from serpsage.core.workunit import WorkUnit
+from serpsage.error_details import exception_summary, exception_to_details
 from serpsage.models.errors import AppError
 from serpsage.telemetry.base import SpanBase
 
@@ -33,21 +34,23 @@ class StepBase(WorkUnit, ABC, Generic[TContext]):
             try:
                 return await self.run_inner(ctx, span=sp)
             except Exception as exc:  # noqa: BLE001
+                summary = exception_summary(exc)
                 sp.set_attr("error", True)
                 sp.add_event(
                     "step_failed",
                     error_type=type(exc).__name__,
-                    message=str(exc),
+                    message=summary,
                 )
                 errors = getattr(ctx, "errors", None)
                 if isinstance(errors, list):
                     errors.append(
                         AppError(
                             code="step_failed",
-                            message=str(exc),
+                            message=summary,
                             details={
                                 "step": type(self).__name__,
                                 "type": type(exc).__name__,
+                                "exception": exception_to_details(exc),
                             },
                         )
                     )

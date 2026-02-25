@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.error_details import exception_summary, exception_to_details
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.steps.base import StepBase
@@ -71,11 +72,16 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             result = await self._llm.chat(model=model, messages=messages, schema=None)
             raw_text = str(result.text or "")
         except Exception as exc:  # noqa: BLE001
+            summary = exception_summary(exc)
             ctx.errors.append(
                 AppError(
                     code="research_render_subreport_failed",
-                    message=str(exc),
-                    details={},
+                    message=summary,
+                    details={
+                        "stage": "subreport",
+                        "model": str(model),
+                        "exception": exception_to_details(exc),
+                    },
                 )
             )
             warnings.warn(
@@ -83,7 +89,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                     "[research][warning] "
                     "research_render_subreport_failed "
                     f"request_id={ctx.request_id} "
-                    f"error={str(exc)}"
+                    f"error={summary}"
                 ),
                 stacklevel=1,
             )

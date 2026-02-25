@@ -8,6 +8,7 @@ from typing_extensions import override
 
 import anyio
 
+from serpsage.error_details import exception_summary, exception_to_details
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchStepContext, ResearchTrackResult
 from serpsage.models.research import RenderArchitectOutput, RenderArchitectSectionPlan
@@ -19,6 +20,26 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
+
+
+class _WriterSectionError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        section_id: str,
+        subhead: str,
+        index: int,
+        cause: Exception,
+    ) -> None:
+        self.section_id = clean_whitespace(section_id)
+        self.subhead = clean_whitespace(subhead)
+        self.index = int(index)
+        self.cause_type = type(cause).__name__
+        self.cause_message = clean_whitespace(str(cause))
+        label = self.section_id or self.subhead or f"section-{self.index}"
+        super().__init__(
+            f"writer section failed: {label}; cause={self.cause_type}: {self.cause_message}"
+        )
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
@@ -141,11 +162,17 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
         except Exception as exc:  # noqa: BLE001
+            detail = exception_to_details(exc)
+            summary = exception_summary(exc)
             ctx.errors.append(
                 AppError(
                     code="research_render_architect_failed",
-                    message=str(exc),
-                    details={},
+                    message=summary,
+                    details={
+                        "stage": "architect",
+                        "model": str(model),
+                        "exception": detail,
+                    },
                 )
             )
             warnings.warn(
@@ -153,7 +180,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "[research][warning] "
                     "research_render_architect_failed "
                     f"request_id={ctx.request_id} "
-                    f"error={str(exc)}"
+                    f"error={summary}"
                 ),
                 stacklevel=1,
             )
@@ -189,11 +216,20 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         index,
                     )
         except Exception as exc:  # noqa: BLE001
+            summary = exception_summary(exc)
+            detail = exception_to_details(exc)
+            failed_sections = self._collect_writer_section_failures(exc)
             ctx.errors.append(
                 AppError(
                     code="research_render_writer_failed",
-                    message=str(exc),
-                    details={},
+                    message=summary,
+                    details={
+                        "stage": "writer",
+                        "model": str(model),
+                        "sections_total": int(len(architect_output.sections)),
+                        "failed_sections": failed_sections,
+                        "exception": detail,
+                    },
                 )
             )
             warnings.warn(
@@ -201,7 +237,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "[research][warning] "
                     "research_render_writer_failed "
                     f"request_id={ctx.request_id} "
-                    f"error={str(exc)}"
+                    f"error={summary} "
+                    f"failed_sections={failed_sections}"
                 ),
                 stacklevel=1,
             )
@@ -229,8 +266,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         try:
             result = await self._llm.chat(model=model, messages=messages, schema=None)
         except Exception as exc:  # noqa: BLE001
-            section_label = section.section_id or section.subhead or f"section-{index}"
-            raise RuntimeError(f"writer section failed: {section_label}") from exc
+            raise _WriterSectionError(
+                section_id=str(section.section_id or ""),
+                subhead=str(section.subhead or ""),
+                index=int(index),
+                cause=exc if isinstance(exc, Exception) else Exception(str(exc)),
+            ) from exc
         outputs[index] = str(result.text or "")
 
     async def _render_structured_once(
@@ -261,11 +302,18 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             if not isinstance(payload, dict):
                 raise TypeError("structured output must be a JSON object")
         except Exception as exc:  # noqa: BLE001
+            summary = exception_summary(exc)
+            detail = exception_to_details(exc)
             ctx.errors.append(
                 AppError(
                     code="research_render_structured_failed",
-                    message=str(exc),
-                    details={},
+                    message=summary,
+                    details={
+                        "stage": "structured",
+                        "model": str(model),
+                        "schema_keys": sorted(str(key) for key in schema),
+                        "exception": detail,
+                    },
                 )
             )
             warnings.warn(
@@ -273,7 +321,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "[research][warning] "
                     "research_render_structured_failed "
                     f"request_id={ctx.request_id} "
-                    f"error={str(exc)}"
+                    f"error={summary}"
                 ),
                 stacklevel=1,
             )
@@ -376,6 +424,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         section: RenderArchitectSectionPlan,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
+        section_subhead = clean_whitespace(section.subhead)
+        section_prefix_h2 = f"## {section_subhead or 'Section'}"
         section_packet = json.dumps(section.model_dump(), ensure_ascii=False, indent=2)
         all_section_plan = json.dumps(
             architect_output.model_dump(), ensure_ascii=False, indent=2
@@ -391,7 +441,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "P1) Contract fidelity: strictly follow CURRENT_SECTION_PLAN_JSON scope_requirements, writing_boundaries, and must_cover_points.\n"
                     "P2) Analytical depth and completeness: deliver rich, concrete, decision-useful content with high information density.\n"
                     "P3) Representation quality: use tables/LaTeX/Mermaid when applicable with strong explanatory framing.\n"
-                    "P4) Markdown discipline: allow only ### and deeper headings, and output fragment-only markdown.\n"
+                    "P4) Markdown discipline: use ### and deeper headings only for internal subsections; section-level title is rendered externally and must not be repeated.\n"
                     "Execution protocol (follow internally, do not print reasoning):\n"
                     "Phase A - Decode section contract:\n"
                     "1) Treat CURRENT_SECTION_PLAN_JSON as binding spec.\n"
@@ -427,12 +477,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "10) For process/workflow content, first provide natural-language explanation, then Mermaid.\n"
                     "11) Markdown heading rule: only ### and deeper headings are allowed (####, #####, ######).\n"
                     "12) Never output # or ## headings.\n"
-                    "13) Keep wording precise; avoid vague terms without analytical support.\n"
-                    "14) Include uncertainty boundaries when evidence is incomplete or conflicting.\n"
-                    "15) Do not overclaim beyond evidence available in FINAL_CONTEXT_PACKET.\n"
-                    "16) No citation tokens and no pseudo-citation placeholders.\n"
-                    "17) No meta commentary, no process narration, no wrappers.\n"
-                    "18) Output markdown fragment only.\n"
+                    "13) Never output a heading that repeats CURRENT_SECTION_PLAN_JSON.subhead (including near-identical wording).\n"
+                    "14) The first non-empty line must not restate CURRENT_SECTION_PLAN_JSON.subhead.\n"
+                    "15) Keep wording precise; avoid vague terms without analytical support.\n"
+                    "16) Include uncertainty boundaries when evidence is incomplete or conflicting.\n"
+                    "17) Do not overclaim beyond evidence available in FINAL_CONTEXT_PACKET.\n"
+                    "18) No citation tokens and no pseudo-citation placeholders.\n"
+                    "19) No meta commentary, no process narration, no wrappers.\n"
+                    "20) Output markdown fragment only.\n"
                     "Self-checklist:\n"
                     "- Did I cover every must_cover_point with concrete analysis?\n"
                     "- Did I respect every writing_boundary and avoid drift?\n"
@@ -441,6 +493,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "- If formulas were needed, did I use LaTeX correctly?\n"
                     "- If workflow was discussed, did I provide language-first then Mermaid?\n"
                     "- Did I avoid # and ## headings entirely?\n"
+                    "- Did I avoid repeating CURRENT_SECTION_PLAN_JSON.subhead as a heading?\n"
+                    "- Is the first heading (if any) different from CURRENT_SECTION_PLAN_JSON.subhead?\n"
                     "- Is the fragment decision-useful, evidence-grounded, and uncertainty-aware?"
                 ),
             },
@@ -449,6 +503,15 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    "SECTION_RENDERING_NOTE:\n"
+                    "- Final assembler already renders CURRENT_SECTION_PLAN_JSON.subhead as a `##` title.\n"
+                    "- Your fragment must not repeat that title.\n\n"
+                    "SECTION_PREFIX_ALREADY_RENDERED:\n"
+                    f"{section_prefix_h2}\n\n"
+                    "WRITING_START_RULE:\n"
+                    "- Continue writing after SECTION_PREFIX_ALREADY_RENDERED.\n"
+                    "- Do not output SECTION_PREFIX_ALREADY_RENDERED again.\n\n"
+                    f"CURRENT_SECTION_SUBHEAD_ALREADY_RENDERED_AS_H2:\n{section_subhead}\n\n"
                     f"ARCHITECT_REPORT_PLAN_JSON:\n{all_section_plan}\n\n"
                     f"CURRENT_SECTION_PLAN_JSON:\n{section_packet}\n\n"
                     f"FINAL_CONTEXT_PACKET_JSON:\n{context_packet}"
@@ -597,6 +660,34 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             for item in track_results
         ]
 
+    def _collect_writer_section_failures(
+        self, exc: BaseException
+    ) -> list[dict[str, object]]:
+        out: list[dict[str, object]] = []
+        stack: list[BaseException] = [exc]
+        while stack and len(out) < 16:
+            node = stack.pop()
+            children = getattr(node, "exceptions", None)
+            if isinstance(children, tuple):
+                stack.extend(
+                    child
+                    for child in reversed(children)
+                    if isinstance(child, BaseException)
+                )
+                continue
+            if not isinstance(node, _WriterSectionError):
+                continue
+            out.append(
+                {
+                    "index": int(node.index),
+                    "section_id": str(node.section_id),
+                    "subhead": str(node.subhead),
+                    "cause_type": str(node.cause_type),
+                    "cause_message": str(node.cause_message),
+                }
+            )
+        return out
+
     def _try_parse_json_value(self, text: str) -> object:
         raw = str(text or "")
         if not raw:
@@ -631,4 +722,3 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchRenderStep"]
-

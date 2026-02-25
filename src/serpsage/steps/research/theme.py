@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
+from serpsage.error_details import exception_summary, exception_to_details
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchQuestionCard, ResearchStepContext
 from serpsage.models.research import (
@@ -73,11 +74,16 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 schema_json=self._build_theme_schema(card_cap=card_cap),
             )
         except Exception as exc:  # noqa: BLE001
+            summary = exception_summary(exc)
             ctx.errors.append(
                 AppError(
                     code="research_theme_plan_failed",
-                    message=str(exc),
-                    details={},
+                    message=summary,
+                    details={
+                        "stage": "theme_plan",
+                        "model": str(model),
+                        "exception": exception_to_details(exc),
+                    },
                 )
             )
             warnings.warn(
@@ -85,7 +91,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "[research][warning] "
                     "research_theme_plan_failed "
                     f"request_id={ctx.request_id} "
-                    f"error={str(exc)}"
+                    f"error={summary}"
                 ),
                 stacklevel=1,
             )
@@ -510,4 +516,3 @@ ResearchThemePlanStep = ResearchThemeStep
 
 
 __all__ = ["ResearchThemeStep", "ResearchThemePlanStep"]
-

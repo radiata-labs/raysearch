@@ -48,7 +48,7 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "https://llm-stats.com/models/compare/glm-5-vs-kimi-k2.5",
+        "https://github.com/LCLM-Horizon/A-Comprehensive-Survey-For-Long-Context-Language-Modeling",
         None,
         False,
     )

@@ -35,6 +35,6 @@ async def main(
 
 if __name__ == "__main__":
     out = anyio.run(
-        main, "qwen3.5 和 glm4.7 哪个更适合 vibe coding", "research-fast", None
+        main, "qwen3.5 vs glm4.7", "research-fast", None
     )
     print(out["research_result"])
