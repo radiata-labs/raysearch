@@ -13,6 +13,7 @@ from serpsage.components.fetch.utils import (
     blocked_marker_hit,
     classify_content_kind,
     estimate_text_quality,
+    has_nextjs_signals,
 )
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
@@ -185,6 +186,17 @@ class PlaywrightFetcher(FetcherBase):
                     span=span,
                 )
                 html = await page.content()
+                if has_nextjs_signals(html.encode("utf-8", errors="ignore")):
+                    dynamic_wait_ms = max(500, min(6000, timeout_ms // 2))
+                    with contextlib.suppress(TimeoutError):
+                        await page.wait_for_load_state(
+                            "networkidle",
+                            timeout=dynamic_wait_ms,
+                        )
+                    await page.wait_for_timeout(min(1200, dynamic_wait_ms))
+                    html = await page.content()
+                    span.set_attr("dynamic_wait_reason", "nextjs")
+                    span.set_attr("dynamic_wait_ms", int(dynamic_wait_ms))
             finally:
                 if page is not None:
                     # Close page and suppress any unhandled future exceptions

@@ -46,6 +46,11 @@ _SPA_RE = re.compile(
     r"data-reactroot|hydration|astro-island|sveltekit|chunk-vendors)",
     re.IGNORECASE,
 )
+_NEXTJS_RE = re.compile(
+    r"(id=[\"']__next[\"']|__NEXT_DATA__|/_next/static/|/_next/image(?:\?|/)|"
+    r"next-route-announcer|next-size-adjust|data-nextjs)",
+    re.IGNORECASE,
+)
 
 
 def get_random_user_agent() -> str:
@@ -236,6 +241,11 @@ def has_spa_signals(content: bytes) -> bool:
     return bool(_SPA_RE.search(sample))
 
 
+def has_nextjs_signals(content: bytes) -> bool:
+    sample = content[:120_000].decode("utf-8", errors="ignore")
+    return bool(_NEXTJS_RE.search(sample))
+
+
 def blocked_marker_hit(
     content: bytes, *, markers: tuple[str, ...] | list[str] | None = None
 ) -> bool:
@@ -351,6 +361,7 @@ __all__ = [
     "estimate_text_quality",
     "get_delay_s",
     "get_random_user_agent",
+    "has_nextjs_signals",
     "has_spa_signals",
     "parse_retry_after_s",
     "USER_AGENTS",

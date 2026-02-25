@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
-from serpsage.app.request import SearchRequest
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import (
-    AnswerPlanState,
     SearchDeepState,
     SearchQueryJob,
     SearchStepContext,
@@ -94,14 +92,13 @@ class SearchExpandStep(StepBase[SearchStepContext]):
 
         deep_cfg = self.settings.search.deep
 
-        # Reuse additional_queries from AnswerPlanStep if available
-        plan = self._get_plan(ctx)
-        manual_queries = self._get_manual_queries(plan, req)
+        manual_queries = self._get_manual_queries(
+            req_additional_queries=req.additional_queries
+        )
+        disable_internal_llm = bool(ctx.disable_internal_llm)
+        span.set_attr("disable_internal_llm", bool(disable_internal_llm))
 
-        # Skip LLM expansion if plan already provided additional_queries
-        plan_provided_expansion = bool(plan.additional_queries)
-        if plan_provided_expansion:
-            # Plan already did the query expansion work, skip LLM expansion
+        if disable_internal_llm:
             llm_queries: list[str] = []
             llm_elapsed_ms: int = 0
             span.set_attr("llm_expansion_skipped", True)
@@ -154,18 +151,10 @@ class SearchExpandStep(StepBase[SearchStepContext]):
     def _is_deep_enabled(self, *, req_mode: str) -> bool:
         return req_mode == "deep" and bool(self.settings.search.deep.enabled)
 
-    def _get_plan(self, ctx: SearchStepContext) -> AnswerPlanState:
-        """Get the answer plan from context."""
-        return ctx.plan
-
     def _get_manual_queries(
-        self, plan: AnswerPlanState | None, req: SearchRequest
+        self, *, req_additional_queries: list[str] | None
     ) -> list[str]:
-        """Get manual queries from plan or request."""
-        if plan is not None and plan.additional_queries:
-            # Reuse additional_queries from plan - it already did the LLM expansion work
-            return self._normalize_queries(list(plan.additional_queries))
-        return self._normalize_queries(list(req.additional_queries or []))
+        return self._normalize_queries(list(req_additional_queries or []))
 
     def _set_expand_span_attrs(
         self,

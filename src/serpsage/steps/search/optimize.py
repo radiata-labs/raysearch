@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import AnswerPlanState, SearchStepContext
+from serpsage.models.pipeline import SearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
@@ -38,17 +38,17 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
         self, ctx: SearchStepContext, *, span: SpanBase
     ) -> SearchStepContext:
         mode = self._normalize_mode(ctx.request.mode)
+        disable_internal_llm = bool(ctx.disable_internal_llm)
         optimize_enabled = mode in {"auto", "deep"}
         span.set_attr("mode", mode)
         span.set_attr("enabled", bool(optimize_enabled))
+        span.set_attr("disable_internal_llm", bool(disable_internal_llm))
 
-        # Reuse optimization results from AnswerPlanStep if available
-        plan = self._get_plan(ctx)
-        if self._can_reuse_plan(plan, mode):
-            span.set_attr("reused_from_plan", True)
-            self._apply_plan_optimization(ctx, plan)
+        if disable_internal_llm:
+            span.set_attr("reused_from_plan", False)
             span.set_attr("query_changed", False)
             span.set_attr("optimize_error", False)
+            span.set_attr("llm_skipped", True)
             return ctx
 
         if not optimize_enabled:
@@ -199,29 +199,6 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
         if token in {"fast", "auto", "deep"}:
             return token  # type: ignore[return-value]
         return "auto"
-
-    def _get_plan(self, ctx: SearchStepContext) -> AnswerPlanState:
-        """Get the answer plan from context."""
-        return ctx.plan
-
-    def _can_reuse_plan(
-        self, plan: AnswerPlanState, mode: Literal["fast", "auto", "deep"]
-    ) -> bool:
-        """Check if plan results can be reused for optimization."""
-        # Plan must have search_query populated
-        if not plan.search_query:
-            return False
-        # Fast mode doesn't use optimization anyway
-        return mode != "fast"
-
-    def _apply_plan_optimization(
-        self, ctx: SearchStepContext, plan: AnswerPlanState
-    ) -> None:
-        """Apply optimization results from plan to context."""
-        # Apply freshness_intent and query_language from plan
-        ctx.plan.freshness_intent = bool(plan.freshness_intent)
-        ctx.plan.query_language = str(plan.query_language)
-        # Note: search_query from plan is already applied in AnswerSearchStep
 
     def _try_parse_json_value(self, text: str) -> object:
         try:

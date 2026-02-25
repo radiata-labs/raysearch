@@ -85,6 +85,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 exclude_text=(list(job.exclude_text) or None),
                 fetchs=FetchRequestBase(
                     crawl_mode="fallback",
+                    crawl_timeout=30.0,
                     content=FetchContentRequest(detail="full"),
                     abstracts=FetchAbstractsRequest(
                         query=ctx.request.themes, max_chars=2200
@@ -103,6 +104,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 SearchStepContext(
                     settings=ctx.settings,
                     request=req,
+                    disable_internal_llm=True,
                     request_id=f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}",
                 )
             )

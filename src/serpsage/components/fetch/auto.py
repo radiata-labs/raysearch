@@ -14,6 +14,7 @@ from serpsage.components.fetch.utils import (
     browser_headers,
     classify_content_kind,
     estimate_text_quality,
+    has_nextjs_signals,
     has_spa_signals,
 )
 from serpsage.models.fetch import FetchAttempt, FetchResult
@@ -41,6 +42,7 @@ class _ProbeSnapshot:
     script_ratio: float = 0.0
     blocked_marker: bool = False
     anti_bot: bool = False
+    nextjs: bool = False
     spa: bool = False
     low_text: bool = False
     error_type: str | None = None
@@ -213,7 +215,18 @@ class AutoFetcher(FetcherBase):
             curl_error_type = type(exc).__name__
             span.set_attr("curl_error_type", curl_error_type)
 
-        if curl_attempt is not None and self._is_useful(curl_attempt):
+        force_playwright_for_nextjs = bool(
+            curl_attempt is not None
+            and curl_attempt.content_kind == "html"
+            and has_nextjs_signals(bytes(curl_attempt.content or b""))
+        )
+        span.set_attr("curl_nextjs_signals", bool(force_playwright_for_nextjs))
+
+        if (
+            curl_attempt is not None
+            and self._is_useful(curl_attempt)
+            and not force_playwright_for_nextjs
+        ):
             winner = self._attach_attempt_chain(
                 winner=curl_attempt,
                 chain_prefix=[probe_chain, decision_chain],
@@ -222,9 +235,12 @@ class AutoFetcher(FetcherBase):
             return winner
 
         span.set_attr("fallback_triggered", True)
-        fallback_reason = "curl_nonperfect"
-        if curl_error_type is not None:
+        if force_playwright_for_nextjs:
+            fallback_reason = "nextjs_detected_after_curl"
+        elif curl_error_type is not None:
             fallback_reason = f"curl_error:{curl_error_type}"
+        else:
+            fallback_reason = "curl_nonperfect"
         span.set_attr("fallback_reason", fallback_reason)
 
         try:
@@ -269,14 +285,18 @@ class AutoFetcher(FetcherBase):
                 timeout_s = self._remaining_timeout_s(deadline_ts)
                 timeout = httpx.Timeout(timeout_s)
                 fetch_cfg = self.settings.fetch
+                probe_headers = browser_headers(
+                    profile="browser",
+                    user_agent=str(fetch_cfg.user_agent),
+                    randomize=True,  # Use random real browser UA for probing
+                )
+                # Avoid Brotli-only probe bodies when the runtime lacks Brotli decode
+                # support; gzip/deflate keeps probe text analyzable for SPA detection.
+                probe_headers["Accept-Encoding"] = "gzip, deflate"
                 async with self._http.stream(
                     "GET",
                     url,
-                    headers=browser_headers(
-                        profile="browser",
-                        user_agent=str(fetch_cfg.user_agent),
-                        randomize=True,  # Use random real browser UA for probing
-                    ),
+                    headers=probe_headers,
                     timeout=timeout,
                     follow_redirects=bool(fetch_cfg.follow_redirects),
                 ) as resp:
@@ -302,6 +322,7 @@ class AutoFetcher(FetcherBase):
                     )
                 )
                 anti_bot = int(snap.status_code) in _BLOCK_STATUSES or marker_hit
+                nextjs = bool(content_kind == "html" and has_nextjs_signals(body))
                 spa = bool(
                     content_kind == "html"
                     and script_ratio >= float(quality.script_ratio_threshold)
@@ -316,6 +337,7 @@ class AutoFetcher(FetcherBase):
                 snap.script_ratio = float(script_ratio)
                 snap.blocked_marker = marker_hit
                 snap.anti_bot = anti_bot
+                snap.nextjs = nextjs
                 snap.spa = spa
                 snap.low_text = low_text
                 snap.bytes_read = int(len(body))
@@ -329,6 +351,7 @@ class AutoFetcher(FetcherBase):
             probe_span.set_attr("text_chars", int(snap.text_chars))
             probe_span.set_attr("script_ratio", float(snap.script_ratio))
             probe_span.set_attr("anti_bot", bool(snap.anti_bot))
+            probe_span.set_attr("nextjs", bool(snap.nextjs))
             probe_span.set_attr("spa", bool(snap.spa))
             probe_span.set_attr("low_text", bool(snap.low_text))
             probe_span.set_attr("bytes_read", int(snap.bytes_read))
@@ -356,6 +379,8 @@ class AutoFetcher(FetcherBase):
             return "curl_cffi", "probe_error"
         if probe.anti_bot:
             return "playwright", "anti_bot"
+        if probe.nextjs:
+            return "playwright", "nextjs"
         if probe.spa:
             return "playwright", "spa"
         if probe.low_text:
@@ -566,6 +591,7 @@ class AutoFetcher(FetcherBase):
         span.set_attr("probe_script_ratio", float(probe.script_ratio))
         span.set_attr("probe_blocked_marker", bool(probe.blocked_marker))
         span.set_attr("probe_anti_bot", bool(probe.anti_bot))
+        span.set_attr("probe_nextjs", bool(probe.nextjs))
         span.set_attr("probe_spa", bool(probe.spa))
         span.set_attr("probe_low_text", bool(probe.low_text))
         span.set_attr("probe_bytes", int(probe.bytes_read))

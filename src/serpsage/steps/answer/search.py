@@ -46,7 +46,7 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         search_ctx = SearchStepContext(
             settings=ctx.settings,
             request=search_request,
-            plan=ctx.plan,  # Pass plan for reuse in search pipeline
+            disable_internal_llm=True,
             request_id=ctx.request_id,
         )
         try:

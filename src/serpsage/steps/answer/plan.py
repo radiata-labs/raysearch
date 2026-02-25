@@ -186,7 +186,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                         "- choose search intensity to minimize latency while preserving answer quality.",
                         "- max_results must be in [1, " + str(max_results_cap) + "].",
                         "- additional_queries must be empty when search_mode=auto.",
-                        "- when search_mode=deep, populate additional_queries with 2-4 semantically distinct query variants (this skips a subsequent LLM expansion step).",
+                        "- when search_mode=deep, populate additional_queries with 2-4 semantically distinct query variants to improve deep retrieval coverage.",
                         "- if freshness_intent=true, include explicit time constraints in search_query and additional_queries as needed.",
                         "Output fields:",
                         "- answer_mode: direct|summary",

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+import anyio
+
+from serpsage.models.errors import AppError
 from serpsage.models.pipeline import (
     ResearchBudgetState,
     ResearchQuestionCard,
@@ -27,6 +29,12 @@ class _TrackAllocation:
     fetch_grant: int
     max_queries_per_round: int
     bonus: bool = False
+
+
+@dataclass(slots=True)
+class _BudgetReservationState:
+    search_reserved: int = 0
+    fetch_reserved: int = 0
 
 
 class ResearchLoopStep(StepBase[ResearchStepContext]):
@@ -56,142 +64,29 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             ctx.runtime.stop_reason = "no_question_cards"
             return ctx
 
-        card_map = {card.question_id: card for card in cards}
         track_map: dict[str, ResearchStepContext] = {
             card.question_id: self._build_track_context(root=ctx, card=card)
             for card in cards
         }
         result_map: dict[str, ResearchTrackResult] = {}
-        finalized: set[str] = set()
-        cycle = 0
+        reservation_state = _BudgetReservationState()
+        budget_lock = anyio.Lock()
+        result_map_lock = anyio.Lock()
+        error_lock = anyio.Lock()
 
-        while True:
-            active_ids = [
-                question_id
-                for question_id, item in track_map.items()
-                if not bool(item.runtime.stop)
-            ]
-            if not active_ids:
-                break
-
-            if self._global_budget_exhausted(ctx):
-                await self._force_stop_tracks(
-                    root=ctx,
-                    card_map=card_map,
-                    track_map=track_map,
-                    active_ids=active_ids,
-                    reason="global_budget_exhausted",
-                    finalized=finalized,
-                    result_map=result_map,
+        async with anyio.create_task_group() as tg:
+            for card in cards:
+                tg.start_soon(
+                    self._run_track_worker,
+                    ctx,
+                    card,
+                    track_map[card.question_id],
+                    result_map,
+                    reservation_state,
+                    budget_lock,
+                    result_map_lock,
+                    error_lock,
                 )
-                break
-
-            cycle += 1
-            scores = {
-                question_id: self._score_track(
-                    track_map[question_id], card_map[question_id]
-                )
-                for question_id in active_ids
-            }
-            allocations = self._allocate_grants(
-                root=ctx,
-                active_ids=active_ids,
-                scores=scores,
-            )
-            runnable_ids = [
-                question_id
-                for question_id in active_ids
-                if allocations[question_id].search_grant > 0
-            ]
-
-            if not runnable_ids:
-                await self._force_stop_tracks(
-                    root=ctx,
-                    card_map=card_map,
-                    track_map=track_map,
-                    active_ids=active_ids,
-                    reason="global_budget_exhausted",
-                    finalized=finalized,
-                    result_map=result_map,
-                )
-                break
-
-            run_batch: list[ResearchStepContext] = []
-            meta: list[tuple[str, int, int]] = []
-            for question_id in runnable_ids:
-                track_ctx = track_map[question_id]
-                alloc = allocations[question_id]
-                self._apply_track_round_budget(
-                    track_ctx=track_ctx,
-                    alloc=alloc,
-                    base_budget=ctx.runtime.budget,
-                )
-                run_batch.append(track_ctx)
-                meta.append(
-                    (
-                        question_id,
-                        int(track_ctx.runtime.search_calls),
-                        int(track_ctx.runtime.fetch_calls),
-                    )
-                )
-
-            out_batch = await self._round_runner.run_batch(run_batch)
-            for index, out in enumerate(out_batch):
-                question_id, before_search, before_fetch = meta[index]
-                track_map[question_id] = out
-                delta_search = max(
-                    0, int(out.runtime.search_calls) - int(before_search)
-                )
-                delta_fetch = max(0, int(out.runtime.fetch_calls) - int(before_fetch))
-                ctx.parallel.global_search_used += int(delta_search)
-                ctx.parallel.global_fetch_used += int(delta_fetch)
-                ctx.runtime.search_calls += int(delta_search)
-                ctx.runtime.fetch_calls += int(delta_fetch)
-                if out.errors:
-                    ctx.errors.extend(out.errors)
-                if out.runtime.stop and question_id not in finalized:
-                    result_map[question_id] = await self._finalize_track(
-                        card=card_map[question_id],
-                        track_ctx=out,
-                    )
-                    finalized.add(question_id)
-
-            if self._global_budget_exhausted(ctx):
-                remaining = [
-                    question_id
-                    for question_id, item in track_map.items()
-                    if not bool(item.runtime.stop)
-                ]
-                await self._force_stop_tracks(
-                    root=ctx,
-                    card_map=card_map,
-                    track_map=track_map,
-                    active_ids=remaining,
-                    reason="global_budget_exhausted",
-                    finalized=finalized,
-                    result_map=result_map,
-                )
-                break
-
-        for card in cards:
-            question_id = card.question_id
-            track_ctx = track_map.get(question_id)
-            if track_ctx is None:
-                continue
-            if question_id not in finalized:
-                if not track_ctx.runtime.stop:
-                    track_ctx.runtime.stop = True
-                    if self._global_budget_exhausted(ctx):
-                        track_ctx.runtime.stop_reason = "global_budget_exhausted"
-                    else:
-                        track_ctx.runtime.stop_reason = (
-                            track_ctx.runtime.stop_reason or "all_tracks_completed"
-                        )
-                result_map[question_id] = await self._finalize_track(
-                    card=card,
-                    track_ctx=track_ctx,
-                )
-                finalized.add(question_id)
 
         ctx.parallel.track_results = [
             result_map[card.question_id]
@@ -208,6 +103,263 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         span.set_attr("tracks_finished", int(len(ctx.parallel.track_results)))
         span.set_attr("stop_reason", str(ctx.runtime.stop_reason or ""))
         return ctx
+
+    async def _run_track_worker(
+        self,
+        root: ResearchStepContext,
+        card: ResearchQuestionCard,
+        track_ctx: ResearchStepContext,
+        result_map: dict[str, ResearchTrackResult],
+        reservation_state: _BudgetReservationState,
+        budget_lock: anyio.Lock,
+        result_map_lock: anyio.Lock,
+        error_lock: anyio.Lock,
+    ) -> None:
+        question_id = card.question_id
+        local_ctx = track_ctx
+        track_result: ResearchTrackResult | None = None
+        try:
+            while not local_ctx.runtime.stop:
+                alloc = await self._reserve_track_allocation(
+                    root=root,
+                    track_ctx=local_ctx,
+                    card=card,
+                    reservation_state=reservation_state,
+                    budget_lock=budget_lock,
+                )
+                if alloc.search_grant <= 0 or alloc.fetch_grant <= 0:
+                    local_ctx.runtime.stop = True
+                    local_ctx.runtime.stop_reason = "global_budget_exhausted"
+                    break
+
+                before_search = int(local_ctx.runtime.search_calls)
+                before_fetch = int(local_ctx.runtime.fetch_calls)
+                before_errors = int(len(local_ctx.errors))
+                delta_search = 0
+                delta_fetch = 0
+                try:
+                    self._apply_track_round_budget(
+                        track_ctx=local_ctx,
+                        alloc=alloc,
+                        base_budget=root.runtime.budget,
+                    )
+                    local_ctx = await self._round_runner.run(local_ctx)
+                    delta_search = max(
+                        0, int(local_ctx.runtime.search_calls) - int(before_search)
+                    )
+                    delta_fetch = max(
+                        0, int(local_ctx.runtime.fetch_calls) - int(before_fetch)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    local_ctx.errors.append(
+                        AppError(
+                            code="research_loop_track_failed",
+                            message=str(exc),
+                            details={"question_id": question_id},
+                        )
+                    )
+                    local_ctx.runtime.stop = True
+                    local_ctx.runtime.stop_reason = "track_execution_failed"
+                finally:
+                    await self._commit_track_usage(
+                        root=root,
+                        alloc=alloc,
+                        delta_search=delta_search,
+                        delta_fetch=delta_fetch,
+                        reservation_state=reservation_state,
+                        budget_lock=budget_lock,
+                    )
+                await self._propagate_track_errors(
+                    root=root,
+                    track_ctx=local_ctx,
+                    before_count=before_errors,
+                    error_lock=error_lock,
+                )
+
+            if not local_ctx.runtime.stop:
+                local_ctx.runtime.stop = True
+                if self._global_budget_exhausted(root):
+                    local_ctx.runtime.stop_reason = "global_budget_exhausted"
+                else:
+                    local_ctx.runtime.stop_reason = (
+                        local_ctx.runtime.stop_reason or "all_tracks_completed"
+                    )
+
+            before_finalize_errors = int(len(local_ctx.errors))
+            track_result = await self._finalize_track(
+                card=card,
+                track_ctx=local_ctx,
+            )
+            await self._propagate_track_errors(
+                root=root,
+                track_ctx=local_ctx,
+                before_count=before_finalize_errors,
+                error_lock=error_lock,
+            )
+        except Exception as exc:  # noqa: BLE001
+            local_ctx.runtime.stop = True
+            local_ctx.runtime.stop_reason = (
+                local_ctx.runtime.stop_reason or "track_worker_failed"
+            )
+            local_ctx.errors.append(
+                AppError(
+                    code="research_loop_worker_failed",
+                    message=str(exc),
+                    details={"question_id": question_id},
+                )
+            )
+            await self._propagate_track_errors(
+                root=root,
+                track_ctx=local_ctx,
+                before_count=max(0, int(len(local_ctx.errors)) - 1),
+                error_lock=error_lock,
+            )
+            track_result = self._build_failed_track_result(
+                card=card,
+                track_ctx=local_ctx,
+            )
+
+        if track_result is None:
+            track_result = self._build_failed_track_result(
+                card=card,
+                track_ctx=local_ctx,
+            )
+        async with result_map_lock:
+            result_map[question_id] = track_result
+
+    async def _reserve_track_allocation(
+        self,
+        *,
+        root: ResearchStepContext,
+        track_ctx: ResearchStepContext,
+        card: ResearchQuestionCard,
+        reservation_state: _BudgetReservationState,
+        budget_lock: anyio.Lock,
+    ) -> _TrackAllocation:
+        baseline_fetch = max(1, int(root.runtime.budget.max_fetch_per_round))
+        bonus_fetch = baseline_fetch + max(1, baseline_fetch // 2)
+        baseline_width = max(
+            1, int(self.settings.research.parallel.baseline_query_width)
+        )
+        bonus_width = max(
+            baseline_width,
+            int(self.settings.research.parallel.bonus_query_width),
+        )
+        async with budget_lock:
+            remaining_search = max(
+                0,
+                int(root.parallel.global_search_budget)
+                - int(root.parallel.global_search_used)
+                - int(reservation_state.search_reserved),
+            )
+            remaining_fetch = max(
+                0,
+                int(root.parallel.global_fetch_budget)
+                - int(root.parallel.global_fetch_used)
+                - int(reservation_state.fetch_reserved),
+            )
+            if remaining_search <= 0 or remaining_fetch <= 0:
+                return _TrackAllocation(
+                    search_grant=0,
+                    fetch_grant=0,
+                    max_queries_per_round=1,
+                    bonus=False,
+                )
+
+            score = self._score_track(track_ctx, card)
+            bonus_ratio = max(
+                0.0,
+                min(1.0, float(self.settings.research.parallel.bonus_ratio)),
+            )
+            bonus_threshold = max(0.0, min(1.0, 1.0 - bonus_ratio))
+            bonus = bool(
+                score >= bonus_threshold
+                and remaining_search >= 2
+                and remaining_fetch >= bonus_fetch
+            )
+            search_grant = 2 if bonus else 1
+            search_grant = max(0, min(int(search_grant), int(remaining_search)))
+            if search_grant <= 0:
+                return _TrackAllocation(
+                    search_grant=0,
+                    fetch_grant=0,
+                    max_queries_per_round=1,
+                    bonus=False,
+                )
+
+            fetch_target = bonus_fetch if bonus else baseline_fetch
+            fetch_grant = max(0, min(int(fetch_target), int(remaining_fetch)))
+            if fetch_grant <= 0:
+                return _TrackAllocation(
+                    search_grant=0,
+                    fetch_grant=0,
+                    max_queries_per_round=1,
+                    bonus=False,
+                )
+
+            reservation_state.search_reserved += int(search_grant)
+            reservation_state.fetch_reserved += int(fetch_grant)
+            return _TrackAllocation(
+                search_grant=int(search_grant),
+                fetch_grant=int(fetch_grant),
+                max_queries_per_round=max(
+                    1,
+                    int(
+                        min(
+                            search_grant,
+                            bonus_width if bonus else baseline_width,
+                        )
+                    ),
+                ),
+                bonus=bool(bonus),
+            )
+
+    async def _commit_track_usage(
+        self,
+        *,
+        root: ResearchStepContext,
+        alloc: _TrackAllocation,
+        delta_search: int,
+        delta_fetch: int,
+        reservation_state: _BudgetReservationState,
+        budget_lock: anyio.Lock,
+    ) -> None:
+        async with budget_lock:
+            reservation_state.search_reserved = max(
+                0,
+                int(reservation_state.search_reserved) - int(max(0, alloc.search_grant)),
+            )
+            reservation_state.fetch_reserved = max(
+                0,
+                int(reservation_state.fetch_reserved) - int(max(0, alloc.fetch_grant)),
+            )
+            actual_search = max(
+                0, min(int(delta_search), int(max(0, alloc.search_grant)))
+            )
+            actual_fetch = max(0, min(int(delta_fetch), int(max(0, alloc.fetch_grant))))
+            root.parallel.global_search_used += int(actual_search)
+            root.parallel.global_fetch_used += int(actual_fetch)
+            root.runtime.search_calls += int(actual_search)
+            root.runtime.fetch_calls += int(actual_fetch)
+
+    async def _propagate_track_errors(
+        self,
+        *,
+        root: ResearchStepContext,
+        track_ctx: ResearchStepContext,
+        before_count: int,
+        error_lock: anyio.Lock,
+    ) -> None:
+        if int(before_count) >= int(len(track_ctx.errors)):
+            return
+        new_errors = [
+            item.model_copy(deep=True)
+            for item in track_ctx.errors[int(before_count) :]
+        ]
+        if not new_errors:
+            return
+        async with error_lock:
+            root.errors.extend(new_errors)
 
     def _resolve_question_cards(
         self, ctx: ResearchStepContext
@@ -330,64 +482,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             + 0.10 * conflict_norm
         )
 
-    def _allocate_grants(
-        self,
-        *,
-        root: ResearchStepContext,
-        active_ids: list[str],
-        scores: dict[str, float],
-    ) -> dict[str, _TrackAllocation]:
-        baseline_fetch = max(1, int(root.runtime.budget.max_fetch_per_round))
-        bonus_fetch = baseline_fetch + max(1, baseline_fetch // 2)
-        baseline_width = max(
-            1, int(self.settings.research.parallel.baseline_query_width)
-        )
-        bonus_width = max(
-            baseline_width,
-            int(self.settings.research.parallel.bonus_query_width),
-        )
-        allocations: dict[str, _TrackAllocation] = {
-            question_id: _TrackAllocation(
-                search_grant=0,
-                fetch_grant=baseline_fetch,
-                max_queries_per_round=baseline_width,
-                bonus=False,
-            )
-            for question_id in active_ids
-        }
-        remaining_search = max(
-            0,
-            int(root.parallel.global_search_budget)
-            - int(root.parallel.global_search_used),
-        )
-        if remaining_search <= 0:
-            return allocations
-
-        sorted_ids = sorted(
-            active_ids, key=lambda item: scores.get(item, 0.0), reverse=True
-        )
-        baseline_count = min(remaining_search, len(sorted_ids))
-        for question_id in sorted_ids[:baseline_count]:
-            allocations[question_id].search_grant = 1
-            remaining_search -= 1
-
-        if remaining_search <= 0 or baseline_count <= 0:
-            return allocations
-
-        bonus_ratio = float(self.settings.research.parallel.bonus_ratio)
-        top_k = max(1, int(math.ceil(float(len(sorted_ids)) * bonus_ratio)))
-        bonus_candidates = sorted_ids[:baseline_count][:top_k]
-        for question_id in bonus_candidates:
-            if remaining_search <= 0:
-                break
-            alloc = allocations[question_id]
-            alloc.search_grant += 1
-            alloc.fetch_grant = bonus_fetch
-            alloc.max_queries_per_round = bonus_width
-            alloc.bonus = True
-            remaining_search -= 1
-        return allocations
-
     def _apply_track_round_budget(
         self,
         *,
@@ -409,32 +503,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         budget.stop_confidence = float(base_budget.stop_confidence)
         budget.min_coverage_ratio = float(base_budget.min_coverage_ratio)
         budget.max_unresolved_conflicts = int(base_budget.max_unresolved_conflicts)
-
-    async def _force_stop_tracks(
-        self,
-        *,
-        root: ResearchStepContext,
-        card_map: dict[str, ResearchQuestionCard],
-        track_map: dict[str, ResearchStepContext],
-        active_ids: list[str],
-        reason: str,
-        finalized: set[str],
-        result_map: dict[str, ResearchTrackResult],
-    ) -> None:
-        for question_id in active_ids:
-            track_ctx = track_map[question_id]
-            if not track_ctx.runtime.stop:
-                track_ctx.runtime.stop = True
-                track_ctx.runtime.stop_reason = reason
-            if question_id in finalized:
-                continue
-            result_map[question_id] = await self._finalize_track(
-                card=card_map[question_id],
-                track_ctx=track_ctx,
-            )
-            finalized.add(question_id)
-            if track_ctx.errors:
-                root.errors.extend(track_ctx.errors)
 
     async def _finalize_track(
         self,
@@ -470,6 +538,30 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             subreport_markdown=str(rendered.output.content or ""),
             key_findings=self._extract_key_findings(rendered),
             errors=[item.model_copy(deep=True) for item in rendered.errors],
+        )
+
+    def _build_failed_track_result(
+        self,
+        *,
+        card: ResearchQuestionCard,
+        track_ctx: ResearchStepContext,
+    ) -> ResearchTrackResult:
+        latest = self._latest_round(track_ctx)
+        return ResearchTrackResult(
+            question_id=card.question_id,
+            question=card.question,
+            stop_reason=clean_whitespace(track_ctx.runtime.stop_reason or ""),
+            rounds=int(len(track_ctx.rounds)),
+            search_calls=int(track_ctx.runtime.search_calls),
+            fetch_calls=int(track_ctx.runtime.fetch_calls),
+            confidence=float(latest.confidence) if latest is not None else 0.0,
+            coverage_ratio=float(latest.coverage_ratio) if latest is not None else 0.0,
+            unresolved_conflicts=(
+                int(latest.unresolved_conflicts) if latest is not None else 0
+            ),
+            subreport_markdown=str(track_ctx.output.content or ""),
+            key_findings=self._extract_key_findings(track_ctx),
+            errors=[item.model_copy(deep=True) for item in track_ctx.errors],
         )
 
     def _extract_key_findings(self, track_ctx: ResearchStepContext) -> list[str]:

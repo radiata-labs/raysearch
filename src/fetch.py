@@ -28,6 +28,7 @@ async def main(
     settings = load_settings("src/search_config_example.yaml")
     req = FetchRequest(
         urls=[url],
+        crawl_timeout=30,
         crawl_mode="fallback",
         content=FetchContentRequest(detail="full"),
         abstracts=FetchAbstractsRequest(query=query, max_chars=300) if query else False,

@@ -112,7 +112,7 @@ class AnswerPlanState(MutableModel):
 class SearchStepContext(BaseStepContext):
     settings: AppSettings
     request: SearchRequest
-    plan: AnswerPlanState = Field(default_factory=AnswerPlanState)
+    disable_internal_llm: bool = False
     deep: SearchDeepState = Field(default_factory=SearchDeepState)
     prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
     fetch: SearchFetchState = Field(default_factory=SearchFetchState)
