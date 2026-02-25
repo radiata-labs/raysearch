@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -10,9 +11,24 @@ import anyio
 
 from serpsage.error_details import exception_summary, exception_to_details
 from serpsage.models.errors import AppError
-from serpsage.models.pipeline import ResearchStepContext, ResearchTrackResult
-from serpsage.models.research import RenderArchitectOutput, RenderArchitectSectionPlan
+from serpsage.models.pipeline import (
+    ResearchQuestionCard,
+    ResearchStepContext,
+    ResearchTrackResult,
+)
+from serpsage.models.research import (
+    RenderArchitectOutput,
+    RenderArchitectSectionPlan,
+    ResearchThemePlan,
+)
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.prompt_markdown import (
+    normalize_block_text,
+    render_architect_plan_markdown,
+    render_question_cards_markdown,
+    render_section_plan_markdown,
+    render_theme_plan_markdown,
+)
 from serpsage.steps.research.utils import chat_pydantic, resolve_research_model
 from serpsage.utils import clean_whitespace
 
@@ -40,6 +56,51 @@ class _WriterSectionError(RuntimeError):
         super().__init__(
             f"writer section failed: {label}; cause={self.cause_type}: {self.cause_message}"
         )
+
+
+@dataclass(slots=True)
+class _WriterSectionFailure:
+    index: int
+    section_id: str
+    subhead: str
+    cause_type: str
+    cause_message: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "index": int(self.index),
+            "section_id": str(self.section_id),
+            "subhead": str(self.subhead),
+            "cause_type": str(self.cause_type),
+            "cause_message": str(self.cause_message),
+        }
+
+
+@dataclass(slots=True)
+class _RenderTrackResultPacket:
+    question_id: str
+    question: str
+    stop_reason: str
+    rounds: int
+    search_calls: int
+    fetch_calls: int
+    confidence: float
+    coverage_ratio: float
+    unresolved_conflicts: int
+    key_findings: list[str] = field(default_factory=list)
+    subreport_excerpt: str = ""
+
+
+@dataclass(slots=True)
+class _RenderFinalContextPacket:
+    theme: str
+    target_output_language: str
+    utc_timestamp: str
+    utc_date: str
+    theme_plan: ResearchThemePlan
+    question_cards: list[ResearchQuestionCard] = field(default_factory=list)
+    track_results: list[_RenderTrackResultPacket] = field(default_factory=list)
+    render_objective: str = ""
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
@@ -115,18 +176,21 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_language=target_language,
             now_utc=now_utc,
         )
+        context_packet_markdown = self._render_final_context_packet_markdown(
+            context_packet
+        )
         architect_output = await self._run_architect(
             ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
-            context_packet=context_packet,
+            context_packet_markdown=context_packet_markdown,
         )
         writer_outputs = await self._run_writers(
             ctx=ctx,
             architect_output=architect_output,
             target_language=target_language,
             now_utc=now_utc,
-            context_packet=context_packet,
+            context_packet_markdown=context_packet_markdown,
         )
         assembled = self._assemble_markdown_from_sections(
             ctx=ctx,
@@ -142,7 +206,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         target_language: str,
         now_utc: datetime,
-        context_packet: str,
+        context_packet_markdown: str,
     ) -> RenderArchitectOutput:
         model = resolve_research_model(
             ctx=ctx,
@@ -156,7 +220,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 messages=self._build_architect_messages(
                     target_language=target_language,
                     now_utc=now_utc,
-                    context_packet=context_packet,
+                    context_packet_markdown=context_packet_markdown,
                 ),
                 schema_model=RenderArchitectOutput,
                 retries=int(self.settings.research.llm_self_heal_retries),
@@ -193,7 +257,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         architect_output: RenderArchitectOutput,
         target_language: str,
         now_utc: datetime,
-        context_packet: str,
+        context_packet_markdown: str,
     ) -> list[str]:
         model = resolve_research_model(
             ctx=ctx,
@@ -209,7 +273,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         model,
                         target_language,
                         now_utc,
-                        context_packet,
+                        context_packet_markdown,
                         architect_output,
                         section,
                         outputs,
@@ -219,6 +283,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             summary = exception_summary(exc)
             detail = exception_to_details(exc)
             failed_sections = self._collect_writer_section_failures(exc)
+            failed_section_payload = [item.to_payload() for item in failed_sections]
             ctx.errors.append(
                 AppError(
                     code="research_render_writer_failed",
@@ -227,7 +292,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         "stage": "writer",
                         "model": str(model),
                         "sections_total": int(len(architect_output.sections)),
-                        "failed_sections": failed_sections,
+                        "failed_sections": failed_section_payload,
                         "exception": detail,
                     },
                 )
@@ -238,7 +303,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "research_render_writer_failed "
                     f"request_id={ctx.request_id} "
                     f"error={summary} "
-                    f"failed_sections={failed_sections}"
+                    f"failed_sections={failed_section_payload}"
                 ),
                 stacklevel=1,
             )
@@ -250,7 +315,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         model: str,
         target_language: str,
         now_utc: datetime,
-        context_packet: str,
+        context_packet_markdown: str,
         architect_output: RenderArchitectOutput,
         section: RenderArchitectSectionPlan,
         outputs: list[str],
@@ -259,7 +324,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         messages = self._build_writer_messages(
             target_language=target_language,
             now_utc=now_utc,
-            context_packet=context_packet,
+            context_packet_markdown=context_packet_markdown,
             architect_output=architect_output,
             section=section,
         )
@@ -334,7 +399,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         *,
         target_language: str,
         now_utc: datetime,
-        context_packet: str,
+        context_packet_markdown: str,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
         return [
@@ -409,7 +474,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "- Ensure middle sections form a clear reasoning staircase with multi-angle coverage.\n"
                     "- Build section contracts that a Writer can execute directly without reinterpretation.\n"
                     "- Do not output explanations; output schema JSON only.\n\n"
-                    f"FINAL_CONTEXT_PACKET_JSON:\n{context_packet}"
+                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
                 ),
             },
         ]
@@ -419,17 +484,15 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         *,
         target_language: str,
         now_utc: datetime,
-        context_packet: str,
+        context_packet_markdown: str,
         architect_output: RenderArchitectOutput,
         section: RenderArchitectSectionPlan,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
         section_subhead = clean_whitespace(section.subhead)
         section_prefix_h2 = f"## {section_subhead or 'Section'}"
-        section_packet = json.dumps(section.model_dump(), ensure_ascii=False, indent=2)
-        all_section_plan = json.dumps(
-            architect_output.model_dump(), ensure_ascii=False, indent=2
-        )
+        section_packet_markdown = render_section_plan_markdown(section)
+        all_section_plan_markdown = render_architect_plan_markdown(architect_output)
         return [
             {
                 "role": "system",
@@ -438,13 +501,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "Identity: Expert analyst and writing coach for high-density technical reports.\n"
                     "Mission: Write exactly one section markdown fragment with maximal information density.\n"
                     "Instruction Priority:\n"
-                    "P1) Contract fidelity: strictly follow CURRENT_SECTION_PLAN_JSON scope_requirements, writing_boundaries, and must_cover_points.\n"
+                    "P1) Contract fidelity: strictly follow CURRENT_SECTION_PLAN_MARKDOWN scope_requirements, writing_boundaries, and must_cover_points.\n"
                     "P2) Analytical depth and completeness: deliver rich, concrete, decision-useful content with high information density.\n"
                     "P3) Representation quality: use tables/LaTeX/Mermaid when applicable with strong explanatory framing.\n"
                     "P4) Markdown discipline: use ### and deeper headings only for internal subsections; section-level title is rendered externally and must not be repeated.\n"
                     "Execution protocol (follow internally, do not print reasoning):\n"
                     "Phase A - Decode section contract:\n"
-                    "1) Treat CURRENT_SECTION_PLAN_JSON as binding spec.\n"
+                    "1) Treat CURRENT_SECTION_PLAN_MARKDOWN as binding spec.\n"
                     "2) Convert scope_requirements + must_cover_points into a compact internal outline.\n"
                     "3) Treat writing_boundaries as hard exclusions.\n"
                     "Phase B - Select and organize evidence:\n"
@@ -465,7 +528,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "2) Ensure concrete conclusions and bounded recommendations are evidence-grounded.\n"
                     "3) Ensure clarity under high density: no vague claims, no rhetorical padding.\n"
                     "Hard Constraints (must):\n"
-                    "1) Write exactly one section fragment for CURRENT_SECTION_PLAN_JSON; never write other sections.\n"
+                    "1) Write exactly one section fragment for CURRENT_SECTION_PLAN_MARKDOWN; never write other sections.\n"
                     "2) Follow scope_requirements, writing_boundaries, must_cover_points exactly.\n"
                     "3) Keep strict topic focus; no unrelated expansions.\n"
                     "4) Ensure content is rich, complete, and high-information; avoid filler and paraphrase loops.\n"
@@ -477,8 +540,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "10) For process/workflow content, first provide natural-language explanation, then Mermaid.\n"
                     "11) Markdown heading rule: only ### and deeper headings are allowed (####, #####, ######).\n"
                     "12) Never output # or ## headings.\n"
-                    "13) Never output a heading that repeats CURRENT_SECTION_PLAN_JSON.subhead (including near-identical wording).\n"
-                    "14) The first non-empty line must not restate CURRENT_SECTION_PLAN_JSON.subhead.\n"
+                    "13) Never output a heading that repeats CURRENT_SECTION_PLAN_MARKDOWN.subhead (including near-identical wording).\n"
+                    "14) The first non-empty line must not restate CURRENT_SECTION_PLAN_MARKDOWN.subhead.\n"
                     "15) Keep wording precise; avoid vague terms without analytical support.\n"
                     "16) Include uncertainty boundaries when evidence is incomplete or conflicting.\n"
                     "17) Do not overclaim beyond evidence available in FINAL_CONTEXT_PACKET.\n"
@@ -493,8 +556,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "- If formulas were needed, did I use LaTeX correctly?\n"
                     "- If workflow was discussed, did I provide language-first then Mermaid?\n"
                     "- Did I avoid # and ## headings entirely?\n"
-                    "- Did I avoid repeating CURRENT_SECTION_PLAN_JSON.subhead as a heading?\n"
-                    "- Is the first heading (if any) different from CURRENT_SECTION_PLAN_JSON.subhead?\n"
+                    "- Did I avoid repeating CURRENT_SECTION_PLAN_MARKDOWN.subhead as a heading?\n"
+                    "- Is the first heading (if any) different from CURRENT_SECTION_PLAN_MARKDOWN.subhead?\n"
                     "- Is the fragment decision-useful, evidence-grounded, and uncertainty-aware?"
                 ),
             },
@@ -504,7 +567,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
                     "SECTION_RENDERING_NOTE:\n"
-                    "- Final assembler already renders CURRENT_SECTION_PLAN_JSON.subhead as a `##` title.\n"
+                    "- Final assembler already renders CURRENT_SECTION_PLAN_MARKDOWN.subhead as a `##` title.\n"
                     "- Your fragment must not repeat that title.\n\n"
                     "SECTION_PREFIX_ALREADY_RENDERED:\n"
                     f"{section_prefix_h2}\n\n"
@@ -512,9 +575,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "- Continue writing after SECTION_PREFIX_ALREADY_RENDERED.\n"
                     "- Do not output SECTION_PREFIX_ALREADY_RENDERED again.\n\n"
                     f"CURRENT_SECTION_SUBHEAD_ALREADY_RENDERED_AS_H2:\n{section_subhead}\n\n"
-                    f"ARCHITECT_REPORT_PLAN_JSON:\n{all_section_plan}\n\n"
-                    f"CURRENT_SECTION_PLAN_JSON:\n{section_packet}\n\n"
-                    f"FINAL_CONTEXT_PACKET_JSON:\n{context_packet}"
+                    f"ARCHITECT_REPORT_PLAN_MARKDOWN:\n{all_section_plan_markdown}\n\n"
+                    f"CURRENT_SECTION_PLAN_MARKDOWN:\n{section_packet_markdown}\n\n"
+                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
                 ),
             },
         ]
@@ -532,12 +595,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_language=target_language,
             now_utc=now_utc,
         )
+        context_packet_markdown = self._render_final_context_packet_markdown(
+            context_packet
+        )
         return [
             {
                 "role": "system",
                 "content": (
                     "Role: Structured Research Synthesizer.\n"
-                    "Mission: Build one JSON object for THEME from FINAL_CONTEXT_PACKET.\n"
                     "Identity: Senior structured-output instructor.\n"
                     "Mission: Build one JSON object for THEME from FINAL_CONTEXT_PACKET in a single pass.\n"
                     "Instruction Priority:\n"
@@ -576,7 +641,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"FINAL_CONTEXT_PACKET_JSON:\n{context_packet}"
+                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
                 ),
             },
         ]
@@ -608,27 +673,49 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         target_language: str,
         now_utc: datetime,
-    ) -> str:
-        payload = {
-            "theme": str(ctx.request.themes),
-            "target_output_language": str(target_language),
-            "time_context": {
-                "utc_timestamp": now_utc.isoformat(),
-                "utc_date": now_utc.date().isoformat(),
-            },
-            "theme_plan": ctx.plan.theme_plan.model_dump(),
-            "question_cards": [
-                item.model_dump() for item in ctx.parallel.question_cards
+    ) -> _RenderFinalContextPacket:
+        return _RenderFinalContextPacket(
+            theme=str(ctx.request.themes),
+            target_output_language=str(target_language),
+            utc_timestamp=now_utc.isoformat(),
+            utc_date=now_utc.date().isoformat(),
+            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
+            question_cards=[
+                item.model_copy(deep=True) for item in ctx.parallel.question_cards
             ],
-            "track_results": self._build_track_result_packet(
-                ctx.parallel.track_results
-            ),
-            "render_objective": (
+            track_results=self._build_track_result_packet(ctx.parallel.track_results),
+            render_objective=(
                 "Produce one theme-focused final synthesis with consensus, conflicts, "
                 "uncertainty boundaries, and implications."
             ),
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        )
+
+    def _render_final_context_packet_markdown(
+        self, packet: _RenderFinalContextPacket
+    ) -> str:
+        lines: list[str] = [
+            "# Final Context Packet",
+            "## Theme",
+            normalize_block_text(packet.theme) or "n/a",
+            "## Target Output Language",
+            normalize_block_text(packet.target_output_language) or "n/a",
+            "## Time Context",
+            f"- UTC timestamp: {packet.utc_timestamp}",
+            f"- UTC date: {packet.utc_date}",
+            "## Render Objective",
+            packet.render_objective,
+            "## Theme Plan",
+            render_theme_plan_markdown(
+                packet.theme_plan,
+                include_title=False,
+                include_question_cards=False,
+            ),
+            "## Question Cards",
+            render_question_cards_markdown(packet.question_cards),
+            "## Track Results",
+            self._render_track_results_markdown(packet.track_results),
+        ]
+        return "\n".join(lines).strip()
 
     def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
         token = clean_whitespace(
@@ -640,30 +727,79 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
     def _build_track_result_packet(
         self, track_results: list[ResearchTrackResult]
-    ) -> list[dict[str, object]]:
+    ) -> list[_RenderTrackResultPacket]:
         return [
-            {
-                "question_id": item.question_id,
-                "question": item.question,
-                "stop_reason": item.stop_reason,
-                "rounds": int(item.rounds),
-                "search_calls": int(item.search_calls),
-                "fetch_calls": int(item.fetch_calls),
-                "confidence": float(item.confidence),
-                "coverage_ratio": float(item.coverage_ratio),
-                "unresolved_conflicts": int(item.unresolved_conflicts),
-                "key_findings": list(item.key_findings),
-                "subreport_excerpt": self._normalize_block_text(
+            _RenderTrackResultPacket(
+                question_id=str(item.question_id),
+                question=str(item.question),
+                stop_reason=str(item.stop_reason),
+                rounds=int(item.rounds),
+                search_calls=int(item.search_calls),
+                fetch_calls=int(item.fetch_calls),
+                confidence=float(item.confidence),
+                coverage_ratio=float(item.coverage_ratio),
+                unresolved_conflicts=int(item.unresolved_conflicts),
+                key_findings=list(item.key_findings),
+                subreport_excerpt=normalize_block_text(
                     str(item.subreport_markdown or "")
                 )[: self._MAX_SUBREPORT_EXCERPT_CHARS],
-            }
+            )
             for item in track_results
         ]
 
+    def _render_track_results_markdown(
+        self, track_results: list[_RenderTrackResultPacket]
+    ) -> str:
+        if not track_results:
+            return "- (none)"
+        lines: list[str] = []
+        for index, item in enumerate(track_results, start=1):
+            question = normalize_block_text(item.question) or "n/a"
+            lines.extend(
+                [
+                    f"### Track {index}: {question}",
+                    f"- Question ID: {normalize_block_text(item.question_id) or 'n/a'}",
+                    f"- Stop reason: {normalize_block_text(item.stop_reason) or 'n/a'}",
+                    f"- Rounds: {int(item.rounds)}",
+                    f"- Search calls: {int(item.search_calls)}",
+                    f"- Fetch calls: {int(item.fetch_calls)}",
+                    f"- Confidence: {float(item.confidence):.3f}",
+                    f"- Coverage ratio: {float(item.coverage_ratio):.3f}",
+                    f"- Unresolved conflicts: {int(item.unresolved_conflicts)}",
+                    "- Key findings:",
+                ]
+            )
+            if item.key_findings:
+                for token in item.key_findings:
+                    finding = normalize_block_text(token)
+                    if not finding:
+                        continue
+                    if "\n" not in finding:
+                        lines.append(f"  - {finding}")
+                        continue
+                    lines.extend(
+                        ["  -", "    ```text"]
+                        + [f"    {line}" for line in finding.split("\n")]
+                        + ["    ```"]
+                    )
+            else:
+                lines.append("  - (none)")
+            lines.append("- Subreport excerpt:")
+            excerpt = normalize_block_text(item.subreport_excerpt)
+            if excerpt:
+                lines.extend(
+                    ["  ```markdown"]
+                    + [f"  {line}" for line in excerpt.split("\n")]
+                    + ["  ```"]
+                )
+            else:
+                lines.append("  - (none)")
+        return "\n".join(lines).strip()
+
     def _collect_writer_section_failures(
         self, exc: BaseException
-    ) -> list[dict[str, object]]:
-        out: list[dict[str, object]] = []
+    ) -> list[_WriterSectionFailure]:
+        out: list[_WriterSectionFailure] = []
         stack: list[BaseException] = [exc]
         while stack and len(out) < 16:
             node = stack.pop()
@@ -678,13 +814,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             if not isinstance(node, _WriterSectionError):
                 continue
             out.append(
-                {
-                    "index": int(node.index),
-                    "section_id": str(node.section_id),
-                    "subhead": str(node.subhead),
-                    "cause_type": str(node.cause_type),
-                    "cause_message": str(node.cause_message),
-                }
+                _WriterSectionFailure(
+                    index=int(node.index),
+                    section_id=str(node.section_id),
+                    subhead=str(node.subhead),
+                    cause_type=str(node.cause_type),
+                    cause_message=str(node.cause_message),
+                )
             )
         return out
 
@@ -700,9 +836,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             if 0 <= start < end:
                 return json.loads(raw[start : end + 1])
             raise
-
-    def _normalize_block_text(self, text: str) -> str:
-        return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 
     def _normalize_markdown(self, text: str) -> str:
         content = str(text or "").replace("\r\n", "\n").replace("\r", "\n")

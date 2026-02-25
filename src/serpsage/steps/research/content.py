@@ -12,6 +12,10 @@ from serpsage.models.research import (
     ContentOutputPayload,
 )
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.prompt_markdown import (
+    render_abstract_review_markdown,
+    render_theme_plan_markdown,
+)
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     sort_source_ids_by_score,
@@ -164,6 +168,10 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
         round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
+        theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
+        abstract_review_markdown = render_abstract_review_markdown(
+            ctx.work.abstract_review
+        )
         return [
             {
                 "role": "system",
@@ -211,8 +219,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep all free-text fields in the required output language.\n\n"
-                    f"THEME_PLAN:\n{ctx.plan.theme_plan.model_dump()}\n\n"
-                    f"ABSTRACT_REVIEW:\n{ctx.work.abstract_review.model_dump()}\n\n"
+                    f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
+                    f"ABSTRACT_REVIEW_MARKDOWN:\n{abstract_review_markdown}\n\n"
                     f"SOURCE_CONTENT_PACKET:\n{packet}\n\n"
                     "Arbitration rubric:\n"
                     "- resolved: one side is sufficiently better supported by evidence.\n"
@@ -311,14 +319,17 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             )
             if len(content) > max_chars:
                 content = content[:max_chars]
+            content_lines = (content or "(empty)").split("\n")
             blocks.append(
                 "\n".join(
                     [
-                        f"source_id={source.source_id}",
-                        f"url={source.url}",
-                        f"title={clean_whitespace(source.title)}",
-                        "content:",
-                        content or "(empty)",
+                        f"### Source {int(source.source_id)}",
+                        f"- URL: {source.url}",
+                        f"- Title: {clean_whitespace(source.title)}",
+                        "- Content:",
+                        "  ```markdown",
+                        *[f"  {line}" for line in content_lines],
+                        "  ```",
                     ]
                 )
             )
@@ -326,4 +337,3 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchContentStep"]
-

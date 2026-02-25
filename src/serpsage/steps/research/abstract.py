@@ -12,6 +12,10 @@ from serpsage.models.research import (
     AbstractOutputPayload,
 )
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.prompt_markdown import (
+    render_rounds_markdown,
+    render_theme_plan_markdown,
+)
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     select_context_source_ids,
@@ -186,6 +190,8 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
         round_index = ctx.current_round.round_index if ctx.current_round else 0
+        theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
+        previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
         return [
             {
                 "role": "system",
@@ -233,8 +239,8 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep all free-text fields in the required output language.\n\n"
-                    f"THEME_PLAN:\n{ctx.plan.theme_plan.model_dump()}\n\n"
-                    f"PREVIOUS_ROUNDS:\n{[r.model_dump() for r in ctx.rounds[-3:]]}\n\n"
+                    f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
+                    f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
                     f"SOURCE_ABSTRACT_PACKET:\n{packet}\n\n"
                     "Escalation rubric for need_content_source_ids:\n"
                     "- Include IDs for sources tied to key conclusions, major conflicts, or model-selection decisions.\n"
@@ -357,4 +363,3 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchAbstractStep"]
-

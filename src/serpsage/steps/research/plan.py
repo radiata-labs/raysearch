@@ -18,6 +18,11 @@ from serpsage.models.research import (
     PlanSearchJobPayload,
 )
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.prompt_markdown import (
+    render_queries_markdown,
+    render_rounds_markdown,
+    render_theme_plan_markdown,
+)
 from serpsage.steps.research.utils import (
     chat_pydantic,
     merge_strings,
@@ -215,6 +220,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         budget = ctx.runtime.budget
         out_lang = ctx.plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
+        previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
+        candidate_queries_markdown = render_queries_markdown(candidate_queries)
         return [
             {
                 "role": "system",
@@ -261,9 +269,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep textual fields in the required output language.\n\n"
-                    f"THEME_PLAN:\n{ctx.plan.theme_plan.model_dump()}\n\n"
-                    f"PREVIOUS_ROUNDS:\n{[r.model_dump() for r in ctx.rounds[-3:]]}\n\n"
-                    f"CANDIDATE_QUERIES:\n{candidate_queries}\n\n"
+                    f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
+                    f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
+                    f"CANDIDATE_QUERIES_MARKDOWN:\n{candidate_queries_markdown}\n\n"
                     "BUDGET_REMAINING:\n"
                     f"- search_calls_remaining={max(0, budget.max_search_calls - ctx.runtime.search_calls)}\n"
                     f"- fetch_calls_remaining={max(0, budget.max_fetch_calls - ctx.runtime.fetch_calls)}\n"
@@ -324,4 +332,3 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchPlanStep"]
-

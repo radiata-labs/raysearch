@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import warnings
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -9,7 +9,9 @@ from typing_extensions import override
 from serpsage.error_details import exception_summary, exception_to_details
 from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
+from serpsage.models.research import ResearchThemePlan
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.prompt_markdown import render_theme_plan_markdown
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     select_context_source_ids,
@@ -21,6 +23,45 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.telemetry.base import SpanBase
+
+
+@dataclass(slots=True)
+class _SubreportRoundTrajectoryItem:
+    round_index: int
+    query_strategy: str
+    queries: list[str] = field(default_factory=list)
+    result_count: int = 0
+    confidence: float = 0.0
+    coverage_ratio: float = 0.0
+    unresolved_conflicts: int = 0
+    critical_gaps: int = 0
+    stop: bool = False
+    stop_reason: str = "n/a"
+
+
+@dataclass(slots=True)
+class _SubreportSourceEvidenceItem:
+    source_id: int
+    url: str
+    title: str
+    round_index: int
+    is_subpage: bool
+    abstracts: list[str] = field(default_factory=list)
+    content_excerpt: str = ""
+
+
+@dataclass(slots=True)
+class _SubreportContextPacket:
+    theme: str
+    core_question: str
+    target_output_language: str
+    utc_timestamp: str
+    utc_date: str
+    theme_plan: ResearchThemePlan
+    round_trajectory: list[_SubreportRoundTrajectoryItem] = field(default_factory=list)
+    source_evidence: list[_SubreportSourceEvidenceItem] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    subreport_objective: str = ""
 
 
 class ResearchSubreportStep(StepBase[ResearchStepContext]):
@@ -107,7 +148,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
-        context_packet = self._build_subreport_context_packet(
+        context_packet_markdown = self._build_subreport_context_packet_markdown(
             ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
@@ -160,7 +201,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"SUBREPORT_CONTEXT_PACKET_JSON:\n{context_packet}"
+                    f"SUBREPORT_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
                 ),
             },
         ]
@@ -208,7 +249,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         )
         return "\n\n".join(sections)
 
-    def _build_subreport_context_packet(
+    def _build_subreport_context_packet_markdown(
         self,
         *,
         ctx: ResearchStepContext,
@@ -216,55 +257,177 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
         core_question: str,
     ) -> str:
+        packet = self._build_subreport_context_packet(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+            core_question=core_question,
+        )
+
+        lines: list[str] = [
+            "# Subreport Context Packet",
+            "## Theme",
+            self._normalize_block_text(packet.theme) or "n/a",
+            "## Core Question",
+            self._normalize_block_text(packet.core_question) or "n/a",
+            "## Target Output Language",
+            self._normalize_block_text(packet.target_output_language) or "n/a",
+            "## Time Context",
+            f"- UTC timestamp: {packet.utc_timestamp}",
+            f"- UTC date: {packet.utc_date}",
+            "## Subreport Objective",
+            packet.subreport_objective,
+            "## Theme Plan",
+        ]
+        lines.append(render_theme_plan_markdown(packet.theme_plan, include_title=False))
+        lines.extend(["## Round Trajectory"])
+        if packet.round_trajectory:
+            for item in packet.round_trajectory:
+                round_index = int(item.round_index)
+                lines.extend(
+                    [
+                        f"### Round {round_index}",
+                        f"- Query strategy: {self._normalize_block_text(item.query_strategy) or 'n/a'}",
+                        f"- Result count: {int(item.result_count)}",
+                        f"- Confidence: {float(item.confidence):.3f}",
+                        f"- Coverage ratio: {float(item.coverage_ratio):.3f}",
+                        f"- Unresolved conflicts: {int(item.unresolved_conflicts)}",
+                        f"- Critical gaps: {int(item.critical_gaps)}",
+                        f"- Stop: {bool(item.stop)}",
+                        f"- Stop reason: {self._normalize_block_text(item.stop_reason) or 'n/a'}",
+                    ]
+                )
+                if item.queries:
+                    lines.append("- Queries:")
+                    for query in item.queries:
+                        token = self._normalize_block_text(str(query))
+                        if not token:
+                            continue
+                        if "\n" not in token:
+                            lines.append(f"  - {token}")
+                            continue
+                        lines.extend(
+                            ["  -", "    ```text"]
+                            + [f"    {line}" for line in token.split("\n")]
+                            + ["    ```"]
+                        )
+                else:
+                    lines.append("- Queries: (none)")
+        else:
+            lines.append("- No round trajectory available.")
+
+        lines.extend(["## Source Evidence"])
+        if packet.source_evidence:
+            for source in packet.source_evidence:
+                source_id = int(source.source_id)
+                title = clean_whitespace(source.title) or "Untitled"
+                url = clean_whitespace(source.url) or "n/a"
+                round_index = int(source.round_index)
+                is_subpage = bool(source.is_subpage)
+                lines.extend(
+                    [
+                        f"### Source {source_id}: {title}",
+                        f"- URL: {url}",
+                        f"- Round index: {round_index}",
+                        f"- Is subpage: {is_subpage}",
+                    ]
+                )
+                if source.abstracts:
+                    lines.append("- Abstracts:")
+                    for item in source.abstracts:
+                        token = self._normalize_block_text(str(item))
+                        if not token:
+                            continue
+                        if "\n" not in token:
+                            lines.append(f"  - {token}")
+                            continue
+                        lines.extend(
+                            ["  -", "    ```text"]
+                            + [f"    {line}" for line in token.split("\n")]
+                            + ["    ```"]
+                        )
+                else:
+                    lines.append("- Abstracts: (none)")
+                excerpt = self._normalize_block_text(source.content_excerpt)
+                if excerpt:
+                    lines.extend(
+                        [
+                            "- Content excerpt:",
+                            "  ```text",
+                            *[f"  {line}" for line in excerpt.split("\n")],
+                            "  ```",
+                        ]
+                    )
+                else:
+                    lines.append("- Content excerpt: (none)")
+        else:
+            lines.append("- No source evidence available.")
+
+        lines.extend(["## Notes"])
+        if packet.notes:
+            lines.extend(f"- {item}" for item in packet.notes)
+        else:
+            lines.append("- (none)")
+        return "\n".join(lines).strip()
+
+    def _build_subreport_context_packet(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        target_language: str,
+        now_utc: datetime,
+        core_question: str,
+    ) -> _SubreportContextPacket:
         selected_sources = self._select_sources_for_render(
             ctx,
             max_sources=self._MAX_SOURCES_FOR_CONTEXT,
         )
-        payload = {
-            "theme": str(ctx.request.themes),
-            "core_question": str(core_question),
-            "target_output_language": str(target_language),
-            "time_context": {
-                "utc_timestamp": now_utc.isoformat(),
-                "utc_date": now_utc.date().isoformat(),
-            },
-            "theme_plan": ctx.plan.theme_plan.model_dump(),
-            "round_trajectory": self._build_round_trajectory_packet(ctx),
-            "source_evidence": self._build_source_evidence_packet(selected_sources),
-            "notes": self._collect_recent_notes(ctx, limit=12),
-            "subreport_objective": (
+        return _SubreportContextPacket(
+            theme=self._normalize_block_text(str(ctx.request.themes)),
+            core_question=self._normalize_block_text(core_question),
+            target_output_language=self._normalize_block_text(target_language),
+            utc_timestamp=now_utc.isoformat(),
+            utc_date=now_utc.date().isoformat(),
+            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
+            round_trajectory=self._build_round_trajectory_packet(ctx),
+            source_evidence=self._build_source_evidence_packet(selected_sources),
+            notes=self._collect_recent_notes(ctx, limit=12),
+            subreport_objective=(
                 "Build an evidence archive for one core question with complete, "
                 "traceable detail and explicit uncertainty boundaries."
             ),
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        )
 
     def _build_round_trajectory_packet(
         self,
         ctx: ResearchStepContext,
-    ) -> list[dict[str, object]]:
+    ) -> list[_SubreportRoundTrajectoryItem]:
         rounds = ctx.rounds[-8:]
         return [
-            {
-                "round_index": int(round_state.round_index),
-                "query_strategy": clean_whitespace(round_state.query_strategy or "n/a"),
-                "queries": [clean_whitespace(item) for item in round_state.queries[:8]],
-                "result_count": int(round_state.result_count),
-                "confidence": float(round_state.confidence),
-                "coverage_ratio": float(round_state.coverage_ratio),
-                "unresolved_conflicts": int(round_state.unresolved_conflicts),
-                "critical_gaps": int(round_state.critical_gaps),
-                "stop": bool(round_state.stop),
-                "stop_reason": clean_whitespace(round_state.stop_reason or "n/a"),
-            }
+            _SubreportRoundTrajectoryItem(
+                round_index=int(round_state.round_index),
+                query_strategy=clean_whitespace(round_state.query_strategy or "n/a"),
+                queries=[
+                    token
+                    for item in round_state.queries[:8]
+                    if (token := self._normalize_block_text(item))
+                ],
+                result_count=int(round_state.result_count),
+                confidence=float(round_state.confidence),
+                coverage_ratio=float(round_state.coverage_ratio),
+                unresolved_conflicts=int(round_state.unresolved_conflicts),
+                critical_gaps=int(round_state.critical_gaps),
+                stop=bool(round_state.stop),
+                stop_reason=clean_whitespace(round_state.stop_reason or "n/a"),
+            )
             for round_state in rounds
         ]
 
     def _build_source_evidence_packet(
         self,
         sources: list[ResearchSource],
-    ) -> list[dict[str, object]]:
-        out: list[dict[str, object]] = []
+    ) -> list[_SubreportSourceEvidenceItem]:
+        out: list[_SubreportSourceEvidenceItem] = []
         total_chars = 0
         for source in sources:
             content_excerpt = self._normalize_block_text(str(source.content or ""))
@@ -275,19 +438,19 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 break
             total_chars = projected
             out.append(
-                {
-                    "source_id": int(source.source_id),
-                    "url": str(source.url),
-                    "title": clean_whitespace(source.title or ""),
-                    "round_index": int(source.round_index),
-                    "is_subpage": bool(source.is_subpage),
-                    "abstracts": [
+                _SubreportSourceEvidenceItem(
+                    source_id=int(source.source_id),
+                    url=str(source.url),
+                    title=clean_whitespace(source.title or ""),
+                    round_index=int(source.round_index),
+                    is_subpage=bool(source.is_subpage),
+                    abstracts=[
                         token
                         for item in source.abstracts[: self._MAX_ABSTRACTS_PER_SOURCE]
-                        if (token := clean_whitespace(item))
+                        if (token := self._normalize_block_text(item))
                     ],
-                    "content_excerpt": content_excerpt,
-                }
+                    content_excerpt=content_excerpt,
+                )
             )
         return out
 
@@ -300,7 +463,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         out: list[str] = []
         seen: set[str] = set()
         for raw in reversed(ctx.notes):
-            item = clean_whitespace(raw)
+            item = self._normalize_block_text(raw)
             if not item:
                 continue
             key = item.casefold()
@@ -388,4 +551,3 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
 
 
 __all__ = ["ResearchSubreportStep"]
-

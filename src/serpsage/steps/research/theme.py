@@ -279,27 +279,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "Comparison Pattern Example (generic):\n"
                     "- Card 1: evaluate candidate A under shared criteria.\n"
                     "- Card 2: evaluate candidate B under the same criteria.\n"
-                    "- Card 3: integrate evidence and decide best fit by scenario.\n\n"
-                    "JSON Skeleton Example:\n"
-                    "{\n"
-                    '  "detected_input_language": "zh",\n'
-                    '  "core_question": "...",\n'
-                    '  "multi_level_questions": [],\n'
-                    '  "subthemes": [],\n'
-                    '  "evidence_targets": [],\n'
-                    '  "risk_conflicts": [],\n'
-                    '  "initial_strategy": "balanced",\n'
-                    '  "seed_queries": [],\n'
-                    '  "question_cards": [\n'
-                    "    {\n"
-                    '      "question": "...",\n'
-                    '      "priority": 3,\n'
-                    '      "seed_queries": ["..."],\n'
-                    '      "evidence_focus": ["..."],\n'
-                    '      "expected_gain": "..."\n'
-                    "    }\n"
-                    "  ]\n"
-                    "}"
+                    "- Card 3: integrate evidence and decide best fit by scenario."
                 ),
             },
         ]

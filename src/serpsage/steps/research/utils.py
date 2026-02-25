@@ -126,23 +126,40 @@ def build_abstract_packet(
     blocks: list[str] = []
     for source in sorted(sources, key=lambda item: item.source_id):
         abstracts = [
-            token
+            text
             for x in source.abstracts[:max_abstracts_per_source]
-            if (token := clean_whitespace(x))
+            if (text := _normalize_block_text(str(x)))
         ]
-        abstract_lines = (
-            "\n".join(f"- {item}" for item in abstracts) if abstracts else "- (none)"
-        )
+        abstract_lines: list[str] = []
+        if abstracts:
+            for index, item in enumerate(abstracts, start=1):
+                if "\n" in item:
+                    abstract_lines.extend(
+                        [
+                            f"  - Abstract {index}:",
+                            "    ```text",
+                            *[f"    {line}" for line in item.split("\n")],
+                            "    ```",
+                        ]
+                    )
+                else:
+                    abstract_lines.append(f"  - {item}")
+        else:
+            abstract_lines.append("  - (none)")
         blocks.append(
             "\n".join(
                 [
-                    f"source_id={source.source_id}",
-                    f"url={source.url}",
-                    f"title={clean_whitespace(source.title)}",
-                    f"is_subpage={str(bool(source.is_subpage)).lower()}",
-                    "abstracts:",
-                    abstract_lines,
+                    f"### Source {int(source.source_id)}",
+                    f"- URL: {source.url}",
+                    f"- Title: {clean_whitespace(source.title)}",
+                    f"- Is subpage: {str(bool(source.is_subpage)).lower()}",
+                    "- Abstracts:",
+                    "\n".join(abstract_lines),
                 ]
             )
         )
     return "\n\n".join(blocks)
+
+
+def _normalize_block_text(text: str) -> str:
+    return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
