@@ -105,7 +105,6 @@ class _RenderFinalContextPacket:
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
     span_name = "step.research_render_final"
-    _MAX_SUBREPORT_EXCERPT_CHARS = 1600
 
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
@@ -742,7 +741,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 key_findings=list(item.key_findings),
                 subreport_excerpt=normalize_block_text(
                     str(item.subreport_markdown or "")
-                )[: self._MAX_SUBREPORT_EXCERPT_CHARS],
+                ),
             )
             for item in track_results
         ]
