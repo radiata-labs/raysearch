@@ -22,12 +22,7 @@ class ThemeOutputPayload(MutableModel):
 
     detected_input_language: str = "same as user input language"
     core_question: str = ""
-    multi_level_questions: list[str] = Field(default_factory=list, max_length=24)
     subthemes: list[str] = Field(default_factory=list, max_length=12)
-    evidence_targets: list[str] = Field(default_factory=list, max_length=12)
-    risk_conflicts: list[str] = Field(default_factory=list, max_length=10)
-    initial_strategy: str = "balanced"
-    seed_queries: list[str] = Field(default_factory=list, max_length=12)
     question_cards: list[ThemeQuestionCardPayload] = Field(
         default_factory=list,
         max_length=24,
@@ -45,11 +40,7 @@ class ResearchThemePlanCard(MutableModel):
 
 class ResearchThemePlan(MutableModel):
     core_question: str = ""
-    multi_level_questions: list[str] = Field(default_factory=list, max_length=24)
     subthemes: list[str] = Field(default_factory=list, max_length=12)
-    evidence_targets: list[str] = Field(default_factory=list, max_length=12)
-    risk_conflicts: list[str] = Field(default_factory=list, max_length=10)
-    initial_strategy: str = "balanced"
     input_language: str = ""
     output_language: str = ""
     question_cards: list[ResearchThemePlanCard] = Field(
@@ -62,11 +53,6 @@ class PlanSearchJobPayload(MutableModel):
     query: str
     intent: str = "coverage"
     mode: str = "auto"
-    include_domains: list[str] = Field(default_factory=list, max_length=8)
-    exclude_domains: list[str] = Field(default_factory=list, max_length=8)
-    include_text: list[str] = Field(default_factory=list, max_length=8)
-    exclude_text: list[str] = Field(default_factory=list, max_length=8)
-    expected_gain: str = ""
 
 
 class PlanOutputPayload(MutableModel):

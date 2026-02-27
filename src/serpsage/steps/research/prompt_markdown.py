@@ -59,25 +59,11 @@ def render_theme_plan_markdown(
             f"- Core question: {_normalize_scalar_text(plan.core_question) or 'n/a'}",
             f"- Input language: {_normalize_scalar_text(plan.input_language) or 'n/a'}",
             f"- Output language: {_normalize_scalar_text(plan.output_language) or 'n/a'}",
-            f"- Initial strategy: {_normalize_scalar_text(plan.initial_strategy) or 'n/a'}",
-            "- Multi-level questions:",
         ]
-    )
-    lines.extend(
-        _render_markdown_bullets(plan.multi_level_questions, indent="  ")
-        or ["  - (none)"]
     )
     lines.append("- Subthemes:")
     lines.extend(
         _render_markdown_bullets(plan.subthemes, indent="  ") or ["  - (none)"]
-    )
-    lines.append("- Evidence targets:")
-    lines.extend(
-        _render_markdown_bullets(plan.evidence_targets, indent="  ") or ["  - (none)"]
-    )
-    lines.append("- Risk conflicts:")
-    lines.extend(
-        _render_markdown_bullets(plan.risk_conflicts, indent="  ") or ["  - (none)"]
     )
     if include_question_cards:
         lines.append("- Question cards:")

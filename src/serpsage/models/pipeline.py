@@ -235,17 +235,13 @@ class ResearchSource(MutableModel):
     source_id: int
     url: str
     canonical_url: str = ""
-    url_version: int = 1
     title: str = ""
     abstracts: list[str] = Field(default_factory=list)
     content: str = ""
     round_index: int = 0
     is_subpage: bool = False
     seen_count: int = 1
-    ingest_query: str = ""
-    ingest_intent: str = ""
     content_fingerprint: str = ""
-    score: float = 0.0
 
 
 class ResearchSearchJob(MutableModel):
@@ -256,7 +252,6 @@ class ResearchSearchJob(MutableModel):
     exclude_domains: list[str] = Field(default_factory=list)
     include_text: list[str] = Field(default_factory=list)
     exclude_text: list[str] = Field(default_factory=list)
-    expected_gain: str = ""
 
 
 class ResearchQuestionCard(MutableModel):
@@ -280,7 +275,6 @@ class ResearchTrackResult(MutableModel):
     unresolved_conflicts: int = 0
     subreport_markdown: str = ""
     key_findings: list[str] = Field(default_factory=list)
-    errors: list[AppError] = Field(default_factory=list)
 
 
 class ResearchParallelState(MutableModel):
@@ -313,12 +307,10 @@ class ResearchPlanState(MutableModel):
     input_language: str = ""
     output_language: str = ""
     core_question: str = ""
-    question_cards: list[ResearchQuestionCard] = Field(default_factory=list)
 
 
 class ResearchCorpusState(MutableModel):
     sources: list[ResearchSource] = Field(default_factory=list)
-    source_url_to_id: dict[str, int] = Field(default_factory=dict)
     source_url_to_ids: dict[str, list[int]] = Field(default_factory=dict)
     ranked_source_ids: list[int] = Field(default_factory=list)
     source_scores: dict[int, float] = Field(default_factory=dict)
@@ -341,7 +333,6 @@ class ResearchRoundState(MutableModel):
     queries: list[str] = Field(default_factory=list)
     result_count: int = 0
     new_source_ids: list[int] = Field(default_factory=list)
-    new_version_source_ids: list[int] = Field(default_factory=list)
     context_source_ids: list[int] = Field(default_factory=list)
     corpus_score_gain: float = 0.0
     abstract_summary: str = ""
@@ -350,8 +341,6 @@ class ResearchRoundState(MutableModel):
     coverage_ratio: float = 0.0
     unresolved_conflicts: int = 0
     critical_gaps: int = 0
-    progress: bool = False
-    next_queries: list[str] = Field(default_factory=list)
     stop_reason: str = ""
     stop: bool = False
 

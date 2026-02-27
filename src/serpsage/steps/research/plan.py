@@ -26,7 +26,6 @@ from serpsage.steps.research.prompt_markdown import (
 from serpsage.steps.research.utils import (
     chat_pydantic,
     merge_strings,
-    normalize_strings,
     resolve_research_model,
 )
 from serpsage.utils import clean_whitespace
@@ -186,11 +185,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     query=query,
                     intent=intent,
                     mode=mode,  # type: ignore[arg-type]
-                    include_domains=normalize_strings(item.include_domains, limit=8),
-                    exclude_domains=normalize_strings(item.exclude_domains, limit=8),
-                    include_text=normalize_strings(item.include_text, limit=8),
-                    exclude_text=normalize_strings(item.exclude_text, limit=8),
-                    expected_gain=clean_whitespace(item.expected_gain),
                 )
             )
             if len(out) >= job_limit:
@@ -204,7 +198,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 query=item,
                 intent="coverage",
                 mode="auto",
-                expected_gain="Increase coverage of core subthemes.",
             )
             for item in fallback
         ]
@@ -250,7 +243,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "- If uncertain, produce fewer but higher-value jobs.\n"
                     "- If all candidate queries are off-topic relative to CORE_QUESTION, return search_jobs as an empty array.\n"
                     "Quality Checklist:\n"
-                    "- Distinct intent per job, explicit expected gain, no near duplicates, conflict-aware targeting."
+                    "- Distinct intent per job, no near duplicates, conflict-aware targeting."
                 ),
             },
             {
@@ -303,27 +296,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                             "query": {"type": "string"},
                             "intent": {"type": "string"},
                             "mode": {"type": "string"},
-                            "include_domains": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "exclude_domains": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "include_text": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "exclude_text": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "expected_gain": {"type": "string"},
                         },
                     },
                 },

@@ -56,7 +56,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             )
         else:
             progress = bool(round_state.new_source_ids or corpus_score_gain > 0.0)
-        round_state.progress = bool(progress)
 
         if progress:
             ctx.runtime.no_progress_rounds = 0
@@ -114,7 +113,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             stop = True
             stop_reason = "no_next_queries"
 
-        round_state.next_queries = list(next_queries)
         round_state.stop = bool(stop)
         round_state.stop_reason = stop_reason
         ctx.plan.next_queries = list(next_queries)

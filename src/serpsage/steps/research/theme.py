@@ -52,12 +52,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         payload = ThemeOutputPayload(
             detected_input_language="same as user input language",
             core_question=ctx.request.themes,
-            multi_level_questions=[],
             subthemes=[],
-            evidence_targets=[],
-            risk_conflicts=[],
-            initial_strategy="balanced",
-            seed_queries=[],
             question_cards=[],
         )
         try:
@@ -104,24 +99,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         if not core_question:
             core_question = ctx.request.themes
-        multi_level_questions = normalize_strings(
-            payload.multi_level_questions,
-            limit=24,
-        )
         subthemes = normalize_strings(payload.subthemes, limit=12)
-        if not subthemes and multi_level_questions:
-            subthemes = self._extract_subthemes_from_multi_level(
-                multi_level_questions,
-                limit=12,
-            )
-        seed_queries = normalize_strings(payload.seed_queries, limit=seed_limit)
         cards = self._normalize_question_cards(
             payload.question_cards,
             core_question=core_question,
             card_cap=card_cap,
             seed_limit=seed_limit,
             fallback_branches=merge_strings(
-                multi_level_questions,
                 subthemes,
                 [core_question],
                 limit=max(24, card_cap * 2),
@@ -131,15 +115,10 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.plan.input_language = input_language
         ctx.plan.output_language = input_language
         ctx.plan.core_question = core_question
-        ctx.plan.question_cards = [item.model_copy(deep=True) for item in cards]
         ctx.parallel.question_cards = [item.model_copy(deep=True) for item in cards]
         ctx.plan.theme_plan = ResearchThemePlan(
             core_question=core_question,
-            multi_level_questions=multi_level_questions,
             subthemes=subthemes,
-            evidence_targets=normalize_strings(payload.evidence_targets, limit=12),
-            risk_conflicts=normalize_strings(payload.risk_conflicts, limit=10),
-            initial_strategy=str(payload.initial_strategy or "balanced"),
             input_language=input_language,
             output_language=input_language,
             question_cards=[
@@ -156,7 +135,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         primary_seeds = list(cards[0].seed_queries) if cards else []
         ctx.plan.next_queries = merge_strings(
-            seed_queries,
             primary_seeds,
             [core_question],
             limit=int(ctx.runtime.budget.max_queries_per_round),
@@ -203,8 +181,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "Step-by-step decomposition method:\n"
                     "1) Classify THEME into one primary type: comparison/selection, planning/how-to, diagnosis, trend/forecast, or factual mapping.\n"
                     "2) Define evidence dimensions before writing cards (for example: performance, cost, reliability, ecosystem, constraints, risk, recency).\n"
-                    "3) Build a multi-level question tree (L1/L2/L3 when useful).\n"
-                    "4) Convert the tree into executable question_cards, each card covering one distinct evidence objective.\n"
+                    "3) Identify subthemes that ensure high coverage with low overlap.\n"
+                    "4) Convert subthemes into executable question_cards, each card covering one distinct evidence objective.\n"
                     "Question-type playbook:\n"
                     "A) Comparison / Selection question:\n"
                     "- If THEME compares N candidates, create candidate cards (one per candidate) and one synthesis card.\n"
@@ -225,17 +203,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "5) Each card needs distinct evidence_focus and high-yield seed_queries.\n"
                     "6) priority must be 1..5 (5 highest).\n"
                     f"7) Return at most {card_cap} question cards.\n"
-                    "8) Return JSON only.\n"
+                    "8) Do not return top-level seed_queries; seed queries must be inside question_cards items.\n"
+                    "9) Return JSON only.\n"
                     "Output Contract (STRICT JSON SHAPE):\n"
                     "Top-level keys allowed:\n"
                     "- detected_input_language (string)\n"
                     "- core_question (string)\n"
-                    "- multi_level_questions (string[])\n"
                     "- subthemes (string[])\n"
-                    "- evidence_targets (string[])\n"
-                    "- risk_conflicts (string[])\n"
-                    "- initial_strategy (string)\n"
-                    "- seed_queries (string[])\n"
                     "- question_cards (object[])\n"
                     "question_cards item keys allowed:\n"
                     "- question (string)\n"
@@ -272,8 +246,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "- For comparison themes, include candidate-specific cards and one final synthesis card.\n\n"
                     "Output Notes:\n"
                     "- core_question: one-sentence anchor question.\n"
-                    "- multi_level_questions: include explicit prefixes like L1:/L2:/L3:.\n"
                     "- question_cards: each card is one executable sub-question for one track.\n"
+                    "- Do not produce top-level seed_queries.\n"
                     "- evidence_focus: list what evidence dimensions to prioritize.\n"
                     "- expected_gain: concrete learning value from this card.\n\n"
                     "Comparison Pattern Example (generic):\n"
@@ -291,39 +265,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             "required": [
                 "detected_input_language",
                 "core_question",
-                "multi_level_questions",
                 "subthemes",
-                "evidence_targets",
-                "risk_conflicts",
-                "initial_strategy",
-                "seed_queries",
                 "question_cards",
             ],
             "properties": {
                 "detected_input_language": {"type": "string"},
                 "core_question": {"type": "string"},
-                "multi_level_questions": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {"type": "string"},
-                },
                 "subthemes": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {"type": "string"},
-                },
-                "evidence_targets": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {"type": "string"},
-                },
-                "risk_conflicts": {
-                    "type": "array",
-                    "maxItems": 10,
-                    "items": {"type": "string"},
-                },
-                "initial_strategy": {"type": "string"},
-                "seed_queries": {
                     "type": "array",
                     "maxItems": 12,
                     "items": {"type": "string"},
@@ -395,7 +343,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     priority=priority,
                     seed_queries=merge_strings(
                         seed_queries,
-                        [question],
                         limit=min(seed_limit, 8),
                     ),
                     evidence_focus=normalize_strings(item.evidence_focus, limit=8),
@@ -463,36 +410,5 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             )
         ]
 
-    def _extract_subthemes_from_multi_level(
-        self,
-        values: list[str],
-        *,
-        limit: int,
-    ) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for raw in values:
-            item = clean_whitespace(raw)
-            if not item:
-                continue
-            normalized = item
-            if ":" in normalized:
-                _, tail = normalized.split(":", 1)
-                normalized = clean_whitespace(tail)
-            if not normalized:
-                continue
-            key = normalized.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(normalized)
-            if len(out) >= max(1, int(limit)):
-                break
-        return out
 
-
-# Backward-compatible alias.
-ResearchThemePlanStep = ResearchThemeStep
-
-
-__all__ = ["ResearchThemeStep", "ResearchThemePlanStep"]
+__all__ = ["ResearchThemeStep"]

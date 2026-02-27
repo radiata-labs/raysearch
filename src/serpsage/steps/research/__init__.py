@@ -8,7 +8,7 @@ from serpsage.steps.research.prepare import ResearchPrepareStep
 from serpsage.steps.research.render import ResearchRenderStep
 from serpsage.steps.research.search import ResearchSearchStep
 from serpsage.steps.research.subreport import ResearchSubreportStep
-from serpsage.steps.research.theme import ResearchThemePlanStep, ResearchThemeStep
+from serpsage.steps.research.theme import ResearchThemeStep
 
 __all__ = [
     "ResearchAbstractStep",
@@ -22,5 +22,5 @@ __all__ = [
     "ResearchSearchStep",
     "ResearchSubreportStep",
     "ResearchThemeStep",
-    "ResearchThemePlanStep",
+
 ]

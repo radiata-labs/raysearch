@@ -365,11 +365,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         self, ctx: ResearchStepContext
     ) -> list[ResearchQuestionCard]:
         cap = max(1, int(self.settings.research.parallel.question_card_cap))
-        raw_cards = (
-            list(ctx.parallel.question_cards)
-            if ctx.parallel.question_cards
-            else list(ctx.plan.question_cards)
-        )
+        raw_cards = list(ctx.parallel.question_cards)
         if not raw_cards:
             raw_cards = [
                 ResearchQuestionCard(
@@ -450,7 +446,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         )
         track.plan = root.plan.model_copy(deep=True)
         track.plan.core_question = card.question
-        track.plan.question_cards = [card.model_copy(deep=True)]
         track.plan.next_queries = list(card.seed_queries or [card.question])
         track.parallel.question_cards = [card.model_copy(deep=True)]
         track.parallel.track_results = []
@@ -537,7 +532,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             ),
             subreport_markdown=str(rendered.output.content or ""),
             key_findings=self._extract_key_findings(rendered),
-            errors=[item.model_copy(deep=True) for item in rendered.errors],
         )
 
     def _build_failed_track_result(
@@ -561,7 +555,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             ),
             subreport_markdown=str(track_ctx.output.content or ""),
             key_findings=self._extract_key_findings(track_ctx),
-            errors=[item.model_copy(deep=True) for item in track_ctx.errors],
         )
 
     def _extract_key_findings(self, track_ctx: ResearchStepContext) -> list[str]:

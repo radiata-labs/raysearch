@@ -118,11 +118,9 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         new_source_ids: list[int] = []
         new_version_source_ids: list[int] = []
         per_round_fetch_calls = 0
-        for idx, item in enumerate(out):
+        for item in out:
             if item.errors:
                 ctx.errors.extend(item.errors)
-            job_query = jobs[idx].query if idx < len(jobs) else ctx.request.themes
-            job_intent = jobs[idx].intent if idx < len(jobs) else "coverage"
             results = list(item.output.results or [])
             all_results.extend(results)
             per_round_fetch_calls += int(len(results))
@@ -131,8 +129,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     ctx=ctx,
                     result=result,
                     round_index=ctx.current_round.round_index,
-                    ingest_query=job_query,
-                    ingest_intent=job_intent,
                 )
                 for source_id in canonical_ids:
                     if source_id not in new_source_ids:
@@ -143,7 +139,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
 
         ctx.current_round.result_count = int(len(all_results))
         ctx.current_round.new_source_ids = list(new_source_ids)
-        ctx.current_round.new_version_source_ids = list(new_version_source_ids)
         ctx.current_round.corpus_score_gain = float(
             rebuild_corpus_ranking(
                 ctx=ctx,
@@ -189,8 +184,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         result: FetchResultItem,
         round_index: int,
-        ingest_query: str,
-        ingest_intent: str,
     ) -> tuple[list[int], list[int]]:
         new_canonical_ids: list[int] = []
         new_version_ids: list[int] = []
@@ -202,8 +195,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             content=str(result.content or ""),
             round_index=int(round_index),
             is_subpage=False,
-            ingest_query=clean_whitespace(ingest_query),
-            ingest_intent=clean_whitespace(ingest_intent),
         )
         if upserted.is_new_canonical:
             new_canonical_ids.append(int(upserted.source_id))
@@ -215,8 +206,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 ctx=ctx,
                 sub=sub,
                 round_index=round_index,
-                ingest_query=ingest_query,
-                ingest_intent=ingest_intent,
             )
             if sub_upserted.is_new_canonical:
                 new_canonical_ids.append(int(sub_upserted.source_id))
@@ -230,8 +219,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         sub: FetchSubpagesResult,
         round_index: int,
-        ingest_query: str,
-        ingest_intent: str,
     ) -> CorpusUpsertResult:
         return append_source_version(
             ctx=ctx,
@@ -241,8 +228,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             content=str(sub.content or ""),
             round_index=int(round_index),
             is_subpage=True,
-            ingest_query=clean_whitespace(ingest_query),
-            ingest_intent=clean_whitespace(ingest_intent),
         )
 
 
@@ -286,13 +271,9 @@ def append_source_version(
     content: str,
     round_index: int,
     is_subpage: bool,
-    ingest_query: str,
-    ingest_intent: str,
 ) -> CorpusUpsertResult:
     canonical_url = canonicalize_url(url) or clean_whitespace(url)
     normalized_title = clean_whitespace(title)
-    normalized_query = clean_whitespace(ingest_query)
-    normalized_intent = clean_whitespace(ingest_intent)
     normalized_abstracts = _normalize_strings(abstracts, limit=32)
     normalized_content = _normalize_text(content)
     fingerprint = build_content_fingerprint(
@@ -323,14 +304,11 @@ def append_source_version(
                 "abstracts": merged_abstracts,
                 "content": source.content or normalized_content,
                 "seen_count": max(1, int(source.seen_count)) + 1,
-                "ingest_query": source.ingest_query or normalized_query,
-                "ingest_intent": source.ingest_intent or normalized_intent,
                 "canonical_url": canonical_url,
                 "content_fingerprint": fingerprint,
             }
         )
         ctx.corpus.sources[idx] = updated
-        ctx.corpus.source_url_to_id[canonical_url] = int(source_id)
         return CorpusUpsertResult(
             source_id=int(source_id),
             canonical_url=canonical_url,
@@ -339,29 +317,23 @@ def append_source_version(
         )
 
     source_id = len(ctx.corpus.sources) + 1
-    url_version = len(existing_ids) + 1
     ctx.corpus.sources.append(
         ResearchSource(
             source_id=source_id,
             url=clean_whitespace(url),
             canonical_url=canonical_url,
-            url_version=url_version,
             title=normalized_title,
             abstracts=normalized_abstracts,
             content=normalized_content,
             round_index=int(round_index),
             is_subpage=bool(is_subpage),
             seen_count=1,
-            ingest_query=normalized_query,
-            ingest_intent=normalized_intent,
             content_fingerprint=fingerprint,
-            score=0.0,
         )
     )
     ids = list(ctx.corpus.source_url_to_ids.get(canonical_url, []))
     ids.append(int(source_id))
     ctx.corpus.source_url_to_ids[canonical_url] = ids
-    ctx.corpus.source_url_to_id[canonical_url] = int(source_id)
     return CorpusUpsertResult(
         source_id=int(source_id),
         canonical_url=canonical_url,
@@ -460,12 +432,10 @@ def rebuild_corpus_ranking(
         canonical = clean_whitespace(source.canonical_url) or canonicalize_url(
             source.url
         )
-        score = float(full_score_map.get(int(source.source_id), 0.0))
-        if canonical != source.canonical_url or abs(float(source.score) - score) > 1e-9:
+        if canonical != source.canonical_url:
             ctx.corpus.sources[idx] = source.model_copy(
                 update={
                     "canonical_url": canonical,
-                    "score": score,
                 }
             )
 
@@ -616,10 +586,8 @@ def synchronize_corpus_indexes(*, ctx: ResearchStepContext) -> None:
         ids = list(url_to_ids.get(canonical, []))
         ids.append(int(source.source_id))
         url_to_ids[canonical] = ids
-    latest_map = {canonical: ids[-1] for canonical, ids in url_to_ids.items() if ids}
     ctx.corpus.sources = sorted_sources
     ctx.corpus.source_url_to_ids = url_to_ids
-    ctx.corpus.source_url_to_id = latest_map
 
 
 def build_content_fingerprint(*, content: str, abstracts: list[str]) -> str:
