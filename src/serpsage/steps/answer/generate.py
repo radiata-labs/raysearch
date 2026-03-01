@@ -101,11 +101,11 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         ctx.output.citations = []
 
         try:
-            result = await self._llm.chat(
-                model=str(self.settings.answer.generate.use_model),
-                messages=messages,
-                schema=schema,
-            )
+            result = await self._llm.chat(
+                model=str(self.settings.answer.generate.use_model),
+                messages=messages,
+                response_format=schema,
+            )
             if schema is None:
                 answer_text = str(result.text or "")
                 normalized_answer = _expand_compound_citation_markers(answer_text)

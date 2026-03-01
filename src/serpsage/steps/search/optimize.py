@@ -91,7 +91,7 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
         result = await self._llm.chat(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
-            schema=schema,
+            response_format=schema,
         )
         raw = (
             result.data

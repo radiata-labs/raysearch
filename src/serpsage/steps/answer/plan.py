@@ -107,11 +107,11 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             now_utc=now_utc,
             max_results_cap=max_results_cap,
         )
-        result = await self._llm.chat(
-            model=str(self.settings.answer.plan.use_model),
-            messages=messages,
-            schema=schema,
-        )
+        result = await self._llm.chat(
+            model=str(self.settings.answer.plan.use_model),
+            messages=messages,
+            response_format=schema,
+        )
         raw = (
             result.data
             if result.data is not None

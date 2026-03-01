@@ -363,7 +363,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             section=section,
         )
         try:
-            result = await self._llm.chat(model=model, messages=messages, schema=None)
+            result = await self._llm.chat(
+                model=model,
+                messages=messages,
+                response_format=None,
+            )
         except Exception as exc:  # noqa: BLE001
             raise _WriterSectionError(
                 section_id=str(section.section_id or ""),
@@ -392,7 +396,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             now_utc=now_utc,
         )
         try:
-            result = await self._llm.chat(model=model, messages=messages, schema=schema)
+            result = await self._llm.chat(
+                model=model,
+                messages=messages,
+                response_format=schema,
+            )
             payload = (
                 result.data
                 if result.data is not None

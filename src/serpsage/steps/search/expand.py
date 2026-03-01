@@ -249,7 +249,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         result = await self._llm.chat(
             model=model_name,
             messages=messages,
-            schema=schema,
+            response_format=schema,
             timeout_s=timeout_s,
         )
         raw = (

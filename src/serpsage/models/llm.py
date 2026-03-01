@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Generic, TypeVar
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from serpsage.core.model_base import FrozenModel
+
+TModel = TypeVar("TModel", bound=BaseModel)
 
 
 class LLMUsage(FrozenModel):
@@ -13,15 +15,28 @@ class LLMUsage(FrozenModel):
     total_tokens: int = 0
 
 
-class ChatResult(FrozenModel):
+class ChatResultBase(FrozenModel):
     text: str = ""
-    data: object | None = None
+    data: Any | None = None
     usage: LLMUsage = Field(default_factory=LLMUsage)
 
 
-class ChatJSONResult(FrozenModel):
+class ChatTextResult(ChatResultBase):
+    data: None = None
+
+
+class ChatDictResult(ChatResultBase):
     data: dict[str, Any] = Field(default_factory=dict)
-    usage: LLMUsage = Field(default_factory=LLMUsage)
 
 
-__all__ = ["ChatJSONResult", "ChatResult", "LLMUsage"]
+class ChatModelResult(ChatResultBase, Generic[TModel]):
+    data: TModel = Field(default_factory=lambda: None)  # type: ignore
+
+
+__all__ = [
+    "ChatDictResult",
+    "ChatModelResult",
+    "ChatResultBase",
+    "ChatTextResult",
+    "LLMUsage",
+]

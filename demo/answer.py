@@ -14,7 +14,7 @@ load_dotenv()
 async def main(
     query: str,
     content: bool = True,
-    json_schema: object | None = None,
+    json_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     settings = load_settings("src/search_config_example.yaml")
     req = AnswerRequest(

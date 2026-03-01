@@ -14,7 +14,7 @@ load_dotenv()
 async def main(
     themes: str,
     search_mode: str = "research",
-    json_schema: object | None = None,
+    json_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     settings = load_settings("src/search_config_example.yaml")
     req = ResearchRequest(

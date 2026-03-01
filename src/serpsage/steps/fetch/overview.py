@@ -98,7 +98,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 res = await self._llm.chat(
                     model=str(model_cfg.name),
                     messages=messages,
-                    schema=schema,
+                    response_format=schema,
                     timeout_s=float(model_cfg.timeout_s),
                 )
                 if schema is None:

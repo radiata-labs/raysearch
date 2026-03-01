@@ -42,16 +42,22 @@ async def chat_pydantic(
     attempts = max(1, int(retries) + 1)
     payload = list(messages)
     last_exc: Exception | None = None
-    schema = (
-        dict(schema_json)
-        if isinstance(schema_json, dict)
-        else schema_model.model_json_schema()
-    )
     for _ in range(attempts):
         try:
-            result = await llm.chat(model=model, messages=payload, schema=schema)
-            raw = _decode_json_payload(result.data, result.text)
-            return schema_model.model_validate(raw)
+            if isinstance(schema_json, dict):
+                result = await llm.chat(
+                    model=model,
+                    messages=payload,
+                    response_format=dict(schema_json),
+                )
+                raw = _decode_json_payload(result.data, result.text)
+                return schema_model.model_validate(raw)
+            model_result = await llm.chat(
+                model=model,
+                messages=payload,
+                response_format=schema_model,
+            )
+            return schema_model.model_validate(model_result.data)
         except Exception as exc:  # noqa: BLE001
             last_exc = exc if isinstance(exc, Exception) else Exception(str(exc))
             payload = payload + [
@@ -104,20 +110,29 @@ def merge_strings(*groups: list[str], limit: int) -> list[str]:
     return out
 
 
-def _decode_json_payload(data: object | None, text: str) -> object:
+def _decode_json_payload(
+    data: dict[str, Any] | None, text: str
+) -> dict[str, Any]:
     if data is not None:
+        if not isinstance(data, dict):
+            raise TypeError("structured LLM response must be a JSON object")
         return data
     raw_text = str(text or "")
     if not raw_text:
         return {}
+    payload: Any
     try:
-        return json.loads(raw_text)
+        payload = json.loads(raw_text)
     except json.JSONDecodeError:
         start = raw_text.find("{")
         end = raw_text.rfind("}")
         if 0 <= start < end:
-            return json.loads(raw_text[start : end + 1])
-        raise
+            payload = json.loads(raw_text[start : end + 1])
+        else:
+            raise
+    if not isinstance(payload, dict):
+        raise TypeError("structured LLM response must be a JSON object")
+    return payload
 
 
 def build_abstract_packet(

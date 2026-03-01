@@ -2,18 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 from typing_extensions import override
 
 from dashscope import Generation
 from dashscope.api_entities.dashscope_response import Message
+from pydantic import BaseModel
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.models.llm import ChatResult, LLMUsage
+from serpsage.models.llm import (
+    ChatDictResult,
+    ChatModelResult,
+    ChatResultBase,
+    ChatTextResult,
+    LLMUsage,
+)
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import OverviewModelSettings
+
+TModel = TypeVar("TModel", bound=BaseModel)
 
 class DashScopeClient(LLMClientBase):
     def __init__(self, *, rt: Runtime, model_cfg: OverviewModelSettings) -> None:
@@ -21,18 +30,62 @@ class DashScopeClient(LLMClientBase):
         self._model_cfg = model_cfg
         self._api_key = model_cfg.api_key
 
+    @overload
+    async def chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: None = None,
+        timeout_s: float | None = None,
+    ) -> ChatTextResult: ...
+
+    @overload
+    async def chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: dict[str, Any],
+        timeout_s: float | None = None,
+    ) -> ChatDictResult: ...
+
+    @overload
+    async def chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: type[TModel],
+        timeout_s: float | None = None,
+    ) -> ChatModelResult[TModel]: ...
+
     @override
     async def chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: dict[str, Any] | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
         timeout_s: float | None = None,
-    ) -> ChatResult:
+    ) -> ChatResultBase:
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
+
+        response_schema: dict[str, Any] | None = None
+        response_model: type[BaseModel] | None = None
+        if response_format is None:
+            response_schema = None
+        elif isinstance(response_format, dict):
+            response_schema = dict(response_format)
+        elif isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            response_model = response_format
+            response_schema = response_model.model_json_schema()
+        else:
+            raise TypeError(
+                "response_format must be dict[str, Any] | type[BaseModel] | None"
+            )
 
         timeout_ms = int(float(timeout_s or llm.timeout_s) * 1000)
         req_messages = _to_dashscope_messages(messages)
@@ -47,7 +100,11 @@ class DashScopeClient(LLMClientBase):
                 api_key=self._api_key,
             )
         except Exception as exc:
-            if schema is not None and llm.schema_strict and _looks_like_schema_error(exc):
+            if (
+                response_schema is not None
+                and llm.schema_strict
+                and _looks_like_schema_error(exc)
+            ):
                 response = await _async_generation_call(
                     model=model,
                     messages=req_messages,
@@ -65,10 +122,13 @@ class DashScopeClient(LLMClientBase):
         if not isinstance(text, str):
             raise TypeError("LLM response content is not a string")
 
-        data: object | None = None
-        if schema is not None:
-            data = _extract_json(text)
-        return ChatResult(text=text, data=data, usage=usage)
+        if response_schema is None:
+            return ChatTextResult(text=text, usage=usage)
+        data = _extract_json_object(text)
+        if response_model is not None:
+            model_data = response_model.model_validate(data)
+            return ChatModelResult(text=text, data=model_data, usage=usage)
+        return ChatDictResult(text=text, data=data, usage=usage)
 
 async def _async_generation_call(
     *,
@@ -174,15 +234,20 @@ def _looks_like_schema_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return "schema" in text or ("json" in text and "valid" in text)
 
-def _extract_json(content: str) -> object:
+def _extract_json_object(content: str) -> dict[str, Any]:
     """Extract JSON from response content."""
+    payload: Any
     try:
-        return json.loads(content)
+        payload = json.loads(content)
     except json.JSONDecodeError:
         start = content.find("{")
         end = content.rfind("}")
         if 0 <= start < end:
-            return json.loads(content[start : end + 1])
-        raise
+            payload = json.loads(content[start : end + 1])
+        else:
+            raise
+    if not isinstance(payload, dict):
+        raise TypeError("structured LLM response must be a JSON object")
+    return payload
 
 __all__ = ["DashScopeClient"]

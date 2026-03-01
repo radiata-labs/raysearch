@@ -84,7 +84,11 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         )
         raw_text = ""
         try:
-            result = await self._llm.chat(model=model, messages=messages, schema=None)
+            result = await self._llm.chat(
+                model=model,
+                messages=messages,
+                response_format=None,
+            )
             raw_text = str(result.text or "")
         except Exception as exc:  # noqa: BLE001
             summary = exception_summary(exc)

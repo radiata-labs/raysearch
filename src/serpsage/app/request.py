@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -59,7 +59,7 @@ def _validate_text_phrase_limit(value: str) -> None:
         raise ValueError("each text filter phrase supports at most 5 words")
 
 
-def _validate_json_schema(value: object | None) -> object | None:
+def _validate_json_schema(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -143,7 +143,7 @@ class FetchOverviewRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     query: str | None = None
-    json_schema: object | None = None
+    json_schema: dict[str, Any] | None = None
 
     @field_validator("query")
     @classmethod
@@ -153,7 +153,9 @@ class FetchOverviewRequest(BaseModel):
 
     @field_validator("json_schema")
     @classmethod
-    def _validate_schema(cls, value: object | None) -> object | None:
+    def _validate_schema(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
         return _validate_json_schema(value)
 
 
@@ -324,7 +326,7 @@ class AnswerRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
 
     query: str
-    json_schema: object | None = None
+    json_schema: dict[str, Any] | None = None
     content: bool = False
 
     @field_validator("query")
@@ -337,7 +339,9 @@ class AnswerRequest(BaseModel):
 
     @field_validator("json_schema")
     @classmethod
-    def _validate_schema(cls, value: object | None) -> object | None:
+    def _validate_schema(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
         return _validate_json_schema(value)
 
 
@@ -346,7 +350,7 @@ class ResearchRequest(BaseModel):
 
     search_mode: ResearchSearchMode = "research"
     themes: str
-    json_schema: object | None = None
+    json_schema: dict[str, Any] | None = None
 
     @field_validator("themes")
     @classmethod
@@ -358,7 +362,9 @@ class ResearchRequest(BaseModel):
 
     @field_validator("json_schema")
     @classmethod
-    def _validate_schema(cls, value: object | None) -> object | None:
+    def _validate_schema(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
         return _validate_json_schema(value)
 
 
