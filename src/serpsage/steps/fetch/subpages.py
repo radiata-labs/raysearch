@@ -5,7 +5,6 @@ from typing_extensions import override
 
 from serpsage.app.request import FetchOthersRequest
 from serpsage.app.response import FetchSubpagesResult
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchRuntimeConfig, FetchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
 
@@ -47,18 +46,20 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                 query_tokens=ctx.subpages.keywords,
             )
         except Exception as exc:  # noqa: BLE001
-            ctx.errors.append(
-                AppError(
-                    code="fetch_subpage_failed",
-                    message=str(exc),
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "subpages",
-                        "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            await self.emit_tracking_event(
+                event_name="fetch.subpages.error",
+                request_id=ctx.request_id,
+                stage="subpages",
+                status="error",
+                error_code="fetch_subpage_failed",
+                error_type=type(exc).__name__,
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": False,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": str(exc),
+                },
             )
             return ctx
 
@@ -106,24 +107,20 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         for index, child_context in enumerate(child_results):
             url = selected_urls[index]
             if child_context.output.result is None:
-                message = (
-                    str(child_context.errors[0].message)
-                    if child_context.errors
-                    else "subpage fetch failed"
-                )
-                ctx.errors.append(
-                    AppError(
-                        code="fetch_subpage_failed",
-                        message=message,
-                        details={
-                            "url": ctx.url,
-                            "url_index": ctx.url_index,
-                            "subpage_url": url,
-                            "stage": "subpages",
-                            "fatal": False,
-                            "crawl_mode": ctx.runtime.crawl_mode,
-                        },
-                    )
+                await self.emit_tracking_event(
+                    event_name="fetch.subpages.error",
+                    request_id=ctx.request_id,
+                    stage="subpages",
+                    status="error",
+                    error_code="fetch_subpage_failed",
+                    attrs={
+                        "url": ctx.url,
+                        "url_index": int(ctx.url_index),
+                        "subpage_url": url,
+                        "fatal": False,
+                        "crawl_mode": str(ctx.runtime.crawl_mode),
+                        "message": "subpage fetch failed",
+                    },
                 )
                 continue
             out[index] = _to_subpage_result(child_context.output.result)

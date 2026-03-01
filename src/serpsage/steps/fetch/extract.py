@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.extract.markdown.postprocess import markdown_to_text
-from serpsage.models.errors import AppError
 from serpsage.models.extract import ExtractedLink
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
@@ -26,18 +25,21 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             return ctx
         if ctx.artifacts.fetch_result is None:
             ctx.fatal = True
-            ctx.errors.append(
-                AppError(
-                    code="fetch_load_failed",
-                    message="missing fetch result",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "extract",
-                        "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error_detail = "missing fetch result"
+            await self.emit_tracking_event(
+                event_name="fetch.extract.error",
+                request_id=ctx.request_id,
+                stage="extract",
+                status="error",
+                error_code="fetch_load_failed",
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": True,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": "missing fetch result",
+                },
             )
             return ctx
 
@@ -64,18 +66,22 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             )
         except Exception as exc:  # noqa: BLE001
             ctx.fatal = True
-            ctx.errors.append(
-                AppError(
-                    code="fetch_extract_failed",
-                    message=str(exc),
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "extract",
-                        "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            ctx.error_tag = "CRAWL_UNKNOWN_ERROR"
+            ctx.error_detail = str(exc)
+            await self.emit_tracking_event(
+                event_name="fetch.extract.error",
+                request_id=ctx.request_id,
+                stage="extract",
+                status="error",
+                error_code="fetch_extract_failed",
+                error_type=type(exc).__name__,
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": True,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": str(exc),
+                },
             )
             return ctx
 
@@ -108,35 +114,41 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         min_text_chars = int(self.settings.fetch.extract.min_text_chars)
         if not markdown.strip():
             ctx.fatal = True
-            ctx.errors.append(
-                AppError(
-                    code="fetch_extract_failed",
-                    message="no content extracted",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "extract",
-                        "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error_detail = "no content extracted"
+            await self.emit_tracking_event(
+                event_name="fetch.extract.error",
+                request_id=ctx.request_id,
+                stage="extract",
+                status="error",
+                error_code="fetch_extract_failed",
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": True,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": "no content extracted",
+                },
             )
         elif text_chars < min_text_chars:
             ctx.fatal = True
-            ctx.errors.append(
-                AppError(
-                    code="fetch_extract_failed",
-                    message="extracted content below min_text_chars",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "extract",
-                        "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                        "text_chars": int(text_chars),
-                        "min_text_chars": int(min_text_chars),
-                    },
-                )
+            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error_detail = "extracted content below min_text_chars"
+            await self.emit_tracking_event(
+                event_name="fetch.extract.error",
+                request_id=ctx.request_id,
+                stage="extract",
+                status="error",
+                error_code="fetch_extract_failed",
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": True,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": "extracted content below min_text_chars",
+                    "text_chars": int(text_chars),
+                    "min_text_chars": int(min_text_chars),
+                },
             )
         return ctx
 

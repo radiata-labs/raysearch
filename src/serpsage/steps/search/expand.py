@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import (
     SearchDeepState,
     SearchQueryJob,
@@ -69,7 +68,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
 
         primary_query = clean_whitespace(str(req.query or ""))
         if not primary_query:
-            self._abort_empty_query(ctx=ctx, raw_query=req.query)
+            await self._abort_empty_query(ctx=ctx, raw_query=req.query)
             return ctx
 
         deep_cfg = self.settings.search.deep
@@ -118,15 +117,21 @@ class SearchExpandStep(StepBase[SearchStepContext]):
     ) -> list[str]:
         return self._normalize_queries(list(req_additional_queries or []))
 
-    def _abort_empty_query(self, *, ctx: SearchStepContext, raw_query: object) -> None:
+    async def _abort_empty_query(
+        self, *, ctx: SearchStepContext, raw_query: object
+    ) -> None:
         ctx.deep.aborted = True
         ctx.deep.abort_reason = "empty query"
-        ctx.errors.append(
-            AppError(
-                code="search_query_expansion_failed",
-                message="empty query",
-                details={"query": raw_query, "stage": "search_expand"},
-            )
+        await self.emit_tracking_event(
+            event_name="search.expand.error",
+            request_id=ctx.request_id,
+            stage="search_expand",
+            status="error",
+            error_code="search_query_expansion_failed",
+            attrs={
+                "query": str(raw_query),
+                "message": "empty query",
+            },
         )
 
     async def _collect_llm_queries(
@@ -152,11 +157,12 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             )
         except Exception as exc:
             elapsed_ms = max(0, self.clock.now_ms() - start_ms)
-            self._abort(
+            await self._abort(
                 ctx=ctx,
                 message=str(exc),
                 query=query,
                 model_name=model_name,
+                error_type=type(exc).__name__,
             )
             return [], elapsed_ms
         elapsed_ms = max(0, self.clock.now_ms() - start_ms)
@@ -170,13 +176,14 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             return model_name
         return str(self.settings.answer.plan.use_model)
 
-    def _abort(
+    async def _abort(
         self,
         *,
         ctx: SearchStepContext,
         message: str,
         query: str,
         model_name: str,
+        error_type: str = "",
     ) -> None:
         ctx.deep.aborted = True
         ctx.deep.abort_reason = message
@@ -188,16 +195,18 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         ctx.prefetch.scores = {}
         ctx.fetch.candidates = []
         ctx.output.results = []
-        ctx.errors.append(
-            AppError(
-                code="search_query_expansion_failed",
-                message=message,
-                details={
-                    "query": query,
-                    "stage": "search_expand",
-                    "model": model_name,
-                },
-            )
+        await self.emit_tracking_event(
+            event_name="search.expand.error",
+            request_id=ctx.request_id,
+            stage="search_expand",
+            status="error",
+            error_code="search_query_expansion_failed",
+            error_type=error_type,
+            attrs={
+                "query": query,
+                "model": model_name,
+                "message": message,
+            },
         )
 
     async def _expand_with_llm(

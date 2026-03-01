@@ -4,7 +4,6 @@ import re
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract
 from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize
@@ -35,18 +34,19 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         if req is None:
             return ctx
         if ctx.artifacts.extracted is None:
-            ctx.errors.append(
-                AppError(
-                    code="fetch_abstract_build_failed",
-                    message="missing extracted content",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "abstract_build",
-                        "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            await self.emit_tracking_event(
+                event_name="fetch.abstract_build.error",
+                request_id=ctx.request_id,
+                stage="abstract_build",
+                status="error",
+                error_code="fetch_abstract_build_failed",
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": False,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": "missing extracted content",
+                },
             )
             return ctx
 

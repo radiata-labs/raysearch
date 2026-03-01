@@ -7,7 +7,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.models.errors import AppError
+from serpsage.app.response import FetchErrorTag
 from serpsage.models.fetch import FetchResult
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.models.telemetry import MeterPayload
@@ -40,7 +40,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             return ctx
         url = (ctx.url or "").strip()
         if not url:
-            self._fail(
+            await self._fail(
                 ctx,
                 code="fetch_load_failed",
                 message="empty url",
@@ -107,7 +107,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                     status="error",
                     attrs={"mode": mode, "cache_key": cache_key},
                 )
-                self._fail(
+                await self._fail(
                     ctx,
                     code="fetch_cache_miss",
                     message="cache miss in crawl_mode=never",
@@ -138,7 +138,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                     attrs={"mode": mode, "cache_key": cache_key},
                 )
             if fetched is None:
-                self._fail(
+                await self._fail(
                     ctx,
                     code="fetch_crawl_failed",
                     message=str(crawl_exc or "crawl failed"),
@@ -178,7 +178,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                         status="error",
                         attrs={"mode": mode, "cache_key": cache_key},
                     )
-                    self._fail(
+                    await self._fail(
                         ctx,
                         code="fetch_crawl_failed",
                         message=str(crawl_exc or "crawl failed and cache miss"),
@@ -247,7 +247,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                         attrs={"mode": mode, "cache_key": cache_key},
                     )
                 if fetched is None:
-                    self._fail(
+                    await self._fail(
                         ctx,
                         code="fetch_crawl_failed",
                         message=str(crawl_exc or "crawl failed"),
@@ -272,7 +272,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         ctx.artifacts.fetch_result = fetched
         return ctx
 
-    def _fail(
+    async def _fail(
         self,
         ctx: FetchStepContext,
         *,
@@ -280,8 +280,11 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         message: str,
         stage: str,
         source: str | None,
+        tag: FetchErrorTag | None = None,
     ) -> None:
         ctx.fatal = True
+        ctx.error_tag = tag or _resolve_error_tag(code=code, message=message)
+        ctx.error_detail = str(message or "").strip() or None
         details: dict[str, Any] = {
             "url": ctx.url,
             "url_index": ctx.url_index,
@@ -291,12 +294,17 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         }
         if source:
             details["source"] = source
-        ctx.errors.append(
-            AppError(
-                code=code,
-                message=message,
-                details=details,
-            )
+        await self.emit_tracking_event(
+            event_name="fetch.load.error",
+            request_id=ctx.request_id,
+            stage=stage,
+            status="error",
+            error_code=code,
+            attrs={
+                **details,
+                "message": message,
+                "error_tag": ctx.error_tag,
+            },
         )
 
     async def _emit_load_event(
@@ -400,6 +408,21 @@ def _decode_fetch_cache(payload: bytes, *, url: str) -> FetchResult:
         headers={str(k): str(v) for k, v in dict(obj.get("headers") or {}).items()},
         attempt_chain=[str(x) for x in list(obj.get("attempt_chain") or [])],
     )
+
+
+def _resolve_error_tag(*, code: str, message: str) -> FetchErrorTag:
+    if code in {"fetch_load_failed", "fetch_cache_miss"}:
+        return "SOURCE_NOT_AVAILABLE"
+    if code != "fetch_crawl_failed":
+        return "CRAWL_UNKNOWN_ERROR"
+    lowered = str(message or "").casefold()
+    if "livecrawl" in lowered and "timeout" in lowered:
+        return "CRAWL_LIVECRAWL_TIMEOUT"
+    if "timeout" in lowered or "timed out" in lowered or "deadline" in lowered:
+        return "CRAWL_TIMEOUT"
+    if "404" in lowered or "not found" in lowered:
+        return "CRAWL_NOT_FOUND"
+    return "CRAWL_UNKNOWN_ERROR"
 
 
 __all__ = ["FetchLoadStep"]

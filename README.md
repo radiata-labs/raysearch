@@ -53,7 +53,7 @@ Runtime prerequisites:
 Telemetry and metering (core component mode):
 
 - This repo exposes pluggable telemetry/metering foundations for host-system integration.
-- Existing API outputs (`response.errors`, error codes, response shapes) are unchanged.
+- V2 is a breaking cut: legacy `response.errors` diagnostics are removed.
 - Telemetry emits request/step/LLM/fetch events; metering emits usage events (`meter.*`).
 - Metering ledger is optional and defaults to disabled (`null` backend).
 
@@ -165,6 +165,10 @@ async with Engine.from_settings(settings) as engine:
   - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
 - `search` does not include overview generation; overview remains fetch-only
 - when deep query expansion fails, search aborts with error code `search_query_expansion_failed`
-- `search` response shape: `search_mode/results/errors`
+- `search` response shape: `search_mode/results`
+- `answer`/`research` response payloads no longer include `errors`
+- `fetch` response adds `statuses[]` (one item per input URL, ordered by input URL order, `success|error`)
+- `fetch.statuses[].error`: present on `error` items, shape `{tag, detail}` where `tag` is one of
+  `CRAWL_NOT_FOUND|CRAWL_TIMEOUT|CRAWL_LIVECRAWL_TIMEOUT|SOURCE_NOT_AVAILABLE|UNSUPPORTED_URL|CRAWL_UNKNOWN_ERROR`
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering
 - `fetch.extract` uses an internal markdown renderer pipeline; no renderer backend toggle is exposed.

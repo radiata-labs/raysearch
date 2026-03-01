@@ -4,7 +4,6 @@ import math
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext, PreparedAbstract, ScoredAbstract
 from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
@@ -33,18 +32,19 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
 
         candidates = list(ctx.artifacts.prepared_abstracts or [])
         if not candidates:
-            ctx.errors.append(
-                AppError(
-                    code="fetch_abstract_rank_failed",
-                    message="no prepared abstracts",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "rank",
-                        "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            await self.emit_tracking_event(
+                event_name="fetch.rank.error",
+                request_id=ctx.request_id,
+                stage="rank",
+                status="error",
+                error_code="fetch_abstract_rank_failed",
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": False,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": "no prepared abstracts",
+                },
             )
             return ctx
 
@@ -70,18 +70,19 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             )
 
             if not raw_scored_abstracts:
-                ctx.errors.append(
-                    AppError(
-                        code="fetch_abstract_rank_failed",
-                        message="no matching abstracts",
-                        details={
-                            "url": ctx.url,
-                            "url_index": ctx.url_index,
-                            "stage": "rank",
-                            "fatal": False,
-                            "crawl_mode": ctx.runtime.crawl_mode,
-                        },
-                    )
+                await self.emit_tracking_event(
+                    event_name="fetch.rank.error",
+                    request_id=ctx.request_id,
+                    stage="rank",
+                    status="error",
+                    error_code="fetch_abstract_rank_failed",
+                    attrs={
+                        "url": ctx.url,
+                        "url_index": int(ctx.url_index),
+                        "fatal": False,
+                        "crawl_mode": str(ctx.runtime.crawl_mode),
+                        "message": "no matching abstracts",
+                    },
                 )
             else:
                 ctx.artifacts.scored_abstracts = [

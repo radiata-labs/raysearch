@@ -16,17 +16,16 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        print(
-            (
-                "[research][finalize] "
-                f"request_id={ctx.request_id} "
-                f"stop={bool(ctx.runtime.stop)} "
-                f"stop_reason={str(ctx.runtime.stop_reason or 'n/a')} "
-                f"content_chars={int(len(str(ctx.output.content or '')))} "
-                f"has_structured={bool(ctx.output.structured is not None)} "
-                f"errors={int(len(ctx.errors))}"
-            ),
-            flush=True,
+        await self.emit_tracking_event(
+            event_name="research.finalize.summary",
+            request_id=ctx.request_id,
+            stage="finalize",
+            attrs={
+                "stop": bool(ctx.runtime.stop),
+                "stop_reason": str(ctx.runtime.stop_reason or "n/a"),
+                "content_chars": int(len(str(ctx.output.content or ""))),
+                "has_structured": bool(ctx.output.structured is not None),
+            },
         )
         return ctx
 

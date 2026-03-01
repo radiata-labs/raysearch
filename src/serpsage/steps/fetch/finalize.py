@@ -5,7 +5,6 @@ from typing_extensions import override
 
 from serpsage.app.response import FetchResultItem
 from serpsage.components.extract.markdown.postprocess import finalize_markdown
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
 
@@ -23,18 +22,21 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             return ctx
         if ctx.artifacts.extracted is None:
             ctx.fatal = True
-            ctx.errors.append(
-                AppError(
-                    code="fetch_extract_failed",
-                    message="missing extracted content",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "finalize",
-                        "fatal": True,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error_detail = "missing extracted content"
+            await self.emit_tracking_event(
+                event_name="fetch.finalize.error",
+                request_id=ctx.request_id,
+                stage="finalize",
+                status="error",
+                error_code="fetch_extract_failed",
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": True,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": "missing extracted content",
+                },
             )
             return ctx
 

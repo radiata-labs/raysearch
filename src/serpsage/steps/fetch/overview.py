@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.app.request import FetchOverviewRequest
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace, stable_json
@@ -40,18 +39,19 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
 
         source_items = self._build_source_items(ctx)
         if not source_items:
-            ctx.errors.append(
-                AppError(
-                    code="fetch_overview_failed",
-                    message="no overview source content",
-                    details={
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "stage": "overview",
-                        "fatal": False,
-                        "crawl_mode": ctx.runtime.crawl_mode,
-                    },
-                )
+            await self.emit_tracking_event(
+                event_name="fetch.overview.error",
+                request_id=ctx.request_id,
+                stage="overview",
+                status="error",
+                error_code="fetch_overview_failed",
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": False,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": "no overview source content",
+                },
             )
             return ctx
 
@@ -131,37 +131,40 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 if attempt < retries:
                     messages = messages + [_self_heal_message()]
                     continue
-                ctx.errors.append(
-                    AppError(
-                        code="overview_schema_mismatch",
-                        message=str(exc),
-                        details={
-                            "url": ctx.url,
-                            "url_index": ctx.url_index,
-                            "stage": "overview",
-                            "fatal": False,
-                            "crawl_mode": ctx.runtime.crawl_mode,
-                        },
-                    )
+                await self.emit_tracking_event(
+                    event_name="fetch.overview.error",
+                    request_id=ctx.request_id,
+                    stage="overview",
+                    status="error",
+                    error_code="overview_schema_mismatch",
+                    error_type=type(exc).__name__,
+                    attrs={
+                        "url": ctx.url,
+                        "url_index": int(ctx.url_index),
+                        "fatal": False,
+                        "crawl_mode": str(ctx.runtime.crawl_mode),
+                        "message": str(exc),
+                    },
                 )
                 return ctx
             except Exception as exc:  # noqa: BLE001
                 if attempt < retries and schema is not None:
                     messages = messages + [_self_heal_message()]
                     continue
-                ctx.errors.append(
-                    AppError(
-                        code="fetch_overview_failed",
-                        message=str(exc),
-                        details={
-                            "type": type(exc).__name__,
-                            "url": ctx.url,
-                            "url_index": ctx.url_index,
-                            "stage": "overview",
-                            "fatal": False,
-                            "crawl_mode": ctx.runtime.crawl_mode,
-                        },
-                    )
+                await self.emit_tracking_event(
+                    event_name="fetch.overview.error",
+                    request_id=ctx.request_id,
+                    stage="overview",
+                    status="error",
+                    error_code="fetch_overview_failed",
+                    error_type=type(exc).__name__,
+                    attrs={
+                        "url": ctx.url,
+                        "url_index": int(ctx.url_index),
+                        "fatal": False,
+                        "crawl_mode": str(ctx.runtime.crawl_mode),
+                        "message": str(exc),
+                    },
                 )
                 return ctx
         return ctx

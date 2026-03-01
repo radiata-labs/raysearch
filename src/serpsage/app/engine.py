@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 from serpsage.app.response import (
     AnswerResponse,
     FetchResponse,
+    FetchStatusError,
+    FetchStatusItem,
     ResearchResponse,
     SearchResponse,
 )
@@ -93,7 +95,6 @@ class Engine(WorkUnit):
                 request_id=request_id,
                 search_mode=ctx.request.mode,
                 results=ctx.output.results,
-                errors=ctx.errors,
             )
             await self._emit_safe(
                 event_name="request.end",
@@ -105,7 +106,6 @@ class Engine(WorkUnit):
                 attrs={
                     "request_kind": "search",
                     "result_count": len(response.results),
-                    "error_count": len(response.errors),
                 },
             )
             await self._emit_request_meter(request_id=request_id, stage="search")
@@ -178,11 +178,42 @@ class Engine(WorkUnit):
                 for ctx in contexts
                 if not ctx.fatal and ctx.output.result is not None
             ]
-            errors = [err for ctx in contexts for err in ctx.errors]
+            statuses = [
+                FetchStatusItem(
+                    url=str(url),
+                    status="error",
+                    error=FetchStatusError(
+                        tag="SOURCE_NOT_AVAILABLE",
+                        detail="not processed",
+                    ),
+                )
+                for url in req.urls
+            ]
+            for ctx_item in contexts:
+                idx = int(ctx_item.url_index)
+                if idx < 0 or idx >= len(statuses):
+                    continue
+                success = bool(
+                    ctx_item.output.result is not None and not ctx_item.fatal
+                )
+                statuses[idx] = FetchStatusItem(
+                    url=str(ctx_item.url),
+                    status="success" if success else "error",
+                    error=(
+                        None
+                        if success
+                        else FetchStatusError(
+                            tag=ctx_item.error_tag,
+                            detail=ctx_item.error_detail,
+                        )
+                    ),
+                )
+            success_count = sum(1 for item in statuses if str(item.status) == "success")
+            error_count = max(0, len(statuses) - success_count)
             response = FetchResponse(
                 request_id=request_id,
                 results=results,
-                errors=errors,
+                statuses=statuses,
             )
             await self._emit_safe(
                 event_name="request.end",
@@ -194,7 +225,8 @@ class Engine(WorkUnit):
                 attrs={
                     "request_kind": "fetch",
                     "result_count": len(response.results),
-                    "error_count": len(response.errors),
+                    "success_count": int(success_count),
+                    "error_count": int(error_count),
                     "url_count": len(req.urls),
                 },
             )
@@ -240,11 +272,21 @@ class Engine(WorkUnit):
         )
         try:
             ctx = await self._answer_runner.run(ctx)
+            answer: str | object
+            if isinstance(req.json_schema, dict):
+                answer = (
+                    ctx.output.answers if isinstance(ctx.output.answers, dict) else {}
+                )
+            else:
+                answer = (
+                    str(ctx.output.answers)
+                    if isinstance(ctx.output.answers, str)
+                    else ""
+                )
             response = AnswerResponse(
                 request_id=request_id,
-                answer=ctx.output.answers,
+                answer=answer,
                 citations=ctx.output.citations,
-                errors=ctx.errors,
             )
             await self._emit_safe(
                 event_name="request.end",
@@ -256,7 +298,9 @@ class Engine(WorkUnit):
                 attrs={
                     "request_kind": "answer",
                     "citation_count": len(response.citations),
-                    "error_count": len(response.errors),
+                    "has_answer": bool(
+                        response.answer if isinstance(response.answer, str) else True
+                    ),
                 },
             )
             await self._emit_request_meter(request_id=request_id, stage="answer")
@@ -305,7 +349,6 @@ class Engine(WorkUnit):
                 request_id=request_id,
                 content=ctx.output.content,
                 structured=ctx.output.structured,
-                errors=ctx.errors,
             )
             await self._emit_safe(
                 event_name="request.end",
@@ -318,7 +361,6 @@ class Engine(WorkUnit):
                     "request_kind": "research",
                     "content_chars": len(str(response.content or "")),
                     "has_structured": response.structured is not None,
-                    "error_count": len(response.errors),
                 },
             )
             await self._emit_request_meter(request_id=request_id, stage="research")

@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 
 import anyio
 
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import (
     SearchQueryJob,
     SearchSnippetContext,
@@ -214,13 +213,17 @@ class SearchStep(StepBase[SearchStepContext]):
                 status="error",
                 error_type=type(exc).__name__,
             )
-
-            ctx.errors.append(
-                AppError(
-                    code="search_failed",
-                    message=str(exc),
-                    details={"query": query, "stage": "search"},
-                )
+            await self.emit_tracking_event(
+                event_name="search.query.error",
+                request_id=ctx.request_id,
+                stage="search",
+                status="error",
+                error_code="search_failed",
+                error_type=type(exc).__name__,
+                attrs={
+                    "query": query,
+                    "message": str(exc),
+                },
             )
 
     async def _emit_search_meter(

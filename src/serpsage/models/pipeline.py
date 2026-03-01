@@ -16,12 +16,12 @@ from serpsage.app.request import (
 )
 from serpsage.app.response import (
     AnswerCitation,
+    FetchErrorTag,
     FetchOthersResult,
     FetchResultItem,
     FetchSubpagesResult,
 )
 from serpsage.core.model_base import MutableModel
-from serpsage.models.errors import AppError
 from serpsage.models.extract import (
     ExtractContentOptions,
     ExtractedDocument,
@@ -118,7 +118,6 @@ class SearchStepContext(BaseStepContext):
     fetch: SearchFetchState = Field(default_factory=SearchFetchState)
     rank: SearchRankState = Field(default_factory=SearchRankState)
     output: SearchOutputState = Field(default_factory=SearchOutputState)
-    errors: list[AppError] = Field(default_factory=list)
 
 
 class AnswerSearchState(MutableModel):
@@ -138,7 +137,6 @@ class AnswerStepContext(BaseStepContext):
     plan: AnswerPlanState = Field(default_factory=AnswerPlanState)
     search: AnswerSearchState = Field(default_factory=AnswerSearchState)
     output: AnswerOutputState = Field(default_factory=AnswerOutputState)
-    errors: list[AppError] = Field(default_factory=list)
 
 
 class ScoredAbstract(MutableModel):
@@ -216,7 +214,8 @@ class FetchStepContext(BaseStepContext):
     subpages: FetchSubpagesState = Field(default_factory=FetchSubpagesState)
     output: FetchOutputState = Field(default_factory=FetchOutputState)
     fatal: bool = False
-    errors: list[AppError] = Field(default_factory=list)
+    error_tag: FetchErrorTag = "CRAWL_UNKNOWN_ERROR"
+    error_detail: str | None = None
 
 
 class ResearchBudgetState(MutableModel):
@@ -365,7 +364,6 @@ class ResearchStepContext(BaseStepContext):
     current_round: ResearchRoundState | None = None
     notes: list[str] = Field(default_factory=list)
     output: ResearchOutputState = Field(default_factory=ResearchOutputState)
-    errors: list[AppError] = Field(default_factory=list)
 
 
 __all__ = [

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import warnings
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.error_details import exception_summary, exception_to_details
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import ResearchQuestionCard, ResearchStepContext
 from serpsage.models.research import (
     ResearchThemePlan,
@@ -75,28 +72,17 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             )
 
         except Exception as exc:  # noqa: BLE001
-            summary = exception_summary(exc)
-
-            ctx.errors.append(
-                AppError(
-                    code="research_theme_plan_failed",
-                    message=summary,
-                    details={
-                        "stage": "theme_plan",
-                        "model": str(model),
-                        "exception": exception_to_details(exc),
-                    },
-                )
-            )
-
-            warnings.warn(
-                (
-                    "[research][warning] "
-                    "research_theme_plan_failed "
-                    f"request_id={ctx.request_id} "
-                    f"error={summary}"
-                ),
-                stacklevel=1,
+            await self.emit_tracking_event(
+                event_name="research.theme.error",
+                request_id=ctx.request_id,
+                stage="theme_plan",
+                status="error",
+                error_code="research_theme_plan_failed",
+                error_type=type(exc).__name__,
+                attrs={
+                    "model": str(model),
+                    "message": str(exc),
+                },
             )
 
         input_language = clean_whitespace(str(payload.detected_input_language or ""))
@@ -175,16 +161,16 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
 
         ctx.notes.append(f"Output language fixed to {ctx.plan.output_language}.")
 
-        print(
-            (
-                "[research][theme] "
-                f"request_id={ctx.request_id} "
-                f"core_question={ctx.plan.core_question} "
-                f"question_cards={len(cards)} "
-                f"subthemes={len(subthemes)} "
-                f"next_queries={len(ctx.plan.next_queries)}"
-            ),
-            flush=True,
+        await self.emit_tracking_event(
+            event_name="research.theme.summary",
+            request_id=ctx.request_id,
+            stage="theme_plan",
+            attrs={
+                "core_question": ctx.plan.core_question,
+                "question_cards": len(cards),
+                "subthemes": len(subthemes),
+                "next_queries": len(ctx.plan.next_queries),
+            },
         )
 
         return ctx
