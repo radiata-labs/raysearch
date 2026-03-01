@@ -13,17 +13,15 @@ if TYPE_CHECKING:
     from serpsage.components.extract import ExtractorBase
     from serpsage.core.runtime import Runtime
 
-class FetchExtractStep(StepBase[FetchStepContext]):
 
+class FetchExtractStep(StepBase[FetchStepContext]):
     def __init__(self, *, rt: Runtime, extractor: ExtractorBase) -> None:
         super().__init__(rt=rt)
         self._extractor = extractor
         self.bind_deps(extractor)
 
     @override
-    async def run_inner(
-        self, ctx: FetchStepContext
-    ) -> FetchStepContext:
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.fatal:
             return ctx
         if ctx.artifacts.fetch_result is None:
@@ -142,6 +140,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             )
         return ctx
 
+
 def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
     if limit is None:
         return []
@@ -157,6 +156,7 @@ def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
         if len(out) >= max_items:
             break
     return out
+
 
 def _prepare_subpage_links(
     *, values: list[ExtractedLink], exclude: list[str], limit: int | None
@@ -179,5 +179,5 @@ def _prepare_subpage_links(
             break
     return out
 
-__all__ = ["FetchExtractStep"]
 
+__all__ = ["FetchExtractStep"]

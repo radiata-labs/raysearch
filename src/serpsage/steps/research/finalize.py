@@ -9,15 +9,13 @@ from serpsage.steps.base import StepBase
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
-class ResearchFinalizeStep(StepBase[ResearchStepContext]):
 
+class ResearchFinalizeStep(StepBase[ResearchStepContext]):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
-    async def run_inner(
-        self, ctx: ResearchStepContext
-    ) -> ResearchStepContext:
+    async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         print(
             (
                 "[research][finalize] "
@@ -31,5 +29,6 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
             flush=True,
         )
         return ctx
+
 
 __all__ = ["ResearchFinalizeStep"]

@@ -94,7 +94,9 @@ class OpenAIClient(LLMClientBase):
             response_schema = None
         elif isinstance(response_format, dict):
             response_schema = dict(response_format)
-        elif isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        elif isinstance(response_format, type) and issubclass(
+            response_format, BaseModel
+        ):
             response_model = response_format
             response_schema = response_model.model_json_schema()
         else:

@@ -1,989 +1,1 @@
-from __future__ import annotationsimport jsonimport warningsfrom dataclasses import dataclass, fieldfrom datetime import UTC, datetimefrom typing import TYPE_CHECKING, Anyfrom typing_extensions import overrideimport anyiofrom serpsage.error_details import exception_summary, exception_to_detailsfrom serpsage.models.errors import AppErrorfrom serpsage.models.pipeline import (    ResearchQuestionCard,    ResearchStepContext,    ResearchTrackResult,)from serpsage.models.research import (    RenderArchitectOutput,    RenderArchitectSectionPlan,    ResearchThemePlan,)from serpsage.steps.base import StepBasefrom serpsage.steps.research.prompt_markdown import (    normalize_block_text,    render_architect_plan_markdown,    render_question_cards_markdown,    render_section_plan_markdown,    render_theme_plan_markdown,)from serpsage.steps.research.utils import chat_pydantic, resolve_research_modelfrom serpsage.utils import clean_whitespaceif TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase    from serpsage.core.runtime import Runtime
-
-class _WriterSectionError(RuntimeError):
-    def __init__(
-        self,
-        *,
-        section_id: str,
-        subhead: str,
-        index: int,
-        cause: Exception,
-    ) -> None:
-        self.section_id = clean_whitespace(section_id)
-        self.subhead = clean_whitespace(subhead)
-        self.index = int(index)
-        self.cause_type = type(cause).__name__
-        self.cause_message = clean_whitespace(str(cause))
-        label = self.section_id or self.subhead or f"section-{self.index}"
-        super().__init__(
-            f"writer section failed: {label}; cause={self.cause_type}: {self.cause_message}"
-        )
-
-
-@dataclass(slots=True)
-class _WriterSectionFailure:
-    index: int
-    section_id: str
-    subhead: str
-    cause_type: str
-    cause_message: str
-
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "index": int(self.index),
-            "section_id": str(self.section_id),
-            "subhead": str(self.subhead),
-            "cause_type": str(self.cause_type),
-            "cause_message": str(self.cause_message),
-        }
-
-
-@dataclass(slots=True)
-class _RenderTrackResultPacket:
-    question_id: str
-    question: str
-    stop_reason: str
-    rounds: int
-    search_calls: int
-    fetch_calls: int
-    confidence: float
-    coverage_ratio: float
-    unresolved_conflicts: int
-    key_findings: list[str] = field(default_factory=list)
-    subreport_excerpt: str = ""
-
-
-@dataclass(slots=True)
-class _RenderFinalContextPacket:
-    theme: str
-    target_output_language: str
-    utc_timestamp: str
-    utc_date: str
-    theme_plan: ResearchThemePlan
-    question_cards: list[ResearchQuestionCard] = field(default_factory=list)
-    track_results: list[_RenderTrackResultPacket] = field(default_factory=list)
-    render_objective: str = ""
-
-
-class ResearchRenderStep(StepBase[ResearchStepContext]):
-
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self.bind_deps(llm)
-
-    @override
-    async def run_inner(
-        self, ctx: ResearchStepContext
-    ) -> ResearchStepContext:
-        now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        target_language = self._resolve_target_language(ctx)
-        schema = (
-            dict(ctx.request.json_schema)
-            if isinstance(ctx.request.json_schema, dict)
-            else None
-        )
-
-        if schema is None:
-            await self._render_markdown_architect_writer(
-                ctx=ctx,
-                target_language=target_language,
-                now_utc=now_utc,
-            )
-            print(
-                (
-                    "[research][render] "
-                    f"request_id={ctx.request_id} "
-                    "mode=final_markdown "
-                    f"track_results={int(len(ctx.parallel.track_results))} "
-                    f"content_chars={int(len(str(ctx.output.content or '')))}"
-                ),
-                flush=True,
-            )
-            return ctx
-
-        await self._render_structured_once(
-            ctx=ctx,
-            schema=schema,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
-        print(
-            (
-                "[research][render] "
-                f"request_id={ctx.request_id} "
-                "mode=final_structured "
-                f"track_results={int(len(ctx.parallel.track_results))} "
-                f"has_structured={bool(ctx.output.structured is not None)}"
-            ),
-            flush=True,
-        )
-        return ctx
-
-    async def _render_markdown_architect_writer(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        target_language: str,
-        now_utc: datetime,
-    ) -> None:
-        context_packet = self._build_final_context_packet(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
-        context_packet_markdown = self._render_final_context_packet_markdown(
-            context_packet
-        )
-        architect_output = await self._run_architect(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-            context_packet_markdown=context_packet_markdown,
-        )
-        architect_output = self._validate_architect_question_coverage(
-            ctx=ctx,
-            architect_output=architect_output,
-        )
-        writer_outputs = await self._run_writers(
-            ctx=ctx,
-            architect_output=architect_output,
-            target_language=target_language,
-            now_utc=now_utc,
-            context_packet_markdown=context_packet_markdown,
-        )
-        assembled = self._assemble_markdown_from_sections(
-            ctx=ctx,
-            architect_output=architect_output,
-            writer_outputs=writer_outputs,
-        )
-        ctx.output.structured = None
-        ctx.output.content = self._normalize_markdown(assembled)
-
-    async def _run_architect(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-    ) -> RenderArchitectOutput:
-        model = resolve_research_model(
-            ctx=ctx,
-            stage="synthesize",
-            fallback=self.settings.answer.generate.use_model,
-        )
-        try:
-            return await chat_pydantic(
-                llm=self._llm,
-                model=model,
-                messages=self._build_architect_messages(
-                    target_language=target_language,
-                    now_utc=now_utc,
-                    context_packet_markdown=context_packet_markdown,
-                ),
-                schema_model=RenderArchitectOutput,
-                retries=int(self.settings.research.llm_self_heal_retries),
-            )
-        except Exception as exc:  # noqa: BLE001
-            detail = exception_to_details(exc)
-            summary = exception_summary(exc)
-            ctx.errors.append(
-                AppError(
-                    code="research_render_architect_failed",
-                    message=summary,
-                    details={
-                        "stage": "architect",
-                        "model": str(model),
-                        "exception": detail,
-                    },
-                )
-            )
-            warnings.warn(
-                (
-                    "[research][warning] "
-                    "research_render_architect_failed "
-                    f"request_id={ctx.request_id} "
-                    f"error={summary}"
-                ),
-                stacklevel=1,
-            )
-            raise RuntimeError("research architect render failed") from exc
-
-    def _validate_architect_question_coverage(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        architect_output: RenderArchitectOutput,
-    ) -> RenderArchitectOutput:
-        required_question_ids = self._resolve_question_ids(ctx)
-        if not required_question_ids:
-            return architect_output
-        sections = list(architect_output.sections or [])
-        if not sections:
-            return architect_output
-
-        required_map = {
-            clean_whitespace(item).casefold(): clean_whitespace(item)
-            for item in required_question_ids
-            if clean_whitespace(item)
-        }
-        normalized_sections: list[RenderArchitectSectionPlan] = []
-        covered_question_ids: set[str] = set()
-        body_indexes: list[int] = []
-
-        for idx, section in enumerate(sections):
-            normalized_question_ids: list[str] = []
-            seen: set[str] = set()
-            for raw in section.question_ids:
-                token = clean_whitespace(raw)
-                if not token:
-                    continue
-                canonical = required_map.get(token.casefold())
-                if not canonical:
-                    continue
-                if canonical in seen:
-                    continue
-                seen.add(canonical)
-                normalized_question_ids.append(canonical)
-            if section.section_role == "body":
-                body_indexes.append(idx)
-                covered_question_ids.update(normalized_question_ids)
-            normalized_sections.append(
-                section.model_copy(update={"question_ids": normalized_question_ids})
-            )
-
-        missing_question_ids = [
-            item for item in required_question_ids if item not in covered_question_ids
-        ]
-        if missing_question_ids:
-            target_idx = body_indexes[-1] if body_indexes else len(normalized_sections) - 1
-            target = normalized_sections[target_idx]
-            patched_question_ids = self._merge_question_ids(
-                list(target.question_ids),
-                missing_question_ids,
-            )
-            normalized_sections[target_idx] = target.model_copy(
-                update={"question_ids": patched_question_ids}
-            )
-            warning_message = (
-                "architect output missed question_ids; patched into final body section "
-                f"missing={missing_question_ids}"
-            )
-            ctx.notes.append(warning_message)
-            warnings.warn(
-                (
-                    "[research][warning] "
-                    "research_render_question_coverage_patched "
-                    f"request_id={ctx.request_id} "
-                    f"missing={missing_question_ids}"
-                ),
-                stacklevel=1,
-            )
-
-        return architect_output.model_copy(update={"sections": normalized_sections})
-
-    async def _run_writers(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        architect_output: RenderArchitectOutput,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-    ) -> list[str]:
-        model = resolve_research_model(
-            ctx=ctx,
-            stage="markdown",
-            fallback=self.settings.answer.generate.use_model,
-        )
-        outputs = [""] * len(architect_output.sections)
-        try:
-            async with anyio.create_task_group() as tg:
-                for index, section in enumerate(architect_output.sections):
-                    tg.start_soon(
-                        self._run_writer_for_section,
-                        model,
-                        target_language,
-                        now_utc,
-                        context_packet_markdown,
-                        architect_output,
-                        section,
-                        outputs,
-                        index,
-                    )
-        except Exception as exc:  # noqa: BLE001
-            summary = exception_summary(exc)
-            detail = exception_to_details(exc)
-            failed_sections = self._collect_writer_section_failures(exc)
-            failed_section_payload = [item.to_payload() for item in failed_sections]
-            ctx.errors.append(
-                AppError(
-                    code="research_render_writer_failed",
-                    message=summary,
-                    details={
-                        "stage": "writer",
-                        "model": str(model),
-                        "sections_total": int(len(architect_output.sections)),
-                        "failed_sections": failed_section_payload,
-                        "exception": detail,
-                    },
-                )
-            )
-            warnings.warn(
-                (
-                    "[research][warning] "
-                    "research_render_writer_failed "
-                    f"request_id={ctx.request_id} "
-                    f"error={summary} "
-                    f"failed_sections={failed_section_payload}"
-                ),
-                stacklevel=1,
-            )
-            raise RuntimeError("research writer render failed") from exc
-        return outputs
-
-    async def _run_writer_for_section(
-        self,
-        model: str,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-        architect_output: RenderArchitectOutput,
-        section: RenderArchitectSectionPlan,
-        outputs: list[str],
-        index: int,
-    ) -> None:
-        messages = self._build_writer_messages(
-            target_language=target_language,
-            now_utc=now_utc,
-            context_packet_markdown=context_packet_markdown,
-            architect_output=architect_output,
-            section=section,
-        )
-        try:
-            result = await self._llm.chat(
-                model=model,
-                messages=messages,
-                response_format=None,
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise _WriterSectionError(
-                section_id=str(section.section_id or ""),
-                subhead=str(section.subhead or ""),
-                index=int(index),
-                cause=exc if isinstance(exc, Exception) else Exception(str(exc)),
-            ) from exc
-        outputs[index] = str(result.text or "")
-
-    async def _render_structured_once(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        schema: dict[str, Any],
-        target_language: str,
-        now_utc: datetime,
-    ) -> None:
-        model = resolve_research_model(
-            ctx=ctx,
-            stage="synthesize",
-            fallback=self.settings.answer.generate.use_model,
-        )
-        messages = self._build_final_structured_messages(
-            ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
-        try:
-            result = await self._llm.chat(
-                model=model,
-                messages=messages,
-                response_format=schema,
-            )
-            payload = (
-                result.data
-                if result.data is not None
-                else self._try_parse_json_value(result.text)
-            )
-            if not isinstance(payload, dict):
-                raise TypeError("structured output must be a JSON object")
-        except Exception as exc:  # noqa: BLE001
-            summary = exception_summary(exc)
-            detail = exception_to_details(exc)
-            ctx.errors.append(
-                AppError(
-                    code="research_render_structured_failed",
-                    message=summary,
-                    details={
-                        "stage": "structured",
-                        "model": str(model),
-                        "schema_keys": sorted(str(key) for key in schema),
-                        "exception": detail,
-                    },
-                )
-            )
-            warnings.warn(
-                (
-                    "[research][warning] "
-                    "research_render_structured_failed "
-                    f"request_id={ctx.request_id} "
-                    f"error={summary}"
-                ),
-                stacklevel=1,
-            )
-            raise RuntimeError("research structured render failed") from exc
-        ctx.output.structured = payload
-        ctx.output.content = json.dumps(payload, ensure_ascii=False, indent=2)
-
-    def _build_architect_messages(
-        self,
-        *,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-    ) -> list[dict[str, str]]:
-        target_language_name = clean_whitespace(target_language) or "unspecified"
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Role: Architect of the final theme report.\n"
-                    "Identity: Senior research writing instructor and report architect.\n"
-                    "Mission: Produce a strict section blueprint (JSON only) for a high-information markdown report.\n"
-                    "Instruction Priority:\n"
-                    "P1) Structural correctness for final assembly: schema-valid output, strict role ordering, and executable section contracts.\n"
-                    "P2) Logical progression quality: enforce General-Body-General and a clear reasoning staircase in body sections.\n"
-                    "P3) Multi-angle analytical coverage: technology, cost, risk, timeliness, scenario fit, constraints, and decision impact.\n"
-                    "P4) Evidence-grounded scope control: reduce breadth when evidence is weak; never invent structure based on assumptions.\n"
-                    "Execution protocol (follow internally, do not print reasoning):\n"
-                    "Phase A - Frame the problem:\n"
-                    "1) Extract the core question, decision target, and uncertainty boundaries from FINAL_CONTEXT_PACKET.\n"
-                    "2) Determine which analytical angles are mandatory: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"
-                    "3) If evidence is thin, narrow scope instead of inventing topics.\n"
-                    "Phase B - Design macro structure:\n"
-                    "1) Use strict General-Body-General structure.\n"
-                    "2) Exactly one opening section first, exactly one closing section last.\n"
-                    "3) Create 3-8 body sections between them to total 5-10 sections.\n"
-                    "Phase C - Build body progression ladder:\n"
-                    "1) Body sections must be progressive and interlocked, never parallel repetition.\n"
-                    "2) Preferred reasoning staircase: mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (adapt to theme).\n"
-                    "3) Each body section must answer a distinct analytical question and prepare the next section.\n"
-                    "Phase D - Define section contracts:\n"
-                    "1) For each section provide concrete subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
-                    "2) writing_boundaries must explicitly block topic drift and unsupported claims.\n"
-                    "3) must_cover_points must be actionable and specific, not generic slogans.\n"
-                    "Hard Constraints (must):\n"
-                    "1) Output JSON only and match schema exactly; no markdown, no prose, no commentary.\n"
-                    "2) Output 5-10 section plans total.\n"
-                    "3) Exactly one opening section at index 1, exactly one closing section at last index.\n"
-                    "4) All intermediate sections must be body sections.\n"
-                    "5) section_role values must be exactly one of: opening, body, closing.\n"
-                    "6) Enforce strict General-Body-General structure in final ordering.\n"
-                    "7) Body sections must be logically progressive and interlocked; no parallel repetition.\n"
-                    "8) Body progression must generally follow mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (theme-adaptive).\n"
-                    "9) Subheads must be concrete, non-overlapping, high-information, and non-synonymous.\n"
-                    "10) Subheads must represent what will be analyzed, not decorative labels.\n"
-                    "11) Each section must include question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
-                    "12) scope_requirements and must_cover_points must be specific and executable, not abstract slogans.\n"
-                    "13) writing_boundaries must explicitly prevent topic drift and unsupported claims.\n"
-                    "14) Opening section must establish objective, scope boundaries, and reading map.\n"
-                    "15) Closing section must synthesize tradeoffs, decision implications, and execution priorities.\n"
-                    "16) Across body sections, ensure multi-angle coverage where relevant: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"
-                    "17) For body sections, question_ids must reference one or more question cards from FINAL_CONTEXT_PACKET only.\n"
-                    "18) Every question_id from question cards must appear in at least one body section.\n"
-                    "19) Keep plan strictly grounded in FINAL_CONTEXT_PACKET; do not fabricate assumptions.\n"
-                    "20) If evidence is sparse, reduce section breadth or section count; do not invent pseudo-coverage.\n"
-                    "21) Keep language concise but high-information in every field.\n"
-                    "22) No duplicate section intent across sections.\n"
-                    "Self-checklist:\n"
-                    "- Does the section order strictly satisfy opening -> body... -> closing?\n"
-                    "- Are all body sections in a clear reasoning staircase rather than side-by-side repetition?\n"
-                    "- Is each section contract directly writable by a Writer without reinterpretation?\n"
-                    "- Do body sections collectively cover every question_id at least once?\n"
-                    "- Are multi-angle viewpoints distributed across body sections?\n"
-                    "- Do subheads avoid overlap and generic wording?\n"
-                    "- Do writing_boundaries clearly block drift and overclaiming?\n"
-                    "- Is the closing truly integrative rather than a summary copy?\n"
-                    "- Is the output strictly valid JSON with no extra narrative?"
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    "ARCHITECT_TASK:\n"
-                    "- Plan only, no narrative writing.\n"
-                    "- Design a section structure that supports very rich, high-density writing.\n"
-                    "- Ensure middle sections form a clear reasoning staircase with multi-angle coverage.\n"
-                    "- Assign question_ids to body sections so every question card is covered at least once.\n"
-                    "- Build section contracts that a Writer can execute directly without reinterpretation.\n"
-                    "- Do not output explanations; output schema JSON only.\n\n"
-                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
-                ),
-            },
-        ]
-
-    def _build_writer_messages(
-        self,
-        *,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-        architect_output: RenderArchitectOutput,
-        section: RenderArchitectSectionPlan,
-    ) -> list[dict[str, str]]:
-        target_language_name = clean_whitespace(target_language) or "unspecified"
-        section_subhead = clean_whitespace(section.subhead)
-        section_prefix_h2 = f"## {section_subhead or 'Section'}"
-        section_packet_markdown = render_section_plan_markdown(section)
-        all_section_plan_markdown = render_architect_plan_markdown(architect_output)
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Role: Writer for one architected section.\n"
-                    "Identity: Expert analyst and writing coach for high-density technical reports.\n"
-                    "Mission: Write exactly one section markdown fragment with maximal information density.\n"
-                    "Instruction Priority:\n"
-                    "P1) Contract fidelity: strictly follow CURRENT_SECTION_PLAN_MARKDOWN scope_requirements, writing_boundaries, and must_cover_points.\n"
-                    "P2) Analytical depth and completeness: deliver rich, concrete, decision-useful content with high information density.\n"
-                    "P3) Representation quality: use tables/LaTeX/Mermaid when applicable with strong explanatory framing.\n"
-                    "P4) Markdown discipline: use ### and deeper headings only for internal subsections; section-level title is rendered externally and must not be repeated.\n"
-                    "Execution protocol (follow internally, do not print reasoning):\n"
-                    "Phase A - Decode section contract:\n"
-                    "1) Treat CURRENT_SECTION_PLAN_MARKDOWN as binding spec.\n"
-                    "2) Convert scope_requirements + must_cover_points into a compact internal outline.\n"
-                    "3) Treat writing_boundaries as hard exclusions.\n"
-                    "Phase B - Select and organize evidence:\n"
-                    "1) Pull only relevant evidence from FINAL_CONTEXT_PACKET.\n"
-                    "2) Prioritize evidence that supports cross-source synthesis, tradeoff reasoning, and decisions.\n"
-                    "3) Mark uncertainty boundaries where evidence is incomplete or conflicting.\n"
-                    "Phase C - Compose high-information prose:\n"
-                    "1) Every paragraph must add new information; avoid paraphrase loops and generic filler.\n"
-                    "2) Use explicit transitions: premise -> evidence -> inference -> implication.\n"
-                    "3) Keep strong logical flow from explanation to judgment to action.\n"
-                    "Phase D - Advanced representations:\n"
-                    "1) Prefer tables for comparisons and data-heavy analysis.\n"
-                    "2) For every table, include dense context before the table and equally dense analysis/summary after the table.\n"
-                    "3) Use LaTeX for formulas and quantitative relationships when involved.\n"
-                    "4) For process/workflow content, first describe in natural language, then provide Mermaid.\n"
-                    "Phase E - Final quality pass:\n"
-                    "1) Ensure strict alignment with section boundaries; do not drift to unrelated topics.\n"
-                    "2) Ensure concrete conclusions and bounded recommendations are evidence-grounded.\n"
-                    "3) Ensure clarity under high density: no vague claims, no rhetorical padding.\n"
-                    "Hard Constraints (must):\n"
-                    "1) Write exactly one section fragment for CURRENT_SECTION_PLAN_MARKDOWN; never write other sections.\n"
-                    "2) Follow scope_requirements, writing_boundaries, must_cover_points exactly.\n"
-                    "3) Keep strict topic focus; no unrelated expansions.\n"
-                    "4) Ensure content is rich, complete, and high-information; avoid filler and paraphrase loops.\n"
-                    "5) Use explicit reasoning chain: premise -> evidence -> inference -> implication.\n"
-                    "6) Prefer tables for comparison/data-heavy reasoning.\n"
-                    "7) For each table, include equally dense analysis before and after the table.\n"
-                    "8) Do not output decorative tables with low analytical value.\n"
-                    "9) Quantitative relationships/formulas must be written in LaTeX when involved.\n"
-                    "10) For process/workflow content, first provide natural-language explanation, then Mermaid.\n"
-                    "11) Markdown heading rule: only ### and deeper headings are allowed (####, #####, ######).\n"
-                    "12) Never output # or ## headings.\n"
-                    "13) Never output a heading that repeats CURRENT_SECTION_PLAN_MARKDOWN.subhead (including near-identical wording).\n"
-                    "14) The first non-empty line must not restate CURRENT_SECTION_PLAN_MARKDOWN.subhead.\n"
-                    "15) Keep wording precise; avoid vague terms without analytical support.\n"
-                    "16) Include uncertainty boundaries when evidence is incomplete or conflicting.\n"
-                    "17) Do not overclaim beyond evidence available in FINAL_CONTEXT_PACKET.\n"
-                    "18) No citation tokens and no pseudo-citation placeholders.\n"
-                    "19) No meta commentary, no process narration, no wrappers.\n"
-                    "20) Output markdown fragment only.\n"
-                    "Self-checklist:\n"
-                    "- Did I cover every must_cover_point with concrete analysis?\n"
-                    "- Did I respect every writing_boundary and avoid drift?\n"
-                    "- Is each paragraph adding net-new information?\n"
-                    "- If I used a table, did I provide dense explanation before and after it?\n"
-                    "- If formulas were needed, did I use LaTeX correctly?\n"
-                    "- If workflow was discussed, did I provide language-first then Mermaid?\n"
-                    "- Did I avoid # and ## headings entirely?\n"
-                    "- Did I avoid repeating CURRENT_SECTION_PLAN_MARKDOWN.subhead as a heading?\n"
-                    "- Is the first heading (if any) different from CURRENT_SECTION_PLAN_MARKDOWN.subhead?\n"
-                    "- Is the fragment decision-useful, evidence-grounded, and uncertainty-aware?"
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    "SECTION_RENDERING_NOTE:\n"
-                    "- Final assembler already renders CURRENT_SECTION_PLAN_MARKDOWN.subhead as a `##` title.\n"
-                    "- Your fragment must not repeat that title.\n\n"
-                    "SECTION_PREFIX_ALREADY_RENDERED:\n"
-                    f"{section_prefix_h2}\n\n"
-                    "WRITING_START_RULE:\n"
-                    "- Continue writing after SECTION_PREFIX_ALREADY_RENDERED.\n"
-                    "- Do not output SECTION_PREFIX_ALREADY_RENDERED again.\n\n"
-                    f"CURRENT_SECTION_SUBHEAD_ALREADY_RENDERED_AS_H2:\n{section_subhead}\n\n"
-                    f"ARCHITECT_REPORT_PLAN_MARKDOWN:\n{all_section_plan_markdown}\n\n"
-                    f"CURRENT_SECTION_PLAN_MARKDOWN:\n{section_packet_markdown}\n\n"
-                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
-                ),
-            },
-        ]
-
-    def _build_final_structured_messages(
-        self,
-        ctx: ResearchStepContext,
-        *,
-        target_language: str,
-        now_utc: datetime,
-    ) -> list[dict[str, str]]:
-        target_language_name = clean_whitespace(target_language) or "unspecified"
-        context_packet = self._build_final_context_packet(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
-        context_packet_markdown = self._render_final_context_packet_markdown(
-            context_packet
-        )
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Role: Structured Research Synthesizer.\n"
-                    "Identity: Senior structured-output instructor.\n"
-                    "Mission: Build one JSON object for THEME from FINAL_CONTEXT_PACKET in a single pass.\n"
-                    "Instruction Priority:\n"
-                    "P1) Schema validity.\n"
-                    "P2) Theme-aligned synthesis quality.\n"
-                    "P3) Language consistency.\n"
-                    "Execution protocol (follow internally, do not print reasoning):\n"
-                    "Phase A - Schema-first planning:\n"
-                    "1) Enumerate required fields and value types from provided schema.\n"
-                    "2) Map each required field to evidence in FINAL_CONTEXT_PACKET before writing.\n"
-                    "3) If evidence is absent, return bounded/empty-safe values that remain schema-valid.\n"
-                    "Phase B - Evidence synthesis:\n"
-                    "1) Identify direct answers, consensus, conflicts, and uncertainty boundaries.\n"
-                    "2) Merge cross-track evidence into concise, non-redundant field values.\n"
-                    "3) Keep claims proportional to evidence strength.\n"
-                    "Phase C - Serialization discipline:\n"
-                    "1) Output must strictly validate the schema.\n"
-                    "2) Keep free-text in TARGET_OUTPUT_LANGUAGE.\n"
-                    "3) Do not include markdown, code fences, citation tokens, or commentary.\n"
-                    "4) Resolve relative time expressions against CURRENT_UTC_DATE.\n"
-                    "Hard Constraints:\n"
-                    "1) Output must strictly validate provided schema.\n"
-                    "2) Use FINAL_CONTEXT_PACKET as the main evidence basis.\n"
-                    "3) Do not include markdown or citation tokens.\n"
-                    "4) Keep free-text values in TARGET_OUTPUT_LANGUAGE.\n"
-                    "5) Preserve uncertainty when evidence is incomplete.\n"
-                    "6) Resolve relative time words against CURRENT_UTC_DATE.\n"
-                    "Self-checklist:\n"
-                    "- Are all required schema fields present and valid?\n"
-                    "- Are claims grounded in FINAL_CONTEXT_PACKET evidence?\n"
-                    "- Are uncertainty boundaries preserved where needed?"
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
-                ),
-            },
-        ]
-
-    def _assemble_markdown_from_sections(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        architect_output: RenderArchitectOutput,
-        writer_outputs: list[str],
-    ) -> str:
-        parts: list[str] = [f"# {ctx.request.themes}"]
-        objective = str(architect_output.report_objective or "").strip()
-        if objective:
-            parts.append(objective)
-        for section_plan, section_content in zip(
-            architect_output.sections,
-            writer_outputs,
-            strict=False,
-        ):
-            subhead = clean_whitespace(section_plan.subhead or section_plan.section_id)
-            parts.append(f"## {subhead or 'Section'}")
-            parts.append(str(section_content or "").strip())
-        parts.append(
-            self._render_coverage_audit_markdown(
-                ctx=ctx,
-                architect_output=architect_output,
-            )
-        )
-        return "\n\n".join(parts).strip()
-
-    def _render_coverage_audit_markdown(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        architect_output: RenderArchitectOutput,
-    ) -> str:
-        required_question_ids = self._resolve_question_ids(ctx)
-        lines: list[str] = ["## Coverage Audit"]
-        if not required_question_ids:
-            lines.append("- No question cards available.")
-            return "\n".join(lines).strip()
-
-        section_map: dict[str, list[str]] = {item: [] for item in required_question_ids}
-        required_set = set(required_question_ids)
-        for idx, section in enumerate(architect_output.sections, start=1):
-            section_id = clean_whitespace(section.section_id) or f"s{idx}"
-            for raw in section.question_ids:
-                question_id = clean_whitespace(raw)
-                if not question_id or question_id not in required_set:
-                    continue
-                refs = section_map[question_id]
-                if section_id in refs:
-                    continue
-                refs.append(section_id)
-
-        track_result_ids = {
-            clean_whitespace(item.question_id)
-            for item in ctx.parallel.track_results
-            if clean_whitespace(item.question_id)
-        }
-        lines.append(f"- Total question cards: {len(required_question_ids)}")
-        for question_id in required_question_ids:
-            refs = section_map.get(question_id, [])
-            status = "covered" if refs else "missing"
-            section_text = ", ".join(refs) if refs else "none"
-            has_track_result = "yes" if question_id in track_result_ids else "no"
-            lines.append(
-                f"- {question_id}: {status}; sections={section_text}; track_result={has_track_result}"
-            )
-        return "\n".join(lines).strip()
-
-    def _build_final_context_packet(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        target_language: str,
-        now_utc: datetime,
-    ) -> _RenderFinalContextPacket:
-        return _RenderFinalContextPacket(
-            theme=str(ctx.request.themes),
-            target_output_language=str(target_language),
-            utc_timestamp=now_utc.isoformat(),
-            utc_date=now_utc.date().isoformat(),
-            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-            question_cards=[
-                item.model_copy(deep=True) for item in ctx.parallel.question_cards
-            ],
-            track_results=self._build_track_result_packet(ctx.parallel.track_results),
-            render_objective=(
-                "Produce one theme-focused final synthesis with consensus, conflicts, "
-                "uncertainty boundaries, and implications."
-            ),
-        )
-
-    def _render_final_context_packet_markdown(
-        self, packet: _RenderFinalContextPacket
-    ) -> str:
-        lines: list[str] = [
-            "# Final Context Packet",
-            "## Theme",
-            normalize_block_text(packet.theme) or "n/a",
-            "## Target Output Language",
-            normalize_block_text(packet.target_output_language) or "n/a",
-            "## Time Context",
-            f"- UTC timestamp: {packet.utc_timestamp}",
-            f"- UTC date: {packet.utc_date}",
-            "## Render Objective",
-            packet.render_objective,
-            "## Theme Plan",
-            render_theme_plan_markdown(
-                packet.theme_plan,
-                include_title=False,
-                include_question_cards=False,
-            ),
-            "## Question Cards",
-            render_question_cards_markdown(packet.question_cards),
-            "## Track Results",
-            self._render_track_results_markdown(packet.track_results),
-        ]
-        return "\n".join(lines).strip()
-
-    def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
-        token = clean_whitespace(
-            str(ctx.plan.output_language or ctx.plan.input_language or "")
-        )
-        if token:
-            return token
-        return "same as user input language"
-
-    def _build_track_result_packet(
-        self, track_results: list[ResearchTrackResult]
-    ) -> list[_RenderTrackResultPacket]:
-        return [
-            _RenderTrackResultPacket(
-                question_id=str(item.question_id),
-                question=str(item.question),
-                stop_reason=str(item.stop_reason),
-                rounds=int(item.rounds),
-                search_calls=int(item.search_calls),
-                fetch_calls=int(item.fetch_calls),
-                confidence=float(item.confidence),
-                coverage_ratio=float(item.coverage_ratio),
-                unresolved_conflicts=int(item.unresolved_conflicts),
-                key_findings=list(item.key_findings),
-                subreport_excerpt=normalize_block_text(
-                    str(item.subreport_markdown or "")
-                ),
-            )
-            for item in track_results
-        ]
-
-    def _resolve_question_ids(self, ctx: ResearchStepContext) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        cards = list(ctx.parallel.question_cards)
-        if not cards:
-            cards = [
-                ResearchQuestionCard(
-                    question_id=item.question_id,
-                    question=item.question,
-                    priority=item.priority,
-                    seed_queries=list(item.seed_queries),
-                    evidence_focus=list(item.evidence_focus),
-                    expected_gain=item.expected_gain,
-                )
-                for item in ctx.plan.theme_plan.question_cards
-            ]
-        for card in cards:
-            question_id = clean_whitespace(card.question_id)
-            if not question_id:
-                continue
-            if question_id in seen:
-                continue
-            seen.add(question_id)
-            out.append(question_id)
-        return out
-
-    def _merge_question_ids(self, left: list[str], right: list[str]) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in [*left, *right]:
-            token = clean_whitespace(item)
-            if not token:
-                continue
-            if token in seen:
-                continue
-            seen.add(token)
-            out.append(token)
-        return out
-
-    def _render_track_results_markdown(
-        self, track_results: list[_RenderTrackResultPacket]
-    ) -> str:
-        if not track_results:
-            return "- (none)"
-        lines: list[str] = []
-        for index, item in enumerate(track_results, start=1):
-            question = normalize_block_text(item.question) or "n/a"
-            lines.extend(
-                [
-                    f"### Track {index}: {question}",
-                    f"- Question ID: {normalize_block_text(item.question_id) or 'n/a'}",
-                    f"- Stop reason: {normalize_block_text(item.stop_reason) or 'n/a'}",
-                    f"- Rounds: {int(item.rounds)}",
-                    f"- Search calls: {int(item.search_calls)}",
-                    f"- Fetch calls: {int(item.fetch_calls)}",
-                    f"- Confidence: {float(item.confidence):.3f}",
-                    f"- Coverage ratio: {float(item.coverage_ratio):.3f}",
-                    f"- Unresolved conflicts: {int(item.unresolved_conflicts)}",
-                    "- Key findings:",
-                ]
-            )
-            if item.key_findings:
-                for token in item.key_findings:
-                    finding = normalize_block_text(token)
-                    if not finding:
-                        continue
-                    if "\n" not in finding:
-                        lines.append(f"  - {finding}")
-                        continue
-                    lines.extend(
-                        ["  -", "    ```text"]
-                        + [f"    {line}" for line in finding.split("\n")]
-                        + ["    ```"]
-                    )
-            else:
-                lines.append("  - (none)")
-            lines.append("- Subreport excerpt:")
-            excerpt = normalize_block_text(item.subreport_excerpt)
-            if excerpt:
-                lines.extend(
-                    ["  ```markdown"]
-                    + [f"  {line}" for line in excerpt.split("\n")]
-                    + ["  ```"]
-                )
-            else:
-                lines.append("  - (none)")
-        return "\n".join(lines).strip()
-
-    def _collect_writer_section_failures(
-        self, exc: BaseException
-    ) -> list[_WriterSectionFailure]:
-        out: list[_WriterSectionFailure] = []
-        stack: list[BaseException] = [exc]
-        while stack and len(out) < 16:
-            node = stack.pop()
-            children = getattr(node, "exceptions", None)
-            if isinstance(children, tuple):
-                stack.extend(
-                    child
-                    for child in reversed(children)
-                    if isinstance(child, BaseException)
-                )
-                continue
-            if not isinstance(node, _WriterSectionError):
-                continue
-            out.append(
-                _WriterSectionFailure(
-                    index=int(node.index),
-                    section_id=str(node.section_id),
-                    subhead=str(node.subhead),
-                    cause_type=str(node.cause_type),
-                    cause_message=str(node.cause_message),
-                )
-            )
-        return out
-
-    def _try_parse_json_value(self, text: str) -> object:
-        raw = str(text or "")
-        if not raw:
-            return {}
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            start = raw.find("{")
-            end = raw.rfind("}")
-            if 0 <= start < end:
-                return json.loads(raw[start : end + 1])
-            raise
-
-    def _normalize_markdown(self, text: str) -> str:
-        content = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-        lines: list[str] = []
-        blank_count = 0
-        for raw in content.split("\n"):
-            line = raw.rstrip()
-            if not line:
-                blank_count += 1
-                if blank_count > 2:
-                    continue
-                lines.append("")
-                continue
-            blank_count = 0
-            lines.append(line)
-        return "\n".join(lines).strip()
-
-
-__all__ = ["ResearchRenderStep"]
+from __future__ import annotationsimport jsonimport warningsfrom dataclasses import dataclass, fieldfrom datetime import UTC, datetimefrom typing import TYPE_CHECKING, Anyfrom typing_extensions import overrideimport anyiofrom serpsage.error_details import exception_summary, exception_to_detailsfrom serpsage.models.errors import AppErrorfrom serpsage.models.pipeline import (    ResearchQuestionCard,    ResearchStepContext,    ResearchTrackResult,)from serpsage.models.research import (    RenderArchitectOutput,    RenderArchitectSectionPlan,    ResearchThemePlan,)from serpsage.steps.base import StepBasefrom serpsage.steps.research.prompt_markdown import (    normalize_block_text,    render_architect_plan_markdown,    render_question_cards_markdown,    render_section_plan_markdown,    render_theme_plan_markdown,)from serpsage.steps.research.utils import chat_pydantic, resolve_research_modelfrom serpsage.utils import clean_whitespaceif TYPE_CHECKING:    from serpsage.components.llm.base import LLMClientBase    from serpsage.core.runtime import Runtimeclass _WriterSectionError(RuntimeError):    def __init__(        self,        *,        section_id: str,        subhead: str,        index: int,        cause: Exception,    ) -> None:        self.section_id = clean_whitespace(section_id)        self.subhead = clean_whitespace(subhead)        self.index = int(index)        self.cause_type = type(cause).__name__        self.cause_message = clean_whitespace(str(cause))        label = self.section_id or self.subhead or f"section-{self.index}"        super().__init__(            f"writer section failed: {label}; cause={self.cause_type}: {self.cause_message}"        )@dataclass(slots=True)class _WriterSectionFailure:    index: int    section_id: str    subhead: str    cause_type: str    cause_message: str    def to_payload(self) -> dict[str, object]:        return {            "index": int(self.index),            "section_id": str(self.section_id),            "subhead": str(self.subhead),            "cause_type": str(self.cause_type),            "cause_message": str(self.cause_message),        }@dataclass(slots=True)class _RenderTrackResultPacket:    question_id: str    question: str    stop_reason: str    rounds: int    search_calls: int    fetch_calls: int    confidence: float    coverage_ratio: float    unresolved_conflicts: int    key_findings: list[str] = field(default_factory=list)    subreport_excerpt: str = ""@dataclass(slots=True)class _RenderFinalContextPacket:    theme: str    target_output_language: str    utc_timestamp: str    utc_date: str    theme_plan: ResearchThemePlan    question_cards: list[ResearchQuestionCard] = field(default_factory=list)    track_results: list[_RenderTrackResultPacket] = field(default_factory=list)    render_objective: str = ""class ResearchRenderStep(StepBase[ResearchStepContext]):    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:        super().__init__(rt=rt)        self._llm = llm        self.bind_deps(llm)    @override    async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:        now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)        target_language = self._resolve_target_language(ctx)        schema = (            dict(ctx.request.json_schema)            if isinstance(ctx.request.json_schema, dict)            else None        )        if schema is None:            await self._render_markdown_architect_writer(                ctx=ctx,                target_language=target_language,                now_utc=now_utc,            )            print(                (                    "[research][render] "                    f"request_id={ctx.request_id} "                    "mode=final_markdown "                    f"track_results={int(len(ctx.parallel.track_results))} "                    f"content_chars={int(len(str(ctx.output.content or '')))}"                ),                flush=True,            )            return ctx        await self._render_structured_once(            ctx=ctx,            schema=schema,            target_language=target_language,            now_utc=now_utc,        )        print(            (                "[research][render] "                f"request_id={ctx.request_id} "                "mode=final_structured "                f"track_results={int(len(ctx.parallel.track_results))} "                f"has_structured={bool(ctx.output.structured is not None)}"            ),            flush=True,        )        return ctx    async def _render_markdown_architect_writer(        self,        *,        ctx: ResearchStepContext,        target_language: str,        now_utc: datetime,    ) -> None:        context_packet = self._build_final_context_packet(            ctx=ctx,            target_language=target_language,            now_utc=now_utc,        )        context_packet_markdown = self._render_final_context_packet_markdown(            context_packet        )        architect_output = await self._run_architect(            ctx=ctx,            target_language=target_language,            now_utc=now_utc,            context_packet_markdown=context_packet_markdown,        )        architect_output = self._validate_architect_question_coverage(            ctx=ctx,            architect_output=architect_output,        )        writer_outputs = await self._run_writers(            ctx=ctx,            architect_output=architect_output,            target_language=target_language,            now_utc=now_utc,            context_packet_markdown=context_packet_markdown,        )        assembled = self._assemble_markdown_from_sections(            ctx=ctx,            architect_output=architect_output,            writer_outputs=writer_outputs,        )        ctx.output.structured = None        ctx.output.content = self._normalize_markdown(assembled)    async def _run_architect(        self,        *,        ctx: ResearchStepContext,        target_language: str,        now_utc: datetime,        context_packet_markdown: str,    ) -> RenderArchitectOutput:        model = resolve_research_model(            ctx=ctx,            stage="synthesize",            fallback=self.settings.answer.generate.use_model,        )        try:            return await chat_pydantic(                llm=self._llm,                model=model,                messages=self._build_architect_messages(                    target_language=target_language,                    now_utc=now_utc,                    context_packet_markdown=context_packet_markdown,                ),                schema_model=RenderArchitectOutput,                retries=int(self.settings.research.llm_self_heal_retries),            )        except Exception as exc:  # noqa: BLE001            detail = exception_to_details(exc)            summary = exception_summary(exc)            ctx.errors.append(                AppError(                    code="research_render_architect_failed",                    message=summary,                    details={                        "stage": "architect",                        "model": str(model),                        "exception": detail,                    },                )            )            warnings.warn(                (                    "[research][warning] "                    "research_render_architect_failed "                    f"request_id={ctx.request_id} "                    f"error={summary}"                ),                stacklevel=1,            )            raise RuntimeError("research architect render failed") from exc    def _validate_architect_question_coverage(        self,        *,        ctx: ResearchStepContext,        architect_output: RenderArchitectOutput,    ) -> RenderArchitectOutput:        required_question_ids = self._resolve_question_ids(ctx)        if not required_question_ids:            return architect_output        sections = list(architect_output.sections or [])        if not sections:            return architect_output        required_map = {            clean_whitespace(item).casefold(): clean_whitespace(item)            for item in required_question_ids            if clean_whitespace(item)        }        normalized_sections: list[RenderArchitectSectionPlan] = []        covered_question_ids: set[str] = set()        body_indexes: list[int] = []        for idx, section in enumerate(sections):            normalized_question_ids: list[str] = []            seen: set[str] = set()            for raw in section.question_ids:                token = clean_whitespace(raw)                if not token:                    continue                canonical = required_map.get(token.casefold())                if not canonical:                    continue                if canonical in seen:                    continue                seen.add(canonical)                normalized_question_ids.append(canonical)            if section.section_role == "body":                body_indexes.append(idx)                covered_question_ids.update(normalized_question_ids)            normalized_sections.append(                section.model_copy(update={"question_ids": normalized_question_ids})            )        missing_question_ids = [            item for item in required_question_ids if item not in covered_question_ids        ]        if missing_question_ids:            target_idx = (                body_indexes[-1] if body_indexes else len(normalized_sections) - 1            )            target = normalized_sections[target_idx]            patched_question_ids = self._merge_question_ids(                list(target.question_ids),                missing_question_ids,            )            normalized_sections[target_idx] = target.model_copy(                update={"question_ids": patched_question_ids}            )            warning_message = (                "architect output missed question_ids; patched into final body section "                f"missing={missing_question_ids}"            )            ctx.notes.append(warning_message)            warnings.warn(                (                    "[research][warning] "                    "research_render_question_coverage_patched "                    f"request_id={ctx.request_id} "                    f"missing={missing_question_ids}"                ),                stacklevel=1,            )        return architect_output.model_copy(update={"sections": normalized_sections})    async def _run_writers(        self,        *,        ctx: ResearchStepContext,        architect_output: RenderArchitectOutput,        target_language: str,        now_utc: datetime,        context_packet_markdown: str,    ) -> list[str]:        model = resolve_research_model(            ctx=ctx,            stage="markdown",            fallback=self.settings.answer.generate.use_model,        )        outputs = [""] * len(architect_output.sections)        try:            async with anyio.create_task_group() as tg:                for index, section in enumerate(architect_output.sections):                    tg.start_soon(                        self._run_writer_for_section,                        model,                        target_language,                        now_utc,                        context_packet_markdown,                        architect_output,                        section,                        outputs,                        index,                    )        except Exception as exc:  # noqa: BLE001            summary = exception_summary(exc)            detail = exception_to_details(exc)            failed_sections = self._collect_writer_section_failures(exc)            failed_section_payload = [item.to_payload() for item in failed_sections]            ctx.errors.append(                AppError(                    code="research_render_writer_failed",                    message=summary,                    details={                        "stage": "writer",                        "model": str(model),                        "sections_total": int(len(architect_output.sections)),                        "failed_sections": failed_section_payload,                        "exception": detail,                    },                )            )            warnings.warn(                (                    "[research][warning] "                    "research_render_writer_failed "                    f"request_id={ctx.request_id} "                    f"error={summary} "                    f"failed_sections={failed_section_payload}"                ),                stacklevel=1,            )            raise RuntimeError("research writer render failed") from exc        return outputs    async def _run_writer_for_section(        self,        model: str,        target_language: str,        now_utc: datetime,        context_packet_markdown: str,        architect_output: RenderArchitectOutput,        section: RenderArchitectSectionPlan,        outputs: list[str],        index: int,    ) -> None:        messages = self._build_writer_messages(            target_language=target_language,            now_utc=now_utc,            context_packet_markdown=context_packet_markdown,            architect_output=architect_output,            section=section,        )        try:            result = await self._llm.chat(                model=model,                messages=messages,                response_format=None,            )        except Exception as exc:  # noqa: BLE001            raise _WriterSectionError(                section_id=str(section.section_id or ""),                subhead=str(section.subhead or ""),                index=int(index),                cause=exc if isinstance(exc, Exception) else Exception(str(exc)),            ) from exc        outputs[index] = str(result.text or "")    async def _render_structured_once(        self,        *,        ctx: ResearchStepContext,        schema: dict[str, Any],        target_language: str,        now_utc: datetime,    ) -> None:        model = resolve_research_model(            ctx=ctx,            stage="synthesize",            fallback=self.settings.answer.generate.use_model,        )        messages = self._build_final_structured_messages(            ctx,            target_language=target_language,            now_utc=now_utc,        )        try:            result = await self._llm.chat(                model=model,                messages=messages,                response_format=schema,            )            payload = (                result.data                if result.data is not None                else self._try_parse_json_value(result.text)            )            if not isinstance(payload, dict):                raise TypeError("structured output must be a JSON object")        except Exception as exc:  # noqa: BLE001            summary = exception_summary(exc)            detail = exception_to_details(exc)            ctx.errors.append(                AppError(                    code="research_render_structured_failed",                    message=summary,                    details={                        "stage": "structured",                        "model": str(model),                        "schema_keys": sorted(str(key) for key in schema),                        "exception": detail,                    },                )            )            warnings.warn(                (                    "[research][warning] "                    "research_render_structured_failed "                    f"request_id={ctx.request_id} "                    f"error={summary}"                ),                stacklevel=1,            )            raise RuntimeError("research structured render failed") from exc        ctx.output.structured = payload        ctx.output.content = json.dumps(payload, ensure_ascii=False, indent=2)    def _build_architect_messages(        self,        *,        target_language: str,        now_utc: datetime,        context_packet_markdown: str,    ) -> list[dict[str, str]]:        target_language_name = clean_whitespace(target_language) or "unspecified"        return [            {                "role": "system",                "content": (                    "Role: Architect of the final theme report.\n"                    "Identity: Senior research writing instructor and report architect.\n"                    "Mission: Produce a strict section blueprint (JSON only) for a high-information markdown report.\n"                    "Instruction Priority:\n"                    "P1) Structural correctness for final assembly: schema-valid output, strict role ordering, and executable section contracts.\n"                    "P2) Logical progression quality: enforce General-Body-General and a clear reasoning staircase in body sections.\n"                    "P3) Multi-angle analytical coverage: technology, cost, risk, timeliness, scenario fit, constraints, and decision impact.\n"                    "P4) Evidence-grounded scope control: reduce breadth when evidence is weak; never invent structure based on assumptions.\n"                    "Execution protocol (follow internally, do not print reasoning):\n"                    "Phase A - Frame the problem:\n"                    "1) Extract the core question, decision target, and uncertainty boundaries from FINAL_CONTEXT_PACKET.\n"                    "2) Determine which analytical angles are mandatory: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"                    "3) If evidence is thin, narrow scope instead of inventing topics.\n"                    "Phase B - Design macro structure:\n"                    "1) Use strict General-Body-General structure.\n"                    "2) Exactly one opening section first, exactly one closing section last.\n"                    "3) Create 3-8 body sections between them to total 5-10 sections.\n"                    "Phase C - Build body progression ladder:\n"                    "1) Body sections must be progressive and interlocked, never parallel repetition.\n"                    "2) Preferred reasoning staircase: mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (adapt to theme).\n"                    "3) Each body section must answer a distinct analytical question and prepare the next section.\n"                    "Phase D - Define section contracts:\n"                    "1) For each section provide concrete subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"                    "2) writing_boundaries must explicitly block topic drift and unsupported claims.\n"                    "3) must_cover_points must be actionable and specific, not generic slogans.\n"                    "Hard Constraints (must):\n"                    "1) Output JSON only and match schema exactly; no markdown, no prose, no commentary.\n"                    "2) Output 5-10 section plans total.\n"                    "3) Exactly one opening section at index 1, exactly one closing section at last index.\n"                    "4) All intermediate sections must be body sections.\n"                    "5) section_role values must be exactly one of: opening, body, closing.\n"                    "6) Enforce strict General-Body-General structure in final ordering.\n"                    "7) Body sections must be logically progressive and interlocked; no parallel repetition.\n"                    "8) Body progression must generally follow mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (theme-adaptive).\n"                    "9) Subheads must be concrete, non-overlapping, high-information, and non-synonymous.\n"                    "10) Subheads must represent what will be analyzed, not decorative labels.\n"                    "11) Each section must include question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"                    "12) scope_requirements and must_cover_points must be specific and executable, not abstract slogans.\n"                    "13) writing_boundaries must explicitly prevent topic drift and unsupported claims.\n"                    "14) Opening section must establish objective, scope boundaries, and reading map.\n"                    "15) Closing section must synthesize tradeoffs, decision implications, and execution priorities.\n"                    "16) Across body sections, ensure multi-angle coverage where relevant: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"                    "17) For body sections, question_ids must reference one or more question cards from FINAL_CONTEXT_PACKET only.\n"                    "18) Every question_id from question cards must appear in at least one body section.\n"                    "19) Keep plan strictly grounded in FINAL_CONTEXT_PACKET; do not fabricate assumptions.\n"                    "20) If evidence is sparse, reduce section breadth or section count; do not invent pseudo-coverage.\n"                    "21) Keep language concise but high-information in every field.\n"                    "22) No duplicate section intent across sections.\n"                    "Self-checklist:\n"                    "- Does the section order strictly satisfy opening -> body... -> closing?\n"                    "- Are all body sections in a clear reasoning staircase rather than side-by-side repetition?\n"                    "- Is each section contract directly writable by a Writer without reinterpretation?\n"                    "- Do body sections collectively cover every question_id at least once?\n"                    "- Are multi-angle viewpoints distributed across body sections?\n"                    "- Do subheads avoid overlap and generic wording?\n"                    "- Do writing_boundaries clearly block drift and overclaiming?\n"                    "- Is the closing truly integrative rather than a summary copy?\n"                    "- Is the output strictly valid JSON with no extra narrative?"                ),            },            {                "role": "user",                "content": (                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"                    "ARCHITECT_TASK:\n"                    "- Plan only, no narrative writing.\n"                    "- Design a section structure that supports very rich, high-density writing.\n"                    "- Ensure middle sections form a clear reasoning staircase with multi-angle coverage.\n"                    "- Assign question_ids to body sections so every question card is covered at least once.\n"                    "- Build section contracts that a Writer can execute directly without reinterpretation.\n"                    "- Do not output explanations; output schema JSON only.\n\n"                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"                ),            },        ]    def _build_writer_messages(        self,        *,        target_language: str,        now_utc: datetime,        context_packet_markdown: str,        architect_output: RenderArchitectOutput,        section: RenderArchitectSectionPlan,    ) -> list[dict[str, str]]:        target_language_name = clean_whitespace(target_language) or "unspecified"        section_subhead = clean_whitespace(section.subhead)        section_prefix_h2 = f"## {section_subhead or 'Section'}"        section_packet_markdown = render_section_plan_markdown(section)        all_section_plan_markdown = render_architect_plan_markdown(architect_output)        return [            {                "role": "system",                "content": (                    "Role: Writer for one architected section.\n"                    "Identity: Expert analyst and writing coach for high-density technical reports.\n"                    "Mission: Write exactly one section markdown fragment with maximal information density.\n"                    "Instruction Priority:\n"                    "P1) Contract fidelity: strictly follow CURRENT_SECTION_PLAN_MARKDOWN scope_requirements, writing_boundaries, and must_cover_points.\n"                    "P2) Analytical depth and completeness: deliver rich, concrete, decision-useful content with high information density.\n"                    "P3) Representation quality: use tables/LaTeX/Mermaid when applicable with strong explanatory framing.\n"                    "P4) Markdown discipline: use ### and deeper headings only for internal subsections; section-level title is rendered externally and must not be repeated.\n"                    "Execution protocol (follow internally, do not print reasoning):\n"                    "Phase A - Decode section contract:\n"                    "1) Treat CURRENT_SECTION_PLAN_MARKDOWN as binding spec.\n"                    "2) Convert scope_requirements + must_cover_points into a compact internal outline.\n"                    "3) Treat writing_boundaries as hard exclusions.\n"                    "Phase B - Select and organize evidence:\n"                    "1) Pull only relevant evidence from FINAL_CONTEXT_PACKET.\n"                    "2) Prioritize evidence that supports cross-source synthesis, tradeoff reasoning, and decisions.\n"                    "3) Mark uncertainty boundaries where evidence is incomplete or conflicting.\n"                    "Phase C - Compose high-information prose:\n"                    "1) Every paragraph must add new information; avoid paraphrase loops and generic filler.\n"                    "2) Use explicit transitions: premise -> evidence -> inference -> implication.\n"                    "3) Keep strong logical flow from explanation to judgment to action.\n"                    "Phase D - Advanced representations:\n"                    "1) Prefer tables for comparisons and data-heavy analysis.\n"                    "2) For every table, include dense context before the table and equally dense analysis/summary after the table.\n"                    "3) Use LaTeX for formulas and quantitative relationships when involved.\n"                    "4) For process/workflow content, first describe in natural language, then provide Mermaid.\n"                    "Phase E - Final quality pass:\n"                    "1) Ensure strict alignment with section boundaries; do not drift to unrelated topics.\n"                    "2) Ensure concrete conclusions and bounded recommendations are evidence-grounded.\n"                    "3) Ensure clarity under high density: no vague claims, no rhetorical padding.\n"                    "Hard Constraints (must):\n"                    "1) Write exactly one section fragment for CURRENT_SECTION_PLAN_MARKDOWN; never write other sections.\n"                    "2) Follow scope_requirements, writing_boundaries, must_cover_points exactly.\n"                    "3) Keep strict topic focus; no unrelated expansions.\n"                    "4) Ensure content is rich, complete, and high-information; avoid filler and paraphrase loops.\n"                    "5) Use explicit reasoning chain: premise -> evidence -> inference -> implication.\n"                    "6) Prefer tables for comparison/data-heavy reasoning.\n"                    "7) For each table, include equally dense analysis before and after the table.\n"                    "8) Do not output decorative tables with low analytical value.\n"                    "9) Quantitative relationships/formulas must be written in LaTeX when involved.\n"                    "10) For process/workflow content, first provide natural-language explanation, then Mermaid.\n"                    "11) Markdown heading rule: only ### and deeper headings are allowed (####, #####, ######).\n"                    "12) Never output # or ## headings.\n"                    "13) Never output a heading that repeats CURRENT_SECTION_PLAN_MARKDOWN.subhead (including near-identical wording).\n"                    "14) The first non-empty line must not restate CURRENT_SECTION_PLAN_MARKDOWN.subhead.\n"                    "15) Keep wording precise; avoid vague terms without analytical support.\n"                    "16) Include uncertainty boundaries when evidence is incomplete or conflicting.\n"                    "17) Do not overclaim beyond evidence available in FINAL_CONTEXT_PACKET.\n"                    "18) No citation tokens and no pseudo-citation placeholders.\n"                    "19) No meta commentary, no process narration, no wrappers.\n"                    "20) Output markdown fragment only.\n"                    "Self-checklist:\n"                    "- Did I cover every must_cover_point with concrete analysis?\n"                    "- Did I respect every writing_boundary and avoid drift?\n"                    "- Is each paragraph adding net-new information?\n"                    "- If I used a table, did I provide dense explanation before and after it?\n"                    "- If formulas were needed, did I use LaTeX correctly?\n"                    "- If workflow was discussed, did I provide language-first then Mermaid?\n"                    "- Did I avoid # and ## headings entirely?\n"                    "- Did I avoid repeating CURRENT_SECTION_PLAN_MARKDOWN.subhead as a heading?\n"                    "- Is the first heading (if any) different from CURRENT_SECTION_PLAN_MARKDOWN.subhead?\n"                    "- Is the fragment decision-useful, evidence-grounded, and uncertainty-aware?"                ),            },            {                "role": "user",                "content": (                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"                    "SECTION_RENDERING_NOTE:\n"                    "- Final assembler already renders CURRENT_SECTION_PLAN_MARKDOWN.subhead as a `##` title.\n"                    "- Your fragment must not repeat that title.\n\n"                    "SECTION_PREFIX_ALREADY_RENDERED:\n"                    f"{section_prefix_h2}\n\n"                    "WRITING_START_RULE:\n"                    "- Continue writing after SECTION_PREFIX_ALREADY_RENDERED.\n"                    "- Do not output SECTION_PREFIX_ALREADY_RENDERED again.\n\n"                    f"CURRENT_SECTION_SUBHEAD_ALREADY_RENDERED_AS_H2:\n{section_subhead}\n\n"                    f"ARCHITECT_REPORT_PLAN_MARKDOWN:\n{all_section_plan_markdown}\n\n"                    f"CURRENT_SECTION_PLAN_MARKDOWN:\n{section_packet_markdown}\n\n"                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"                ),            },        ]    def _build_final_structured_messages(        self,        ctx: ResearchStepContext,        *,        target_language: str,        now_utc: datetime,    ) -> list[dict[str, str]]:        target_language_name = clean_whitespace(target_language) or "unspecified"        context_packet = self._build_final_context_packet(            ctx=ctx,            target_language=target_language,            now_utc=now_utc,        )        context_packet_markdown = self._render_final_context_packet_markdown(            context_packet        )        return [            {                "role": "system",                "content": (                    "Role: Structured Research Synthesizer.\n"                    "Identity: Senior structured-output instructor.\n"                    "Mission: Build one JSON object for THEME from FINAL_CONTEXT_PACKET in a single pass.\n"                    "Instruction Priority:\n"                    "P1) Schema validity.\n"                    "P2) Theme-aligned synthesis quality.\n"                    "P3) Language consistency.\n"                    "Execution protocol (follow internally, do not print reasoning):\n"                    "Phase A - Schema-first planning:\n"                    "1) Enumerate required fields and value types from provided schema.\n"                    "2) Map each required field to evidence in FINAL_CONTEXT_PACKET before writing.\n"                    "3) If evidence is absent, return bounded/empty-safe values that remain schema-valid.\n"                    "Phase B - Evidence synthesis:\n"                    "1) Identify direct answers, consensus, conflicts, and uncertainty boundaries.\n"                    "2) Merge cross-track evidence into concise, non-redundant field values.\n"                    "3) Keep claims proportional to evidence strength.\n"                    "Phase C - Serialization discipline:\n"                    "1) Output must strictly validate the schema.\n"                    "2) Keep free-text in TARGET_OUTPUT_LANGUAGE.\n"                    "3) Do not include markdown, code fences, citation tokens, or commentary.\n"                    "4) Resolve relative time expressions against CURRENT_UTC_DATE.\n"                    "Hard Constraints:\n"                    "1) Output must strictly validate provided schema.\n"                    "2) Use FINAL_CONTEXT_PACKET as the main evidence basis.\n"                    "3) Do not include markdown or citation tokens.\n"                    "4) Keep free-text values in TARGET_OUTPUT_LANGUAGE.\n"                    "5) Preserve uncertainty when evidence is incomplete.\n"                    "6) Resolve relative time words against CURRENT_UTC_DATE.\n"                    "Self-checklist:\n"                    "- Are all required schema fields present and valid?\n"                    "- Are claims grounded in FINAL_CONTEXT_PACKET evidence?\n"                    "- Are uncertainty boundaries preserved where needed?"                ),            },            {                "role": "user",                "content": (                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"                ),            },        ]    def _assemble_markdown_from_sections(        self,        *,        ctx: ResearchStepContext,        architect_output: RenderArchitectOutput,        writer_outputs: list[str],    ) -> str:        parts: list[str] = [f"# {ctx.request.themes}"]        objective = str(architect_output.report_objective or "").strip()        if objective:            parts.append(objective)        for section_plan, section_content in zip(            architect_output.sections,            writer_outputs,            strict=False,        ):            subhead = clean_whitespace(section_plan.subhead or section_plan.section_id)            parts.append(f"## {subhead or 'Section'}")            parts.append(str(section_content or "").strip())        parts.append(            self._render_coverage_audit_markdown(                ctx=ctx,                architect_output=architect_output,            )        )        return "\n\n".join(parts).strip()    def _render_coverage_audit_markdown(        self,        *,        ctx: ResearchStepContext,        architect_output: RenderArchitectOutput,    ) -> str:        required_question_ids = self._resolve_question_ids(ctx)        lines: list[str] = ["## Coverage Audit"]        if not required_question_ids:            lines.append("- No question cards available.")            return "\n".join(lines).strip()        section_map: dict[str, list[str]] = {item: [] for item in required_question_ids}        required_set = set(required_question_ids)        for idx, section in enumerate(architect_output.sections, start=1):            section_id = clean_whitespace(section.section_id) or f"s{idx}"            for raw in section.question_ids:                question_id = clean_whitespace(raw)                if not question_id or question_id not in required_set:                    continue                refs = section_map[question_id]                if section_id in refs:                    continue                refs.append(section_id)        track_result_ids = {            clean_whitespace(item.question_id)            for item in ctx.parallel.track_results            if clean_whitespace(item.question_id)        }        lines.append(f"- Total question cards: {len(required_question_ids)}")        for question_id in required_question_ids:            refs = section_map.get(question_id, [])            status = "covered" if refs else "missing"            section_text = ", ".join(refs) if refs else "none"            has_track_result = "yes" if question_id in track_result_ids else "no"            lines.append(                f"- {question_id}: {status}; sections={section_text}; track_result={has_track_result}"            )        return "\n".join(lines).strip()    def _build_final_context_packet(        self,        *,        ctx: ResearchStepContext,        target_language: str,        now_utc: datetime,    ) -> _RenderFinalContextPacket:        return _RenderFinalContextPacket(            theme=str(ctx.request.themes),            target_output_language=str(target_language),            utc_timestamp=now_utc.isoformat(),            utc_date=now_utc.date().isoformat(),            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),            question_cards=[                item.model_copy(deep=True) for item in ctx.parallel.question_cards            ],            track_results=self._build_track_result_packet(ctx.parallel.track_results),            render_objective=(                "Produce one theme-focused final synthesis with consensus, conflicts, "                "uncertainty boundaries, and implications."            ),        )    def _render_final_context_packet_markdown(        self, packet: _RenderFinalContextPacket    ) -> str:        lines: list[str] = [            "# Final Context Packet",            "## Theme",            normalize_block_text(packet.theme) or "n/a",            "## Target Output Language",            normalize_block_text(packet.target_output_language) or "n/a",            "## Time Context",            f"- UTC timestamp: {packet.utc_timestamp}",            f"- UTC date: {packet.utc_date}",            "## Render Objective",            packet.render_objective,            "## Theme Plan",            render_theme_plan_markdown(                packet.theme_plan,                include_title=False,                include_question_cards=False,            ),            "## Question Cards",            render_question_cards_markdown(packet.question_cards),            "## Track Results",            self._render_track_results_markdown(packet.track_results),        ]        return "\n".join(lines).strip()    def _resolve_target_language(self, ctx: ResearchStepContext) -> str:        token = clean_whitespace(            str(ctx.plan.output_language or ctx.plan.input_language or "")        )        if token:            return token        return "same as user input language"    def _build_track_result_packet(        self, track_results: list[ResearchTrackResult]    ) -> list[_RenderTrackResultPacket]:        return [            _RenderTrackResultPacket(                question_id=str(item.question_id),                question=str(item.question),                stop_reason=str(item.stop_reason),                rounds=int(item.rounds),                search_calls=int(item.search_calls),                fetch_calls=int(item.fetch_calls),                confidence=float(item.confidence),                coverage_ratio=float(item.coverage_ratio),                unresolved_conflicts=int(item.unresolved_conflicts),                key_findings=list(item.key_findings),                subreport_excerpt=normalize_block_text(                    str(item.subreport_markdown or "")                ),            )            for item in track_results        ]    def _resolve_question_ids(self, ctx: ResearchStepContext) -> list[str]:        out: list[str] = []        seen: set[str] = set()        cards = list(ctx.parallel.question_cards)        if not cards:            cards = [                ResearchQuestionCard(                    question_id=item.question_id,                    question=item.question,                    priority=item.priority,                    seed_queries=list(item.seed_queries),                    evidence_focus=list(item.evidence_focus),                    expected_gain=item.expected_gain,                )                for item in ctx.plan.theme_plan.question_cards            ]        for card in cards:            question_id = clean_whitespace(card.question_id)            if not question_id:                continue            if question_id in seen:                continue            seen.add(question_id)            out.append(question_id)        return out    def _merge_question_ids(self, left: list[str], right: list[str]) -> list[str]:        out: list[str] = []        seen: set[str] = set()        for item in [*left, *right]:            token = clean_whitespace(item)            if not token:                continue            if token in seen:                continue            seen.add(token)            out.append(token)        return out    def _render_track_results_markdown(        self, track_results: list[_RenderTrackResultPacket]    ) -> str:        if not track_results:            return "- (none)"        lines: list[str] = []        for index, item in enumerate(track_results, start=1):            question = normalize_block_text(item.question) or "n/a"            lines.extend(                [                    f"### Track {index}: {question}",                    f"- Question ID: {normalize_block_text(item.question_id) or 'n/a'}",                    f"- Stop reason: {normalize_block_text(item.stop_reason) or 'n/a'}",                    f"- Rounds: {int(item.rounds)}",                    f"- Search calls: {int(item.search_calls)}",                    f"- Fetch calls: {int(item.fetch_calls)}",                    f"- Confidence: {float(item.confidence):.3f}",                    f"- Coverage ratio: {float(item.coverage_ratio):.3f}",                    f"- Unresolved conflicts: {int(item.unresolved_conflicts)}",                    "- Key findings:",                ]            )            if item.key_findings:                for token in item.key_findings:                    finding = normalize_block_text(token)                    if not finding:                        continue                    if "\n" not in finding:                        lines.append(f"  - {finding}")                        continue                    lines.extend(                        ["  -", "    ```text"]                        + [f"    {line}" for line in finding.split("\n")]                        + ["    ```"]                    )            else:                lines.append("  - (none)")            lines.append("- Subreport excerpt:")            excerpt = normalize_block_text(item.subreport_excerpt)            if excerpt:                lines.extend(                    ["  ```markdown"]                    + [f"  {line}" for line in excerpt.split("\n")]                    + ["  ```"]                )            else:                lines.append("  - (none)")        return "\n".join(lines).strip()    def _collect_writer_section_failures(        self, exc: BaseException    ) -> list[_WriterSectionFailure]:        out: list[_WriterSectionFailure] = []        stack: list[BaseException] = [exc]        while stack and len(out) < 16:            node = stack.pop()            children = getattr(node, "exceptions", None)            if isinstance(children, tuple):                stack.extend(                    child                    for child in reversed(children)                    if isinstance(child, BaseException)                )                continue            if not isinstance(node, _WriterSectionError):                continue            out.append(                _WriterSectionFailure(                    index=int(node.index),                    section_id=str(node.section_id),                    subhead=str(node.subhead),                    cause_type=str(node.cause_type),                    cause_message=str(node.cause_message),                )            )        return out    def _try_parse_json_value(self, text: str) -> object:        raw = str(text or "")        if not raw:            return {}        try:            return json.loads(raw)        except json.JSONDecodeError:            start = raw.find("{")            end = raw.rfind("}")            if 0 <= start < end:                return json.loads(raw[start : end + 1])            raise    def _normalize_markdown(self, text: str) -> str:        content = str(text or "").replace("\r\n", "\n").replace("\r", "\n")        lines: list[str] = []        blank_count = 0        for raw in content.split("\n"):            line = raw.rstrip()            if not line:                blank_count += 1                if blank_count > 2:                    continue                lines.append("")                continue            blank_count = 0            lines.append(line)        return "\n".join(lines).strip()__all__ = ["ResearchRenderStep"]

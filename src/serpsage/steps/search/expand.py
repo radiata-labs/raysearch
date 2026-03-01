@@ -38,11 +38,13 @@ _JA_EVIDENCE_SUFFIX = (
 _EN_INTENT_SUFFIX = "official docs guide comparison"
 _EN_EVIDENCE_SUFFIX = "benchmark report source"
 
+
 @dataclass(slots=True)
 class _QueryCandidate:
     query: str
     weight: float
     source: str
+
 
 class SearchExpandStep(StepBase[SearchStepContext]):
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
@@ -51,9 +53,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         self.bind_deps(llm)
 
     @override
-    async def run_inner(
-        self, ctx: SearchStepContext
-    ) -> SearchStepContext:
+    async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         """Build deep-search query jobs from primary/manual/rule/LLM variants.
 
         Args:
@@ -508,5 +508,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             if 0 <= start < end:
                 return json.loads(text[start : end + 1])
             raise
+
 
 __all__ = ["SearchExpandStep"]

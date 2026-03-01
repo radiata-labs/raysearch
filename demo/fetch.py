@@ -38,11 +38,7 @@ async def main(
     )
     async with Engine.from_settings(settings) as engine:
         resp = await engine.fetch(req)
-    return {
-        "fetch_result": json.dumps(
-            resp.model_dump(), ensure_ascii=False, indent=2
-        )
-    }
+    return {"fetch_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2)}
 
 
 if __name__ == "__main__":

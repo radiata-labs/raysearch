@@ -67,8 +67,7 @@ def render_theme_plan_markdown(
     )
     lines.append("- Required entities:")
     lines.extend(
-        _render_markdown_bullets(plan.required_entities, indent="  ")
-        or ["  - (none)"]
+        _render_markdown_bullets(plan.required_entities, indent="  ") or ["  - (none)"]
     )
     if include_question_cards:
         lines.append("- Question cards:")
@@ -212,13 +211,11 @@ def render_abstract_review_markdown(review: AbstractOutputPayload) -> str:
     )
     lines.append("- Covered entities:")
     lines.extend(
-        _render_markdown_bullets(review.covered_entities, indent="  ")
-        or ["  - (none)"]
+        _render_markdown_bullets(review.covered_entities, indent="  ") or ["  - (none)"]
     )
     lines.append("- Missing entities:")
     lines.extend(
-        _render_markdown_bullets(review.missing_entities, indent="  ")
-        or ["  - (none)"]
+        _render_markdown_bullets(review.missing_entities, indent="  ") or ["  - (none)"]
     )
     return "\n".join(lines).strip()
 
@@ -302,12 +299,11 @@ def render_section_plan_markdown(section: RenderArchitectSectionPlan) -> str:
         "- question_ids:",
     ]
     lines.extend(
-        _render_markdown_bullets(section.question_ids, indent="  ")
-        or ["  - (none)"]
+        _render_markdown_bullets(section.question_ids, indent="  ") or ["  - (none)"]
     )
     lines.extend(
         [
-        "- scope_requirements:",
+            "- scope_requirements:",
         ]
     )
     lines.extend(

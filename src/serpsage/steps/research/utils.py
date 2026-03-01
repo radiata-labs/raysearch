@@ -110,9 +110,7 @@ def merge_strings(*groups: list[str], limit: int) -> list[str]:
     return out
 
 
-def _decode_json_payload(
-    data: dict[str, Any] | None, text: str
-) -> dict[str, Any]:
+def _decode_json_payload(data: dict[str, Any] | None, text: str) -> dict[str, Any]:
     if data is not None:
         if not isinstance(data, dict):
             raise TypeError("structured LLM response must be a JSON object")
@@ -211,13 +209,8 @@ def normalize_entity_coverage(
     ]
     if not missing:
         covered_keys = {item.casefold() for item in covered}
-        missing = [
-            item
-            for item in required
-            if item.casefold() not in covered_keys
-        ]
+        missing = [item for item in required if item.casefold() not in covered_keys]
     complete = bool(
-        (bool(entity_coverage_complete) or not missing_entities)
-        and not missing
+        (bool(entity_coverage_complete) or not missing_entities) and not missing
     )
     return complete, covered, missing

@@ -22,15 +22,13 @@ _INLINE_CODE_ONLY_RE = re.compile(r"^\s*`[^`]+`\s*$")
 _CJK_SENTENCE_END = {"。", "！", "？", "；"}
 _GENERAL_SENTENCE_END = {"!", "?", ";"}
 
-class FetchAbstractBuildStep(StepBase[FetchStepContext]):
 
+class FetchAbstractBuildStep(StepBase[FetchStepContext]):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
-    async def run_inner(
-        self, ctx: FetchStepContext
-    ) -> FetchStepContext:
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.fatal:
             return ctx
         req = ctx.resolved.abstracts_request
@@ -184,5 +182,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
             return ""
         values = [cell for cell in cells if cell]
         return " | ".join(values)
+
 
 __all__ = ["FetchAbstractBuildStep"]

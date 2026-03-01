@@ -7,6 +7,7 @@ import anyio
 if TYPE_CHECKING:
     from types import TracebackType
 
+    from serpsage.components.telemetry import TelemetryEmitterBase
     from serpsage.core.runtime import ClockBase, Runtime
     from serpsage.settings.models import AppSettings
 
@@ -40,6 +41,10 @@ class WorkUnit:
     @property
     def clock(self) -> ClockBase:
         return self.rt.clock
+
+    @property
+    def telemetry(self) -> TelemetryEmitterBase | None:
+        return self.rt.telemetry
 
     def bind_deps(self, *deps: WorkUnit | None) -> None:
         def _bind_dep_one(dep: WorkUnit | None) -> WorkUnit | None:

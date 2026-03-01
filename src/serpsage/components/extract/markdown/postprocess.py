@@ -17,7 +17,9 @@ _IMAGE_RE = re.compile(r"!\[[^\]]*]\([^)]+\)")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _AUTO_URL_RE = re.compile(r"<https?://[^>\s]+>", re.IGNORECASE)
 _BARE_URL_RE = re.compile(r"(?<!<)https?://\S+", re.IGNORECASE)
-_ABSTRACT_NOISE_RE = re.compile(r"^\s*(跳到主要内容|skip to main content)\s*$", re.IGNORECASE)
+_ABSTRACT_NOISE_RE = re.compile(
+    r"^\s*(跳到主要内容|skip to main content)\s*$", re.IGNORECASE
+)
 _SETEXT_HEADING_LINE_RE = re.compile(r"^\s*[=-]{2,}\s*$")
 _HR_LINE_RE = re.compile(r"^\s*(?:[-*_]\s*){3,}\s*$")
 
@@ -234,7 +236,9 @@ def extract_feature_snippets(*, markdown: str, feature: str) -> str:
         return "\n\n".join(blocks[:6]).strip()
 
     if feature == "heading_count":
-        heads = [ln.strip() for ln in markdown.splitlines() if ln.strip().startswith("#")]
+        heads = [
+            ln.strip() for ln in markdown.splitlines() if ln.strip().startswith("#")
+        ]
         return "\n".join(heads[:14]).strip()
 
     if feature == "ordered_list_count":

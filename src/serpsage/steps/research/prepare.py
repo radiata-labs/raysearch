@@ -22,15 +22,13 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import ResearchModeSettings
 
-class ResearchPrepareStep(StepBase[ResearchStepContext]):
 
+class ResearchPrepareStep(StepBase[ResearchStepContext]):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
-    async def run_inner(
-        self, ctx: ResearchStepContext
-    ) -> ResearchStepContext:
+    async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         mode = str(ctx.request.search_mode or "research")
         themes = clean_whitespace(ctx.request.themes or "")
         profile = self._resolve_profile(mode)
@@ -94,16 +92,17 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         ctx.notes = []
         ctx.output = ResearchOutputState(content="", structured=None)
 
-        print(
-            (
-                "[research][prepare] "
-                f"request_id={ctx.request_id} "
-                f"mode={mode} "
-                f"max_rounds={int(profile.max_rounds)} "
-                f"max_search_calls={int(profile.max_search_calls)} "
-                f"theme={themes}"
-            ),
-            flush=True,
+        await self.emit_tracking_event(
+            event_name="research.progress",
+            request_id=ctx.request_id,
+            stage="prepare",
+            attrs={
+                "message": "research.prepare.initialized",
+                "mode": mode,
+                "max_rounds": int(profile.max_rounds),
+                "max_search_calls": int(profile.max_search_calls),
+                "theme": themes,
+            },
         )
         return ctx
 
@@ -113,5 +112,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         if mode == "research-pro":
             return self.settings.research.research_pro
         return self.settings.research.research
+
 
 __all__ = ["ResearchPrepareStep"]

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 TModel = TypeVar("TModel", bound=BaseModel)
 
+
 class GeminiClient(LLMClientBase):
     def __init__(self, *, rt: Runtime, model_cfg: OverviewModelSettings) -> None:
         super().__init__(rt=rt)
@@ -90,7 +91,9 @@ class GeminiClient(LLMClientBase):
             response_schema = None
         elif isinstance(response_format, dict):
             response_schema = dict(response_format)
-        elif isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        elif isinstance(response_format, type) and issubclass(
+            response_format, BaseModel
+        ):
             response_model = response_format
             response_schema = response_model.model_json_schema()
         else:
@@ -146,6 +149,7 @@ class GeminiClient(LLMClientBase):
             return ChatModelResult(text=text, data=model_data, usage=usage)
         return ChatDictResult(text=text, data=data, usage=usage)
 
+
 def _build_config(
     *,
     system_instruction: str | None,
@@ -165,6 +169,7 @@ def _build_config(
         if schema_strict:
             cfg["response_json_schema"] = schema
     return types.GenerateContentConfig(**cfg)
+
 
 def _to_gemini_messages(
     messages: list[dict[str, str]],
@@ -200,6 +205,7 @@ def _to_gemini_messages(
         system_instruction = "\n\n".join(system_parts)
     return system_instruction, contents
 
+
 def _extract_json_object(
     *, resp: types.GenerateContentResponse, fallback_text: str
 ) -> dict[str, Any]:
@@ -227,6 +233,7 @@ def _extract_json_object(
         raise TypeError("structured LLM response must be a JSON object")
     return payload
 
+
 def _to_usage(usage_meta: Any) -> LLMUsage:
     if usage_meta is None:
         return LLMUsage()
@@ -240,6 +247,7 @@ def _to_usage(usage_meta: Any) -> LLMUsage:
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
     )
+
 
 def _looks_like_schema_error(exc: Exception) -> bool:
     code = getattr(exc, "code", None)
@@ -259,5 +267,6 @@ def _looks_like_schema_error(exc: Exception) -> bool:
     if isinstance(exc, (errors.ClientError, errors.APIError)):
         return "invalid" in text and "response" in text
     return False
+
 
 __all__ = ["GeminiClient"]

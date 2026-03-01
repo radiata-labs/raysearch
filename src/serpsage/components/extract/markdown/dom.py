@@ -178,9 +178,7 @@ def is_secondary_container(tag: Tag) -> bool:
     role = str(tag.get("role") or "").lower()
     if role == "complementary":
         return True
-    ident = " ".join(
-        [str(tag.get("id") or ""), " ".join(tag.get("class") or [])]
-    )
+    ident = " ".join([str(tag.get("id") or ""), " ".join(tag.get("class") or [])])
     return bool(ident and _SECONDARY_PATTERNS.search(ident))
 
 
@@ -191,9 +189,7 @@ def is_noise_container(tag: Tag) -> bool:
     role = str(tag.get("role") or "").lower()
     if role in _HARD_NOISE_ROLE:
         return True
-    ident = " ".join(
-        [str(tag.get("id") or ""), " ".join(tag.get("class") or [])]
-    )
+    ident = " ".join([str(tag.get("id") or ""), " ".join(tag.get("class") or [])])
     if ident and _looks_like_noise_ident(ident):
         return True
     return _looks_like_search_or_ad(tag)
@@ -218,9 +214,7 @@ def score_primary_candidate(tag: Tag) -> float:
     punct_density = len(_PUNCT_RE.findall(text)) / max(1, chars)
     heading_count = len(tag.find_all(["h1", "h2", "h3"]))
     p_count = len(tag.find_all("p"))
-    ident = " ".join(
-        [str(tag.get("id") or ""), " ".join(tag.get("class") or [])]
-    )
+    ident = " ".join([str(tag.get("id") or ""), " ".join(tag.get("class") or [])])
     hint_bonus = 1.0 if (ident and _PRIMARY_HINT_PATTERNS.search(ident)) else 0.0
     noise_penalty = 1.0 if (ident and _looks_like_noise_ident(ident)) else 0.0
     return (
@@ -268,9 +262,7 @@ def _looks_like_link_farm(tag: Tag) -> bool:
     if link_count < 8:
         return False
 
-    link_text = clean_whitespace(
-        " ".join(a.get_text(" ", strip=True) for a in links)
-    )
+    link_text = clean_whitespace(" ".join(a.get_text(" ", strip=True) for a in links))
     link_density = len(link_text) / max(1, chars)
     punct_density = len(_PUNCT_RE.findall(text)) / max(1, chars)
     paragraph_count = len(tag.find_all("p"))

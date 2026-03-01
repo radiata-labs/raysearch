@@ -8,6 +8,7 @@ from serpsage.components.llm import build_overview_client
 from serpsage.components.provider import build_provider
 from serpsage.components.rank import build_ranker
 from serpsage.components.rate_limit import build_rate_limiter
+from serpsage.components.telemetry import build_telemetry
 
 __all__ = [
     "build_cache",
@@ -18,4 +19,5 @@ __all__ = [
     "build_provider",
     "build_ranker",
     "build_rate_limiter",
+    "build_telemetry",
 ]

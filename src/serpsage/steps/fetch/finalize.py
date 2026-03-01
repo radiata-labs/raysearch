@@ -12,15 +12,13 @@ from serpsage.steps.base import StepBase
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
-class FetchFinalizeStep(StepBase[FetchStepContext]):
 
+class FetchFinalizeStep(StepBase[FetchStepContext]):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
-    async def run_inner(
-        self, ctx: FetchStepContext
-    ) -> FetchStepContext:
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.fatal:
             return ctx
         if ctx.artifacts.extracted is None:
@@ -80,5 +78,6 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         )
 
         return ctx
+
 
 __all__ = ["FetchFinalizeStep"]

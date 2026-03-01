@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
+import warnings
 from abc import ABC, abstractmethod
-from contextlib import suppress
+from contextlib import redirect_stdout, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 from typing_extensions import override
@@ -24,9 +26,45 @@ else:
 
 class StepBase(WorkUnit, ABC, Generic[TContext]):
     async def run(self, ctx: TContext) -> TContext:
+        request_id = str(getattr(ctx, "request_id", "") or "anonymous")
+        step_name = type(self).__name__
+        started_ms = int(self.clock.now_ms())
+        await self._emit_step_event(
+            event_name="step.start",
+            request_id=request_id,
+            step_name=step_name,
+            status="start",
+            attrs={"step": step_name},
+        )
         try:
-            return await self.run_inner(ctx)
+            out = await self._run_inner_with_signal_capture(
+                ctx=ctx,
+                request_id=request_id,
+                step_name=step_name,
+            )
+            await self._emit_step_event(
+                event_name="step.end",
+                request_id=request_id,
+                step_name=step_name,
+                status="ok",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                attrs={
+                    "step": step_name,
+                    "error_count": len(getattr(out, "errors", []) or []),
+                },
+            )
+            return out
         except Exception as exc:  # noqa: BLE001
+            await self._emit_step_event(
+                event_name="step.error",
+                request_id=request_id,
+                step_name=step_name,
+                status="error",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                error_code="step_failed",
+                error_type=type(exc).__name__,
+                attrs={"step": step_name},
+            )
             summary = exception_summary(exc)
             errors = getattr(ctx, "errors", None)
             if isinstance(errors, list):
@@ -42,6 +80,130 @@ class StepBase(WorkUnit, ABC, Generic[TContext]):
                     )
                 )
             return ctx
+
+    async def _run_inner_with_signal_capture(
+        self,
+        *,
+        ctx: TContext,
+        request_id: str,
+        step_name: str,
+    ) -> TContext:
+        out: TContext | None = None
+        failure: BaseException | None = None
+        stdout_buffer = io.StringIO()
+        warning_records: list[warnings.WarningMessage] = []
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            try:
+                with redirect_stdout(stdout_buffer):
+                    out = await self.run_inner(ctx)
+            except BaseException as exc:
+                failure = exc
+            finally:
+                warning_records = list(captured)
+        await self._emit_captured_tracking_signals(
+            request_id=request_id,
+            step_name=step_name,
+            stdout_text=stdout_buffer.getvalue(),
+            warnings_list=warning_records,
+        )
+        if failure is not None:
+            raise failure
+        if out is None:
+            raise RuntimeError(f"{step_name} returned no context")
+        return out
+
+    async def _emit_captured_tracking_signals(
+        self,
+        *,
+        request_id: str,
+        step_name: str,
+        stdout_text: str,
+        warnings_list: list[warnings.WarningMessage],
+    ) -> None:
+        for raw in str(stdout_text or "").splitlines()[:24]:
+            line = raw.strip()
+            if not line:
+                continue
+            await self.emit_tracking_event(
+                event_name="step.signal.print",
+                request_id=request_id,
+                stage=step_name,
+                attrs={
+                    "message": line,
+                    "source": "stdout",
+                },
+            )
+        for item in warnings_list[:24]:
+            message = str(item.message or "").strip()
+            if not message:
+                continue
+            category = getattr(item.category, "__name__", "Warning")
+            await self.emit_tracking_event(
+                event_name="step.signal.warning",
+                request_id=request_id,
+                stage=step_name,
+                status="error",
+                error_type=str(category),
+                attrs={
+                    "message": message,
+                    "category": str(category),
+                    "filename": str(getattr(item, "filename", "") or ""),
+                    "lineno": int(getattr(item, "lineno", 0) or 0),
+                },
+            )
+
+    async def _emit_step_event(
+        self,
+        *,
+        event_name: str,
+        request_id: str,
+        step_name: str,
+        status: Literal["start", "ok", "error"],
+        duration_ms: int | None = None,
+        error_code: str = "",
+        error_type: str = "",
+        attrs: dict[str, object] | None = None,
+    ) -> None:
+        telemetry = self.telemetry
+        if telemetry is None:
+            return
+        with suppress(Exception):
+            await telemetry.emit(
+                event_name=event_name,
+                status=status,
+                request_id=request_id,
+                component="step",
+                stage=step_name,
+                duration_ms=duration_ms,
+                error_code=error_code,
+                error_type=error_type,
+                attrs=attrs,
+            )
+
+    async def emit_tracking_event(
+        self,
+        *,
+        event_name: str,
+        request_id: str,
+        stage: str,
+        status: Literal["ok", "error"] = "ok",
+        error_type: str = "",
+        attrs: dict[str, object] | None = None,
+    ) -> None:
+        telemetry = self.telemetry
+        if telemetry is None:
+            return
+        with suppress(Exception):
+            await telemetry.emit(
+                event_name=event_name,
+                status="error" if status == "error" else "ok",
+                request_id=request_id,
+                component="step",
+                stage=stage,
+                error_type=error_type,
+                attrs=attrs,
+            )
 
     @abstractmethod
     async def run_inner(self, ctx: TContext) -> TContext:

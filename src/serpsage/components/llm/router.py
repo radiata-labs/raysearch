@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 from typing_extensions import override
 
@@ -12,6 +13,7 @@ from serpsage.models.llm import (
     ChatResultBase,
     ChatTextResult,
 )
+from serpsage.models.telemetry import MeterPayload
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -73,12 +75,86 @@ class RoutedLLMClient(LLMClientBase):
         if route is None:
             raise ValueError(f"llm model route `{model}` is not configured")
         client, provider_model = route
-        return await client.chat(
-            model=provider_model,
-            messages=messages,
-            response_format=response_format,
-            timeout_s=timeout_s,
+        started_ms = int(self.clock.now_ms())
+        await self._emit_safe(
+            event_name="llm.call",
+            status="start",
+            component="llm_router",
+            stage="chat",
+            attrs={
+                "route_model": str(model),
+                "provider_model": str(provider_model),
+                "provider_client": type(client).__name__,
+                "message_count": len(messages),
+            },
         )
+        try:
+            result = await client.chat(
+                model=provider_model,
+                messages=messages,
+                response_format=response_format,
+                timeout_s=timeout_s,
+            )
+            usage = result.usage
+            await self._emit_safe(
+                event_name="llm.result",
+                status="ok",
+                component="llm_router",
+                stage="chat",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                attrs={
+                    "route_model": str(model),
+                    "provider_model": str(provider_model),
+                    "provider_client": type(client).__name__,
+                },
+            )
+            await self._emit_safe(
+                event_name="meter.usage.llm_tokens",
+                status="ok",
+                component="llm_router",
+                stage="chat",
+                idempotency_key=(
+                    f"{model}:{provider_model}:{started_ms}:{usage.total_tokens}"
+                ),
+                attrs={
+                    "route_model": str(model),
+                    "provider_model": str(provider_model),
+                    "provider_client": type(client).__name__,
+                },
+                meter=MeterPayload(
+                    meter_type="llm_tokens",
+                    unit="token",
+                    quantity=float(usage.total_tokens),
+                    provider=type(client).__name__,
+                    model=str(provider_model),
+                    prompt_tokens=int(usage.prompt_tokens),
+                    completion_tokens=int(usage.completion_tokens),
+                    total_tokens=int(usage.total_tokens),
+                ),
+            )
+            return result
+        except Exception as exc:  # noqa: BLE001
+            await self._emit_safe(
+                event_name="llm.error",
+                status="error",
+                component="llm_router",
+                stage="chat",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                error_type=type(exc).__name__,
+                attrs={
+                    "route_model": str(model),
+                    "provider_model": str(provider_model),
+                    "provider_client": type(client).__name__,
+                },
+            )
+            raise
+
+    async def _emit_safe(self, **kwargs: Any) -> None:
+        telemetry = self.telemetry
+        if telemetry is None:
+            return
+        with suppress(Exception):
+            await telemetry.emit(**kwargs)
 
 
 __all__ = ["RoutedLLMClient"]

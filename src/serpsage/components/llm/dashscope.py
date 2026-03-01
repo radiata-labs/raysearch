@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 TModel = TypeVar("TModel", bound=BaseModel)
 
+
 class DashScopeClient(LLMClientBase):
     def __init__(self, *, rt: Runtime, model_cfg: OverviewModelSettings) -> None:
         super().__init__(rt=rt)
@@ -79,7 +80,9 @@ class DashScopeClient(LLMClientBase):
             response_schema = None
         elif isinstance(response_format, dict):
             response_schema = dict(response_format)
-        elif isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        elif isinstance(response_format, type) and issubclass(
+            response_format, BaseModel
+        ):
             response_model = response_format
             response_schema = response_model.model_json_schema()
         else:
@@ -130,6 +133,7 @@ class DashScopeClient(LLMClientBase):
             return ChatModelResult(text=text, data=model_data, usage=usage)
         return ChatDictResult(text=text, data=data, usage=usage)
 
+
 async def _async_generation_call(
     *,
     model: str,
@@ -157,6 +161,7 @@ async def _async_generation_call(
         ),
     )
 
+
 def _to_dashscope_messages(
     messages: list[dict[str, str]],
 ) -> list[dict[str, str]]:
@@ -179,6 +184,7 @@ def _to_dashscope_messages(
             role_str = "user"
         result.append({"role": role_str, "content": content_str})
     return result
+
 
 def _get_text_content(response: Any) -> str:
     """Extract text content from DashScope response."""
@@ -203,6 +209,7 @@ def _get_text_content(response: Any) -> str:
 
     content = getattr(message, "content", "")
     return str(content) if content else ""
+
 
 def _to_usage(response: Any) -> LLMUsage:
     """Convert DashScope usage to LLMUsage."""
@@ -229,10 +236,12 @@ def _to_usage(response: Any) -> LLMUsage:
         total_tokens=total_tokens,
     )
 
+
 def _looks_like_schema_error(exc: Exception) -> bool:
     """Detect if exception is related to schema validation failure."""
     text = str(exc).lower()
     return "schema" in text or ("json" in text and "valid" in text)
+
 
 def _extract_json_object(content: str) -> dict[str, Any]:
     """Extract JSON from response content."""
@@ -249,5 +258,6 @@ def _extract_json_object(content: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError("structured LLM response must be a JSON object")
     return payload
+
 
 __all__ = ["DashScopeClient"]

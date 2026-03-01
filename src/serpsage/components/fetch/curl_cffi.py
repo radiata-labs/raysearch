@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
 
+
 class CurlCffiFetcher(FetcherBase):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
@@ -211,5 +212,6 @@ class CurlCffiFetcher(FetcherBase):
         if len(body) <= budget:
             return body, False
         return body[:budget], True
+
 
 __all__ = ["CURL_CFFI_AVAILABLE", "CurlCffiFetcher"]

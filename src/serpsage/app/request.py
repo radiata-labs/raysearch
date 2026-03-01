@@ -153,9 +153,7 @@ class FetchOverviewRequest(BaseModel):
 
     @field_validator("json_schema")
     @classmethod
-    def _validate_schema(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _validate_schema(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return _validate_json_schema(value)
 
 
@@ -339,9 +337,7 @@ class AnswerRequest(BaseModel):
 
     @field_validator("json_schema")
     @classmethod
-    def _validate_schema(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _validate_schema(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return _validate_json_schema(value)
 
 
@@ -362,9 +358,7 @@ class ResearchRequest(BaseModel):
 
     @field_validator("json_schema")
     @classmethod
-    def _validate_schema(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _validate_schema(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return _validate_json_schema(value)
 
 

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import re
@@ -221,9 +221,7 @@ class MarkdownExtractor(ExtractorBase):
         include_secondary_content: bool,
     ) -> ExtractedDocument:
         lines = [
-            cleaned
-            for line in text.splitlines()
-            if (cleaned := clean_whitespace(line))
+            cleaned for line in text.splitlines() if (cleaned := clean_whitespace(line))
         ]
         markdown = finalize_markdown(
             markdown="\n\n".join(lines),

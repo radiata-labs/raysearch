@@ -157,8 +157,11 @@ class HeuristicRanker(RankerBase):
                     all_hit_positions.append([phrase_pos])
 
             base = (
-                float(cfg.unique_hit_weight) * (
-                    0.60 * query_coverage + 0.25 * query_tf_quality + 0.15 * query_proximity
+                float(cfg.unique_hit_weight)
+                * (
+                    0.60 * query_coverage
+                    + 0.25 * query_tf_quality
+                    + 0.15 * query_proximity
                 )
                 + float(cfg.count_weight) * phrase_hit
             )
@@ -173,7 +176,9 @@ class HeuristicRanker(RankerBase):
                 raw_scores.append(max(0.0, float(base)))
                 continue
 
-            all_flat_positions = [p for positions in all_hit_positions for p in positions]
+            all_flat_positions = [
+                p for positions in all_hit_positions for p in positions
+            ]
             earliest_pos = float(min(all_flat_positions))
             position_ratio = earliest_pos / max(1.0, float(len(normalized_text) - 1))
             position_ratio = max(0.0, min(1.0, position_ratio))

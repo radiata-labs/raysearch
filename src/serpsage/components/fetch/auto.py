@@ -285,8 +285,7 @@ class AutoFetcher(FetcherBase):
                 and has_spa_signals(body)
             )
             low_text = bool(
-                content_kind == "html"
-                and int(text_chars) < int(quality.min_text_chars)
+                content_kind == "html" and int(text_chars) < int(quality.min_text_chars)
             )
             snap.content_kind = content_kind
             snap.text_chars = int(text_chars)

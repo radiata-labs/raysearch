@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Literal
 
@@ -20,6 +20,8 @@ RankBlendProviderKey = Literal["heuristic", "bm25"]
 CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
 CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
 OverviewModelBackendKey = Literal["openai", "gemini", "dashscope"]
+TelemetryObsBackendKey = Literal["null", "jsonl"]
+TelemetryMeteringBackendKey = Literal["null", "sqlite"]
 
 
 class RetrySettings(Model):
@@ -353,9 +355,15 @@ class ResearchSettings(Model):
     models: ResearchModelsSettings = Field(default_factory=ResearchModelsSettings)
     parallel: ResearchParallelSettings = Field(default_factory=ResearchParallelSettings)
     corpus: ResearchCorpusSettings = Field(default_factory=ResearchCorpusSettings)
-    research_fast: ResearchModeSettings = Field(default_factory=_default_research_fast_mode)
-    research: ResearchModeSettings = Field(default_factory=_default_research_standard_mode)
-    research_pro: ResearchModeSettings = Field(default_factory=_default_research_pro_mode)
+    research_fast: ResearchModeSettings = Field(
+        default_factory=_default_research_fast_mode
+    )
+    research: ResearchModeSettings = Field(
+        default_factory=_default_research_standard_mode
+    )
+    research_pro: ResearchModeSettings = Field(
+        default_factory=_default_research_pro_mode
+    )
 
     @model_validator(mode="after")
     def _validate_runtime_limits(self) -> ResearchSettings:
@@ -607,6 +615,54 @@ class LLMSettings(Model):
         raise ValueError(f"llm model `{name}` does not exist in llm.models")
 
 
+class TelemetryObsSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    backend: TelemetryObsBackendKey = "null"
+    jsonl_path: str = ".serpsage_events.jsonl"
+
+    @field_validator("jsonl_path")
+    @classmethod
+    def _validate_jsonl_path(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("telemetry.obs.jsonl_path must be non-empty")
+        return token
+
+
+class TelemetryMeteringSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    backend: TelemetryMeteringBackendKey = "null"
+    sqlite_db_path: str = ".serpsage_metering.sqlite3"
+
+    @field_validator("sqlite_db_path")
+    @classmethod
+    def _validate_sqlite_db_path(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("telemetry.metering.sqlite_db_path must be non-empty")
+        return token
+
+
+class TelemetrySettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    enabled: bool = False
+    queue_size: int = 2048
+    drop_noncritical_when_full: bool = True
+    obs: TelemetryObsSettings = Field(default_factory=TelemetryObsSettings)
+    metering: TelemetryMeteringSettings = Field(
+        default_factory=TelemetryMeteringSettings
+    )
+
+    @model_validator(mode="after")
+    def _validate_telemetry(self) -> TelemetrySettings:
+        if int(self.queue_size) <= 0:
+            raise ValueError("telemetry.queue_size must be > 0")
+        return self
+
+
 class AppSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
@@ -620,6 +676,7 @@ class AppSettings(Model):
     rank: RankSettings = Field(default_factory=RankSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
 
     @model_validator(mode="after")
     def _validate_model_links(self) -> AppSettings:
@@ -709,4 +766,7 @@ __all__ = [
     "RetrySettings",
     "SearchDeepSettings",
     "SearxngSettings",
+    "TelemetryMeteringSettings",
+    "TelemetryObsSettings",
+    "TelemetrySettings",
 ]

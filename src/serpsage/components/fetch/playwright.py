@@ -290,4 +290,3 @@ class PlaywrightFetcher(FetcherBase):
 
 
 __all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightFetcher"]
-

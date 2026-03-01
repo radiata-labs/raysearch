@@ -14,17 +14,15 @@ if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
 
-class FetchAbstractRankStep(StepBase[FetchStepContext]):
 
+class FetchAbstractRankStep(StepBase[FetchStepContext]):
     def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
         self.bind_deps(ranker)
 
     @override
-    async def run_inner(
-        self, ctx: FetchStepContext
-    ) -> FetchStepContext:
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.fatal:
             return ctx
 
@@ -208,6 +206,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
 
         return scored
 
+
 def _resolve_effective_query(
     *, requested_query: str | None, title: str, url: str
 ) -> str:
@@ -218,6 +217,7 @@ def _resolve_effective_query(
     if normalized_title:
         return normalized_title
     return clean_whitespace(url or "")
+
 
 def _apply_title_logit_boost(
     *,
@@ -232,6 +232,7 @@ def _apply_title_logit_boost(
     lt = max(0.0, math.log(st / (1.0 - st)))
     boosted = 1.0 / (1.0 + math.exp(-(la + float(alpha) * lt)))
     return min(1.0, max(sa, boosted))
+
 
 def _fit_budget(
     *,
@@ -251,5 +252,6 @@ def _fit_budget(
         total_chars = next_total
         out.append((score, candidate))
     return out
+
 
 __all__ = ["FetchAbstractRankStep"]

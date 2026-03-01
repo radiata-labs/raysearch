@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from serpsage.components.llm import LLMClientBase
     from serpsage.core.runtime import Runtime
 
-class FetchOverviewStep(StepBase[FetchStepContext]):
 
+class FetchOverviewStep(StepBase[FetchStepContext]):
     def __init__(
         self,
         *,
@@ -31,9 +31,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         self.bind_deps(llm, cache)
 
     @override
-    async def run_inner(
-        self, ctx: FetchStepContext
-    ) -> FetchStepContext:
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.fatal:
             return ctx
         enabled, req = self._resolve_overview_request(ctx)
@@ -258,6 +256,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
             {"role": "user", "content": user},
         ]
 
+
 def _coerce_json_output(*, result_data: object | None, raw_text: str) -> object:
     if result_data is not None:
         return result_data
@@ -265,6 +264,7 @@ def _coerce_json_output(*, result_data: object | None, raw_text: str) -> object:
     if not text:
         raise ValueError("json output is empty")
     return json.loads(text)
+
 
 def _validate_json_output(*, schema: dict[str, Any], value: object) -> None:
     try:
@@ -276,8 +276,10 @@ def _validate_json_output(*, schema: dict[str, Any], value: object) -> None:
     except Exception as exc:  # noqa: BLE001
         raise _SchemaMismatchError(str(exc)) from exc
 
+
 class _SchemaMismatchError(Exception):
     pass
+
 
 def _self_heal_message() -> dict[str, str]:
     return {
@@ -287,5 +289,6 @@ def _self_heal_message() -> dict[str, str]:
             "the provided schema."
         ),
     }
+
 
 __all__ = ["FetchOverviewStep"]

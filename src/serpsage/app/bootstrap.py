@@ -14,6 +14,7 @@ from serpsage.components import (
     build_provider,
     build_ranker,
     build_rate_limiter,
+    build_telemetry,
 )
 from serpsage.core.runtime import ClockBase, Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
@@ -80,7 +81,7 @@ def build_runtime(
 ) -> Runtime:
     ov = overrides or Overrides()
     clock = ov.clock or SystemClock()
-    return Runtime(settings=settings, clock=clock)
+    return Runtime(settings=settings, clock=clock, telemetry=None)
 
 
 def build_engine(
@@ -89,6 +90,8 @@ def build_engine(
     ov = overrides or Overrides()
     rt = build_runtime(settings=settings, overrides=ov)
     _validate_override_workunits(ov)
+    telemetry = build_telemetry(rt=rt, overrides=ov)
+    rt = rt.model_copy(update={"telemetry": telemetry})
 
     shared_http_unit = build_http_client(rt=rt, overrides=ov)
 
@@ -193,6 +196,7 @@ def _validate_override_workunits(ov: Overrides) -> None:
     _ensure_workunit_override("extractor", ov.extractor)
     _ensure_workunit_override("ranker", ov.ranker)
     _ensure_workunit_override("llm", ov.llm)
+    _ensure_workunit_override("telemetry", ov.telemetry)
 
 
 def _ensure_workunit_override(name: str, obj: object | None) -> None:

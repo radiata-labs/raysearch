@@ -12,6 +12,7 @@ from serpsage.components.llm import LLMClientBase
 from serpsage.components.provider import SearchProviderBase
 from serpsage.components.rank import RankerBase
 from serpsage.components.rate_limit.basic import BasicRateLimiter
+from serpsage.components.telemetry import TelemetryEmitterBase
 from serpsage.core.model_base import FrozenModel, MutableModel
 from serpsage.settings.models import AppSettings
 
@@ -31,6 +32,7 @@ class Runtime(FrozenModel):
 
     settings: AppSettings
     clock: ClockBase
+    telemetry: TelemetryEmitterBase | None = None
 
 
 class Overrides(MutableModel):
@@ -49,6 +51,7 @@ class Overrides(MutableModel):
     extractor: ExtractorBase | None = None
     ranker: RankerBase | None = None
     llm: LLMClientBase | None = None
+    telemetry: TelemetryEmitterBase | None = None
 
 
 __all__ = ["ClockBase", "Overrides", "Runtime"]

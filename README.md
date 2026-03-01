@@ -50,6 +50,26 @@ Runtime prerequisites:
 - Overview uses optional dependencies (`serpsage[overview]`) plus API keys.
 - HTML->Markdown conversion uses an internal renderer (compat backend name remains `markdownify`).
 
+Telemetry and metering (core component mode):
+
+- This repo exposes pluggable telemetry/metering foundations for host-system integration.
+- Existing API outputs (`response.errors`, error codes, response shapes) are unchanged.
+- Telemetry emits request/step/LLM/fetch events; metering emits usage events (`meter.*`).
+- Metering ledger is optional and defaults to disabled (`null` backend).
+
+Settings:
+
+- `telemetry.enabled`: enable async event emission.
+- `telemetry.queue_size`: bounded in-memory queue size.
+- `telemetry.drop_noncritical_when_full`: drop low-priority events when queue is full.
+- `telemetry.obs.backend`: `null|jsonl`.
+- `telemetry.obs.jsonl_path`: JSONL output path when obs backend is `jsonl`.
+- `telemetry.metering.backend`: `null|sqlite`.
+- `telemetry.metering.sqlite_db_path`: SQLite ledger path for metering sink.
+
+When `telemetry.metering.backend=sqlite`, an append-only table `metering_ledger` is created
+with dedupe constraints on `event_id` and `idempotency_key`.
+
 ## Usage
 
 ```python

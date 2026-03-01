@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
 
-class FetchSubpageStep(StepBase[FetchStepContext]):
 
+class FetchSubpageStep(StepBase[FetchStepContext]):
     def __init__(
         self,
         *,
@@ -29,9 +29,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         self.bind_deps(fetch_runner, ranker)
 
     @override
-    async def run_inner(
-        self, ctx: FetchStepContext
-    ) -> FetchStepContext:
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.fatal:
             return ctx
         if not ctx.enable_others_and_subpages:
@@ -136,7 +134,9 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
             )
             out_overview_scores[index] = [
                 float(item.score)
-                for item in list(child_context.artifacts.overview_scored_abstracts or [])
+                for item in list(
+                    child_context.artifacts.overview_scored_abstracts or []
+                )
             ]
 
         paired = [
@@ -156,6 +156,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         ]
         return ctx
 
+
 def _to_subpage_result(value: FetchResultItem) -> FetchSubpagesResult:
     return FetchSubpagesResult(
         url=str(value.url),
@@ -166,7 +167,9 @@ def _to_subpage_result(value: FetchResultItem) -> FetchSubpagesResult:
         overview=value.overview,
     )
 
+
 def _score_at(*, scores: list[float], idx: int) -> float:
     return float(scores[idx]) if idx < len(scores) else 0.0
+
 
 __all__ = ["FetchSubpageStep"]

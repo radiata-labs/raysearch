@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any
 
 from serpsage.app.response import (
     AnswerResponse,
@@ -18,6 +19,7 @@ from serpsage.models.pipeline import (
     ResearchStepContext,
     SearchStepContext,
 )
+from serpsage.models.telemetry import MeterPayload
 from serpsage.steps.base import RunnerBase
 
 if TYPE_CHECKING:
@@ -57,6 +59,7 @@ class Engine(WorkUnit):
             fetch_runner,
             answer_runner,
             self._research_runner,
+            self.telemetry,
         )
 
     @classmethod
@@ -69,84 +72,324 @@ class Engine(WorkUnit):
 
     async def search(self, req: SearchRequest) -> SearchResponse:
         request_id = uuid.uuid4().hex
+        started_ms = int(self.clock.now_ms())
+        token = self._push_request_context(request_id)
+        await self._emit_safe(
+            event_name="request.start",
+            status="start",
+            request_id=request_id,
+            component="engine",
+            stage="search",
+            attrs={"request_kind": "search"},
+        )
         ctx = SearchStepContext(
             settings=self.settings,
             request=req,
             request_id=request_id,
         )
-        ctx = await self._search_runner.run(ctx)
-        return SearchResponse(
-            request_id=request_id,
-            search_mode=ctx.request.mode,
-            results=ctx.output.results,
-            errors=ctx.errors,
-        )
+        try:
+            ctx = await self._search_runner.run(ctx)
+            response = SearchResponse(
+                request_id=request_id,
+                search_mode=ctx.request.mode,
+                results=ctx.output.results,
+                errors=ctx.errors,
+            )
+            await self._emit_safe(
+                event_name="request.end",
+                status="ok",
+                request_id=request_id,
+                component="engine",
+                stage="search",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                attrs={
+                    "request_kind": "search",
+                    "result_count": len(response.results),
+                    "error_count": len(response.errors),
+                },
+            )
+            await self._emit_request_meter(request_id=request_id, stage="search")
+            return response
+        except Exception as exc:  # noqa: BLE001
+            await self._emit_safe(
+                event_name="request.error",
+                status="error",
+                request_id=request_id,
+                component="engine",
+                stage="search",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                error_type=type(exc).__name__,
+                attrs={"request_kind": "search"},
+            )
+            await self._emit_request_meter(
+                request_id=request_id,
+                stage="search",
+                status="error",
+                error_type=type(exc).__name__,
+            )
+            raise
+        finally:
+            self._pop_request_context(token)
 
     async def fetch(self, req: FetchRequest) -> FetchResponse:
         request_id = uuid.uuid4().hex
-        contexts: list[FetchStepContext] = [
-            FetchStepContext(
-                settings=self.settings,
-                request=req,
-                request_id=request_id,
-                url=url,
-                url_index=idx,
-                enable_others_and_subpages=True,
-                runtime=FetchRuntimeConfig(
-                    crawl_mode=req.crawl_mode,
-                    crawl_timeout_s=float(req.crawl_timeout or 0.0),
-                    max_links=(req.others.max_links if req.others is not None else None),
-                    max_image_links=(
-                        req.others.max_image_links if req.others is not None else None
-                    ),
-                ),
-            )
-            for idx, url in enumerate(req.urls)
-        ]
-        if contexts:
-            contexts = await self._fetch_runner.run_batch(contexts)
-
-        results = [
-            ctx.output.result
-            for ctx in contexts
-            if not ctx.fatal and ctx.output.result is not None
-        ]
-        errors = [err for ctx in contexts for err in ctx.errors]
-        return FetchResponse(
+        started_ms = int(self.clock.now_ms())
+        token = self._push_request_context(request_id)
+        await self._emit_safe(
+            event_name="request.start",
+            status="start",
             request_id=request_id,
-            results=results,
-            errors=errors,
+            component="engine",
+            stage="fetch",
+            attrs={
+                "request_kind": "fetch",
+                "url_count": len(req.urls),
+            },
         )
+        try:
+            contexts: list[FetchStepContext] = [
+                FetchStepContext(
+                    settings=self.settings,
+                    request=req,
+                    request_id=request_id,
+                    url=url,
+                    url_index=idx,
+                    enable_others_and_subpages=True,
+                    runtime=FetchRuntimeConfig(
+                        crawl_mode=req.crawl_mode,
+                        crawl_timeout_s=float(req.crawl_timeout or 0.0),
+                        max_links=(
+                            req.others.max_links if req.others is not None else None
+                        ),
+                        max_image_links=(
+                            req.others.max_image_links
+                            if req.others is not None
+                            else None
+                        ),
+                    ),
+                )
+                for idx, url in enumerate(req.urls)
+            ]
+            if contexts:
+                contexts = await self._fetch_runner.run_batch(contexts)
+
+            results = [
+                ctx.output.result
+                for ctx in contexts
+                if not ctx.fatal and ctx.output.result is not None
+            ]
+            errors = [err for ctx in contexts for err in ctx.errors]
+            response = FetchResponse(
+                request_id=request_id,
+                results=results,
+                errors=errors,
+            )
+            await self._emit_safe(
+                event_name="request.end",
+                status="ok",
+                request_id=request_id,
+                component="engine",
+                stage="fetch",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                attrs={
+                    "request_kind": "fetch",
+                    "result_count": len(response.results),
+                    "error_count": len(response.errors),
+                    "url_count": len(req.urls),
+                },
+            )
+            await self._emit_request_meter(request_id=request_id, stage="fetch")
+            return response
+        except Exception as exc:  # noqa: BLE001
+            await self._emit_safe(
+                event_name="request.error",
+                status="error",
+                request_id=request_id,
+                component="engine",
+                stage="fetch",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                error_type=type(exc).__name__,
+                attrs={"request_kind": "fetch"},
+            )
+            await self._emit_request_meter(
+                request_id=request_id,
+                stage="fetch",
+                status="error",
+                error_type=type(exc).__name__,
+            )
+            raise
+        finally:
+            self._pop_request_context(token)
 
     async def answer(self, req: AnswerRequest) -> AnswerResponse:
         request_id = uuid.uuid4().hex
+        started_ms = int(self.clock.now_ms())
+        token = self._push_request_context(request_id)
+        await self._emit_safe(
+            event_name="request.start",
+            status="start",
+            request_id=request_id,
+            component="engine",
+            stage="answer",
+            attrs={"request_kind": "answer"},
+        )
         ctx = AnswerStepContext(
             settings=self.settings,
             request=req,
             request_id=request_id,
         )
-        ctx = await self._answer_runner.run(ctx)
-        return AnswerResponse(
-            request_id=request_id,
-            answer=ctx.output.answers,
-            citations=ctx.output.citations,
-            errors=ctx.errors,
-        )
+        try:
+            ctx = await self._answer_runner.run(ctx)
+            response = AnswerResponse(
+                request_id=request_id,
+                answer=ctx.output.answers,
+                citations=ctx.output.citations,
+                errors=ctx.errors,
+            )
+            await self._emit_safe(
+                event_name="request.end",
+                status="ok",
+                request_id=request_id,
+                component="engine",
+                stage="answer",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                attrs={
+                    "request_kind": "answer",
+                    "citation_count": len(response.citations),
+                    "error_count": len(response.errors),
+                },
+            )
+            await self._emit_request_meter(request_id=request_id, stage="answer")
+            return response
+        except Exception as exc:  # noqa: BLE001
+            await self._emit_safe(
+                event_name="request.error",
+                status="error",
+                request_id=request_id,
+                component="engine",
+                stage="answer",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                error_type=type(exc).__name__,
+                attrs={"request_kind": "answer"},
+            )
+            await self._emit_request_meter(
+                request_id=request_id,
+                stage="answer",
+                status="error",
+                error_type=type(exc).__name__,
+            )
+            raise
+        finally:
+            self._pop_request_context(token)
 
     async def research(self, req: ResearchRequest) -> ResearchResponse:
         request_id = uuid.uuid4().hex
+        started_ms = int(self.clock.now_ms())
+        token = self._push_request_context(request_id)
+        await self._emit_safe(
+            event_name="request.start",
+            status="start",
+            request_id=request_id,
+            component="engine",
+            stage="research",
+            attrs={"request_kind": "research"},
+        )
         ctx = ResearchStepContext(
             settings=self.settings,
             request=req,
             request_id=request_id,
         )
-        ctx = await self._research_runner.run(ctx)
-        return ResearchResponse(
+        try:
+            ctx = await self._research_runner.run(ctx)
+            response = ResearchResponse(
+                request_id=request_id,
+                content=ctx.output.content,
+                structured=ctx.output.structured,
+                errors=ctx.errors,
+            )
+            await self._emit_safe(
+                event_name="request.end",
+                status="ok",
+                request_id=request_id,
+                component="engine",
+                stage="research",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                attrs={
+                    "request_kind": "research",
+                    "content_chars": len(str(response.content or "")),
+                    "has_structured": response.structured is not None,
+                    "error_count": len(response.errors),
+                },
+            )
+            await self._emit_request_meter(request_id=request_id, stage="research")
+            return response
+        except Exception as exc:  # noqa: BLE001
+            await self._emit_safe(
+                event_name="request.error",
+                status="error",
+                request_id=request_id,
+                component="engine",
+                stage="research",
+                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
+                error_type=type(exc).__name__,
+                attrs={"request_kind": "research"},
+            )
+            await self._emit_request_meter(
+                request_id=request_id,
+                stage="research",
+                status="error",
+                error_type=type(exc).__name__,
+            )
+            raise
+        finally:
+            self._pop_request_context(token)
+
+    async def _emit_request_meter(
+        self,
+        *,
+        request_id: str,
+        stage: str,
+        status: str = "ok",
+        error_type: str = "",
+    ) -> None:
+        await self._emit_safe(
+            event_name="meter.usage.request",
+            status="error" if status == "error" else "ok",
             request_id=request_id,
-            content=ctx.output.content,
-            structured=ctx.output.structured,
-            errors=ctx.errors,
+            component="engine",
+            stage=stage,
+            error_type=error_type,
+            idempotency_key=f"{request_id}:meter.usage.request:{stage}",
+            attrs={"request_kind": stage},
+            meter=MeterPayload(
+                meter_type="request",
+                unit="request",
+                quantity=1.0,
+            ),
         )
+
+    async def _emit_safe(self, **kwargs: Any) -> None:
+        telemetry = self.telemetry
+        if telemetry is None:
+            return
+        with suppress(Exception):
+            await telemetry.emit(**kwargs)
+
+    def _push_request_context(self, request_id: str) -> object:
+        telemetry = self.telemetry
+        if telemetry is None:
+            return None
+        try:
+            return telemetry.push_request_context(request_id=request_id)
+        except Exception:
+            return None
+
+    def _pop_request_context(self, token: object) -> None:
+        telemetry = self.telemetry
+        if telemetry is None:
+            return
+        with suppress(Exception):
+            telemetry.pop_request_context(token)
 
 
 __all__ = ["Engine"]

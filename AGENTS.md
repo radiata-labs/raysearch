@@ -69,8 +69,9 @@ All edits must be coordinated through `.codex/SCOPES.md`.
   1. `./.venv/Scripts/python.exe -m pyright`
   2. `./.venv/Scripts/python.exe -m mypy .`
   3. `./.venv/Scripts/python.exe -m ruff check --fix`
+  4. `./.venv/Scripts/python.exe -m ruff format`
 - Fix all reported issues.
-- Run the same three commands again in the same order.
+- Run the same four commands again in the same order.
 - After review passes, update each file status to `COMPLETED`.
 - A file marked `COMPLETED` is no longer occupied.
 - When all files in the current task are `COMPLETED` and final checks are done, move the entire task section to `.codex/ARCHIVED.md`.

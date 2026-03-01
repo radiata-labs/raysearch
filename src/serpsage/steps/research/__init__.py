@@ -22,5 +22,4 @@ __all__ = [
     "ResearchSearchStep",
     "ResearchSubreportStep",
     "ResearchThemeStep",
-
 ]
