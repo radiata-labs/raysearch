@@ -13,11 +13,8 @@ from serpsage.utils import clean_whitespace
 if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
-
 
 class FetchAbstractRankStep(StepBase[FetchStepContext]):
-    span_name = "step.fetch_abstract_rank"
 
     def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
         super().__init__(rt=rt)
@@ -26,15 +23,13 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(
-        self, ctx: FetchStepContext, *, span: SpanBase
+        self, ctx: FetchStepContext
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
 
         abstracts_req = ctx.resolved.abstracts_request
         overview_req = ctx.resolved.overview_request
-        span.set_attr("has_abstracts", bool(abstracts_req is not None))
-        span.set_attr("has_overview", bool(overview_req is not None))
         if abstracts_req is None and overview_req is None:
             return ctx
 
@@ -155,11 +150,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     )
                 ]
 
-        span.set_attr("abstracts_kept", int(len(ctx.artifacts.scored_abstracts)))
-        span.set_attr(
-            "overview_abstracts_kept",
-            int(len(ctx.artifacts.overview_scored_abstracts)),
-        )
         return ctx
 
     async def _score_abstracts(
@@ -218,7 +208,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
 
         return scored
 
-
 def _resolve_effective_query(
     *, requested_query: str | None, title: str, url: str
 ) -> str:
@@ -229,7 +218,6 @@ def _resolve_effective_query(
     if normalized_title:
         return normalized_title
     return clean_whitespace(url or "")
-
 
 def _apply_title_logit_boost(
     *,
@@ -244,7 +232,6 @@ def _apply_title_logit_boost(
     lt = max(0.0, math.log(st / (1.0 - st)))
     boosted = 1.0 / (1.0 + math.exp(-(la + float(alpha) * lt)))
     return min(1.0, max(sa, boosted))
-
 
 def _fit_budget(
     *,
@@ -264,6 +251,5 @@ def _fit_budget(
         total_chars = next_total
         out.append((score, candidate))
     return out
-
 
 __all__ = ["FetchAbstractRankStep"]

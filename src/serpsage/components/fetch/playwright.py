@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -26,10 +25,9 @@ if TYPE_CHECKING:
     )
 
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
 
 # Suppress "Future exception was never retrieved" warnings from Playwright
-# These occur when background page loads are interrupted by timeouts or page.close()
+# when background page loads are interrupted by timeouts or page.close().
 _original_call_exception_handler = getattr(
     asyncio.BaseEventLoop, "call_exception_handler", None
 )
@@ -40,14 +38,12 @@ def _suppress_future_exception_warning(self, context):
     exc = context.get("exception")
     if exc is not None:
         exc_name = type(exc).__name__
-        # Suppress these Playwright-related warnings
         if exc_name in {"TimeoutError", "TargetClosedError", "Error"}:
             return
     if _original_call_exception_handler:
         _original_call_exception_handler(self, context)
 
 
-# Apply the custom exception handler
 asyncio.BaseEventLoop.call_exception_handler = _suppress_future_exception_warning
 
 PLAYWRIGHT_AVAILABLE = False
@@ -91,11 +87,6 @@ class PlaywrightFetcher(FetcherBase):
         if _pw_factory is None:
             raise RuntimeError("playwright is not available")
         self._pw = await _pw_factory().start()
-        # NOTE: Security features are disabled for web scraping compatibility:
-        # - disable-blink-features=AutomationControlled: Hide automation detection
-        # - disable-web-security: Allow cross-origin requests for iframe content
-        # - disable-features=IsolateOrigins,site-per-process: Enable full page access
-        # These are safe in headless crawler context but should not be used for browsing
         self._browser = await self._pw.chromium.launch(
             headless=True,
             args=[
@@ -137,31 +128,28 @@ class PlaywrightFetcher(FetcherBase):
         url: str,
         timeout_s: float | None = None,
     ) -> FetchResult:
-        with self.span("fetch.playwright", url=url) as sp:
-            attempt = await self.fetch_attempt(
-                url=url,
-                span=sp,
-                timeout_s=timeout_s,
-            )
-            if int(attempt.status_code or 0) <= 0:
-                raise RuntimeError("playwright fetch failed")
-            return FetchResult(
-                url=attempt.url,
-                status_code=int(attempt.status_code),
-                content_type=attempt.content_type,
-                content=attempt.content,
-                fetch_mode="playwright",
-                rendered=True,
-                content_kind=attempt.content_kind,
-                headers=dict(attempt.headers or {}),
-                attempt_chain=list(attempt.attempt_chain or []),
-            )
+        attempt = await self.fetch_attempt(
+            url=url,
+            timeout_s=timeout_s,
+        )
+        if int(attempt.status_code or 0) <= 0:
+            raise RuntimeError("playwright fetch failed")
+        return FetchResult(
+            url=attempt.url,
+            status_code=int(attempt.status_code),
+            content_type=attempt.content_type,
+            content=attempt.content,
+            fetch_mode="playwright",
+            rendered=True,
+            content_kind=attempt.content_kind,
+            headers=dict(attempt.headers or {}),
+            attempt_chain=list(attempt.attempt_chain or []),
+        )
 
     async def fetch_attempt(
         self,
         *,
         url: str,
-        span: SpanBase,
         timeout_s: float | None = None,
         render_reason: str | None = None,
     ) -> FetchAttempt:
@@ -172,7 +160,6 @@ class PlaywrightFetcher(FetcherBase):
         if timeout_s is not None:
             timeout_ms = min(timeout_ms, int(timeout_s * 1000))
 
-        started = time.time()
         page = None
         async with self._sem:
             try:
@@ -182,7 +169,6 @@ class PlaywrightFetcher(FetcherBase):
                     page=page,
                     url=url,
                     timeout_ms=timeout_ms,
-                    span=span,
                 )
                 html = await page.content()
                 with contextlib.suppress(TimeoutError):
@@ -192,17 +178,12 @@ class PlaywrightFetcher(FetcherBase):
                     )
                 await page.wait_for_timeout(min(1200, timeout_ms))
                 html = await page.content()
-                span.set_attr("dynamic_wait_reason", "nextjs")
-                span.set_attr("dynamic_wait_ms", int(timeout_ms))
             finally:
                 if page is not None:
-                    # Close page and suppress any unhandled future exceptions
-                    # from background resource loads that may still be pending
                     with contextlib.suppress(Exception):
                         await page.close()
 
         body = (html or "").encode("utf-8", errors="ignore")
-        elapsed_ms = int((time.time() - started) * 1000)
         content_type = headers.get("content-type")
         content_kind = classify_content_kind(
             content_type=content_type,
@@ -218,14 +199,6 @@ class PlaywrightFetcher(FetcherBase):
                 markers=tuple(self.settings.fetch.quality.blocked_markers),
             )
         )
-        span.set_attr("playwright_status", int(status))
-        span.set_attr("playwright_elapsed_ms", int(elapsed_ms))
-        span.set_attr("content_kind", content_kind)
-        span.set_attr("content_score", float(content_score))
-        span.set_attr("text_chars", int(text_chars))
-        span.set_attr("script_ratio", float(script_ratio))
-        if render_reason:
-            span.set_attr("render_reason", str(render_reason))
 
         return FetchAttempt(
             url=final_url,
@@ -248,7 +221,6 @@ class PlaywrightFetcher(FetcherBase):
         )
 
     async def _prepare_page(self, page: Page) -> None:
-        # Inject script to hide automation fingerprints
         await page.add_init_script(
             """
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
@@ -282,13 +254,11 @@ class PlaywrightFetcher(FetcherBase):
         page: Page,
         url: str,
         timeout_ms: int,
-        span: SpanBase,
     ) -> tuple[int, str, dict[str, str]]:
         status = 0
         final_url = url
         headers: dict[str, str] = {}
         resp = None
-        navigation_error: str | None = None
 
         try:
             resp = await page.goto(
@@ -297,17 +267,10 @@ class PlaywrightFetcher(FetcherBase):
                 wait_until="domcontentloaded",
             )
         except TimeoutError:
-            # Page navigation timed out, but some content may have loaded
-            # Continue to extract whatever content is available
-            navigation_error = "timeout"
-            span.set_attr("navigation_timeout", True)
-        except Exception as exc:
-            # Other navigation errors (network failure, DNS error, etc.)
-            # Log the error type and continue with empty response
-            navigation_error = type(exc).__name__
-            span.set_attr("playwright_error_type", navigation_error)
+            pass
+        except Exception:
+            pass
 
-        # If page didn't load at all, try waiting for body element
         try:
             with contextlib.suppress(TimeoutError):
                 await page.wait_for_selector("body", timeout=min(2000, timeout_ms))
@@ -317,15 +280,8 @@ class PlaywrightFetcher(FetcherBase):
         final_url = str(page.url or url)
 
         if resp is None:
-            # No response object - either timeout or error
-            # Return 200 if we have any content, otherwise 0
             html = await page.content()
-            if len(html) > 100:
-                status = 200
-            else:
-                status = 0
-                if navigation_error:
-                    span.set_attr("navigation_error", navigation_error)
+            status = 200 if len(html) > 100 else 0
             return status, final_url, headers
 
         status = int(resp.status or 0)
@@ -334,3 +290,4 @@ class PlaywrightFetcher(FetcherBase):
 
 
 __all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightFetcher"]
+

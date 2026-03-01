@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import OverviewModelSettings
 
-
 class GeminiClient(LLMClientBase):
     def __init__(self, *, rt: Runtime, model_cfg: OverviewModelSettings) -> None:
         super().__init__(rt=rt)
@@ -49,11 +48,20 @@ class GeminiClient(LLMClientBase):
         system_instruction, contents = _to_gemini_messages(messages)
         timeout_ms = max(1, int(float(timeout_s or llm.timeout_s) * 1000))
 
-        with self.span("llm.gemini.chat", model=model) as sp:
-            sp.set_attr("schema_mode", bool(schema is not None))
-            sp.set_attr("schema_strict", bool(llm.schema_strict))
-            sp.set_attr("timeout_s", float(timeout_s or llm.timeout_s))
-            try:
+        try:
+            resp = await self.client.aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=_build_config(
+                    system_instruction=system_instruction,
+                    temperature=float(llm.temperature),
+                    timeout_ms=timeout_ms,
+                    schema=schema,
+                    schema_strict=bool(llm.schema_strict),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            if schema is not None and llm.schema_strict and _looks_like_schema_error(exc):
                 resp = await self.client.aio.models.generate_content(
                     model=model,
                     contents=contents,
@@ -62,44 +70,21 @@ class GeminiClient(LLMClientBase):
                         temperature=float(llm.temperature),
                         timeout_ms=timeout_ms,
                         schema=schema,
-                        schema_strict=bool(llm.schema_strict),
+                        schema_strict=False,
                     ),
                 )
-            except Exception as exc:  # noqa: BLE001
-                if (
-                    schema is not None
-                    and llm.schema_strict
-                    and _looks_like_schema_error(exc)
-                ):
-                    sp.add_event("llm.gemini.schema_rejected_fallback_json_object")
-                    resp = await self.client.aio.models.generate_content(
-                        model=model,
-                        contents=contents,
-                        config=_build_config(
-                            system_instruction=system_instruction,
-                            temperature=float(llm.temperature),
-                            timeout_ms=timeout_ms,
-                            schema=schema,
-                            schema_strict=False,
-                        ),
-                    )
-                else:
-                    raise
+            else:
+                raise
 
-            usage = _to_usage(getattr(resp, "usage_metadata", None))
-            sp.set_attr("usage_prompt_tokens", int(usage.prompt_tokens))
-            sp.set_attr("usage_completion_tokens", int(usage.completion_tokens))
-            sp.set_attr("usage_total_tokens", int(usage.total_tokens))
+        usage = _to_usage(getattr(resp, "usage_metadata", None))
 
-            text = getattr(resp, "text", "") or ""
-            if not isinstance(text, str):
-                raise TypeError("LLM response content is not a string")
-            sp.set_attr("response_chars", int(len(text)))
-            data: object | None = None
-            if schema is not None:
-                data = _extract_json_data(resp=resp, fallback_text=text, span=sp)
-            return ChatResult(text=text, data=data, usage=usage)
-
+        text = getattr(resp, "text", "") or ""
+        if not isinstance(text, str):
+            raise TypeError("LLM response content is not a string")
+        data: object | None = None
+        if schema is not None:
+            data = _extract_json_data(resp=resp, fallback_text=text)
+        return ChatResult(text=text, data=data, usage=usage)
 
 def _build_config(
     *,
@@ -120,7 +105,6 @@ def _build_config(
         if schema_strict:
             cfg["response_json_schema"] = schema
     return types.GenerateContentConfig(**cfg)
-
 
 def _to_gemini_messages(
     messages: list[dict[str, str]],
@@ -156,9 +140,8 @@ def _to_gemini_messages(
         system_instruction = "\n\n".join(system_parts)
     return system_instruction, contents
 
-
 def _extract_json_data(
-    *, resp: types.GenerateContentResponse, fallback_text: str, span: Any
+    *, resp: types.GenerateContentResponse, fallback_text: str
 ) -> object:
     parsed = getattr(resp, "parsed", None)
     if parsed is not None:
@@ -176,10 +159,8 @@ def _extract_json_data(
         start = fallback_text.find("{")
         end = fallback_text.rfind("}")
         if 0 <= start < end:
-            span.add_event("llm.gemini.json_salvage")
             return json.loads(fallback_text[start : end + 1])
         raise
-
 
 def _to_usage(usage_meta: Any) -> LLMUsage:
     if usage_meta is None:
@@ -194,7 +175,6 @@ def _to_usage(usage_meta: Any) -> LLMUsage:
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
     )
-
 
 def _looks_like_schema_error(exc: Exception) -> bool:
     code = getattr(exc, "code", None)
@@ -214,6 +194,5 @@ def _looks_like_schema_error(exc: Exception) -> bool:
     if isinstance(exc, (errors.ClientError, errors.APIError)):
         return "invalid" in text and "response" in text
     return False
-
 
 __all__ = ["GeminiClient"]

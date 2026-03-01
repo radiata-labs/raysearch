@@ -1,6 +1,5 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -13,11 +12,8 @@ from serpsage.steps.base import StepBase
 if TYPE_CHECKING:
     from serpsage.components.extract import ExtractorBase
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
-
 
 class FetchExtractStep(StepBase[FetchStepContext]):
-    span_name = "step.fetch_extract"
 
     def __init__(self, *, rt: Runtime, extractor: ExtractorBase) -> None:
         super().__init__(rt=rt)
@@ -26,7 +22,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(
-        self, ctx: FetchStepContext, *, span: SpanBase
+        self, ctx: FetchStepContext
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
@@ -57,7 +53,6 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         collect_images = bool(
             ctx.enable_others_and_subpages and ctx.runtime.max_image_links is not None
         )
-        t0 = time.monotonic()
 
         try:
             assert ctx.artifacts.fetch_result is not None
@@ -85,7 +80,6 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                 )
             )
             return ctx
-        extract_ms = int((time.monotonic() - t0) * 1000)
 
         ctx.artifacts.extracted = extracted
         if ctx.enable_others_and_subpages:
@@ -111,27 +105,9 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         else:
             ctx.output.others.links = []
             ctx.output.others.image_links = []
-        span.set_attr("extractor_used", str(extracted.extractor_used))
-        span.set_attr("extract_ms", int(extract_ms))
-        span.set_attr("content_detail", str(ctx.resolved.content_options.detail))
-        span.set_attr(
-            "include_html_tags", bool(ctx.resolved.content_options.include_html_tags)
-        )
-        span.set_attr("collect_links", bool(collect_links))
-        span.set_attr("collect_images", bool(collect_images))
-        span.set_attr("primary_chars", int(extracted.stats.get("primary_chars", 0)))
-        span.set_attr(
-            "secondary_chars",
-            int(extracted.stats.get("secondary_chars", 0)),
-        )
-        span.set_attr("links_count", int(len(extracted.links or [])))
-        span.set_attr("image_links_count", int(len(extracted.image_links or [])))
-        span.set_attr("engine_chain", str(extracted.stats.get("engine_chain", "")))
         markdown = str(extracted.markdown or "")
         text_chars = len(markdown_to_text(markdown))
         min_text_chars = int(self.settings.fetch.extract.min_text_chars)
-        span.set_attr("text_chars", int(text_chars))
-        span.set_attr("min_text_chars", int(min_text_chars))
         if not markdown.strip():
             ctx.fatal = True
             ctx.errors.append(
@@ -166,7 +142,6 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             )
         return ctx
 
-
 def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
     if limit is None:
         return []
@@ -182,7 +157,6 @@ def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
         if len(out) >= max_items:
             break
     return out
-
 
 def _prepare_subpage_links(
     *, values: list[ExtractedLink], exclude: list[str], limit: int | None
@@ -205,5 +179,5 @@ def _prepare_subpage_links(
             break
     return out
 
-
 __all__ = ["FetchExtractStep"]
+

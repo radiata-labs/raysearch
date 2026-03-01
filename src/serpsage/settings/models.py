@@ -607,11 +607,6 @@ class LLMSettings(Model):
         raise ValueError(f"llm model `{name}` does not exist in llm.models")
 
 
-class TelemetrySettings(Model):
-    enabled: bool = False
-    include_events: bool = False
-
-
 class AppSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
@@ -625,7 +620,6 @@ class AppSettings(Model):
     rank: RankSettings = Field(default_factory=RankSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
-    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
 
     @model_validator(mode="after")
     def _validate_model_links(self) -> AppSettings:
@@ -715,5 +709,4 @@ __all__ = [
     "RetrySettings",
     "SearchDeepSettings",
     "SearxngSettings",
-    "TelemetrySettings",
 ]

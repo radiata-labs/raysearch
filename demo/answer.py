@@ -24,14 +24,10 @@ async def main(
     )
     async with Engine.from_settings(settings) as engine:
         resp = await engine.answer(req)
-    resp_dict = resp.model_dump()
-    resp_dict["telemetry"]["spans"] = [
-        item for item in resp_dict["telemetry"]["spans"] if "fetch" not in item["name"]
-    ]
     return {
         "answer": resp.answer,
         "answer_result": json.dumps(
-            resp_dict,
+            resp.model_dump(),
             ensure_ascii=False,
             indent=2,
         ),

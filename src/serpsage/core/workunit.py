@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Self
 
 import anyio
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from types import TracebackType
 
-    from serpsage.core.runtime import Runtime
+    from serpsage.core.runtime import ClockBase, Runtime
     from serpsage.settings.models import AppSettings
-    from serpsage.telemetry.base import ClockBase, SpanBase, TelemetryBase
 
 
 class WorkUnit:
@@ -41,20 +38,8 @@ class WorkUnit:
         return self.rt.settings
 
     @property
-    def telemetry(self) -> TelemetryBase:
-        return self.rt.telemetry
-
-    @property
     def clock(self) -> ClockBase:
         return self.rt.clock
-
-    @contextmanager
-    def span(self, name: str, **attrs: Any) -> Iterator[SpanBase]:
-        sp = self.telemetry.start_span(name, **attrs)
-        try:
-            yield sp
-        finally:
-            sp.end()
 
     def bind_deps(self, *deps: WorkUnit | None) -> None:
         def _bind_dep_one(dep: WorkUnit | None) -> WorkUnit | None:

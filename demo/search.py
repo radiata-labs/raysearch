@@ -41,7 +41,7 @@ async def main(
 
     return {
         "search_result": json.dumps(
-            resp.model_dump(exclude={"telemetry"}), ensure_ascii=False, indent=2
+            resp.model_dump(), ensure_ascii=False, indent=2
         ),
     }
 

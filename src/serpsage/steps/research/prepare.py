@@ -21,18 +21,15 @@ from serpsage.utils import clean_whitespace
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import ResearchModeSettings
-    from serpsage.telemetry.base import SpanBase
-
 
 class ResearchPrepareStep(StepBase[ResearchStepContext]):
-    span_name = "step.research_prepare"
 
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
     async def run_inner(
-        self, ctx: ResearchStepContext, *, span: SpanBase
+        self, ctx: ResearchStepContext
     ) -> ResearchStepContext:
         mode = str(ctx.request.search_mode or "research")
         themes = clean_whitespace(ctx.request.themes or "")
@@ -108,7 +105,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             ),
             flush=True,
         )
-        span.set_attr("search_mode", mode)
         return ctx
 
     def _resolve_profile(self, mode: str) -> ResearchModeSettings:
@@ -117,6 +113,5 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         if mode == "research-pro":
             return self.settings.research.research_pro
         return self.settings.research.research
-
 
 __all__ = ["ResearchPrepareStep"]

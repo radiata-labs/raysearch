@@ -8,23 +8,16 @@ from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
-
 
 class ResearchFinalizeStep(StepBase[ResearchStepContext]):
-    span_name = "step.research_finalize"
 
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
     async def run_inner(
-        self, ctx: ResearchStepContext, *, span: SpanBase
+        self, ctx: ResearchStepContext
     ) -> ResearchStepContext:
-        span.set_attr("stop", bool(ctx.runtime.stop))
-        span.set_attr("stop_reason", str(ctx.runtime.stop_reason or ""))
-        span.set_attr("has_content", bool(ctx.output.content))
-        span.set_attr("has_structured", bool(ctx.output.structured is not None))
         print(
             (
                 "[research][finalize] "
@@ -38,6 +31,5 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
             flush=True,
         )
         return ctx
-
 
 __all__ = ["ResearchFinalizeStep"]

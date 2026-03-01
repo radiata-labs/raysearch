@@ -31,7 +31,6 @@ Top-level settings:
 - `rank`
 - `llm`
 - `cache`
-- `telemetry`
 
 Reference file: `src/search_config_example.yaml`.
 
@@ -146,6 +145,6 @@ async with Engine.from_settings(settings) as engine:
   - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
 - `search` does not include overview generation; overview remains fetch-only
 - when deep query expansion fails, search aborts with error code `search_query_expansion_failed`
-- `search` response shape: `search_mode/results/errors/telemetry`
+- `search` response shape: `search_mode/results/errors`
 - fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering
 - `fetch.extract` uses an internal markdown renderer pipeline; no renderer backend toggle is exposed.

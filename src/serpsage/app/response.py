@@ -1,14 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from serpsage.models.errors import AppError  # noqa: TC001
-
-
-def _default_telemetry() -> dict[str, Any]:
-    return {"enabled": False, "trace_id": "noop", "spans": []}
 
 
 class FetchOthersResult(BaseModel):
@@ -53,7 +47,6 @@ class FetchResponse(BaseModel):
     request_id: str
     results: list[FetchResultItem] = Field(default_factory=list)
     errors: list[AppError] = Field(default_factory=list)
-    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
 class SearchResponse(BaseModel):
@@ -63,7 +56,6 @@ class SearchResponse(BaseModel):
     search_mode: str
     results: list[FetchResultItem] = Field(default_factory=list)
     errors: list[AppError] = Field(default_factory=list)
-    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
 class AnswerCitation(BaseModel):
@@ -89,7 +81,6 @@ class AnswerResponse(BaseModel):
     answer: str | object
     citations: list[AnswerCitation] = Field(default_factory=list)
     errors: list[AppError] = Field(default_factory=list)
-    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
 class ResearchResponse(BaseModel):
@@ -99,7 +90,6 @@ class ResearchResponse(BaseModel):
     content: str
     structured: object | None = None
     errors: list[AppError] = Field(default_factory=list)
-    telemetry: dict[str, Any] = Field(default_factory=_default_telemetry)
 
 
 __all__ = [

@@ -11,18 +11,15 @@ from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
-
 
 class FetchFinalizeStep(StepBase[FetchStepContext]):
-    span_name = "step.fetch_finalize"
 
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
     async def run_inner(
-        self, ctx: FetchStepContext, *, span: SpanBase
+        self, ctx: FetchStepContext
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
@@ -82,24 +79,6 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             **others_result,
         )
 
-        span.set_attr("has_result", True)
-        span.set_attr("abstracts_count", int(len(abstracts)))
-        span.set_attr(
-            "links_count",
-            int(len(others_result["others"].links))
-            if hasattr(others_result, "others")
-            else 0,
-        )
-        span.set_attr(
-            "image_links_count",
-            int(len(others_result["others"].image_links))
-            if hasattr(others_result, "others")
-            else 0,
-        )
-        span.set_attr("subpages_count", int(len(subpages_result)))
-        span.set_attr("has_overview", bool(ctx.artifacts.overview_output is not None))
-        span.set_attr("has_content_output", bool(ctx.resolved.return_content))
         return ctx
-
 
 __all__ = ["FetchFinalizeStep"]

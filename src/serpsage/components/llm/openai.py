@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import OverviewModelSettings
 
-
 class OpenAIClient(LLMClientBase):
     def __init__(
         self, *, rt: Runtime, http: HttpClientBase, model_cfg: OverviewModelSettings
@@ -68,60 +67,45 @@ class OpenAIClient(LLMClientBase):
             else:
                 req["response_format"] = {"type": "json_object"}
 
-        with self.span("llm.openai.chat", model=model) as sp:
-            sp.set_attr("schema_mode", bool(schema is not None))
-            sp.set_attr("schema_strict", bool(llm.schema_strict))
-            sp.set_attr("timeout_s", float(timeout_s or llm.timeout_s))
-
-            try:
+        try:
+            resp = await self.client.chat.completions.create(**req)
+        except Exception as exc:  # noqa: BLE001
+            if schema is not None and llm.schema_strict and _looks_like_schema_error(exc):
+                req["response_format"] = {"type": "json_object"}
                 resp = await self.client.chat.completions.create(**req)
-            except Exception as exc:  # noqa: BLE001
-                if (
-                    schema is not None
-                    and llm.schema_strict
-                    and _looks_like_schema_error(exc)
-                ):
-                    sp.add_event("llm.openai.schema_rejected_fallback_json_object")
-                    req["response_format"] = {"type": "json_object"}
-                    resp = await self.client.chat.completions.create(**req)
-                else:
-                    raise
+            else:
+                raise
 
-            usage = cast("CompletionUsage | None", getattr(resp, "usage", None))
-            usage_out = LLMUsage()
-            if usage is not None:
-                usage_out = LLMUsage(
-                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
-                    total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
-                )
-            content = ""
-            choices = cast("list[Choice]", getattr(resp, "choices", None) or [])
-            sp.set_attr("choices_count", int(len(choices)))
-            if choices:
-                msg = getattr(choices[0], "message", None)
-                content = getattr(msg, "content", "") or ""
-            if not isinstance(content, str):
-                raise TypeError("LLM response content is not a string")
-            sp.set_attr("response_chars", int(len(content)))
+        usage = cast("CompletionUsage | None", getattr(resp, "usage", None))
+        usage_out = LLMUsage()
+        if usage is not None:
+            usage_out = LLMUsage(
+                prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
+            )
+        content = ""
+        choices = cast("list[Choice]", getattr(resp, "choices", None) or [])
+        if choices:
+            msg = getattr(choices[0], "message", None)
+            content = getattr(msg, "content", "") or ""
+        if not isinstance(content, str):
+            raise TypeError("LLM response content is not a string")
 
-            data: object | None = None
-            if schema is not None:
-                data = _try_parse_json(content, span=sp)
-            return ChatResult(text=content, data=data, usage=usage_out)
+        data: object | None = None
+        if schema is not None:
+            data = _try_parse_json(content)
+        return ChatResult(text=content, data=data, usage=usage_out)
 
-
-def _try_parse_json(content: str, *, span: Any) -> object:
+def _try_parse_json(content: str) -> object:
     try:
         return json.loads(content)
     except json.JSONDecodeError:
         start = content.find("{")
         end = content.rfind("}")
         if 0 <= start < end:
-            span.add_event("llm.openai.json_salvage")
             return json.loads(content[start : end + 1])
         raise
-
 
 def _looks_like_schema_error(exc: Exception) -> bool:
     msg = str(exc) or ""
@@ -140,6 +124,5 @@ def _looks_like_schema_error(exc: Exception) -> bool:
         ):
             return True
     return False
-
 
 __all__ = ["OpenAIClient"]

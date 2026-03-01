@@ -15,7 +15,7 @@ from serpsage.components import (
     build_ranker,
     build_rate_limiter,
 )
-from serpsage.core.runtime import Overrides, Runtime
+from serpsage.core.runtime import ClockBase, Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
 from serpsage.models.pipeline import (
     AnswerStepContext,
@@ -57,8 +57,6 @@ from serpsage.steps.search import (
     SearchRankStep,
     SearchStep,
 )
-from serpsage.telemetry.base import ClockBase
-from serpsage.telemetry.trace import NoopTelemetry, TraceTelemetry
 
 if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase
@@ -82,12 +80,7 @@ def build_runtime(
 ) -> Runtime:
     ov = overrides or Overrides()
     clock = ov.clock or SystemClock()
-    telemetry = ov.telemetry or (
-        TraceTelemetry(settings.telemetry, clock=clock)
-        if settings.telemetry.enabled
-        else NoopTelemetry()
-    )
-    return Runtime(settings=settings, telemetry=telemetry, clock=clock)
+    return Runtime(settings=settings, clock=clock)
 
 
 def build_engine(

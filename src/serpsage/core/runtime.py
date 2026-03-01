@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 import httpx
 from pydantic import ConfigDict
 
@@ -12,7 +14,12 @@ from serpsage.components.rank import RankerBase
 from serpsage.components.rate_limit.basic import BasicRateLimiter
 from serpsage.core.model_base import FrozenModel, MutableModel
 from serpsage.settings.models import AppSettings
-from serpsage.telemetry.base import ClockBase, TelemetryBase
+
+
+class ClockBase(ABC):
+    @abstractmethod
+    def now_ms(self) -> int:
+        raise NotImplementedError
 
 
 class Runtime(FrozenModel):
@@ -23,7 +30,6 @@ class Runtime(FrozenModel):
     )
 
     settings: AppSettings
-    telemetry: TelemetryBase
     clock: ClockBase
 
 
@@ -35,7 +41,6 @@ class Overrides(MutableModel):
     )
 
     http: httpx.AsyncClient | None = None
-    telemetry: TelemetryBase | None = None
     clock: ClockBase | None = None
     cache: CacheBase | None = None
     rate_limiter: BasicRateLimiter | None = None
@@ -46,4 +51,4 @@ class Overrides(MutableModel):
     llm: LLMClientBase | None = None
 
 
-__all__ = ["Overrides", "Runtime"]
+__all__ = ["ClockBase", "Overrides", "Runtime"]

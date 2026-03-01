@@ -26,7 +26,7 @@ async def main(
         resp = await engine.research(req)
     return {
         "research_result": json.dumps(
-            resp.model_dump(exclude={"telemetry"}),
+            resp.model_dump(),
             ensure_ascii=False,
             indent=2,
         )

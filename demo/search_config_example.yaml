@@ -235,6 +235,3 @@ cache:
     url: sqlite+aiosqlite:///./.serpsage_cache.sqlite3
     table: cache
 
-telemetry:
-  enabled: true
-  include_events: false

@@ -22,7 +22,6 @@ Use this index first to locate files quickly before deep scanning.
 |     |- models/
 |     |- settings/
 |     |- steps/
-|     |- telemetry/
 |     |- tokenize/
 |- tests/
 |- pyproject.toml
@@ -70,4 +69,4 @@ All edits must be coordinated through `.codex/SCOPES.md`.
 ## 4) Language Requirement
 
 - Keep this system fully in English.
-- `AGENTS.md` and `.codex/SCOPES.md` must not contain Chinese.
+- `.codex/SCOPES.md` must not contain Chinese.

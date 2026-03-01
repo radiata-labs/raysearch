@@ -12,7 +12,6 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
 
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$")
@@ -23,21 +22,18 @@ _INLINE_CODE_ONLY_RE = re.compile(r"^\s*`[^`]+`\s*$")
 _CJK_SENTENCE_END = {"。", "！", "？", "；"}
 _GENERAL_SENTENCE_END = {"!", "?", ";"}
 
-
 class FetchAbstractBuildStep(StepBase[FetchStepContext]):
-    span_name = "step.fetch_abstract_build"
 
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
     @override
     async def run_inner(
-        self, ctx: FetchStepContext, *, span: SpanBase
+        self, ctx: FetchStepContext
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
         req = ctx.resolved.abstracts_request
-        span.set_attr("has_abstracts", bool(req is not None))
         if req is None:
             return ctx
         if ctx.artifacts.extracted is None:
@@ -67,7 +63,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
             min_abstract_tokens=int(cfg.min_abstract_tokens),
         )
         ctx.artifacts.prepared_abstracts = prepared
-        span.set_attr("prepared_abstracts", int(len(prepared)))
         return ctx
 
     def _extract_abstracts(
@@ -189,6 +184,5 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
             return ""
         values = [cell for cell in cells if cell]
         return " | ".join(values)
-
 
 __all__ = ["FetchAbstractBuildStep"]

@@ -21,8 +21,6 @@ if TYPE_CHECKING:
 
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
-
 
 _JACCARD_SIMILARITY_THRESHOLD = 0.85
 _RE_CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -40,17 +38,13 @@ _JA_EVIDENCE_SUFFIX = (
 _EN_INTENT_SUFFIX = "official docs guide comparison"
 _EN_EVIDENCE_SUFFIX = "benchmark report source"
 
-
 @dataclass(slots=True)
 class _QueryCandidate:
     query: str
     weight: float
     source: str
 
-
 class SearchExpandStep(StepBase[SearchStepContext]):
-    span_name = "step.search_expand"
-
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -58,13 +52,12 @@ class SearchExpandStep(StepBase[SearchStepContext]):
 
     @override
     async def run_inner(
-        self, ctx: SearchStepContext, *, span: SpanBase
+        self, ctx: SearchStepContext
     ) -> SearchStepContext:
         """Build deep-search query jobs from primary/manual/rule/LLM variants.
 
         Args:
             ctx: Search pipeline context containing request and deep state.
-            span: Telemetry span for expansion counts and abort diagnostics.
 
         Returns:
             Updated context with `deep.query_jobs` populated for deep mode.
@@ -72,23 +65,11 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         ctx.deep = SearchDeepState()
         req = ctx.request
         if not self._is_deep_enabled(req_mode=str(req.mode or "auto")):
-            span.set_attr("enabled", False)
-            span.set_attr("aborted", False)
             return ctx
 
-        span.set_attr("enabled", True)
         primary_query = clean_whitespace(str(req.query or ""))
         if not primary_query:
             self._abort_empty_query(ctx=ctx, raw_query=req.query)
-            self._set_expand_span_attrs(
-                span=span,
-                aborted=True,
-                manual_count=0,
-                rule_count=0,
-                llm_count=0,
-                query_jobs_count=0,
-                llm_elapsed_ms=0,
-            )
             return ctx
 
         deep_cfg = self.settings.search.deep
@@ -97,12 +78,10 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             req_additional_queries=req.additional_queries
         )
         disable_internal_llm = bool(ctx.disable_internal_llm)
-        span.set_attr("disable_internal_llm", bool(disable_internal_llm))
 
         if disable_internal_llm:
             llm_queries: list[str] = []
             llm_elapsed_ms: int = 0
-            span.set_attr("llm_expansion_skipped", True)
         else:
             llm_queries, llm_elapsed_ms = await self._collect_llm_queries(
                 ctx=ctx,
@@ -116,15 +95,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             max_queries=int(deep_cfg.rule_max_queries),
         )
         if bool(ctx.deep.aborted):
-            self._set_expand_span_attrs(
-                span=span,
-                aborted=True,
-                manual_count=len(manual_queries),
-                rule_count=len(rule_queries),
-                llm_count=0,
-                query_jobs_count=0,
-                llm_elapsed_ms=llm_elapsed_ms,
-            )
             return ctx
 
         query_jobs = self._merge_query_jobs(
@@ -138,15 +108,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             llm_weight=float(deep_cfg.llm_query_score_weight),
         )
         ctx.deep.query_jobs = query_jobs
-        self._set_expand_span_attrs(
-            span=span,
-            aborted=False,
-            manual_count=len(manual_queries),
-            rule_count=len(rule_queries),
-            llm_count=len(llm_queries),
-            query_jobs_count=len(query_jobs),
-            llm_elapsed_ms=llm_elapsed_ms,
-        )
         return ctx
 
     def _is_deep_enabled(self, *, req_mode: str) -> bool:
@@ -156,24 +117,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         self, *, req_additional_queries: list[str] | None
     ) -> list[str]:
         return self._normalize_queries(list(req_additional_queries or []))
-
-    def _set_expand_span_attrs(
-        self,
-        *,
-        span: SpanBase,
-        aborted: bool,
-        manual_count: int,
-        rule_count: int,
-        llm_count: int,
-        query_jobs_count: int,
-        llm_elapsed_ms: int,
-    ) -> None:
-        span.set_attr("aborted", bool(aborted))
-        span.set_attr("manual_count", int(manual_count))
-        span.set_attr("rule_count", int(rule_count))
-        span.set_attr("llm_count", int(llm_count))
-        span.set_attr("query_jobs_count", int(query_jobs_count))
-        span.set_attr("llm_elapsed_ms", int(llm_elapsed_ms))
 
     def _abort_empty_query(self, *, ctx: SearchStepContext, raw_query: object) -> None:
         ctx.deep.aborted = True
@@ -565,6 +508,5 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             if 0 <= start < end:
                 return json.loads(text[start : end + 1])
             raise
-
 
 __all__ = ["SearchExpandStep"]

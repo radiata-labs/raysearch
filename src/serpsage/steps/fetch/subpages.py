@@ -13,11 +13,8 @@ if TYPE_CHECKING:
     from serpsage.app.response import FetchResultItem
     from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
-
 
 class FetchSubpageStep(StepBase[FetchStepContext]):
-    span_name = "step.fetch_subpages"
 
     def __init__(
         self,
@@ -33,7 +30,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(
-        self, ctx: FetchStepContext, *, span: SpanBase
+        self, ctx: FetchStepContext
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
@@ -157,15 +154,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         ctx.subpages.overview_scores = [
             overview_scores for _, _, overview_scores in paired
         ]
-        span.set_attr("subpages_candidates_count", int(len(candidates)))
-        span.set_attr("subpages_selected_count", int(len(selected_urls)))
-        span.set_attr("subpages_success_count", int(len(ctx.subpages.results)))
-        span.set_attr(
-            "subpages_failure_count",
-            int(len(selected_urls) - len(ctx.subpages.results)),
-        )
         return ctx
-
 
 def _to_subpage_result(value: FetchResultItem) -> FetchSubpagesResult:
     return FetchSubpagesResult(
@@ -177,9 +166,7 @@ def _to_subpage_result(value: FetchResultItem) -> FetchSubpagesResult:
         overview=value.overview,
     )
 
-
 def _score_at(*, scores: list[float], idx: int) -> float:
     return float(scores[idx]) if idx < len(scores) else 0.0
-
 
 __all__ = ["FetchSubpageStep"]

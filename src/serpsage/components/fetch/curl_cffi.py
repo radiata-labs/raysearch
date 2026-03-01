@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
@@ -31,8 +30,6 @@ if TYPE_CHECKING:
 
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
-    from serpsage.telemetry.base import SpanBase
-
 
 class CurlCffiFetcher(FetcherBase):
     def __init__(self, *, rt: Runtime) -> None:
@@ -53,25 +50,23 @@ class CurlCffiFetcher(FetcherBase):
         url: str,
         timeout_s: float | None = None,
     ) -> FetchResult:
-        with self.span("fetch.curl", url=url) as sp:
-            res = await self.fetch_attempt(
-                url=url,
-                span=sp,
-                timeout_s=timeout_s,
-            )
-            if int(res.status_code) <= 0:
-                raise RuntimeError("curl_cffi fetch failed")
-            return FetchResult(
-                url=str(res.url or url),
-                status_code=int(res.status_code),
-                content_type=res.content_type,
-                content=bytes(res.content or b""),
-                fetch_mode="curl_cffi",
-                rendered=False,
-                content_kind=res.content_kind,
-                headers=dict(res.headers or {}),
-                attempt_chain=list(res.attempt_chain or []),
-            )
+        res = await self.fetch_attempt(
+            url=url,
+            timeout_s=timeout_s,
+        )
+        if int(res.status_code) <= 0:
+            raise RuntimeError("curl_cffi fetch failed")
+        return FetchResult(
+            url=str(res.url or url),
+            status_code=int(res.status_code),
+            content_type=res.content_type,
+            content=bytes(res.content or b""),
+            fetch_mode="curl_cffi",
+            rendered=False,
+            content_kind=res.content_kind,
+            headers=dict(res.headers or {}),
+            attempt_chain=list(res.attempt_chain or []),
+        )
 
     @override
     async def on_close(self) -> None:
@@ -88,13 +83,11 @@ class CurlCffiFetcher(FetcherBase):
         self,
         *,
         url: str,
-        span: SpanBase,
         retry: RetrySettings | None = None,
         timeout_s: float | None = None,
     ) -> FetchAttempt:
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
-        started = time.time()
         fetch_cfg = self.settings.fetch
         proxy = self.settings.http.proxy
         req_timeout_s = timeout_s or fetch_cfg.timeout_s
@@ -115,8 +108,7 @@ class CurlCffiFetcher(FetcherBase):
         last_headers: dict[str, str] = {}
         last_truncated = False
 
-        for attempt in range(1, max_attempts + 1):
-            span.set_attr("curl_attempt", int(attempt))
+        for _attempt in range(1, max_attempts + 1):
             try:
                 resp = await self._session.get(
                     url,
@@ -149,30 +141,20 @@ class CurlCffiFetcher(FetcherBase):
                 )
 
                 if last_status == 429 or (500 <= last_status < 600):
-                    if attempt >= max_attempts:
+                    if _attempt >= max_attempts:
                         break
                     ra = parse_retry_after_s(last_headers.get("retry-after"))
                     delay = ra if ra is not None else get_delay_s(delay_ms)
-                    span.set_attr("curl_retry_reason", "status")
-                    span.set_attr("curl_retry_delay_s", float(delay))
                     await anyio.sleep(delay)
                     continue
                 break
-            except Exception as exc:  # noqa: BLE001
-                span.set_attr("curl_error_type", type(exc).__name__)
-                if attempt >= max_attempts:
+            except Exception:  # noqa: BLE001
+                if _attempt >= max_attempts:
                     break
                 delay = get_delay_s(delay_ms)
-                span.set_attr("curl_retry_reason", "network")
-                span.set_attr("curl_retry_delay_s", float(delay))
                 await anyio.sleep(delay)
                 continue
 
-        elapsed_ms = int((time.time() - started) * 1000)
-        span.set_attr("curl_status", int(last_status or 0))
-        span.set_attr("curl_elapsed_ms", int(elapsed_ms))
-        span.set_attr("curl_bytes", int(len(last_body)))
-        span.set_attr("curl_truncated", bool(last_truncated))
         content_kind = classify_content_kind(
             content_type=last_ct,
             url=last_url,
@@ -188,10 +170,6 @@ class CurlCffiFetcher(FetcherBase):
                 markers=tuple(self.settings.fetch.quality.blocked_markers),
             )
         )
-        span.set_attr("content_kind", content_kind)
-        span.set_attr("text_chars", int(text_chars))
-        span.set_attr("content_score", float(content_score))
-        span.set_attr("script_ratio", float(script_ratio))
 
         return FetchAttempt(
             url=last_url,
@@ -233,6 +211,5 @@ class CurlCffiFetcher(FetcherBase):
         if len(body) <= budget:
             return body, False
         return body[:budget], True
-
 
 __all__ = ["CURL_CFFI_AVAILABLE", "CurlCffiFetcher"]

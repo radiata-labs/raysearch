@@ -15,11 +15,8 @@ if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase
     from serpsage.components.llm import LLMClientBase
     from serpsage.core.runtime import Runtime
-    from serpsage.telemetry.base import SpanBase
-
 
 class FetchOverviewStep(StepBase[FetchStepContext]):
-    span_name = "step.fetch_overview"
 
     def __init__(
         self,
@@ -35,7 +32,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(
-        self, ctx: FetchStepContext, *, span: SpanBase
+        self, ctx: FetchStepContext
     ) -> FetchStepContext:
         if ctx.fatal:
             return ctx
@@ -90,13 +87,10 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 try:
                     decoded = json.loads(cached.decode("utf-8"))
                 except Exception:  # noqa: BLE001
-                    span.add_event("overview.cache_corrupt")
+                    pass
                 else:
                     ctx.artifacts.overview_output = decoded
-                    span.set_attr("cache_hit", True)
                     return ctx
-        span.set_attr("cache_hit", False)
-        span.set_attr("overview_mode", mode)
 
         retries = max(0, int(profile.self_heal_retries))
         for attempt in range(retries + 1):
@@ -264,7 +258,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
             {"role": "user", "content": user},
         ]
 
-
 def _coerce_json_output(*, result_data: object | None, raw_text: str) -> object:
     if result_data is not None:
         return result_data
@@ -272,7 +265,6 @@ def _coerce_json_output(*, result_data: object | None, raw_text: str) -> object:
     if not text:
         raise ValueError("json output is empty")
     return json.loads(text)
-
 
 def _validate_json_output(*, schema: dict[str, Any], value: object) -> None:
     try:
@@ -284,10 +276,8 @@ def _validate_json_output(*, schema: dict[str, Any], value: object) -> None:
     except Exception as exc:  # noqa: BLE001
         raise _SchemaMismatchError(str(exc)) from exc
 
-
 class _SchemaMismatchError(Exception):
     pass
-
 
 def _self_heal_message() -> dict[str, str]:
     return {
@@ -297,6 +287,5 @@ def _self_heal_message() -> dict[str, str]:
             "the provided schema."
         ),
     }
-
 
 __all__ = ["FetchOverviewStep"]
