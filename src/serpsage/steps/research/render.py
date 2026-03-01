@@ -184,6 +184,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             now_utc=now_utc,
             context_packet_markdown=context_packet_markdown,
         )
+        architect_output = self._validate_architect_question_coverage(
+            ctx=ctx,
+            architect_output=architect_output,
+        )
         writer_outputs = await self._run_writers(
             ctx=ctx,
             architect_output=architect_output,
@@ -248,6 +252,79 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 stacklevel=1,
             )
             raise RuntimeError("research architect render failed") from exc
+
+    def _validate_architect_question_coverage(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        architect_output: RenderArchitectOutput,
+    ) -> RenderArchitectOutput:
+        required_question_ids = self._resolve_question_ids(ctx)
+        if not required_question_ids:
+            return architect_output
+        sections = list(architect_output.sections or [])
+        if not sections:
+            return architect_output
+
+        required_map = {
+            clean_whitespace(item).casefold(): clean_whitespace(item)
+            for item in required_question_ids
+            if clean_whitespace(item)
+        }
+        normalized_sections: list[RenderArchitectSectionPlan] = []
+        covered_question_ids: set[str] = set()
+        body_indexes: list[int] = []
+
+        for idx, section in enumerate(sections):
+            normalized_question_ids: list[str] = []
+            seen: set[str] = set()
+            for raw in section.question_ids:
+                token = clean_whitespace(raw)
+                if not token:
+                    continue
+                canonical = required_map.get(token.casefold())
+                if not canonical:
+                    continue
+                if canonical in seen:
+                    continue
+                seen.add(canonical)
+                normalized_question_ids.append(canonical)
+            if section.section_role == "body":
+                body_indexes.append(idx)
+                covered_question_ids.update(normalized_question_ids)
+            normalized_sections.append(
+                section.model_copy(update={"question_ids": normalized_question_ids})
+            )
+
+        missing_question_ids = [
+            item for item in required_question_ids if item not in covered_question_ids
+        ]
+        if missing_question_ids:
+            target_idx = body_indexes[-1] if body_indexes else len(normalized_sections) - 1
+            target = normalized_sections[target_idx]
+            patched_question_ids = self._merge_question_ids(
+                list(target.question_ids),
+                missing_question_ids,
+            )
+            normalized_sections[target_idx] = target.model_copy(
+                update={"question_ids": patched_question_ids}
+            )
+            warning_message = (
+                "architect output missed question_ids; patched into final body section "
+                f"missing={missing_question_ids}"
+            )
+            ctx.notes.append(warning_message)
+            warnings.warn(
+                (
+                    "[research][warning] "
+                    "research_render_question_coverage_patched "
+                    f"request_id={ctx.request_id} "
+                    f"missing={missing_question_ids}"
+                ),
+                stacklevel=1,
+            )
+
+        return architect_output.model_copy(update={"sections": normalized_sections})
 
     async def _run_writers(
         self,
@@ -427,7 +504,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "2) Preferred reasoning staircase: mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (adapt to theme).\n"
                     "3) Each body section must answer a distinct analytical question and prepare the next section.\n"
                     "Phase D - Define section contracts:\n"
-                    "1) For each section provide concrete subhead, section_role, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
+                    "1) For each section provide concrete subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
                     "2) writing_boundaries must explicitly block topic drift and unsupported claims.\n"
                     "3) must_cover_points must be actionable and specific, not generic slogans.\n"
                     "Hard Constraints (must):\n"
@@ -441,20 +518,23 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "8) Body progression must generally follow mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (theme-adaptive).\n"
                     "9) Subheads must be concrete, non-overlapping, high-information, and non-synonymous.\n"
                     "10) Subheads must represent what will be analyzed, not decorative labels.\n"
-                    "11) Each section must include scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
+                    "11) Each section must include question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
                     "12) scope_requirements and must_cover_points must be specific and executable, not abstract slogans.\n"
                     "13) writing_boundaries must explicitly prevent topic drift and unsupported claims.\n"
                     "14) Opening section must establish objective, scope boundaries, and reading map.\n"
                     "15) Closing section must synthesize tradeoffs, decision implications, and execution priorities.\n"
                     "16) Across body sections, ensure multi-angle coverage where relevant: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"
-                    "17) Keep plan strictly grounded in FINAL_CONTEXT_PACKET; do not fabricate assumptions.\n"
-                    "18) If evidence is sparse, reduce section breadth or section count; do not invent pseudo-coverage.\n"
-                    "19) Keep language concise but high-information in every field.\n"
-                    "20) No duplicate section intent across sections.\n"
+                    "17) For body sections, question_ids must reference one or more question cards from FINAL_CONTEXT_PACKET only.\n"
+                    "18) Every question_id from question cards must appear in at least one body section.\n"
+                    "19) Keep plan strictly grounded in FINAL_CONTEXT_PACKET; do not fabricate assumptions.\n"
+                    "20) If evidence is sparse, reduce section breadth or section count; do not invent pseudo-coverage.\n"
+                    "21) Keep language concise but high-information in every field.\n"
+                    "22) No duplicate section intent across sections.\n"
                     "Self-checklist:\n"
                     "- Does the section order strictly satisfy opening -> body... -> closing?\n"
                     "- Are all body sections in a clear reasoning staircase rather than side-by-side repetition?\n"
                     "- Is each section contract directly writable by a Writer without reinterpretation?\n"
+                    "- Do body sections collectively cover every question_id at least once?\n"
                     "- Are multi-angle viewpoints distributed across body sections?\n"
                     "- Do subheads avoid overlap and generic wording?\n"
                     "- Do writing_boundaries clearly block drift and overclaiming?\n"
@@ -471,6 +551,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "- Plan only, no narrative writing.\n"
                     "- Design a section structure that supports very rich, high-density writing.\n"
                     "- Ensure middle sections form a clear reasoning staircase with multi-angle coverage.\n"
+                    "- Assign question_ids to body sections so every question card is covered at least once.\n"
                     "- Build section contracts that a Writer can execute directly without reinterpretation.\n"
                     "- Do not output explanations; output schema JSON only.\n\n"
                     f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
@@ -664,7 +745,54 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             subhead = clean_whitespace(section_plan.subhead or section_plan.section_id)
             parts.append(f"## {subhead or 'Section'}")
             parts.append(str(section_content or "").strip())
+        parts.append(
+            self._render_coverage_audit_markdown(
+                ctx=ctx,
+                architect_output=architect_output,
+            )
+        )
         return "\n\n".join(parts).strip()
+
+    def _render_coverage_audit_markdown(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        architect_output: RenderArchitectOutput,
+    ) -> str:
+        required_question_ids = self._resolve_question_ids(ctx)
+        lines: list[str] = ["## Coverage Audit"]
+        if not required_question_ids:
+            lines.append("- No question cards available.")
+            return "\n".join(lines).strip()
+
+        section_map: dict[str, list[str]] = {item: [] for item in required_question_ids}
+        required_set = set(required_question_ids)
+        for idx, section in enumerate(architect_output.sections, start=1):
+            section_id = clean_whitespace(section.section_id) or f"s{idx}"
+            for raw in section.question_ids:
+                question_id = clean_whitespace(raw)
+                if not question_id or question_id not in required_set:
+                    continue
+                refs = section_map[question_id]
+                if section_id in refs:
+                    continue
+                refs.append(section_id)
+
+        track_result_ids = {
+            clean_whitespace(item.question_id)
+            for item in ctx.parallel.track_results
+            if clean_whitespace(item.question_id)
+        }
+        lines.append(f"- Total question cards: {len(required_question_ids)}")
+        for question_id in required_question_ids:
+            refs = section_map.get(question_id, [])
+            status = "covered" if refs else "missing"
+            section_text = ", ".join(refs) if refs else "none"
+            has_track_result = "yes" if question_id in track_result_ids else "no"
+            lines.append(
+                f"- {question_id}: {status}; sections={section_text}; track_result={has_track_result}"
+            )
+        return "\n".join(lines).strip()
 
     def _build_final_context_packet(
         self,
@@ -745,6 +873,45 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             )
             for item in track_results
         ]
+
+    def _resolve_question_ids(self, ctx: ResearchStepContext) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        cards = list(ctx.parallel.question_cards)
+        if not cards:
+            cards = [
+                ResearchQuestionCard(
+                    question_id=item.question_id,
+                    question=item.question,
+                    priority=item.priority,
+                    seed_queries=list(item.seed_queries),
+                    evidence_focus=list(item.evidence_focus),
+                    expected_gain=item.expected_gain,
+                )
+                for item in ctx.plan.theme_plan.question_cards
+            ]
+        for card in cards:
+            question_id = clean_whitespace(card.question_id)
+            if not question_id:
+                continue
+            if question_id in seen:
+                continue
+            seen.add(question_id)
+            out.append(question_id)
+        return out
+
+    def _merge_question_ids(self, left: list[str], right: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in [*left, *right]:
+            token = clean_whitespace(item)
+            if not token:
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+        return out
 
     def _render_track_results_markdown(
         self, track_results: list[_RenderTrackResultPacket]

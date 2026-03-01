@@ -24,6 +24,7 @@ from serpsage.steps.research.utils import (
     build_abstract_packet,
     chat_pydantic,
     merge_strings,
+    normalize_entity_coverage,
     normalize_strings,
     resolve_research_model,
 )
@@ -118,6 +119,23 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             )
             payload = self._empty_review()
 
+        (
+            entity_coverage_complete,
+            covered_entities,
+            missing_entities,
+        ) = normalize_entity_coverage(
+            covered_entities=payload.covered_entities,
+            missing_entities=payload.missing_entities,
+            entity_coverage_complete=payload.entity_coverage_complete,
+            required_entities=ctx.plan.theme_plan.required_entities,
+        )
+        payload = payload.model_copy(
+            update={
+                "entity_coverage_complete": bool(entity_coverage_complete),
+                "covered_entities": list(covered_entities),
+                "missing_entities": list(missing_entities),
+            }
+        )
         ctx.work.abstract_review = payload
         need_content_ids = self._normalize_source_ids(
             payload.need_content_source_ids,
@@ -153,6 +171,8 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             float(len(ctx.corpus.coverage_state.covered_subthemes)) / float(total),
         )
         ctx.current_round.coverage_ratio = float(coverage_ratio)
+        ctx.current_round.entity_coverage_complete = bool(entity_coverage_complete)
+        ctx.current_round.missing_entities = list(missing_entities)
 
         unresolved_topics = self._extract_unresolved_topics(
             payload.conflict_arbitration
@@ -211,9 +231,11 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "6) Evaluate temporal relevance for recency-sensitive claims.\n"
                     "7) Free-text fields must be in the required output language.\n"
                     "8) next_queries must remain strictly focused on CORE_QUESTION and must not introduce new standalone topics.\n"
-                    "9) If no valid focused query exists, return next_queries as an empty array.\n"
-                    "10) Return JSON only, exactly matching schema.\n"
-                    "11) Abstract evidence is provisional: avoid final certainty when content verification is still needed.\n"
+                    "9) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
+                    "10) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
+                    "11) If no valid focused query exists, return next_queries as an empty array.\n"
+                    "12) Return JSON only, exactly matching schema.\n"
+                    "13) Abstract evidence is provisional: avoid final certainty when content verification is still needed.\n"
                     "Allowed Evidence:\n"
                     "- Theme, theme plan, round summaries, abstract packet.\n"
                     "Failure Policy:\n"
@@ -241,6 +263,8 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "- Keep all free-text fields in the required output language.\n\n"
                     f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
                     f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
+                    "REQUIRED_ENTITIES:\n"
+                    f"{ctx.plan.theme_plan.required_entities}\n\n"
                     f"SOURCE_ABSTRACT_PACKET:\n{packet}\n\n"
                     "Escalation rubric for need_content_source_ids:\n"
                     "- Include IDs for sources tied to key conclusions, major conflicts, or model-selection decisions.\n"
@@ -258,6 +282,9 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "findings",
                 "conflict_arbitration",
                 "covered_subthemes",
+                "entity_coverage_complete",
+                "covered_entities",
+                "missing_entities",
                 "critical_gaps",
                 "confidence",
                 "need_content_source_ids",
@@ -287,6 +314,17 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "covered_subthemes": {
                     "type": "array",
                     "maxItems": 16,
+                    "items": {"type": "string"},
+                },
+                "entity_coverage_complete": {"type": "boolean"},
+                "covered_entities": {
+                    "type": "array",
+                    "maxItems": 24,
+                    "items": {"type": "string"},
+                },
+                "missing_entities": {
+                    "type": "array",
+                    "maxItems": 24,
                     "items": {"type": "string"},
                 },
                 "critical_gaps": {

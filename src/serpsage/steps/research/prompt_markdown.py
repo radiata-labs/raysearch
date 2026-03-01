@@ -65,6 +65,11 @@ def render_theme_plan_markdown(
     lines.extend(
         _render_markdown_bullets(plan.subthemes, indent="  ") or ["  - (none)"]
     )
+    lines.append("- Required entities:")
+    lines.extend(
+        _render_markdown_bullets(plan.required_entities, indent="  ")
+        or ["  - (none)"]
+    )
     if include_question_cards:
         lines.append("- Question cards:")
         if plan.question_cards:
@@ -126,6 +131,7 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
                 f"- Result count: {int(round_state.result_count)}",
                 f"- Confidence: {float(round_state.confidence):.3f}",
                 f"- Coverage ratio: {float(round_state.coverage_ratio):.3f}",
+                f"- Entity coverage complete: {bool(round_state.entity_coverage_complete)}",
                 f"- Unresolved conflicts: {int(round_state.unresolved_conflicts)}",
                 f"- Critical gaps: {int(round_state.critical_gaps)}",
                 f"- Stop: {bool(round_state.stop)}",
@@ -156,6 +162,11 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
             )
         else:
             lines.append("  - (none)")
+        lines.append("- Missing entities:")
+        lines.extend(
+            _render_markdown_bullets(round_state.missing_entities, indent="  ")
+            or ["  - (none)"]
+        )
     return "\n".join(lines).strip()
 
 
@@ -163,6 +174,7 @@ def render_abstract_review_markdown(review: AbstractOutputPayload) -> str:
     lines: list[str] = [
         "### Abstract Review",
         f"- Confidence: {float(review.confidence):.3f}",
+        f"- Entity coverage complete: {bool(review.entity_coverage_complete)}",
         f"- Next query strategy: {_normalize_scalar_text(review.next_query_strategy) or 'n/a'}",
         f"- Stop: {bool(review.stop)}",
         "- Findings:",
@@ -197,6 +209,16 @@ def render_abstract_review_markdown(review: AbstractOutputPayload) -> str:
     lines.append("- Next queries:")
     lines.extend(
         _render_markdown_bullets(review.next_queries, indent="  ") or ["  - (none)"]
+    )
+    lines.append("- Covered entities:")
+    lines.extend(
+        _render_markdown_bullets(review.covered_entities, indent="  ")
+        or ["  - (none)"]
+    )
+    lines.append("- Missing entities:")
+    lines.extend(
+        _render_markdown_bullets(review.missing_entities, indent="  ")
+        or ["  - (none)"]
     )
     return "\n".join(lines).strip()
 
@@ -240,6 +262,15 @@ def render_architect_plan_markdown(plan: RenderArchitectOutput) -> str:
                     "    - progression_hint: "
                     f"{_normalize_scalar_text(section.progression_hint) or 'n/a'}"
                 ),
+                "    - question_ids:",
+            ]
+        )
+        lines.extend(
+            _render_markdown_bullets(section.question_ids, indent="      ")
+            or ["      - (none)"]
+        )
+        lines.extend(
+            [
                 "    - scope_requirements:",
             ]
         )
@@ -268,8 +299,17 @@ def render_section_plan_markdown(section: RenderArchitectSectionPlan) -> str:
         f"- section_role: {_normalize_scalar_text(section.section_role) or 'n/a'}",
         f"- angle: {_normalize_scalar_text(section.angle) or 'n/a'}",
         f"- progression_hint: {_normalize_scalar_text(section.progression_hint) or 'n/a'}",
-        "- scope_requirements:",
+        "- question_ids:",
     ]
+    lines.extend(
+        _render_markdown_bullets(section.question_ids, indent="  ")
+        or ["  - (none)"]
+    )
+    lines.extend(
+        [
+        "- scope_requirements:",
+        ]
+    )
     lines.extend(
         _render_markdown_bullets(section.scope_requirements, indent="  ")
         or ["  - (none)"]

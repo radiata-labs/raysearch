@@ -7,7 +7,7 @@ from typing import Any, cast
 from serpsage.tokenize.stopwords import is_stopword
 from serpsage.utils import normalize_text, uniq_preserve_order
 
-WORD_RE = re.compile(r"[A-Za-z0-9]+")
+WORD_RE = re.compile(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*")
 CJK_KANA_RUN_RE = re.compile(
     r"[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\u3005\u30fc\uff66-\uff9d]+"
 )

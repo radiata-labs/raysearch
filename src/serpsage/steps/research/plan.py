@@ -135,7 +135,13 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         jobs = self._normalize_jobs(
             payload.search_jobs,
             job_limit=job_limit,
+            core_question=core_question,
             fallback_queries=candidate_queries,
+        )
+        jobs = self._enforce_low_budget_deep_policy(
+            jobs=jobs,
+            candidate_queries=candidate_queries,
+            job_limit=job_limit,
         )
 
         if not jobs:
@@ -159,6 +165,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         raw: list[PlanSearchJobPayload],
         *,
         job_limit: int,
+        core_question: str,
         fallback_queries: list[str],
     ) -> list[ResearchSearchJob]:
         if job_limit <= 0:
@@ -180,11 +187,26 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             mode = clean_whitespace(item.mode).casefold()
             if mode not in {"auto", "deep"}:
                 mode = "auto"
+            include_domains = self._normalize_strings(item.include_domains, limit=12)
+            exclude_domains = self._normalize_strings(item.exclude_domains, limit=12)
+            include_text = self._normalize_strings(item.include_text, limit=8)
+            exclude_text = self._normalize_strings(item.exclude_text, limit=8)
+            additional_queries = self._normalize_strings(
+                item.additional_queries,
+                limit=8,
+            )
+            if mode != "deep":
+                additional_queries = []
             out.append(
                 ResearchSearchJob(
                     query=query,
                     intent=intent,
                     mode=mode,  # type: ignore[arg-type]
+                    additional_queries=additional_queries,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                    include_text=include_text,
+                    exclude_text=exclude_text,
                 )
             )
             if len(out) >= job_limit:
@@ -192,7 +214,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
 
         if out:
             return out
-        fallback = merge_strings(fallback_queries, [], limit=job_limit)
+        fallback = merge_strings([core_question], fallback_queries, limit=job_limit)
         return [
             ResearchSearchJob(
                 query=item,
@@ -201,6 +223,55 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             )
             for item in fallback
         ]
+
+    def _normalize_strings(self, values: list[str], *, limit: int) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            token = clean_whitespace(str(item or ""))
+            if not token:
+                continue
+            key = token.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(token)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
+
+    def _enforce_low_budget_deep_policy(
+        self,
+        *,
+        jobs: list[ResearchSearchJob],
+        candidate_queries: list[str],
+        job_limit: int,
+    ) -> list[ResearchSearchJob]:
+        if int(job_limit) != 1 or not jobs:
+            return jobs
+        head = jobs[0]
+        extras = self._normalize_strings(
+            merge_strings(
+                list(head.additional_queries),
+                list(candidate_queries),
+                limit=8,
+            ),
+            limit=8,
+        )
+        extras = [
+            item
+            for item in extras
+            if item.casefold() != clean_whitespace(head.query).casefold()
+        ]
+        if not extras:
+            return jobs
+        jobs[0] = head.model_copy(
+            update={
+                "mode": "deep",
+                "additional_queries": extras,
+            }
+        )
+        return jobs
 
     def _build_plan_messages(
         self,
@@ -230,13 +301,16 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "1) All search_jobs must serve CORE_QUESTION. Do not introduce a new independent research question.\n"
                     "2) Minimize overlap between jobs while maximizing information gain.\n"
                     "3) Respect remaining budget and prioritize unresolved evidence gaps.\n"
-                    "4) Use deep mode only when higher recall or conflict verification is needed.\n"
+                    "4) Use deep mode when higher recall or conflict verification is needed.\n"
                     "5) Free-text fields must be in the required output language.\n"
                     "6) Temporal grounding: interpret relative time words against current UTC date.\n"
                     "7) If recency intent exists, include explicit temporal constraints in query text.\n"
                     "8) For high-impact claims, prioritize authoritative evidence routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
-                    "9) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
-                    "10) Return JSON only; no markdown or explanations.\n"
+                    "9) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
+                    "10) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
+                    "11) Domain/text route constraints are executable: include_domains, exclude_domains, include_text, exclude_text.\n"
+                    "12) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
+                    "13) Return JSON only; no markdown or explanations.\n"
                     "Allowed Evidence:\n"
                     "- User theme, theme plan, previous round summaries, candidate queries.\n"
                     "Failure Policy:\n"
@@ -265,6 +339,10 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
                     f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
                     f"CANDIDATE_QUERIES_MARKDOWN:\n{candidate_queries_markdown}\n\n"
+                    "ENTITY_POLICY:\n"
+                    f"- required_entities={ctx.plan.theme_plan.required_entities}\n"
+                    "- Every required entity must appear in query or additional_queries as exact text.\n"
+                    "- Do not drop version markers such as dots/hyphens (for example qwen3.5, glm4.7, llama-3.1).\n\n"
                     "BUDGET_REMAINING:\n"
                     f"- search_calls_remaining={max(0, budget.max_search_calls - ctx.runtime.search_calls)}\n"
                     f"- fetch_calls_remaining={max(0, budget.max_fetch_calls - ctx.runtime.fetch_calls)}\n"
@@ -273,7 +351,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "- coverage: close missing subtheme coverage.\n"
                     "- deepen: improve depth on high-value evidence branches.\n"
                     "- verify: target contradiction resolution and tie-break evidence.\n"
-                    "- refresh: prioritize latest authoritative updates."
+                    "- refresh: prioritize latest authoritative updates.\n"
+                    "- use include/exclude domain and text constraints when that increases authority and precision.\n"
+                    "- if max_queries_this_round=1, prefer deep mode with additional_queries for one-call breadth."
                 ),
             },
         ]
@@ -296,6 +376,31 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                             "query": {"type": "string"},
                             "intent": {"type": "string"},
                             "mode": {"type": "string"},
+                            "include_domains": {
+                                "type": "array",
+                                "maxItems": 12,
+                                "items": {"type": "string"},
+                            },
+                            "exclude_domains": {
+                                "type": "array",
+                                "maxItems": 12,
+                                "items": {"type": "string"},
+                            },
+                            "include_text": {
+                                "type": "array",
+                                "maxItems": 8,
+                                "items": {"type": "string"},
+                            },
+                            "exclude_text": {
+                                "type": "array",
+                                "maxItems": 8,
+                                "items": {"type": "string"},
+                            },
+                            "additional_queries": {
+                                "type": "array",
+                                "maxItems": 8,
+                                "items": {"type": "string"},
+                            },
                         },
                     },
                 },

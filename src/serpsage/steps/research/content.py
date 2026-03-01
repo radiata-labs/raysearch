@@ -23,6 +23,7 @@ from serpsage.steps.research.search import (
 from serpsage.steps.research.utils import (
     chat_pydantic,
     merge_strings,
+    normalize_entity_coverage,
     normalize_strings,
     resolve_research_model,
 )
@@ -119,6 +120,23 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             )
             payload = self._empty_review()
 
+        (
+            entity_coverage_complete,
+            covered_entities,
+            missing_entities,
+        ) = normalize_entity_coverage(
+            covered_entities=payload.covered_entities,
+            missing_entities=payload.missing_entities,
+            entity_coverage_complete=payload.entity_coverage_complete,
+            required_entities=ctx.plan.theme_plan.required_entities,
+        )
+        payload = payload.model_copy(
+            update={
+                "entity_coverage_complete": bool(entity_coverage_complete),
+                "covered_entities": list(covered_entities),
+                "missing_entities": list(missing_entities),
+            }
+        )
         ctx.work.content_review = payload
         findings = normalize_strings(payload.resolved_findings, limit=8)
         if findings:
@@ -137,6 +155,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         ctx.current_round.critical_gaps = int(
             len(normalize_strings(payload.remaining_gaps, limit=20))
         )
+        ctx.current_round.entity_coverage_complete = bool(entity_coverage_complete)
+        ctx.current_round.missing_entities = list(missing_entities)
         ctx.work.next_queries = merge_strings(
             list(ctx.work.next_queries),
             normalize_strings(
@@ -192,8 +212,10 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "7) For recency-sensitive claims, explicitly account for publication/update-time relevance.\n"
                     "8) Free-text fields must be in the required output language.\n"
                     "9) resolved_findings should be information-dense: include implication, condition, and edge-case when available.\n"
-                    "10) If no valid focused next query exists, return next_queries as an empty array.\n"
-                    "11) Return JSON only and match schema exactly.\n"
+                    "10) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
+                    "11) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
+                    "12) If no valid focused next query exists, return next_queries as an empty array.\n"
+                    "13) Return JSON only and match schema exactly.\n"
                     "Allowed Evidence:\n"
                     "- Theme, theme plan, abstract review, selected content packet.\n"
                     "Failure Policy:\n"
@@ -221,6 +243,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "- Keep all free-text fields in the required output language.\n\n"
                     f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
                     f"ABSTRACT_REVIEW_MARKDOWN:\n{abstract_review_markdown}\n\n"
+                    "REQUIRED_ENTITIES:\n"
+                    f"{ctx.plan.theme_plan.required_entities}\n\n"
                     f"SOURCE_CONTENT_PACKET:\n{packet}\n\n"
                     "Arbitration rubric:\n"
                     "- resolved: one side is sufficiently better supported by evidence.\n"
@@ -241,6 +265,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             "required": [
                 "resolved_findings",
                 "conflict_resolutions",
+                "entity_coverage_complete",
+                "covered_entities",
+                "missing_entities",
                 "remaining_gaps",
                 "confidence_adjustment",
                 "next_query_strategy",
@@ -264,6 +291,17 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                             "status": {"type": "string"},
                         },
                     },
+                },
+                "entity_coverage_complete": {"type": "boolean"},
+                "covered_entities": {
+                    "type": "array",
+                    "maxItems": 24,
+                    "items": {"type": "string"},
+                },
+                "missing_entities": {
+                    "type": "array",
+                    "maxItems": 24,
+                    "items": {"type": "string"},
                 },
                 "remaining_gaps": {
                     "type": "array",

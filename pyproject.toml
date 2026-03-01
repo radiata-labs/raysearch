@@ -75,7 +75,7 @@ dev-dependencies = [
     # lint
     "ruff>=0.6",
     "mypy>=1",
-
+    "pyright>=1.1.408",
     # docs
     "sophia-doc>=0.1",
     "tomlkit>=0.13",
@@ -153,7 +153,7 @@ keep-runtime-typing = true
 
 
 [tool.pyright]
-exclude = ["**/.conda", "**/.venv", "**/__pycache__"]
+exclude = ["**/.conda", "**/.venv", "**/__pycache__", "**/node_modules", "**/.*"]
 pythonVersion = "3.11"
 pythonPlatform = "All"
 #typeCheckingMode = "strict"

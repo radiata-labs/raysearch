@@ -236,8 +236,12 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         reservation_state: _BudgetReservationState,
         budget_lock: anyio.Lock,
     ) -> _TrackAllocation:
-        baseline_fetch = max(1, int(root.runtime.budget.max_fetch_per_round))
-        bonus_fetch = baseline_fetch + max(1, baseline_fetch // 2)
+        fetch_per_search_floor = max(
+            1,
+            int(root.runtime.budget.max_fetch_calls)
+            // max(1, int(root.runtime.budget.max_search_calls)),
+        )
+        bonus_fetch = 1
         baseline_width = max(
             1, int(self.settings.research.parallel.baseline_query_width)
         )
@@ -287,8 +291,36 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     bonus=False,
                 )
 
-            fetch_target = bonus_fetch if bonus else baseline_fetch
-            fetch_grant = max(0, min(int(fetch_target), int(remaining_fetch)))
+            minimum_fetch_for_grant = int(search_grant * fetch_per_search_floor)
+            max_fetch_affordable = int(
+                remaining_fetch
+                - max(0, int(remaining_search) - int(search_grant))
+                * int(fetch_per_search_floor)
+            )
+            if max_fetch_affordable < minimum_fetch_for_grant and search_grant > 1:
+                search_grant = 1
+                minimum_fetch_for_grant = int(search_grant * fetch_per_search_floor)
+                max_fetch_affordable = int(
+                    remaining_fetch
+                    - max(0, int(remaining_search) - int(search_grant))
+                    * int(fetch_per_search_floor)
+                )
+            if max_fetch_affordable < minimum_fetch_for_grant:
+                return _TrackAllocation(
+                    search_grant=0,
+                    fetch_grant=0,
+                    max_queries_per_round=1,
+                    bonus=False,
+                )
+            fetch_target = minimum_fetch_for_grant + (bonus_fetch if bonus else 0)
+            fetch_grant = max(
+                0,
+                min(
+                    int(fetch_target),
+                    int(max_fetch_affordable),
+                    int(remaining_fetch),
+                ),
+            )
             if fetch_grant <= 0:
                 return _TrackAllocation(
                     search_grant=0,

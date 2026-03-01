@@ -48,8 +48,8 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "https://github.com/LCLM-Horizon/A-Comprehensive-Survey-For-Long-Context-Language-Modeling",
-        None,
-        False,
+        "https://api-docs.deepseek.com/zh-cn/news/news251201",
+        "What is DeepSeek-V3.2?",
+        True,
     )
     print(out["fetch_result"])

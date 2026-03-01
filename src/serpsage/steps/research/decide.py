@@ -40,8 +40,22 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             budget.max_unresolved_conflicts
         )
         gaps_ok = int(round_state.critical_gaps) == 0
+        required_entities = normalize_strings(
+            ctx.plan.theme_plan.required_entities,
+            limit=24,
+        )
+        entity_coverage_ok = (
+            bool(round_state.entity_coverage_complete)
+            if required_entities
+            else True
+        )
         multi_signal_stop = bool(
-            model_stop and confidence_ok and coverage_ok and conflict_ok and gaps_ok
+            model_stop
+            and confidence_ok
+            and coverage_ok
+            and conflict_ok
+            and gaps_ok
+            and entity_coverage_ok
         )
         corpus_score_gain = float(round_state.corpus_score_gain)
 
@@ -76,6 +90,16 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         )
         next_queries = list(raw_next_queries)
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        if required_entities and not entity_coverage_ok:
+            next_queries = merge_strings(
+                self._build_entity_backfill_queries(
+                    core_question=core_question,
+                    missing_entities=round_state.missing_entities,
+                    limit=int(budget.max_queries_per_round),
+                ),
+                next_queries,
+                limit=int(budget.max_queries_per_round),
+            )
         allow_auto_seed = (
             not multi_signal_stop
             and int(ctx.runtime.no_progress_rounds)
@@ -127,11 +151,33 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         span.set_attr("coverage_ok", bool(coverage_ok))
         span.set_attr("conflict_ok", bool(conflict_ok))
         span.set_attr("gaps_ok", bool(gaps_ok))
+        span.set_attr("entity_coverage_ok", bool(entity_coverage_ok))
         span.set_attr("progress", bool(progress))
         span.set_attr("no_progress_rounds", int(ctx.runtime.no_progress_rounds))
         span.set_attr("stop", bool(stop))
         span.set_attr("stop_reason", stop_reason)
         return ctx
+
+    def _build_entity_backfill_queries(
+        self,
+        *,
+        core_question: str,
+        missing_entities: list[str],
+        limit: int,
+    ) -> list[str]:
+        base = clean_whitespace(core_question)
+        queries: list[str] = []
+        for item in normalize_strings(missing_entities, limit=16):
+            entity = clean_whitespace(item)
+            if not entity:
+                continue
+            if base:
+                queries.append(f"{base} {entity}")
+            else:
+                queries.append(entity)
+        if base:
+            queries.append(base)
+        return merge_strings(queries, [], limit=max(1, int(limit)))
 
 
 __all__ = ["ResearchDecideStep"]

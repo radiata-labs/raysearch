@@ -248,6 +248,7 @@ class ResearchSearchJob(MutableModel):
     query: str
     intent: str = "coverage"
     mode: Literal["auto", "deep"] = "auto"
+    additional_queries: list[str] = Field(default_factory=list)
     include_domains: list[str] = Field(default_factory=list)
     exclude_domains: list[str] = Field(default_factory=list)
     include_text: list[str] = Field(default_factory=list)
@@ -339,6 +340,8 @@ class ResearchRoundState(MutableModel):
     content_summary: str = ""
     confidence: float = 0.0
     coverage_ratio: float = 0.0
+    entity_coverage_complete: bool = False
+    missing_entities: list[str] = Field(default_factory=list)
     unresolved_conflicts: int = 0
     critical_gaps: int = 0
     stop_reason: str = ""

@@ -23,6 +23,7 @@ class ThemeOutputPayload(MutableModel):
     detected_input_language: str = "same as user input language"
     core_question: str = ""
     subthemes: list[str] = Field(default_factory=list, max_length=12)
+    required_entities: list[str] = Field(default_factory=list, max_length=16)
     question_cards: list[ThemeQuestionCardPayload] = Field(
         default_factory=list,
         max_length=24,
@@ -41,6 +42,7 @@ class ResearchThemePlanCard(MutableModel):
 class ResearchThemePlan(MutableModel):
     core_question: str = ""
     subthemes: list[str] = Field(default_factory=list, max_length=12)
+    required_entities: list[str] = Field(default_factory=list, max_length=16)
     input_language: str = ""
     output_language: str = ""
     question_cards: list[ResearchThemePlanCard] = Field(
@@ -53,6 +55,11 @@ class PlanSearchJobPayload(MutableModel):
     query: str
     intent: str = "coverage"
     mode: str = "auto"
+    include_domains: list[str] = Field(default_factory=list, max_length=12)
+    exclude_domains: list[str] = Field(default_factory=list, max_length=12)
+    include_text: list[str] = Field(default_factory=list, max_length=8)
+    exclude_text: list[str] = Field(default_factory=list, max_length=8)
+    additional_queries: list[str] = Field(default_factory=list, max_length=8)
 
 
 class PlanOutputPayload(MutableModel):
@@ -72,6 +79,9 @@ class AbstractOutputPayload(MutableModel):
         max_length=16,
     )
     covered_subthemes: list[str] = Field(default_factory=list, max_length=16)
+    entity_coverage_complete: bool = False
+    covered_entities: list[str] = Field(default_factory=list, max_length=24)
+    missing_entities: list[str] = Field(default_factory=list, max_length=24)
     critical_gaps: list[str] = Field(default_factory=list, max_length=12)
     confidence: float = 0.0
     need_content_source_ids: list[int] = Field(default_factory=list, max_length=20)
@@ -90,6 +100,9 @@ class ContentOutputPayload(MutableModel):
         default_factory=list,
         max_length=16,
     )
+    entity_coverage_complete: bool = False
+    covered_entities: list[str] = Field(default_factory=list, max_length=24)
+    missing_entities: list[str] = Field(default_factory=list, max_length=24)
     remaining_gaps: list[str] = Field(default_factory=list, max_length=12)
     confidence_adjustment: float = 0.0
     next_query_strategy: str = "coverage"
@@ -101,6 +114,7 @@ class RenderArchitectSectionPlan(MutableModel):
     section_id: str
     subhead: str
     section_role: Literal["opening", "body", "closing"]
+    question_ids: list[str] = Field(default_factory=list, max_length=16)
     scope_requirements: list[str] = Field(default_factory=list, max_length=12)
     writing_boundaries: list[str] = Field(default_factory=list, max_length=12)
     must_cover_points: list[str] = Field(default_factory=list, max_length=12)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -17,7 +16,6 @@ from serpsage.app.request import (
     SearchRequest,
 )
 from serpsage.app.response import FetchResultItem, FetchSubpagesResult
-from serpsage.models.errors import AppError
 from serpsage.models.pipeline import (
     ResearchSource,
     ResearchStepContext,
@@ -33,7 +31,7 @@ if TYPE_CHECKING:
 
 _TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
 _TRACKING_QUERY_PREFIXES = ("utm_",)
-_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+_TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
 
 
 @dataclass(slots=True)
@@ -72,11 +70,46 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ctx.current_round.stop_reason = "no_search_jobs"
             return ctx
 
+        remaining_fetch_budget = max(
+            0,
+            int(ctx.runtime.budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
+        )
+        if remaining_fetch_budget <= 0:
+            ctx.runtime.stop = True
+            ctx.runtime.stop_reason = "max_fetch_calls"
+            ctx.current_round.stop = True
+            ctx.current_round.stop_reason = "max_fetch_calls"
+            return ctx
+
+        executable_jobs = min(len(jobs), int(remaining_fetch_budget))
+        jobs = jobs[:executable_jobs]
+        if not jobs:
+            ctx.runtime.stop = True
+            ctx.runtime.stop_reason = "max_fetch_calls"
+            ctx.current_round.stop = True
+            ctx.current_round.stop_reason = "max_fetch_calls"
+            return ctx
+
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
+            jobs_left_after_current = max(0, len(jobs) - idx - 1)
+            fetch_cap = max(1, remaining_fetch_budget - jobs_left_after_current)
+            max_subpages = max(0, int(fetch_cap) - 1)
+            subpages_request = (
+                FetchSubpagesRequest(
+                    max_subpages=max_subpages,
+                    subpage_keywords=None,
+                )
+                if max_subpages > 0
+                else None
+            )
             req = SearchRequest(
                 query=job.query,
-                additional_queries=None,
+                additional_queries=(
+                    list(job.additional_queries or [])
+                    if str(job.mode) == "deep"
+                    else None
+                ),
                 mode=job.mode,
                 max_results=int(ctx.runtime.budget.max_results_per_search),
                 include_domains=(list(job.include_domains) or None),
@@ -94,12 +127,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     abstracts=FetchAbstractsRequest(
                         query=ctx.request.themes, max_chars=2200
                     ),
-                    subpages=FetchSubpagesRequest(
-                        max_subpages=max(
-                            1, min(4, int(ctx.runtime.budget.max_fetch_per_round))
-                        ),
-                        subpage_keywords=None,
-                    ),
+                    subpages=subpages_request,
                     overview=False,
                     others=None,
                 ),
@@ -112,22 +140,40 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     request_id=f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}",
                 )
             )
+            remaining_fetch_budget = max(0, int(remaining_fetch_budget) - 1)
 
         out = await self._search_runner.run_batch(contexts)
         all_results: list[FetchResultItem] = []
         new_source_ids: list[int] = []
         new_version_source_ids: list[int] = []
         per_round_fetch_calls = 0
+        remaining_fetch_budget = max(
+            0,
+            int(ctx.runtime.budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
+        )
+        fetch_budget_exhausted = False
         for item in out:
             if item.errors:
                 ctx.errors.extend(item.errors)
             results = list(item.output.results or [])
-            all_results.extend(results)
-            per_round_fetch_calls += int(len(results))
             for result in results:
+                if remaining_fetch_budget <= 0:
+                    fetch_budget_exhausted = True
+                    break
+                trimmed_result, consumed_pages = self._trim_result_to_fetch_budget(
+                    result=result,
+                    remaining_fetch_budget=remaining_fetch_budget,
+                )
+                if consumed_pages <= 0:
+                    continue
+                remaining_fetch_budget = max(
+                    0, int(remaining_fetch_budget) - int(consumed_pages)
+                )
+                per_round_fetch_calls += int(consumed_pages)
+                all_results.append(trimmed_result)
                 canonical_ids, version_ids = self._append_sources_from_fetch_result(
                     ctx=ctx,
-                    result=result,
+                    result=trimmed_result,
                     round_index=ctx.current_round.round_index,
                 )
                 for source_id in canonical_ids:
@@ -136,6 +182,8 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 for source_id in version_ids:
                     if source_id not in new_version_source_ids:
                         new_version_source_ids.append(source_id)
+            if fetch_budget_exhausted:
+                break
 
         ctx.current_round.result_count = int(len(all_results))
         ctx.current_round.new_source_ids = list(new_source_ids)
@@ -148,35 +196,27 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx.runtime.search_calls += int(len(jobs))
         ctx.runtime.fetch_calls += int(per_round_fetch_calls)
 
-        if int(ctx.runtime.fetch_calls) > int(ctx.runtime.budget.max_fetch_calls):
-            ctx.errors.append(
-                AppError(
-                    code="research_fetch_budget_soft_exceeded",
-                    message="search pipeline returned more fetched pages than logical budget",
-                    details={
-                        "fetch_calls": int(ctx.runtime.fetch_calls),
-                        "max_fetch_calls": int(ctx.runtime.budget.max_fetch_calls),
-                        "round_index": int(ctx.current_round.round_index),
-                    },
-                )
-            )
-            warnings.warn(
-                (
-                    "[research][warning] "
-                    "research_fetch_budget_soft_exceeded "
-                    f"request_id={ctx.request_id} "
-                    f"round_index={int(ctx.current_round.round_index)} "
-                    f"fetch_calls={int(ctx.runtime.fetch_calls)} "
-                    f"max_fetch_calls={int(ctx.runtime.budget.max_fetch_calls)}"
-                ),
-                stacklevel=1,
-            )
-
         span.set_attr("round_index", int(ctx.current_round.round_index))
         span.set_attr("results", int(len(all_results)))
+        span.set_attr("fetch_pages_used", int(per_round_fetch_calls))
         span.set_attr("new_canonical_sources", int(len(new_source_ids)))
         span.set_attr("new_versions", int(len(new_version_source_ids)))
         return ctx
+
+    def _trim_result_to_fetch_budget(
+        self,
+        *,
+        result: FetchResultItem,
+        remaining_fetch_budget: int,
+    ) -> tuple[FetchResultItem, int]:
+        pages_left = max(0, int(remaining_fetch_budget))
+        if pages_left <= 0:
+            return result.model_copy(update={"subpages": []}), 0
+        allowed_subpages = max(0, pages_left - 1)
+        trimmed_subpages = list(result.subpages or [])[:allowed_subpages]
+        trimmed = result.model_copy(update={"subpages": trimmed_subpages})
+        consumed = 1 + len(trimmed_subpages)
+        return trimmed, consumed
 
     def _append_sources_from_fetch_result(
         self,

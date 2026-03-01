@@ -53,6 +53,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             detected_input_language="same as user input language",
             core_question=ctx.request.themes,
             subthemes=[],
+            required_entities=[],
             question_cards=[],
         )
         try:
@@ -100,6 +101,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         if not core_question:
             core_question = ctx.request.themes
         subthemes = normalize_strings(payload.subthemes, limit=12)
+        required_entities = normalize_strings(payload.required_entities, limit=16)
         cards = self._normalize_question_cards(
             payload.question_cards,
             core_question=core_question,
@@ -119,6 +121,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.plan.theme_plan = ResearchThemePlan(
             core_question=core_question,
             subthemes=subthemes,
+            required_entities=required_entities,
             input_language=input_language,
             output_language=input_language,
             question_cards=[
@@ -133,16 +136,19 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 for card in cards
             ],
         )
-        primary_seeds = list(cards[0].seed_queries) if cards else []
+        seed_groups = [list(item.seed_queries) for item in cards]
+        next_query_limit = max(8, int(ctx.runtime.budget.max_queries_per_round) * 3)
         ctx.plan.next_queries = merge_strings(
-            primary_seeds,
+            *seed_groups,
             [core_question],
-            limit=int(ctx.runtime.budget.max_queries_per_round),
+            limit=next_query_limit,
         )
         ctx.corpus.coverage_state.total_subthemes = int(len(subthemes))
         ctx.notes.append(
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
         )
+        if required_entities:
+            ctx.notes.append(f"Required entities: {', '.join(required_entities[:8])}.")
         ctx.notes.append(f"Output language fixed to {ctx.plan.output_language}.")
 
         print(
@@ -210,7 +216,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "- detected_input_language (string)\n"
                     "- core_question (string)\n"
                     "- subthemes (string[])\n"
+                    "- required_entities (string[])\n"
                     "- question_cards (object[])\n"
+                    "required_entities policy:\n"
+                    "- If THEME compares/evaluates named entities, include each entity as an exact surface form.\n"
+                    "- Keep versions/suffixes intact (for example qwen3.5, glm4.7, llama-3.1).\n"
+                    "- If no concrete named entities are required, return an empty array.\n"
                     "question_cards item keys allowed:\n"
                     "- question (string)\n"
                     "- priority (integer 1..5)\n"
@@ -246,6 +257,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "- For comparison themes, include candidate-specific cards and one final synthesis card.\n\n"
                     "Output Notes:\n"
                     "- core_question: one-sentence anchor question.\n"
+                    "- required_entities: exact strings that must be covered by evidence and later summaries.\n"
                     "- question_cards: each card is one executable sub-question for one track.\n"
                     "- Do not produce top-level seed_queries.\n"
                     "- evidence_focus: list what evidence dimensions to prioritize.\n"
@@ -266,6 +278,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "detected_input_language",
                 "core_question",
                 "subthemes",
+                "required_entities",
                 "question_cards",
             ],
             "properties": {
@@ -274,6 +287,11 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "subthemes": {
                     "type": "array",
                     "maxItems": 12,
+                    "items": {"type": "string"},
+                },
+                "required_entities": {
+                    "type": "array",
+                    "maxItems": 16,
                     "items": {"type": "string"},
                 },
                 "question_cards": {

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 _JACCARD_SIMILARITY_THRESHOLD = 0.85
 _RE_CJK = re.compile(r"[\u4e00-\u9fff]")
 _RE_KANA = re.compile(r"[\u3040-\u30ff]")
+_RE_VERSION_LIKE_TOKEN = re.compile(r"(?i)^[a-z]*\d+(?:[._-]\d+)+(?:[a-z0-9._-]*)$")
 
 _ZH_INTENT_SUFFIX = "\u5b98\u65b9 \u6587\u6863 \u6307\u5357 \u5bf9\u6bd4"
 _ZH_EVIDENCE_SUFFIX = "\u8bc4\u6d4b \u62a5\u544a \u6765\u6e90"
@@ -536,6 +537,11 @@ class SearchExpandStep(StepBase[SearchStepContext]):
                 if len(token) < 2:
                     continue
             else:
+                if self._is_version_like_token(token):
+                    kept.append(token)
+                    if len(kept) >= 4:
+                        break
+                    continue
                 if token.isdigit() and len(token) != 4:
                     continue
                 if not token.isdigit() and len(token) < 3:
@@ -546,6 +552,9 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         if len(kept) < 2:
             return ""
         return " ".join(kept)
+
+    def _is_version_like_token(self, token: str) -> bool:
+        return bool(_RE_VERSION_LIKE_TOKEN.fullmatch(token))
 
     def _try_parse_json_value(self, text: str) -> object:
         try:

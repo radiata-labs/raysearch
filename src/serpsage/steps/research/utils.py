@@ -163,3 +163,46 @@ def build_abstract_packet(
 
 def _normalize_block_text(text: str) -> str:
     return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def normalize_entity_coverage(
+    *,
+    covered_entities: list[str],
+    missing_entities: list[str],
+    entity_coverage_complete: bool,
+    required_entities: list[str],
+) -> tuple[bool, list[str], list[str]]:
+    """Normalize and compute entity coverage status.
+
+    Args:
+        covered_entities: Entities reported as covered by the LLM.
+        missing_entities: Entities reported as missing by the LLM.
+        entity_coverage_complete: Coverage complete flag from LLM output.
+        required_entities: The canonical list of required entities.
+
+    Returns:
+        Tuple of (is_complete, covered_list, missing_list).
+    """
+    required = normalize_strings(required_entities, limit=24)
+    covered = normalize_strings(covered_entities, limit=24)
+    if not required:
+        return True, covered, []
+
+    required_map = {item.casefold(): item for item in required}
+    missing = [
+        required_map[item.casefold()]
+        for item in normalize_strings(missing_entities, limit=24)
+        if item.casefold() in required_map
+    ]
+    if not missing:
+        covered_keys = {item.casefold() for item in covered}
+        missing = [
+            item
+            for item in required
+            if item.casefold() not in covered_keys
+        ]
+    complete = bool(
+        (bool(entity_coverage_complete) or not missing_entities)
+        and not missing
+    )
+    return complete, covered, missing
