@@ -13,10 +13,10 @@ from serpsage.models.research import (
     ThemeQuestionCardPayload,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt_style import (
-    UNIVERSAL_GUARDRAILS,
-    build_style_overlay,
-    compose_system_prompt,
+from serpsage.steps.research.prompt import (
+    build_theme_messages as build_theme_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
     infer_report_style_from_theme,
     resolve_report_style,
 )
@@ -41,7 +41,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        card_cap = max(1, int(self.settings.research.parallel.question_card_cap))
+        mode_depth = ctx.runtime.mode_depth
+        card_cap = max(1, int(mode_depth.max_question_cards_effective))
         seed_limit = max(6, int(ctx.runtime.budget.max_queries_per_round) * 3)
         style_cfg = self.settings.research.report_style
         hinted_style = infer_report_style_from_theme(
@@ -173,6 +174,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "question_cards": len(cards),
                 "subthemes": len(subthemes),
                 "next_queries": len(ctx.plan.next_queries),
+                "mode_depth_profile": str(mode_depth.mode_key),
+                "mode_depth_question_card_cap": int(card_cap),
                 "report_style_selected": str(report_style),
                 "report_style_fallback_used": bool(style_fallback_used),
             },
@@ -187,121 +190,25 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         card_cap: int,
     ) -> list[dict[str, str]]:
         budget = ctx.runtime.budget
+        mode_depth = ctx.runtime.mode_depth
         hinted_style = infer_report_style_from_theme(
             ctx.request.themes,
             default=self._normalize_style_fallback(
                 self.settings.research.report_style.fallback_style
             ),
         )
-        system_contract = (
-            "Role: Senior Research Architect.\n"
-            "Mission: Decompose THEME into executable, non-overlapping research question cards and classify one report_style.\n"
-            "Instruction Priority:\n"
-            "P1) Schema correctness.\n"
-            "P2) Question-card execution quality.\n"
-            "P3) Decomposition power and coverage.\n"
-            "P4) Report-style fit for user task intent.\n"
-            "P5) Language consistency.\n"
-            "Step-by-step decomposition method:\n"
-            "1) Classify THEME into one primary type: comparison/selection, planning/how-to, diagnosis, trend/forecast, or factual mapping.\n"
-            "2) Predict best report_style for user value: decision/explainer/execution.\n"
-            "3) Define evidence dimensions before writing cards (for example: performance, cost, reliability, ecosystem, constraints, risk, recency).\n"
-            "4) Identify subthemes that ensure high coverage with low overlap.\n"
-            "5) Convert subthemes into executable question_cards, each card covering one distinct evidence objective.\n"
-            "Question-type playbook:\n"
-            "A) Comparison / Selection question:\n"
-            "- If THEME compares N candidates, create candidate cards (one per candidate) and one synthesis card.\n"
-            "- Candidate cards: evaluate one candidate only using shared criteria.\n"
-            "- Synthesis card: answer which option fits which scenario and why.\n"
-            "- For two-candidate comparisons, target structure is: candidate A card + candidate B card + final recommendation card.\n"
-            "B) Planning / How-to question:\n"
-            "- Split into goal definition, implementation path, bottlenecks, and validation criteria.\n"
-            "C) Diagnosis / Why question:\n"
-            "- Split into symptom framing, root-cause hypotheses, disambiguation evidence, and fix validation.\n"
-            "D) Trend / Forecast question:\n"
-            "- Split into current baseline, drivers, constraints, and forward-looking scenarios with time anchors.\n"
-            "Hard Constraints:\n"
-            "1) Output free-text in detected_input_language.\n"
-            "2) Every question card must be externally verifiable by web evidence.\n"
-            "3) question_cards must be deduplicated and practical for a single track loop.\n"
-            "4) Each card must focus on one sub-problem, not the entire THEME restated.\n"
-            "5) Each card needs distinct evidence_focus and high-yield seed_queries.\n"
-            "6) priority must be 1..5 (5 highest).\n"
-            f"7) Return at most {card_cap} question cards.\n"
-            "8) Do not return top-level seed_queries; seed queries must be inside question_cards items.\n"
-            "9) report_style must be exactly one of: decision, explainer, execution.\n"
-            "10) Return JSON only.\n"
-            "Output Contract (STRICT JSON SHAPE):\n"
-            "Top-level keys allowed:\n"
-            "- detected_input_language (string)\n"
-            "- core_question (string)\n"
-            "- report_style (decision|explainer|execution)\n"
-            "- subthemes (string[])\n"
-            "- required_entities (string[])\n"
-            "- question_cards (object[])\n"
-            "required_entities policy:\n"
-            "- If THEME compares/evaluates named entities, include each entity as an exact surface form.\n"
-            "- Keep versions/suffixes intact (for example qwen3.5, glm4.7, llama-3.1).\n"
-            "- If no concrete named entities are required, return an empty array.\n"
-            "question_cards item keys allowed:\n"
-            "- question (string)\n"
-            "- priority (integer 1..5)\n"
-            "- seed_queries (string[])\n"
-            "- evidence_focus (string[])\n"
-            "- expected_gain (string)\n"
-            "Do not add question_id in question_cards; question_id is generated by runtime.\n"
-            "Quality Checklist:\n"
-            "- High coverage, low overlap, concrete queries, explicit expected gain.\n"
-            "- Every question_cards item must include question, priority, seed_queries, evidence_focus, expected_gain.\n"
-            "- Comparison questions must include per-candidate cards and one synthesis/final-decision card."
+        return build_theme_prompt_messages(
+            theme=ctx.request.themes,
+            search_mode=ctx.request.search_mode,
+            mode_depth_profile=str(mode_depth.mode_key),
+            current_utc_timestamp=now_utc.isoformat(),
+            current_utc_date=now_utc.date().isoformat(),
+            max_rounds=int(budget.max_rounds),
+            max_search_calls=int(budget.max_search_calls),
+            max_queries_per_round=int(budget.max_queries_per_round),
+            card_cap=int(card_cap),
+            hinted_style=hinted_style,
         )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=build_style_overlay(
-                        stage="theme",
-                        style=hinted_style,
-                    ),
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"THEME:\n{ctx.request.themes}\n\n"
-                    f"SEARCH_MODE:\n{ctx.request.search_mode}\n\n"
-                    "TIME_CONTEXT:\n"
-                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
-                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
-                    "TEMPORAL_POLICY:\n"
-                    "- If THEME asks for latest/current/today/now/as of, include explicit time anchors in seed queries.\n"
-                    "- Resolve relative words against current_utc_date.\n\n"
-                    "BUDGET_HINTS:\n"
-                    f"- max_rounds={budget.max_rounds}\n"
-                    f"- max_search_calls={budget.max_search_calls}\n"
-                    f"- max_queries_per_round={budget.max_queries_per_round}\n\n"
-                    "DECOMPOSITION_POLICY:\n"
-                    "- Prefer fewer high-information cards over many generic cards.\n"
-                    "- Avoid cards that only rephrase THEME.\n"
-                    "- Make evidence_focus mutually informative (little overlap).\n"
-                    "- For comparison themes, include candidate-specific cards and one final synthesis card.\n\n"
-                    "Output Notes:\n"
-                    "- core_question: one-sentence anchor question.\n"
-                    "- report_style: classify best user-facing report style as decision/explainer/execution.\n"
-                    "- required_entities: exact strings that must be covered by evidence and later summaries.\n"
-                    "- question_cards: each card is one executable sub-question for one track.\n"
-                    "- Do not produce top-level seed_queries.\n"
-                    "- evidence_focus: list what evidence dimensions to prioritize.\n"
-                    "- expected_gain: concrete learning value from this card.\n\n"
-                    "Comparison Pattern Example (generic):\n"
-                    "- Card 1: evaluate candidate A under shared criteria.\n"
-                    "- Card 2: evaluate candidate B under the same criteria.\n"
-                    "- Card 3: integrate evidence and decide best fit by scenario."
-                ),
-            },
-        ]
 
     def _build_theme_schema(self, *, card_cap: int) -> dict[str, Any]:
         return {

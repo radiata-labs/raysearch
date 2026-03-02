@@ -159,7 +159,7 @@ def build_engine(
         ResearchSearchStep(rt=rt, search_runner=search_runner),
         ResearchOverviewStep(rt=rt, llm=llm),
         ResearchContentStep(rt=rt, llm=llm),
-        ResearchDecideStep(rt=rt),
+        ResearchDecideStep(rt=rt, llm=llm),
     ]
     research_round_runner = RunnerBase[ResearchStepContext](
         rt=rt,
@@ -171,6 +171,7 @@ def build_engine(
         ResearchThemeStep(rt=rt, llm=llm),
         ResearchLoopStep(
             rt=rt,
+            llm=llm,
             round_runner=research_round_runner,
             render_step=ResearchSubreportStep(rt=rt, llm=llm),
         ),

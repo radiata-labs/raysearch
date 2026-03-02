@@ -18,19 +18,29 @@ from serpsage.models.research import (
     RenderArchitectSectionPlan,
     ReportStyle,
     ResearchThemePlan,
+    TrackInsightCardPayload,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt_markdown import (
+from serpsage.steps.research.context import (
     normalize_block_text,
     render_architect_plan_markdown,
     render_question_cards_markdown,
     render_section_plan_markdown,
     render_theme_plan_markdown,
 )
-from serpsage.steps.research.prompt_style import (
-    UNIVERSAL_GUARDRAILS,
-    build_style_overlay,
-    compose_system_prompt,
+from serpsage.steps.research.prompt import (
+    build_density_gate_messages as build_density_gate_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
+    build_render_architect_messages as build_render_architect_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
+    build_render_structured_messages as build_render_structured_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
+    build_render_writer_messages as build_render_writer_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
     resolve_report_style,
 )
 from serpsage.steps.research.utils import resolve_research_model
@@ -90,6 +100,7 @@ class _RenderTrackResultPacket:
     confidence: float
     coverage_ratio: float
     unresolved_conflicts: int
+    track_insight_card: TrackInsightCardPayload | None = None
     key_findings: list[str] = field(default_factory=list)
     subreport_excerpt: str = ""
 
@@ -98,8 +109,10 @@ class _RenderTrackResultPacket:
 class _RenderFinalContextPacket:
     theme: str
     target_output_language: str
+    mode_depth_profile: str
     utc_timestamp: str
     utc_date: str
+    target_length_ratio: float
     theme_plan: ResearchThemePlan
     question_cards: list[ResearchQuestionCard] = field(default_factory=list)
     track_results: list[_RenderTrackResultPacket] = field(default_factory=list)
@@ -136,6 +149,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "mode": "final_markdown",
                     "track_results": int(len(ctx.parallel.track_results)),
                     "content_chars": int(len(str(ctx.output.content or ""))),
+                    "mode_depth_profile": str(ctx.runtime.mode_depth.mode_key),
+                    "density_gate_passes_applied": int(
+                        ctx.runtime.density_gate_passes_applied
+                    ),
+                    "target_output_chars": int(ctx.runtime.target_output_chars),
+                    "output_length_ratio_vs_target": float(
+                        ctx.runtime.output_length_ratio_vs_target
+                    ),
                     "report_style_selected": str(report_style),
                     "style_applied_stage": "render" if style_applied else "none",
                 },
@@ -155,6 +176,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "mode": "final_structured",
                 "track_results": int(len(ctx.parallel.track_results)),
                 "has_structured": bool(ctx.output.structured is not None),
+                "mode_depth_profile": str(ctx.runtime.mode_depth.mode_key),
                 "report_style_selected": str(report_style),
                 "style_applied_stage": "render" if style_applied else "none",
             },
@@ -186,6 +208,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             architect_output=architect_output,
         )
+        architect_output = self._enforce_section_range(
+            ctx=ctx,
+            architect_output=architect_output,
+        )
         writer_outputs = await self._run_writers(
             ctx=ctx,
             architect_output=architect_output,
@@ -197,6 +223,25 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             architect_output=architect_output,
             writer_outputs=writer_outputs,
+        )
+        target_chars = max(
+            0,
+            int(
+                len(str(assembled))
+                * float(ctx.runtime.mode_depth.target_length_ratio_vs_current)
+            ),
+        )
+        if target_chars > 0 and int(ctx.runtime.target_output_chars) <= 0:
+            ctx.runtime.target_output_chars = int(target_chars)
+            ctx.runtime.output_length_ratio_vs_target = float(
+                len(str(assembled)) / float(target_chars)
+            )
+        assembled = await self._apply_density_gate(
+            ctx=ctx,
+            markdown=assembled,
+            target_language=target_language,
+            now_utc=now_utc,
+            context_packet_markdown=context_packet_markdown,
         )
         ctx.output.structured = None
         ctx.output.content = self._normalize_markdown(assembled)
@@ -219,6 +264,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             chat_result = await self._llm.chat(
                 model=model,
                 messages=self._build_architect_messages(
+                    ctx=ctx,
                     report_style=report_style,
                     style_applied=style_applied,
                     target_language=target_language,
@@ -455,6 +501,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     def _build_architect_messages(
         self,
         *,
+        ctx: ResearchStepContext,
         report_style: ReportStyle,
         style_applied: bool,
         target_language: str,
@@ -462,60 +509,19 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown: str,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
-        style_overlay = (
-            build_style_overlay(stage="render_architect", style=report_style)
-            if style_applied
-            else ""
+        section_min = max(1, int(ctx.runtime.mode_depth.render_section_min))
+        section_max = max(section_min, int(ctx.runtime.mode_depth.render_section_max))
+        return build_render_architect_prompt_messages(
+            target_output_language=target_language,
+            target_output_language_label=target_language_name,
+            current_utc_date=now_utc.date().isoformat(),
+            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            report_style=report_style,
+            style_applied=bool(style_applied),
+            section_min=int(section_min),
+            section_max=int(section_max),
+            context_packet_markdown=context_packet_markdown,
         )
-        style_lock_line = (
-            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-        )
-        system_contract = (
-            "Role: Final-report architect.\n"
-            "Mission: produce a JSON-only section blueprint for a polished end-user report.\n"
-            "Output requirements:\n"
-            "1) Return valid JSON only.\n"
-            "2) Return 5-10 sections.\n"
-            "3) Ordering is strict: one opening first, body sections in the middle, one closing last.\n"
-            "4) section_role must be one of opening/body/closing.\n"
-            "5) Every section must include section_id, subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
-            "Content-quality requirements:\n"
-            "1) Subheads must be concrete, non-overlapping, and non-generic.\n"
-            "2) Body sections must form a progressive reasoning flow, not repeated parallel slices.\n"
-            "3) must_cover_points must be specific and evidence-seeking.\n"
-            "4) writing_boundaries must explicitly block drift and overclaiming.\n"
-            "5) If evidence is limited, narrow scope instead of inventing content.\n"
-            "Privacy requirements:\n"
-            "1) The final report is external-facing; do not expose internal process details.\n"
-            "2) Do not design sections about runtime mechanics or internal audits.\n"
-            "3) Never include internal metadata in user-facing section intent: question IDs, track IDs, rounds, search/fetch calls, stop reasons, section IDs, or coverage audit.\n"
-            "4) Keep language concise and implementation-ready."
-        )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=style_overlay,
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"{style_lock_line}"
-                    "ARCHITECT_TASK:\n"
-                    "- Plan only. Do not write report prose.\n"
-                    "- Optimize for clarity, analytical depth, and decision value.\n"
-                    "- Keep the blueprint user-facing, not system-facing.\n"
-                    "- Ensure every question card is covered by at least one body section.\n"
-                    "- Output schema JSON only.\n\n"
-                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
-                ),
-            },
-        ]
 
     def _build_writer_messages(
         self,
@@ -533,71 +539,18 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         section_prefix_h2 = f"## {section_subhead or 'Section'}"
         section_packet_markdown = render_section_plan_markdown(section)
         all_section_plan_markdown = render_architect_plan_markdown(architect_output)
-        style_overlay = (
-            build_style_overlay(stage="render_writer", style=report_style)
-            if style_applied
-            else ""
+        return build_render_writer_prompt_messages(
+            target_output_language=target_language,
+            target_output_language_label=target_language_name,
+            current_utc_date=now_utc.date().isoformat(),
+            report_style=report_style,
+            style_applied=bool(style_applied),
+            section_subhead=section_subhead,
+            section_prefix_h2=section_prefix_h2,
+            all_section_plan_markdown=all_section_plan_markdown,
+            section_plan_markdown=section_packet_markdown,
+            context_packet_markdown=context_packet_markdown,
         )
-        style_lock_line = (
-            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-        )
-        system_contract = (
-            "Role: Section writer.\n"
-            "Mission: write exactly one high-quality report section fragment.\n"
-            "Follow CURRENT_SECTION_PLAN_MARKDOWN as a strict contract.\n"
-            "Writing goals:\n"
-            "1) Be clear, concrete, and task-useful.\n"
-            "2) Explain trade-offs and uncertainty boundaries.\n"
-            "3) Keep logic explicit: claim -> evidence -> implication.\n"
-            "4) Use tables only when they improve comparison or compression of evidence.\n"
-            "Formatting rules:\n"
-            "1) Output markdown fragment only.\n"
-            "2) Use only ### and deeper headings.\n"
-            "3) Never output # or ##.\n"
-            "4) Never repeat the section H2 title; it is already rendered.\n"
-            "5) No citation tokens and no pseudo-citations.\n"
-            "Privacy rules (must):\n"
-            "1) Never mention internal mechanics, pipeline stages, or prompt/context packet names.\n"
-            "2) Never mention internal metadata: track IDs, question IDs, rounds, search calls, fetch calls, stop reasons, coverage audit, or section IDs.\n"
-            "3) Write as a polished external report for end users.\n"
-            "Quality guardrails:\n"
-            "1) Avoid filler, template language, and repetitive phrasing.\n"
-            "2) Avoid phrases like 'this report' or 'this section' unless needed for clarity.\n"
-            "3) If evidence is insufficient, state limits plainly without exposing internal process."
-        )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=style_overlay,
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"{style_lock_line}"
-                    "SECTION_RENDERING_NOTE:\n"
-                    "- Final assembler already renders CURRENT_SECTION_PLAN_MARKDOWN.subhead as a `##` title.\n"
-                    "- Your fragment must not repeat that title.\n\n"
-                    "PRIVATE_CONTEXT_NOTE:\n"
-                    "- FINAL_CONTEXT_PACKET_MARKDOWN is private working context.\n"
-                    "- Do not disclose private metadata in output.\n\n"
-                    "SECTION_PREFIX_ALREADY_RENDERED:\n"
-                    f"{section_prefix_h2}\n\n"
-                    "WRITING_START_RULE:\n"
-                    "- Continue writing after SECTION_PREFIX_ALREADY_RENDERED.\n"
-                    "- Do not output SECTION_PREFIX_ALREADY_RENDERED again.\n\n"
-                    f"CURRENT_SECTION_SUBHEAD_ALREADY_RENDERED_AS_H2:\n{section_subhead}\n\n"
-                    f"ARCHITECT_REPORT_PLAN_MARKDOWN:\n{all_section_plan_markdown}\n\n"
-                    f"CURRENT_SECTION_PLAN_MARKDOWN:\n{section_packet_markdown}\n\n"
-                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
-                ),
-            },
-        ]
 
     def _build_final_structured_messages(
         self,
@@ -616,44 +569,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown = self._render_final_context_packet_markdown(
             context_packet
         )
-        style_overlay = (
-            build_style_overlay(stage="render_structured", style=report_style)
-            if style_applied
-            else ""
+        return build_render_structured_prompt_messages(
+            target_output_language=target_language,
+            target_output_language_label=target_language_name,
+            current_utc_date=now_utc.date().isoformat(),
+            report_style=report_style,
+            style_applied=bool(style_applied),
+            context_packet_markdown=context_packet_markdown,
         )
-        style_lock_line = (
-            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-        )
-        system_contract = (
-            "Role: Structured Research Synthesizer.\n"
-            "Mission: Build one schema-valid JSON object from FINAL_CONTEXT_PACKET.\n"
-            "Rules:\n"
-            "1) Output must strictly validate the provided schema.\n"
-            "2) Keep all free-text in TARGET_OUTPUT_LANGUAGE.\n"
-            "3) Keep claims evidence-grounded and uncertainty-aware.\n"
-            "4) Resolve relative time terms against CURRENT_UTC_DATE.\n"
-            "5) Do not include markdown, code fences, citations, or commentary.\n"
-            "6) Do not leak internal process metadata or private context labels."
-        )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=style_overlay,
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"{style_lock_line}"
-                    f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
-                ),
-            },
-        ]
 
     def _assemble_markdown_from_sections(
         self,
@@ -683,19 +606,21 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         target_language: str,
         now_utc: datetime,
     ) -> _RenderFinalContextPacket:
+        mode_depth = ctx.runtime.mode_depth
         return _RenderFinalContextPacket(
             theme=str(ctx.request.themes),
             target_output_language=str(target_language),
+            mode_depth_profile=str(mode_depth.mode_key),
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
+            target_length_ratio=float(mode_depth.target_length_ratio_vs_current),
             theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
             question_cards=[
                 item.model_copy(deep=True) for item in ctx.parallel.question_cards
             ],
             track_results=self._build_track_result_packet(ctx.parallel.track_results),
-            render_objective=(
-                "Produce one theme-focused final synthesis with consensus, conflicts, "
-                "uncertainty boundaries, and implications."
+            render_objective=self._render_objective_for_mode(
+                mode_key=str(mode_depth.mode_key)
             ),
         )
 
@@ -708,9 +633,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             normalize_block_text(packet.theme) or "n/a",
             "## Target Output Language",
             normalize_block_text(packet.target_output_language) or "n/a",
+            "## Mode Depth Profile",
+            normalize_block_text(packet.mode_depth_profile) or "n/a",
             "## Time Context",
             f"- UTC timestamp: {packet.utc_timestamp}",
             f"- UTC date: {packet.utc_date}",
+            "## Length Policy",
+            f"- target_length_ratio_vs_current={float(packet.target_length_ratio):.2f}",
             "## Render Objective",
             packet.render_objective,
             "## Theme Plan",
@@ -728,6 +657,152 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             self._render_track_results_markdown(packet.track_results),
         ]
         return "\n".join(lines).strip()
+
+    def _render_objective_for_mode(self, *, mode_key: str) -> str:
+        mode_name = clean_whitespace(mode_key).casefold()
+        if mode_name == "research-fast":
+            return (
+                "Produce a concise synthesis that answers the theme directly with only "
+                "the highest-impact findings."
+            )
+        if mode_name == "research-pro":
+            return (
+                "Produce a rich, high-density synthesis with explicit tradeoffs, "
+                "boundary conditions, and action-ready implications."
+            )
+        return (
+            "Produce a stable high-density synthesis with clear conclusions, conflicts, "
+            "uncertainty boundaries, and actionable implications."
+        )
+
+    def _enforce_section_range(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        architect_output: RenderArchitectOutput,
+    ) -> RenderArchitectOutput:
+        section_min = max(1, int(ctx.runtime.mode_depth.render_section_min))
+        section_max = max(section_min, int(ctx.runtime.mode_depth.render_section_max))
+        sections = list(architect_output.sections or [])
+        if not sections:
+            return architect_output
+        opening = sections[0]
+        closing = sections[-1]
+        body_sections = list(sections[1:-1]) if len(sections) >= 2 else []
+        if len(sections) > section_max:
+            keep_body = max(0, section_max - 2)
+            body_sections = body_sections[:keep_body]
+            sections = [opening, *body_sections, closing]
+        while len(sections) < section_min:
+            idx = len(body_sections) + 1
+            body_sections.append(
+                RenderArchitectSectionPlan(
+                    section_id=f"body_{idx}",
+                    subhead=f"Additional Insight {idx}",
+                    section_role="body",
+                    question_ids=[],
+                    scope_requirements=[
+                        "Add one high-impact information layer not covered above."
+                    ],
+                    writing_boundaries=["Avoid repeating prior section content."],
+                    must_cover_points=[
+                        "One new conclusion with explicit condition and implication."
+                    ],
+                    angle="density_extension",
+                    progression_hint="Expand with non-overlapping incremental value.",
+                )
+            )
+            sections = [opening, *body_sections, closing]
+        return architect_output.model_copy(update={"sections": sections})
+
+    async def _apply_density_gate(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        markdown: str,
+        target_language: str,
+        now_utc: datetime,
+        context_packet_markdown: str,
+    ) -> str:
+        mode_depth = ctx.runtime.mode_depth
+        if not bool(mode_depth.enable_density_gate):
+            return markdown
+        pass_cap = max(0, int(mode_depth.density_gate_passes))
+        if pass_cap <= 0:
+            return markdown
+        model = resolve_research_model(
+            ctx=ctx,
+            stage="markdown",
+            fallback=self.settings.answer.generate.use_model,
+        )
+        current = str(markdown or "")
+        target_ratio = float(mode_depth.target_length_ratio_vs_current)
+        target_chars = max(0, int(len(current) * target_ratio))
+        if target_chars > 0:
+            ctx.runtime.target_output_chars = int(target_chars)
+        for pass_index in range(pass_cap):
+            try:
+                result = await self._llm.chat(
+                    model=model,
+                    messages=self._build_density_gate_messages(
+                        ctx=ctx,
+                        markdown=current,
+                        target_language=target_language,
+                        now_utc=now_utc,
+                        context_packet_markdown=context_packet_markdown,
+                        pass_index=pass_index,
+                        target_chars=target_chars,
+                    ),
+                    response_format=None,
+                )
+                candidate = self._normalize_markdown(str(result.text or ""))
+            except Exception as exc:  # noqa: BLE001
+                await self.emit_tracking_event(
+                    event_name="research.density_gate.error",
+                    request_id=ctx.request_id,
+                    stage="render",
+                    status="error",
+                    error_code="research_density_gate_failed",
+                    error_type=type(exc).__name__,
+                    attrs={
+                        "pass_index": int(pass_index + 1),
+                        "model": str(model),
+                        "message": str(exc),
+                    },
+                )
+                break
+            if not candidate:
+                continue
+            if target_chars > 0 and len(candidate) < int(target_chars * 0.75):
+                continue
+            current = candidate
+            ctx.runtime.density_gate_passes_applied += 1
+        if target_chars > 0:
+            ctx.runtime.output_length_ratio_vs_target = float(
+                len(current) / float(target_chars)
+            )
+        return current
+
+    def _build_density_gate_messages(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        markdown: str,
+        target_language: str,
+        now_utc: datetime,
+        context_packet_markdown: str,
+        pass_index: int,
+        target_chars: int,
+    ) -> list[dict[str, str]]:
+        return build_density_gate_prompt_messages(
+            target_output_language=target_language,
+            current_utc_date=now_utc.date().isoformat(),
+            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            pass_index=int(pass_index),
+            target_chars=int(target_chars),
+            context_packet_markdown=context_packet_markdown,
+            current_markdown=markdown,
+        )
 
     def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
         token = clean_whitespace(
@@ -768,6 +843,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 confidence=float(item.confidence),
                 coverage_ratio=float(item.coverage_ratio),
                 unresolved_conflicts=int(item.unresolved_conflicts),
+                track_insight_card=self._coerce_track_insight_card(
+                    item.track_insight_card
+                ),
                 key_findings=list(item.key_findings),
                 subreport_excerpt=normalize_block_text(
                     str(item.subreport_markdown or "")
@@ -827,6 +905,54 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 [
                     f"### Evidence Cluster {index}",
                     f"- Research question: {question}",
+                    "- Insight card:",
+                ]
+            )
+            insight_card = item.track_insight_card
+            if insight_card is None:
+                lines.append("  - (none)")
+            else:
+                lines.append(
+                    f"  - Direct answer: {normalize_block_text(insight_card.direct_answer) or 'n/a'}"
+                )
+                lines.append("  - High-value points:")
+                if insight_card.high_value_points:
+                    for point in insight_card.high_value_points:
+                        conclusion = normalize_block_text(point.conclusion) or "n/a"
+                        condition = normalize_block_text(point.condition) or "n/a"
+                        impact = normalize_block_text(point.impact) or "n/a"
+                        lines.append(
+                            "    - "
+                            f"conclusion={conclusion}; condition={condition}; impact={impact}"
+                        )
+                else:
+                    lines.append("    - (none)")
+                lines.append("  - Tradeoffs/mechanisms:")
+                if insight_card.key_tradeoffs_or_mechanisms:
+                    for token in insight_card.key_tradeoffs_or_mechanisms:
+                        text = normalize_block_text(token)
+                        if text:
+                            lines.append(f"    - {text}")
+                else:
+                    lines.append("    - (none)")
+                lines.append("  - Unknowns/risks:")
+                if insight_card.unknowns_and_risks:
+                    for token in insight_card.unknowns_and_risks:
+                        text = normalize_block_text(token)
+                        if text:
+                            lines.append(f"    - {text}")
+                else:
+                    lines.append("    - (none)")
+                lines.append("  - Next actions:")
+                if insight_card.next_actions:
+                    for token in insight_card.next_actions:
+                        text = normalize_block_text(token)
+                        if text:
+                            lines.append(f"    - {text}")
+                else:
+                    lines.append("    - (none)")
+            lines.extend(
+                [
                     "- Key findings:",
                 ]
             )
@@ -884,6 +1010,20 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 )
             )
         return out
+
+    def _coerce_track_insight_card(
+        self, raw: object | None
+    ) -> TrackInsightCardPayload | None:
+        if raw is None:
+            return None
+        if isinstance(raw, TrackInsightCardPayload):
+            return raw.model_copy(deep=True)
+        if isinstance(raw, dict):
+            try:
+                return TrackInsightCardPayload.model_validate(raw)
+            except Exception:  # noqa: S112
+                return None
+        return None
 
     def _try_parse_json_value(self, text: str) -> object:
         raw = str(text or "")

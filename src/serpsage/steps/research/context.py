@@ -58,6 +58,7 @@ def render_theme_plan_markdown(
         [
             f"- Core question: {_normalize_scalar_text(plan.core_question) or 'n/a'}",
             f"- Report style: {_normalize_scalar_text(plan.report_style) or 'n/a'}",
+            f"- Question card count: {int(len(plan.question_cards))}",
             f"- Input language: {_normalize_scalar_text(plan.input_language) or 'n/a'}",
             f"- Output language: {_normalize_scalar_text(plan.output_language) or 'n/a'}",
         ]

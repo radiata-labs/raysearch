@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 _TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
 _TRACKING_QUERY_PREFIXES = ("utm_",)
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
+_CORPUS_SCORE_WEIGHT_NEWNESS = 0.45
+_CORPUS_SCORE_WEIGHT_RELEVANCE = 0.30
+_CORPUS_SCORE_WEIGHT_DEPTH = 0.15
+_CORPUS_SCORE_WEIGHT_STABILITY = 0.10
 
 
 @dataclass(slots=True)
@@ -407,12 +411,11 @@ def rebuild_corpus_ranking(
             1.0,
             float(canonical_seen.get(canonical, 0)) / float(max_seen or 1),
         )
-        cfg = ctx.settings.research.corpus
         final_score = (
-            float(cfg.score_weight_newness) * newness_score
-            + float(cfg.score_weight_relevance) * relevance_score
-            + float(cfg.score_weight_depth) * depth_score
-            + float(cfg.score_weight_stability) * stability_score
+            float(_CORPUS_SCORE_WEIGHT_NEWNESS) * newness_score
+            + float(_CORPUS_SCORE_WEIGHT_RELEVANCE) * relevance_score
+            + float(_CORPUS_SCORE_WEIGHT_DEPTH) * depth_score
+            + float(_CORPUS_SCORE_WEIGHT_STABILITY) * stability_score
         )
         score_map[int(latest_id)] = float(final_score)
         scored.append((int(latest_id), float(final_score)))

@@ -32,6 +32,7 @@ from serpsage.models.research import (
     ContentOutputPayload,
     OverviewOutputPayload,
     ResearchThemePlan,
+    TrackInsightCardPayload,
 )
 from serpsage.settings.models import AppSettings
 
@@ -274,6 +275,7 @@ class ResearchTrackResult(MutableModel):
     coverage_ratio: float = 0.0
     unresolved_conflicts: int = 0
     subreport_markdown: str = ""
+    track_insight_card: TrackInsightCardPayload | None = None
     key_findings: list[str] = Field(default_factory=list)
 
 
@@ -291,11 +293,36 @@ class ResearchCoverageState(MutableModel):
     covered_subthemes: list[str] = Field(default_factory=list)
 
 
+class ResearchModeDepthState(MutableModel):
+    mode_key: Literal["research-fast", "research", "research-pro"] = "research"
+    max_question_cards_effective: int = 4
+    min_rounds_per_track: int = 2
+    no_progress_rounds_to_stop_effective: int = 2
+    enable_llm_track_orchestrator: bool = True
+    enable_gap_closure_pass: bool = True
+    gap_closure_passes: int = 1
+    enable_density_gate: bool = True
+    density_gate_passes: int = 1
+    render_section_min: int = 7
+    render_section_max: int = 9
+    overview_context_topk_override: int = 18
+    content_context_topk_override: int = 12
+    subreport_context_topk_override: int = 14
+    content_packet_max_chars: int = 10_000
+    target_length_ratio_vs_current: float = 1.0
+
+
 class ResearchRuntimeState(MutableModel):
+    mode_depth: ResearchModeDepthState = Field(default_factory=ResearchModeDepthState)
     budget: ResearchBudgetState = Field(default_factory=ResearchBudgetState)
     search_calls: int = 0
     fetch_calls: int = 0
     no_progress_rounds: int = 0
+    no_progress_rounds_to_stop_effective: int = 2
+    gap_closure_passes_applied: int = 0
+    density_gate_passes_applied: int = 0
+    target_output_chars: int = 0
+    output_length_ratio_vs_target: float = 0.0
     stop: bool = False
     stop_reason: str = ""
     round_index: int = 0
@@ -382,6 +409,7 @@ __all__ = [
     "ResearchCorpusState",
     "ResearchBudgetState",
     "ResearchCoverageState",
+    "ResearchModeDepthState",
     "ResearchOutputState",
     "ResearchParallelState",
     "ResearchPlanState",

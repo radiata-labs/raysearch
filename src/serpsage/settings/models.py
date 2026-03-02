@@ -230,79 +230,154 @@ class ResearchModeSettings(Model):
         return self
 
 
-class ResearchParallelSettings(Model):
+class ResearchModeDepthProfileSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    question_card_cap: int = 6
-    budget_multiplier: float = 2.0
-    bonus_ratio: float = 0.30
-    baseline_query_width: int = 1
-    bonus_query_width: int = 2
+    max_question_cards_effective: int = 4
+    min_rounds_per_track: int = 2
+    no_progress_rounds_to_stop_effective: int = 2
+    enable_llm_track_orchestrator: bool = True
+    enable_gap_closure_pass: bool = True
+    gap_closure_passes: int = 1
+    enable_density_gate: bool = True
+    density_gate_passes: int = 1
+    render_section_min: int = 7
+    render_section_max: int = 9
+    overview_context_topk_override: int = 18
+    content_context_topk_override: int = 12
+    subreport_context_topk_override: int = 14
+    content_packet_max_chars: int = 10_000
+    target_length_ratio_vs_current: float = 1.0
 
     @model_validator(mode="after")
-    def _validate_parallel_limits(self) -> ResearchParallelSettings:
-        if int(self.question_card_cap) <= 0:
-            raise ValueError("research.parallel.question_card_cap must be > 0")
-        if float(self.budget_multiplier) <= 0:
-            raise ValueError("research.parallel.budget_multiplier must be > 0")
-        if not 0.0 <= float(self.bonus_ratio) <= 1.0:
-            raise ValueError("research.parallel.bonus_ratio must be between 0 and 1")
-        if int(self.baseline_query_width) <= 0:
-            raise ValueError("research.parallel.baseline_query_width must be > 0")
-        if int(self.bonus_query_width) <= 0:
-            raise ValueError("research.parallel.bonus_query_width must be > 0")
-        if int(self.bonus_query_width) < int(self.baseline_query_width):
+    def _validate_mode_depth_profile(self) -> ResearchModeDepthProfileSettings:
+        if int(self.max_question_cards_effective) <= 0:
             raise ValueError(
-                "research.parallel.bonus_query_width must be >= baseline_query_width"
+                "research.mode_depth profile max_question_cards_effective must be > 0"
+            )
+        if int(self.min_rounds_per_track) <= 0:
+            raise ValueError(
+                "research.mode_depth profile min_rounds_per_track must be > 0"
+            )
+        if int(self.no_progress_rounds_to_stop_effective) <= 0:
+            raise ValueError(
+                "research.mode_depth profile no_progress_rounds_to_stop_effective "
+                "must be > 0"
+            )
+        if int(self.gap_closure_passes) < 0:
+            raise ValueError(
+                "research.mode_depth profile gap_closure_passes must be >= 0"
+            )
+        if int(self.density_gate_passes) < 0:
+            raise ValueError(
+                "research.mode_depth profile density_gate_passes must be >= 0"
+            )
+        if int(self.render_section_min) <= 0:
+            raise ValueError(
+                "research.mode_depth profile render_section_min must be > 0"
+            )
+        if int(self.render_section_max) <= 0:
+            raise ValueError(
+                "research.mode_depth profile render_section_max must be > 0"
+            )
+        if int(self.render_section_max) < int(self.render_section_min):
+            raise ValueError(
+                "research.mode_depth profile render_section_max must be >= "
+                "render_section_min"
+            )
+        if int(self.overview_context_topk_override) <= 0:
+            raise ValueError(
+                "research.mode_depth profile overview_context_topk_override must be > 0"
+            )
+        if int(self.content_context_topk_override) <= 0:
+            raise ValueError(
+                "research.mode_depth profile content_context_topk_override must be > 0"
+            )
+        if int(self.subreport_context_topk_override) <= 0:
+            raise ValueError(
+                "research.mode_depth profile subreport_context_topk_override must be > 0"
+            )
+        if int(self.content_packet_max_chars) <= 0:
+            raise ValueError(
+                "research.mode_depth profile content_packet_max_chars must be > 0"
+            )
+        if float(self.target_length_ratio_vs_current) <= 0:
+            raise ValueError(
+                "research.mode_depth profile target_length_ratio_vs_current must be > 0"
             )
         return self
 
 
-class ResearchCorpusSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    abstract_context_topk: int = 18
-    content_context_topk: int = 10
-    subreport_context_topk: int = 12
-    new_result_target_ratio: float = 0.60
-    min_history_sources: int = 3
-    score_weight_newness: float = 0.45
-    score_weight_relevance: float = 0.30
-    score_weight_depth: float = 0.15
-    score_weight_stability: float = 0.10
+def _default_mode_depth_fast() -> ResearchModeDepthProfileSettings:
+    return ResearchModeDepthProfileSettings(
+        max_question_cards_effective=2,
+        min_rounds_per_track=1,
+        no_progress_rounds_to_stop_effective=1,
+        enable_llm_track_orchestrator=False,
+        enable_gap_closure_pass=False,
+        gap_closure_passes=0,
+        enable_density_gate=False,
+        density_gate_passes=0,
+        render_section_min=5,
+        render_section_max=6,
+        overview_context_topk_override=12,
+        content_context_topk_override=8,
+        subreport_context_topk_override=8,
+        content_packet_max_chars=7000,
+        target_length_ratio_vs_current=0.85,
+    )
 
-    @model_validator(mode="after")
-    def _validate_corpus_limits(self) -> ResearchCorpusSettings:
-        if int(self.abstract_context_topk) <= 0:
-            raise ValueError("research.corpus.abstract_context_topk must be > 0")
-        if int(self.content_context_topk) <= 0:
-            raise ValueError("research.corpus.content_context_topk must be > 0")
-        if int(self.subreport_context_topk) <= 0:
-            raise ValueError("research.corpus.subreport_context_topk must be > 0")
-        if int(self.min_history_sources) <= 0:
-            raise ValueError("research.corpus.min_history_sources must be > 0")
-        if not 0.0 <= float(self.new_result_target_ratio) <= 1.0:
-            raise ValueError(
-                "research.corpus.new_result_target_ratio must be between 0 and 1"
-            )
-        if float(self.score_weight_newness) < 0:
-            raise ValueError("research.corpus.score_weight_newness must be >= 0")
-        if float(self.score_weight_relevance) < 0:
-            raise ValueError("research.corpus.score_weight_relevance must be >= 0")
-        if float(self.score_weight_depth) < 0:
-            raise ValueError("research.corpus.score_weight_depth must be >= 0")
-        if float(self.score_weight_stability) < 0:
-            raise ValueError("research.corpus.score_weight_stability must be >= 0")
-        weight_sum = (
-            float(self.score_weight_newness)
-            + float(self.score_weight_relevance)
-            + float(self.score_weight_depth)
-            + float(self.score_weight_stability)
-        )
-        if abs(weight_sum - _FINAL_WEIGHT_SUM_TARGET) > _WEIGHT_SUM_EPS:
-            raise ValueError(
-                "research.corpus score weights must sum to 1.0 "
-                "(newness + relevance + depth + stability)"
-            )
-        return self
+
+def _default_mode_depth_research() -> ResearchModeDepthProfileSettings:
+    return ResearchModeDepthProfileSettings(
+        max_question_cards_effective=4,
+        min_rounds_per_track=2,
+        no_progress_rounds_to_stop_effective=2,
+        enable_llm_track_orchestrator=True,
+        enable_gap_closure_pass=True,
+        gap_closure_passes=1,
+        enable_density_gate=True,
+        density_gate_passes=1,
+        render_section_min=7,
+        render_section_max=9,
+        overview_context_topk_override=18,
+        content_context_topk_override=12,
+        subreport_context_topk_override=14,
+        content_packet_max_chars=10_000,
+        target_length_ratio_vs_current=1.0,
+    )
+
+
+def _default_mode_depth_pro() -> ResearchModeDepthProfileSettings:
+    return ResearchModeDepthProfileSettings(
+        max_question_cards_effective=6,
+        min_rounds_per_track=3,
+        no_progress_rounds_to_stop_effective=3,
+        enable_llm_track_orchestrator=True,
+        enable_gap_closure_pass=True,
+        gap_closure_passes=2,
+        enable_density_gate=True,
+        density_gate_passes=2,
+        render_section_min=9,
+        render_section_max=10,
+        overview_context_topk_override=26,
+        content_context_topk_override=18,
+        subreport_context_topk_override=20,
+        content_packet_max_chars=14_000,
+        target_length_ratio_vs_current=1.1,
+    )
+
+
+class ResearchModeDepthSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    research_fast: ResearchModeDepthProfileSettings = Field(
+        default_factory=_default_mode_depth_fast
+    )
+    research: ResearchModeDepthProfileSettings = Field(
+        default_factory=_default_mode_depth_research
+    )
+    research_pro: ResearchModeDepthProfileSettings = Field(
+        default_factory=_default_mode_depth_pro
+    )
 
 
 def _default_research_fast_mode() -> ResearchModeSettings:
@@ -351,13 +426,13 @@ class ResearchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     tool_max_attempts: int = 3
     llm_self_heal_retries: int = 2
-    no_progress_rounds_to_stop: int = 2
     models: ResearchModelsSettings = Field(default_factory=ResearchModelsSettings)
     report_style: ResearchReportStyleSettings = Field(
         default_factory=ResearchReportStyleSettings
     )
-    parallel: ResearchParallelSettings = Field(default_factory=ResearchParallelSettings)
-    corpus: ResearchCorpusSettings = Field(default_factory=ResearchCorpusSettings)
+    mode_depth: ResearchModeDepthSettings = Field(
+        default_factory=ResearchModeDepthSettings
+    )
     research_fast: ResearchModeSettings = Field(
         default_factory=_default_research_fast_mode
     )
@@ -374,8 +449,6 @@ class ResearchSettings(Model):
             raise ValueError("research.tool_max_attempts must be > 0")
         if int(self.llm_self_heal_retries) < 0:
             raise ValueError("research.llm_self_heal_retries must be >= 0")
-        if int(self.no_progress_rounds_to_stop) <= 0:
-            raise ValueError("research.no_progress_rounds_to_stop must be > 0")
         return self
 
 
@@ -743,10 +816,10 @@ __all__ = [
     "ProviderSettings",
     "ReportStyleKey",
     "ResearchModelsSettings",
+    "ResearchModeDepthProfileSettings",
+    "ResearchModeDepthSettings",
     "ResearchReportStyleSettings",
     "ResearchModeSettings",
-    "ResearchCorpusSettings",
-    "ResearchParallelSettings",
     "ResearchSettings",
     "RunnerSettings",
     "SearchSettings",

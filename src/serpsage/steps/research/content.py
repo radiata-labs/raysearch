@@ -11,14 +11,14 @@ from serpsage.models.research import (
     ReportStyle,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt_markdown import (
+from serpsage.steps.research.context import (
     render_overview_review_markdown,
     render_theme_plan_markdown,
 )
-from serpsage.steps.research.prompt_style import (
-    UNIVERSAL_GUARDRAILS,
-    build_style_overlay,
-    compose_system_prompt,
+from serpsage.steps.research.prompt import (
+    build_content_messages as build_content_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
     resolve_report_style,
 )
 from serpsage.steps.research.search import (
@@ -49,14 +49,16 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
-        cfg = ctx.settings.research.corpus
+        mode_depth = ctx.runtime.mode_depth
+        content_topk = max(1, int(mode_depth.content_context_topk_override))
+        packet_max_chars = max(1000, int(mode_depth.content_packet_max_chars))
         source_ids = list(ctx.work.need_content_source_ids or [])
         if not source_ids:
             source_ids = list(ctx.current_round.context_source_ids or [])
         source_ids = sort_source_ids_by_score(
             ctx=ctx,
             source_ids=source_ids,
-        )[: max(1, int(cfg.content_context_topk))]
+        )[:content_topk]
         if not source_ids:
             ctx.work.content_review = self._empty_review()
             return ctx
@@ -70,7 +72,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         packet = self._build_content_packet(
             sources=selected_sources,
             source_ids=source_ids,
-            max_chars=9000,
+            max_chars=packet_max_chars,
         )
         model = resolve_research_model(
             ctx=ctx,
@@ -163,6 +165,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             attrs={
                 "report_style_selected": str(report_style),
                 "style_applied_stage": "content",
+                "mode_depth_profile": str(mode_depth.mode_key),
+                "content_context_topk_effective": int(content_topk),
+                "content_packet_max_chars_effective": int(packet_max_chars),
             },
         )
         return ctx
@@ -183,80 +188,21 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         overview_review_markdown = render_overview_review_markdown(
             ctx.work.overview_review
         )
-        system_contract = (
-            "Role: Evidence Arbiter (Full-Content Stage).\n"
-            "Mission: Resolve contradictions and raise evidence completeness for ONE core question.\n"
-            "Instruction Priority:\n"
-            "P1) Schema correctness.\n"
-            "P2) Content-grounded arbitration quality.\n"
-            "P3) Language consistency.\n"
-            "Hard Constraints:\n"
-            "1) Use only SOURCE_CONTENT_PACKET.\n"
-            "2) Keep every judgment aligned to CORE_QUESTION; do not branch into a new standalone topic.\n"
-            "3) Mark conflict status conservatively as resolved, unresolved, or insufficient.\n"
-            "4) Prefer direct content evidence over overview-level assumptions.\n"
-            "5) If uncertainty remains, list concrete remaining gaps.\n"
-            "6) next_queries must remain strictly focused on CORE_QUESTION and non-redundant.\n"
-            "7) For recency-sensitive claims, explicitly account for publication/update-time relevance.\n"
-            "8) Free-text fields must be in the required output language.\n"
-            "9) resolved_findings should be information-dense: include implication, condition, and edge-case when available.\n"
-            "10) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
-            "11) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
-            "12) If no valid focused next query exists, return next_queries as an empty array.\n"
-            "13) Return JSON only and match schema exactly.\n"
-            "Allowed Evidence:\n"
-            "- Theme, theme plan, overview review, selected content packet.\n"
-            "Failure Policy:\n"
-            "- If evidence is insufficient or stale for recency intent, avoid overclaiming and lower confidence.\n"
-            "Quality Checklist:\n"
-            "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency.\n"
-            "- Preserve detail that can later be rendered as tables (fact, evidence, conflict, constraint, gap)."
+        return build_content_prompt_messages(
+            theme=ctx.request.themes,
+            core_question=core_question,
+            report_style=report_style,
+            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            round_index=str(round_index),
+            current_utc_timestamp=now_utc.isoformat(),
+            current_utc_date=now_utc.date().isoformat(),
+            required_output_language=out_lang,
+            required_output_language_label=out_lang_name,
+            theme_plan_markdown=theme_plan_markdown,
+            overview_review_markdown=overview_review_markdown,
+            required_entities=list(ctx.plan.theme_plan.required_entities),
+            source_content_packet=packet,
         )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=build_style_overlay(
-                        stage="content",
-                        style=report_style,
-                    ),
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"THEME:\n{ctx.request.themes}\n\n"
-                    f"CORE_QUESTION:\n{core_question}\n\n"
-                    f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
-                    f"ROUND_INDEX:\n{round_index}\n\n"
-                    "TIME_CONTEXT:\n"
-                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
-                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
-                    "TEMPORAL_POLICY:\n"
-                    "- Resolve relative time expressions against current_utc_date.\n"
-                    "- If latest/current intent exists, prefer the most recent trustworthy evidence and flag stale content.\n"
-                    "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
-                    "LANGUAGE_POLICY:\n"
-                    f"- required_output_language={out_lang} ({out_lang_name})\n"
-                    "- Keep all free-text fields in the required output language.\n\n"
-                    f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
-                    f"OVERVIEW_REVIEW_MARKDOWN:\n{overview_review_markdown}\n\n"
-                    "REQUIRED_ENTITIES:\n"
-                    f"{ctx.plan.theme_plan.required_entities}\n\n"
-                    f"SOURCE_CONTENT_PACKET:\n{packet}\n\n"
-                    "Arbitration rubric:\n"
-                    "- resolved: one side is sufficiently better supported by evidence.\n"
-                    "- unresolved: both sides remain plausible with no decisive tie-break.\n"
-                    "- insufficient: current evidence cannot adjudicate the claim.\n\n"
-                    "Output depth rubric:\n"
-                    "- Prefer specific, decision-useful findings over generic statements.\n"
-                    "- Capture trade-offs and boundary conditions when relevant.\n"
-                    "- Keep confidence_adjustment calibrated to evidence strength."
-                ),
-            },
-        ]
 
     def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
         cfg = self.settings.research.report_style

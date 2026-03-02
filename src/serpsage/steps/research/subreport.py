@@ -6,13 +6,19 @@ from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
-from serpsage.models.research import ReportStyle, ResearchThemePlan
+from serpsage.models.research import (
+    ReportStyle,
+    ResearchThemePlan,
+    SubreportOutputPayload,
+    TrackInsightCardPayload,
+    TrackInsightPointPayload,
+)
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt_markdown import render_theme_plan_markdown
-from serpsage.steps.research.prompt_style import (
-    UNIVERSAL_GUARDRAILS,
-    build_style_overlay,
-    compose_system_prompt,
+from serpsage.steps.research.context import render_theme_plan_markdown
+from serpsage.steps.research.prompt import (
+    build_subreport_messages as build_subreport_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
     resolve_report_style,
 )
 from serpsage.steps.research.search import (
@@ -72,6 +78,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     _MAX_OVERVIEW_CHARS = 3200
     _MAX_CONTENT_EXCERPT_CHARS = 2200
     _MAX_TOTAL_CONTENT_CHARS = 22000
+    _CONTEXT_NEW_RESULT_TARGET_RATIO = 0.60
+    _CONTEXT_MIN_HISTORY_SOURCES = 3
 
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
@@ -106,14 +114,19 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             target_language=target_language,
             now_utc=now_utc,
         )
-        raw_text = ""
+        require_insight_card = self._require_insight_card(ctx)
+        markdown_text = ""
+        insight_card: TrackInsightCardPayload | None = None
         try:
             result = await self._llm.chat(
                 model=model,
                 messages=messages,
-                response_format=None,
+                response_format=SubreportOutputPayload,
+                retries=int(self.settings.research.llm_self_heal_retries),
             )
-            raw_text = str(result.text or "")
+            payload = result.data
+            markdown_text = str(payload.subreport_markdown or "")
+            insight_card = payload.track_insight_card
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="research.subreport.error",
@@ -127,10 +140,14 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-        if not raw_text.strip():
-            raw_text = self._build_subreport_fallback(ctx)
-        ctx.output.structured = None
-        ctx.output.content = self._normalize_markdown(raw_text)
+        if not markdown_text.strip():
+            markdown_text = self._build_subreport_fallback(ctx)
+        if require_insight_card and insight_card is None:
+            insight_card = self._build_fallback_insight_card(ctx=ctx)
+        ctx.output.structured = (
+            insight_card.model_dump(mode="json") if insight_card is not None else None
+        )
+        ctx.output.content = self._normalize_markdown(markdown_text)
         report_style, style_applied = self._resolve_report_style(ctx)
         await self.emit_tracking_event(
             event_name="research.style.applied",
@@ -139,6 +156,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             attrs={
                 "report_style_selected": str(report_style),
                 "style_applied_stage": "subreport" if style_applied else "none",
+                "require_insight_card": bool(require_insight_card),
+                "has_insight_card": bool(insight_card is not None),
             },
         )
 
@@ -158,74 +177,18 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             now_utc=now_utc,
             core_question=core_question,
         )
-        style_overlay = (
-            build_style_overlay(stage="subreport", style=report_style)
-            if style_applied
-            else ""
-        )
-        style_lock_line = (
-            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-        )
-        flow_contract = self._subreport_flow_contract(
+        require_insight_card = self._require_insight_card(ctx)
+        return build_subreport_prompt_messages(
+            target_output_language=target_language,
+            target_output_language_label=target_language_name,
+            current_utc_date=now_utc.date().isoformat(),
+            core_question=core_question,
+            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
             report_style=report_style,
-            style_applied=style_applied,
+            style_applied=bool(style_applied),
+            require_insight_card=bool(require_insight_card),
+            context_packet_markdown=context_packet_markdown,
         )
-        system_contract = (
-            "Role: Senior research analyst.\n"
-            "Mission: Write one external-facing subreport that answers CORE_QUESTION with evidence and explicit uncertainty boundaries.\n"
-            "Core principles:\n"
-            "1) Stay strictly on CORE_QUESTION.\n"
-            "2) Ground every key claim in evidence from SUBREPORT_CONTEXT_PACKET_MARKDOWN.\n"
-            "3) Distinguish support, conflict, and unknowns.\n"
-            "4) Prefer specific facts, dates, conditions, and numbers over generic summary language.\n"
-            "5) If evidence is weak or mixed, narrow the claim and say so directly.\n"
-            "Writing quality requirements:\n"
-            "1) Start with a direct answer status (confirmed, partial, or unresolved) in plain language.\n"
-            "2) Use clear reasoning flow: claim -> evidence -> implication.\n"
-            "3) Explain what disagreements mean for user outcomes.\n"
-            "4) Keep prose concise, concrete, and non-repetitive.\n"
-            "5) End with targeted next checks that reduce the highest-impact uncertainty.\n"
-            f"{flow_contract}\n"
-            "Privacy requirements (strict):\n"
-            "1) Output is user-facing; never reveal internal workflow or implementation details.\n"
-            "2) Never mention prompt/context packet names, pipeline stages, rounds, query lists, search/fetch calls, stop reasons, confidence/coverage metrics, IDs, or telemetry/audit mechanics.\n"
-            "3) Never echo internal field names or debug-style labels.\n"
-            "4) Do not output sections such as coverage audit or process log.\n"
-            "Formatting and time rules:\n"
-            "1) Output markdown only.\n"
-            "2) Do not use citation tokens or pseudo-citations.\n"
-            "3) Use tables only when they materially improve comparison clarity.\n"
-            "4) Resolve relative time expressions against CURRENT_UTC_DATE.\n"
-            "5) Keep all free text in TARGET_OUTPUT_LANGUAGE.\n"
-            "Self-check before final output:\n"
-            "- Did each paragraph stay on CORE_QUESTION?\n"
-            "- Are uncertainty boundaries explicit and non-overclaiming?\n"
-            "- Did I avoid internal-process leakage?"
-        )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=style_overlay,
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"CORE_QUESTION:\n{core_question}\n\n"
-                    f"{style_lock_line}"
-                    "PRIVATE_CONTEXT_NOTICE:\n"
-                    "- SUBREPORT_CONTEXT_PACKET_MARKDOWN is private working context.\n"
-                    "- Convert private evidence into polished user-facing analysis.\n"
-                    "- Do not expose private metadata, field names, IDs, or process traces.\n\n"
-                    f"SUBREPORT_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
-                ),
-            },
-        ]
 
     def _build_subreport_fallback(self, ctx: ResearchStepContext) -> str:
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
@@ -267,6 +230,65 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             )
         )
         return "\n\n".join(sections)
+
+    def _build_fallback_insight_card(
+        self, *, ctx: ResearchStepContext
+    ) -> TrackInsightCardPayload:
+        round_state = ctx.rounds[-1] if ctx.rounds else None
+        confidence = (
+            float(getattr(round_state, "confidence", 0.0)) if round_state else 0.0
+        )
+        coverage_ratio = (
+            float(getattr(round_state, "coverage_ratio", 0.0)) if round_state else 0.0
+        )
+        unresolved_conflicts = (
+            int(getattr(round_state, "unresolved_conflicts", 0)) if round_state else 0
+        )
+        missing_entities = (
+            list(getattr(round_state, "missing_entities", []))[:4]
+            if round_state is not None
+            else []
+        )
+        direct_answer = (
+            "Current evidence supports a stable answer."
+            if unresolved_conflicts <= 0 and confidence >= 0.75
+            else "Current answer remains partial and requires additional verification."
+        )
+        high_value_points = [
+            TrackInsightPointPayload(
+                conclusion="Confidence trend is available from the latest round.",
+                condition=f"confidence={confidence:.3f}, coverage_ratio={coverage_ratio:.3f}",
+                impact=(
+                    "Low confidence or coverage indicates additional targeted research is needed."
+                ),
+            ),
+            TrackInsightPointPayload(
+                conclusion="Conflict level directly affects final recommendation stability.",
+                condition=f"unresolved_conflicts={int(unresolved_conflicts)}",
+                impact="Higher unresolved conflict means lower decision reliability.",
+            ),
+        ]
+        return TrackInsightCardPayload(
+            direct_answer=direct_answer,
+            high_value_points=high_value_points,
+            key_tradeoffs_or_mechanisms=[
+                "Higher confidence usually requires broader source coverage and conflict resolution."
+            ],
+            unknowns_and_risks=[
+                "Residual ambiguity remains where sources disagree on high-impact claims."
+            ],
+            next_actions=[
+                (
+                    "Add targeted verification queries for missing entities: "
+                    + ", ".join(str(item) for item in missing_entities)
+                )
+                if missing_entities
+                else "Add one additional authoritative source to validate the key claim."
+            ],
+        )
+
+    def _require_insight_card(self, ctx: ResearchStepContext) -> bool:
+        return str(ctx.runtime.mode_depth.mode_key) != "research-fast"
 
     def _fallback_answer_status(
         self,
@@ -380,48 +402,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             entity_text = ", ".join(missing_entities)
             lines.append(f"- Add direct evidence for missing entities: {entity_text}.")
         return lines
-
-    def _subreport_flow_contract(
-        self,
-        *,
-        report_style: ReportStyle,
-        style_applied: bool,
-    ) -> str:
-        if not style_applied:
-            return (
-                "Recommended section flow (adapt if needed):\n"
-                "- Direct Answer\n"
-                "- Evidence and Reasoning\n"
-                "- Conflicts and Uncertainty\n"
-                "- Practical Implications\n"
-                "- Targeted Next Checks"
-            )
-        if report_style == "decision":
-            return (
-                "Required section flow:\n"
-                "- Verdict Snapshot\n"
-                "- Trade-offs\n"
-                "- Scenario Recommendation\n"
-                "- Risk Triggers\n"
-                "- Next Checks"
-            )
-        if report_style == "execution":
-            return (
-                "Required section flow:\n"
-                "- Goal and Prerequisites\n"
-                "- Step Sequence\n"
-                "- Validation Criteria\n"
-                "- Failure Handling\n"
-                "- Next Actions"
-            )
-        return (
-            "Required section flow:\n"
-            "- Core Model\n"
-            "- Mechanisms\n"
-            "- Boundary Cases\n"
-            "- Common Misconceptions\n"
-            "- Practical Takeaway"
-        )
 
     def _build_style_fallback_sections(
         self,
@@ -749,11 +729,13 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         *,
         max_sources: int,
     ) -> list[ResearchSource]:
+        mode_depth = ctx.runtime.mode_depth
+        subreport_topk = max(1, int(mode_depth.subreport_context_topk_override))
         limit = max(
             1,
             min(
                 int(max_sources),
-                int(ctx.settings.research.corpus.subreport_context_topk),
+                int(subreport_topk),
             ),
         )
         latest_round_index = 0
@@ -770,10 +752,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             round_index=latest_round_index,
             topk=limit,
-            new_result_target_ratio=float(
-                ctx.settings.research.corpus.new_result_target_ratio
-            ),
-            min_history_sources=int(ctx.settings.research.corpus.min_history_sources),
+            new_result_target_ratio=float(self._CONTEXT_NEW_RESULT_TARGET_RATIO),
+            min_history_sources=int(self._CONTEXT_MIN_HISTORY_SOURCES),
         )
         if selected_ids:
             selected = pick_sources_by_ids(

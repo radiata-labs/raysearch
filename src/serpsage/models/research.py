@@ -112,6 +112,28 @@ class ContentOutputPayload(MutableModel):
     stop: bool = False
 
 
+class TrackInsightPointPayload(MutableModel):
+    conclusion: str = ""
+    condition: str = ""
+    impact: str = ""
+
+
+class TrackInsightCardPayload(MutableModel):
+    direct_answer: str = ""
+    high_value_points: list[TrackInsightPointPayload] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+    key_tradeoffs_or_mechanisms: list[str] = Field(default_factory=list, max_length=10)
+    unknowns_and_risks: list[str] = Field(default_factory=list, max_length=10)
+    next_actions: list[str] = Field(default_factory=list, max_length=10)
+
+
+class SubreportOutputPayload(MutableModel):
+    subreport_markdown: str = ""
+    track_insight_card: TrackInsightCardPayload | None = None
+
+
 class RenderArchitectSectionPlan(MutableModel):
     section_id: str
     subhead: str
@@ -143,6 +165,9 @@ __all__ = [
     "PlanSearchJobPayload",
     "RenderArchitectOutput",
     "RenderArchitectSectionPlan",
+    "SubreportOutputPayload",
+    "TrackInsightCardPayload",
+    "TrackInsightPointPayload",
     "ResearchThemePlan",
     "ResearchThemePlanCard",
     "ThemeOutputPayload",

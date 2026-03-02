@@ -11,14 +11,14 @@ from serpsage.models.research import (
     ReportStyle,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt_markdown import (
+from serpsage.steps.research.context import (
     render_rounds_markdown,
     render_theme_plan_markdown,
 )
-from serpsage.steps.research.prompt_style import (
-    UNIVERSAL_GUARDRAILS,
-    build_style_overlay,
-    compose_system_prompt,
+from serpsage.steps.research.prompt import (
+    build_overview_messages as build_overview_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
     resolve_report_style,
 )
 from serpsage.steps.research.search import (
@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 
 
 class ResearchOverviewStep(StepBase[ResearchStepContext]):
+    _CONTEXT_NEW_RESULT_TARGET_RATIO = 0.60
+    _CONTEXT_MIN_HISTORY_SOURCES = 3
+
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -56,13 +59,14 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             ctx.work.need_content_source_ids = []
             ctx.current_round.context_source_ids = []
             return ctx
-        corpus_cfg = ctx.settings.research.corpus
+        mode_depth = ctx.runtime.mode_depth
+        overview_topk = max(1, int(mode_depth.overview_context_topk_override))
         context_source_ids = select_context_source_ids(
             ctx=ctx,
             round_index=int(ctx.current_round.round_index),
-            topk=int(corpus_cfg.abstract_context_topk),
-            new_result_target_ratio=float(corpus_cfg.new_result_target_ratio),
-            min_history_sources=int(corpus_cfg.min_history_sources),
+            topk=overview_topk,
+            new_result_target_ratio=float(self._CONTEXT_NEW_RESULT_TARGET_RATIO),
+            min_history_sources=int(self._CONTEXT_MIN_HISTORY_SOURCES),
         )
         ctx.current_round.context_source_ids = list(context_source_ids)
         sources = pick_sources_by_ids(
@@ -184,6 +188,8 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             attrs={
                 "report_style_selected": str(report_style),
                 "style_applied_stage": "overview",
+                "mode_depth_profile": str(mode_depth.mode_key),
+                "overview_context_topk_effective": int(overview_topk),
             },
         )
         return ctx
@@ -202,85 +208,21 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
-        system_contract = (
-            "Role: Evidence Analyst (Overview-First) and Methodology Instructor.\n"
-            "Mission: Evaluate evidence quality, theme coverage, and uncertainty using overview evidence.\n"
-            "Instruction Priority:\n"
-            "P1) Schema correctness.\n"
-            "P2) Evidence-grounded reasoning and conflict transparency.\n"
-            "P3) Language consistency.\n"
-            "Hard Constraints:\n"
-            "1) Use only SOURCE_OVERVIEW_PACKET.\n"
-            "2) Keep analysis scoped to CORE_QUESTION and its evidence dimensions.\n"
-            "3) Distinguish observations from inferences.\n"
-            "4) Identify unresolved conflicts and critical evidence gaps.\n"
-            "5) Select source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
-            "6) Use URL/domain/path/title cues from SOURCE_OVERVIEW_PACKET to estimate source authority and evidence type.\n"
-            "7) For need_content_source_ids, prioritize authoritative evidence URLs first: official documentation, standards/specs, papers/preprints, repositories/model hubs, government/education, and vendor technical docs.\n"
-            "8) De-prioritize low-authority commentary or marketing-style pages unless they provide unique, decision-critical evidence.\n"
-            "9) Evaluate temporal relevance for recency-sensitive claims.\n"
-            "10) Free-text fields must be in the required output language.\n"
-            "11) next_queries must remain strictly focused on CORE_QUESTION and must not introduce new standalone topics.\n"
-            "12) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
-            "13) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
-            "14) If no valid focused query exists, return next_queries as an empty array.\n"
-            "15) Return JSON only, exactly matching schema.\n"
-            "16) Overview evidence is provisional: avoid final certainty when content verification is still needed.\n"
-            "Allowed Evidence:\n"
-            "- Theme, theme plan, round summaries, overview packet.\n"
-            "Failure Policy:\n"
-            "- If evidence is weak or temporally stale for a recency query, lower confidence and propose targeted next queries.\n"
-            "Quality Checklist:\n"
-            "- Coverage progression, conflict clarity, economical content escalation, calibrated confidence."
+        return build_overview_prompt_messages(
+            theme=ctx.request.themes,
+            core_question=core_question,
+            report_style=report_style,
+            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            round_index=int(round_index),
+            current_utc_timestamp=now_utc.isoformat(),
+            current_utc_date=now_utc.date().isoformat(),
+            required_output_language=out_lang,
+            required_output_language_label=out_lang_name,
+            theme_plan_markdown=theme_plan_markdown,
+            previous_rounds_markdown=previous_rounds_markdown,
+            required_entities=list(ctx.plan.theme_plan.required_entities),
+            source_overview_packet=packet,
         )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=build_style_overlay(
-                        stage="overview",
-                        style=report_style,
-                    ),
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"THEME:\n{ctx.request.themes}\n\n"
-                    f"CORE_QUESTION:\n{core_question}\n\n"
-                    f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
-                    f"ROUND_INDEX:\n{round_index}\n\n"
-                    "TIME_CONTEXT:\n"
-                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
-                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
-                    "TEMPORAL_POLICY:\n"
-                    "- If THEME or prior plans indicate latest/current intent, judge whether each overview is fresh enough.\n"
-                    "- Treat relative time words (today/this month/this year/recent/latest) against current_utc_date.\n"
-                    "- For stale evidence under recency intent, request follow-up queries in next_queries.\n"
-                    "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
-                    "SOURCE_SELECTION_POLICY:\n"
-                    "- Use URL host, path, and URL evidence hint to estimate authority and evidence type.\n"
-                    "- Prefer authoritative sources for content escalation: docs/specs, papers/preprints, repositories/model hubs, and institutional domains.\n"
-                    "- Escalate low-authority media/blog pages only when they contain unique evidence not present in authoritative sources.\n\n"
-                    "LANGUAGE_POLICY:\n"
-                    f"- required_output_language={out_lang} ({out_lang_name})\n"
-                    "- Keep all free-text fields in the required output language.\n\n"
-                    f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
-                    f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
-                    "REQUIRED_ENTITIES:\n"
-                    f"{ctx.plan.theme_plan.required_entities}\n\n"
-                    f"SOURCE_OVERVIEW_PACKET:\n{packet}\n\n"
-                    "Escalation rubric for need_content_source_ids:\n"
-                    "- Include IDs for sources tied to key conclusions, major conflicts, or model-selection decisions.\n"
-                    "- Prefer IDs from authoritative URLs (official docs/specs, papers/preprints, repositories/model hubs, government/education domains, vendor technical docs).\n"
-                    "- Include IDs when overview evidence is vague but potentially important.\n"
-                    "- For media/blog/secondary pages, include IDs only when they carry unique high-impact facts absent elsewhere.\n"
-                    "- Include IDs when evidence freshness is uncertain for latest/current requests."
-                ),
-            },
-        ]
 
     def _build_overview_schema(self, *, max_queries: int) -> dict[str, Any]:
         return {

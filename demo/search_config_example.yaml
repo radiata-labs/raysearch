@@ -44,23 +44,61 @@ answer:
 research:
   tool_max_attempts: 3
   llm_self_heal_retries: 2
-  no_progress_rounds_to_stop: 2
-  parallel:
-    question_card_cap: 6
-    budget_multiplier: 2.0
-    bonus_ratio: 0.3
-    baseline_query_width: 1
-    bonus_query_width: 2
-  corpus:
-    abstract_context_topk: 18
-    content_context_topk: 10
-    subreport_context_topk: 12
-    new_result_target_ratio: 0.6
-    min_history_sources: 3
-    score_weight_newness: 0.45
-    score_weight_relevance: 0.3
-    score_weight_depth: 0.15
-    score_weight_stability: 0.1
+  report_style:
+    enabled: true
+    fallback_style: explainer
+    strict_style_lock: true
+    apply_subreport: true
+    apply_render: true
+  mode_depth:
+    research_fast:
+      max_question_cards_effective: 2
+      min_rounds_per_track: 1
+      no_progress_rounds_to_stop_effective: 1
+      enable_llm_track_orchestrator: false
+      enable_gap_closure_pass: false
+      gap_closure_passes: 0
+      enable_density_gate: false
+      density_gate_passes: 0
+      render_section_min: 5
+      render_section_max: 6
+      overview_context_topk_override: 12
+      content_context_topk_override: 8
+      subreport_context_topk_override: 8
+      content_packet_max_chars: 7000
+      target_length_ratio_vs_current: 0.85
+    research:
+      max_question_cards_effective: 4
+      min_rounds_per_track: 2
+      no_progress_rounds_to_stop_effective: 2
+      enable_llm_track_orchestrator: true
+      enable_gap_closure_pass: true
+      gap_closure_passes: 1
+      enable_density_gate: true
+      density_gate_passes: 1
+      render_section_min: 7
+      render_section_max: 9
+      overview_context_topk_override: 18
+      content_context_topk_override: 12
+      subreport_context_topk_override: 14
+      content_packet_max_chars: 10000
+      target_length_ratio_vs_current: 1.0
+    research_pro:
+      max_question_cards_effective: 6
+      min_rounds_per_track: 3
+      no_progress_rounds_to_stop_effective: 3
+      enable_llm_track_orchestrator: true
+      enable_gap_closure_pass: true
+      gap_closure_passes: 2
+      enable_density_gate: true
+      density_gate_passes: 2
+      render_section_min: 9
+      render_section_max: 10
+      overview_context_topk_override: 26
+      content_context_topk_override: 18
+      subreport_context_topk_override: 20
+      content_packet_max_chars: 14000
+      target_length_ratio_vs_current: 1.1
   models:
     plan: kimi-k2.5
     abstract_analyze: kimi-k2.5

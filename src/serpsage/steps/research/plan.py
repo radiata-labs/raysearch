@@ -17,15 +17,15 @@ from serpsage.models.research import (
     ReportStyle,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt_markdown import (
+from serpsage.steps.research.context import (
     render_queries_markdown,
     render_rounds_markdown,
     render_theme_plan_markdown,
 )
-from serpsage.steps.research.prompt_style import (
-    UNIVERSAL_GUARDRAILS,
-    build_style_overlay,
-    compose_system_prompt,
+from serpsage.steps.research.prompt import (
+    build_plan_messages as build_plan_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
     resolve_report_style,
 )
 from serpsage.steps.research.utils import (
@@ -258,91 +258,37 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> list[dict[str, str]]:
         budget = ctx.runtime.budget
+        mode_depth = ctx.runtime.mode_depth
         out_lang = ctx.plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
         report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
         candidate_queries_markdown = render_queries_markdown(candidate_queries)
-        system_contract = (
-            "Role: Principal Research Planner and Evidence Operations Lead.\n"
-            "Mission: Generate high-information, low-overlap search jobs for the next research round.\n"
-            "Instruction Priority:\n"
-            "P1) Schema correctness and budget adherence.\n"
-            "P2) Evidence gain per query.\n"
-            "P3) Output language consistency.\n"
-            "Hard Constraints:\n"
-            "1) All search_jobs must serve CORE_QUESTION. Do not introduce a new independent research question.\n"
-            "2) Minimize overlap between jobs while maximizing information gain.\n"
-            "3) Respect remaining budget and prioritize unresolved evidence gaps.\n"
-            "4) Use deep mode when higher recall or conflict verification is needed.\n"
-            "5) Free-text fields must be in the required output language.\n"
-            "6) Temporal grounding: interpret relative time words against current UTC date.\n"
-            "7) If recency intent exists, include explicit temporal constraints in query text.\n"
-            "8) For high-impact claims, prioritize authoritative evidence routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
-            "9) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
-            "10) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
-            "11) Domain/text route constraints are executable: include_domains, exclude_domains, include_text, exclude_text.\n"
-            "12) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
-            "13) Return JSON only; no markdown or explanations.\n"
-            "Allowed Evidence:\n"
-            "- User theme, theme plan, previous round summaries, candidate queries.\n"
-            "Failure Policy:\n"
-            "- If uncertain, produce fewer but higher-value jobs.\n"
-            "- If all candidate queries are off-topic relative to CORE_QUESTION, return search_jobs as an empty array.\n"
-            "Quality Checklist:\n"
-            "- Distinct intent per job, no near duplicates, conflict-aware targeting."
+        return build_plan_prompt_messages(
+            theme=ctx.request.themes,
+            core_question=core_question,
+            report_style=report_style,
+            mode_depth_profile=str(mode_depth.mode_key),
+            round_index=int(ctx.runtime.round_index),
+            current_utc_timestamp=now_utc.isoformat(),
+            current_utc_date=now_utc.date().isoformat(),
+            required_output_language=out_lang,
+            required_output_language_label=out_lang_name,
+            theme_plan_markdown=theme_plan_markdown,
+            previous_rounds_markdown=previous_rounds_markdown,
+            candidate_queries_markdown=candidate_queries_markdown,
+            required_entities=list(ctx.plan.theme_plan.required_entities),
+            search_calls_remaining=max(
+                0,
+                int(budget.max_search_calls) - int(ctx.runtime.search_calls),
+            ),
+            fetch_calls_remaining=max(
+                0,
+                int(budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
+            ),
+            max_queries_this_round=int(budget.max_queries_per_round),
         )
-        return [
-            {
-                "role": "system",
-                "content": compose_system_prompt(
-                    base_contract=system_contract,
-                    style_overlay=build_style_overlay(
-                        stage="plan",
-                        style=report_style,
-                    ),
-                    universal_guardrails=UNIVERSAL_GUARDRAILS,
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"THEME:\n{ctx.request.themes}\n\n"
-                    f"CORE_QUESTION:\n{core_question}\n\n"
-                    f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
-                    f"ROUND_INDEX:\n{ctx.runtime.round_index}\n\n"
-                    "TIME_CONTEXT:\n"
-                    f"- current_utc_timestamp={now_utc.isoformat()}\n"
-                    f"- current_utc_date={now_utc.date().isoformat()}\n\n"
-                    "TEMPORAL_POLICY:\n"
-                    "- If theme/round context asks for latest/current/today/now/as of/this year/month/week, queries must include concrete temporal anchors.\n"
-                    "- When no recency intent is present, avoid over-constraining by date.\n"
-                    "- Prefer fresh/authoritative sources for recency queries.\n\n"
-                    "LANGUAGE_POLICY:\n"
-                    f"- required_output_language={out_lang} ({out_lang_name})\n"
-                    "- Keep textual fields in the required output language.\n\n"
-                    f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
-                    f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
-                    f"CANDIDATE_QUERIES_MARKDOWN:\n{candidate_queries_markdown}\n\n"
-                    "ENTITY_POLICY:\n"
-                    f"- required_entities={ctx.plan.theme_plan.required_entities}\n"
-                    "- Every required entity must appear in query or additional_queries as exact text.\n"
-                    "- Do not drop version markers such as dots/hyphens (for example qwen3.5, glm4.7, llama-3.1).\n\n"
-                    "BUDGET_REMAINING:\n"
-                    f"- search_calls_remaining={max(0, budget.max_search_calls - ctx.runtime.search_calls)}\n"
-                    f"- fetch_calls_remaining={max(0, budget.max_fetch_calls - ctx.runtime.fetch_calls)}\n"
-                    f"- max_queries_this_round={budget.max_queries_per_round}\n\n"
-                    "Job design rubric:\n"
-                    "- coverage: close missing subtheme coverage.\n"
-                    "- deepen: improve depth on high-value evidence branches.\n"
-                    "- verify: target contradiction resolution and tie-break evidence.\n"
-                    "- refresh: prioritize latest authoritative updates.\n"
-                    "- use include/exclude domain and text constraints when that increases authority and precision.\n"
-                    "- if max_queries_this_round=1, prefer deep mode with additional_queries for one-call breadth."
-                ),
-            },
-        ]
 
     def _build_plan_schema(self) -> dict[str, Any]:
         return {

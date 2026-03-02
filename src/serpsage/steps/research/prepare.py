@@ -7,6 +7,7 @@ from typing_extensions import override
 from serpsage.models.pipeline import (
     ResearchBudgetState,
     ResearchCorpusState,
+    ResearchModeDepthState,
     ResearchOutputState,
     ResearchParallelState,
     ResearchPlanState,
@@ -20,10 +21,19 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import ResearchModeSettings
+    from serpsage.settings.models import (
+        ResearchModeDepthProfileSettings,
+        ResearchModeSettings,
+    )
 
 
 class ResearchPrepareStep(StepBase[ResearchStepContext]):
+    _GLOBAL_BUDGET_MULTIPLIER_BY_MODE: dict[str, float] = {
+        "research-fast": 1.5,
+        "research": 2.0,
+        "research-pro": 2.5,
+    }
+
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
@@ -32,11 +42,43 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         mode = str(ctx.request.search_mode or "research")
         themes = clean_whitespace(ctx.request.themes or "")
         profile = self._resolve_profile(mode)
-        parallel = self.settings.research.parallel
+        mode_depth = self._resolve_mode_depth_profile(mode)
         ctx.request = ctx.request.model_copy(
             update={"search_mode": mode, "themes": themes}
         )
         ctx.runtime = ResearchRuntimeState(
+            mode_depth=ResearchModeDepthState(
+                mode_key=mode,  # type: ignore[arg-type]
+                max_question_cards_effective=int(
+                    mode_depth.max_question_cards_effective
+                ),
+                min_rounds_per_track=int(mode_depth.min_rounds_per_track),
+                no_progress_rounds_to_stop_effective=int(
+                    mode_depth.no_progress_rounds_to_stop_effective
+                ),
+                enable_llm_track_orchestrator=bool(
+                    mode_depth.enable_llm_track_orchestrator
+                ),
+                enable_gap_closure_pass=bool(mode_depth.enable_gap_closure_pass),
+                gap_closure_passes=int(mode_depth.gap_closure_passes),
+                enable_density_gate=bool(mode_depth.enable_density_gate),
+                density_gate_passes=int(mode_depth.density_gate_passes),
+                render_section_min=int(mode_depth.render_section_min),
+                render_section_max=int(mode_depth.render_section_max),
+                overview_context_topk_override=int(
+                    mode_depth.overview_context_topk_override
+                ),
+                content_context_topk_override=int(
+                    mode_depth.content_context_topk_override
+                ),
+                subreport_context_topk_override=int(
+                    mode_depth.subreport_context_topk_override
+                ),
+                content_packet_max_chars=int(mode_depth.content_packet_max_chars),
+                target_length_ratio_vs_current=float(
+                    mode_depth.target_length_ratio_vs_current
+                ),
+            ),
             budget=ResearchBudgetState(
                 max_rounds=int(profile.max_rounds),
                 max_search_calls=int(profile.max_search_calls),
@@ -51,6 +93,13 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             search_calls=0,
             fetch_calls=0,
             no_progress_rounds=0,
+            no_progress_rounds_to_stop_effective=int(
+                mode_depth.no_progress_rounds_to_stop_effective
+            ),
+            gap_closure_passes_applied=0,
+            density_gate_passes_applied=0,
+            target_output_chars=0,
+            output_length_ratio_vs_target=0.0,
             stop=False,
             stop_reason="",
             round_index=0,
@@ -59,7 +108,8 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             1,
             int(
                 math.ceil(
-                    float(profile.max_search_calls) * float(parallel.budget_multiplier)
+                    float(profile.max_search_calls)
+                    * self._resolve_global_budget_multiplier(mode)
                 )
             ),
         )
@@ -67,7 +117,8 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             1,
             int(
                 math.ceil(
-                    float(profile.max_fetch_calls) * float(parallel.budget_multiplier)
+                    float(profile.max_fetch_calls)
+                    * self._resolve_global_budget_multiplier(mode)
                 )
             ),
         )
@@ -99,7 +150,28 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 "mode": mode,
                 "max_rounds": int(profile.max_rounds),
                 "max_search_calls": int(profile.max_search_calls),
+                "mode_depth_profile": str(mode),
+                "mode_depth_question_cards": int(
+                    mode_depth.max_question_cards_effective
+                ),
+                "mode_depth_min_rounds_per_track": int(mode_depth.min_rounds_per_track),
+                "mode_depth_orchestrator_enabled": bool(
+                    mode_depth.enable_llm_track_orchestrator
+                ),
                 "theme": themes,
+            },
+        )
+        await self.emit_tracking_event(
+            event_name="research.mode_depth.selected",
+            request_id=ctx.request_id,
+            stage="prepare",
+            attrs={
+                "mode_depth_profile": str(mode),
+                "llm_orchestrator_enabled": bool(
+                    mode_depth.enable_llm_track_orchestrator
+                ),
+                "gap_closure_passes": int(mode_depth.gap_closure_passes),
+                "density_gate_passes": int(mode_depth.density_gate_passes),
             },
         )
         return ctx
@@ -110,6 +182,20 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         if mode == "research-pro":
             return self.settings.research.research_pro
         return self.settings.research.research
+
+    def _resolve_mode_depth_profile(
+        self, mode: str
+    ) -> ResearchModeDepthProfileSettings:
+        settings = self.settings.research.mode_depth
+        if mode == "research-fast":
+            return settings.research_fast
+        if mode == "research-pro":
+            return settings.research_pro
+        return settings.research
+
+    def _resolve_global_budget_multiplier(self, mode: str) -> float:
+        token = clean_whitespace(mode).casefold()
+        return float(self._GLOBAL_BUDGET_MULTIPLIER_BY_MODE.get(token, 2.0))
 
 
 __all__ = ["ResearchPrepareStep"]
