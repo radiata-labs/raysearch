@@ -12,7 +12,6 @@ WORD_RE = re.compile(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*")
 CJK_KANA_RUN_RE = re.compile(
     r"[\u3400-\u9fff\u3040-\u30ff\u31f0-\u31ff\u3005\u30fc\uff66-\uff9d]+"
 )
-
 KEEP_POS_ZH = {
     "n",
     "nr",
@@ -36,9 +35,7 @@ KEEP_POS_ZH = {
     "l",
     "j",
 }
-
 KEEP_POS_JA = {"名詞", "動詞", "形容詞", "副詞", "記号", "接頭詞", "接尾辞"}
-
 try:
     import jieba.posseg as pseg  # type: ignore[import-untyped]
 
@@ -46,7 +43,6 @@ try:
 except Exception:  # noqa: BLE001
     pseg = None
     JIEBA_AVAILABLE = False
-
 try:
     from sudachipy import (  # type: ignore[import-untyped]
         dictionary as sudachi_dictionary,
@@ -60,7 +56,6 @@ except Exception:  # noqa: BLE001
     sudachi = None
     sudachi_mode = None
     SUDACHI_AVAILABLE = False
-
 opencc: Any | None = None
 try:
     opencc = importlib.import_module("opencc")
@@ -95,10 +90,8 @@ def tokenize(text: str) -> list[str]:
     t = normalize_text(text)
     if not t:
         return []
-
     tokens: list[str] = []
     tokens.extend(m.group(0).lower() for m in WORD_RE.finditer(t))
-
     if JIEBA_AVAILABLE and pseg is not None:
         for tok, flag in pseg.cut(t, use_paddle=True):
             tok = tok.strip()
@@ -112,7 +105,6 @@ def tokenize(text: str) -> list[str]:
                 tokens.append(tok)
             elif WORD_RE.fullmatch(tok):
                 tokens.append(tok.lower())
-
     if (
         SUDACHI_AVAILABLE
         and sudachi is not None
@@ -132,7 +124,6 @@ def tokenize(text: str) -> list[str]:
             if not CJK_KANA_RUN_RE.fullmatch(tok) and not WORD_RE.fullmatch(tok):
                 continue
             tokens.append(tok)
-
     if (not JIEBA_AVAILABLE or pseg is None) and (
         not SUDACHI_AVAILABLE or sudachi is None
     ):
@@ -141,7 +132,6 @@ def tokenize(text: str) -> list[str]:
             if len(run) < 2:
                 continue
             tokens.append(run)
-
     return uniq_preserve_order(tokens)
 
 
@@ -149,7 +139,6 @@ def tokenize(text: str) -> list[str]:
 def tokenize_for_query(query: str) -> list[str]:
     items = tokenize(query)
     merged = items + [_to_zh_tw(x) for x in items]
-
     seen: set[str] = set()
     out: list[str] = []
     for x in merged:
@@ -166,7 +155,6 @@ def _to_zh_tw(text: str) -> str:
             return str(cast("Any", converter).convert(text))
         except Exception:  # noqa: BLE001
             return text
-
     zhconv_module = _get_zhconv_module()
     if zhconv_module is None:
         return text

@@ -9,7 +9,6 @@ from serpsage.core.model_base import MutableModel
 
 class ThemeQuestionCardPayload(MutableModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
-
     question: str
     priority: int = Field(default=3, ge=1, le=5)
     seed_queries: list[str] = Field(default_factory=list, max_length=8)
@@ -19,7 +18,6 @@ class ThemeQuestionCardPayload(MutableModel):
 
 class ThemeOutputPayload(MutableModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
-
     detected_input_language: str = "same as user input language"
     core_question: str = ""
     subthemes: list[str] = Field(default_factory=list, max_length=12)

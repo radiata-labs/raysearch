@@ -127,7 +127,6 @@ class WorkUnit:
                 raise RuntimeError(f"{type(self).__name__} is already closed")
             if self._wu_initialized:
                 return
-
             order = self._collect_post_order()
             initialized_now: list[WorkUnit] = []
             try:
@@ -155,7 +154,6 @@ class WorkUnit:
                         ],
                     ) from exc
                 raise
-
             self._wu_init_order = order
 
     async def aclose(self) -> None:

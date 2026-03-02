@@ -16,14 +16,12 @@ FetchErrorTag = Literal[
 
 class FetchOthersResult(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     links: list[str] = Field(default_factory=list)
     image_links: list[str] = Field(default_factory=list)
 
 
 class FetchSubpagesResult(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     url: str
     title: str
     content: str
@@ -52,7 +50,6 @@ class FetchResultItem(FetchSubpagesResult):
 
 class FetchResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     request_id: str
     results: list[FetchResultItem] = Field(default_factory=list)
     statuses: list[FetchStatusItem]
@@ -60,14 +57,12 @@ class FetchResponse(BaseModel):
 
 class FetchStatusError(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     tag: FetchErrorTag
     detail: str | None = None
 
 
 class FetchStatusItem(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     url: str
     status: Literal["success", "error"]
     error: FetchStatusError | None = None
@@ -75,7 +70,6 @@ class FetchStatusItem(BaseModel):
 
 class SearchResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     request_id: str
     search_mode: str
     results: list[FetchResultItem] = Field(default_factory=list)
@@ -83,7 +77,6 @@ class SearchResponse(BaseModel):
 
 class AnswerCitation(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     id: str
     url: str
     title: str
@@ -99,7 +92,6 @@ class AnswerCitation(BaseModel):
 
 class AnswerResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     request_id: str
     answer: str | object
     citations: list[AnswerCitation] = Field(default_factory=list)
@@ -107,7 +99,6 @@ class AnswerResponse(BaseModel):
 
 class ResearchResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     request_id: str
     content: str
     structured: object | None = None
@@ -126,7 +117,6 @@ __all__ = [
     "AnswerResponse",
     "ResearchResponse",
 ]
-
 FetchResultItem.model_rebuild()
 FetchStatusError.model_rebuild()
 FetchStatusItem.model_rebuild()

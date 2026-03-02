@@ -20,7 +20,6 @@ from serpsage.models.telemetry import (
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-
 _REQUEST_ID_CTX: ContextVar[str] = ContextVar("telemetry_request_id", default="")
 
 

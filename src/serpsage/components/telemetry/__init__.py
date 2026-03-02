@@ -25,18 +25,15 @@ def build_telemetry(
     ov = overrides
     if ov is not None and ov.telemetry is not None:
         return ov.telemetry
-
     cfg = rt.settings.telemetry
     if not bool(cfg.enabled):
         return NullTelemetryEmitter(rt=rt)
-
     sinks: list[EventSinkBase] = []
     obs_backend = str(cfg.obs.backend or "null").lower()
     if obs_backend == "jsonl":
         sinks.append(JsonlObsSink(rt=rt, file_path=str(cfg.obs.jsonl_path)))
     else:
         sinks.append(NullObsSink(rt=rt))
-
     meter_backend = str(cfg.metering.backend or "null").lower()
     if meter_backend == "sqlite":
         sinks.append(
@@ -45,10 +42,8 @@ def build_telemetry(
                 db_path=str(cfg.metering.sqlite_db_path),
             )
         )
-
     if not sinks:
         return NullTelemetryEmitter(rt=rt)
-
     return AsyncEventEmitter(
         rt=rt,
         sinks=sinks,

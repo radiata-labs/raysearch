@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase
     from serpsage.components.fetch import FetcherBase
     from serpsage.core.runtime import Runtime
-
 _CACHE_NAMESPACE = "fetch:v4"
 
 
@@ -48,7 +47,6 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                 source=None,
             )
             return ctx
-
         mode = str(ctx.runtime.crawl_mode or "fallback")
         cache_key = _cache_key(
             url=url,
@@ -57,7 +55,6 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         timeout_s = float(ctx.runtime.crawl_timeout_s or 0.0) or float(
             self.settings.fetch.timeout_s
         )
-
         cache_fetch_ms = 0
         crawl_fetch_ms = 0
 
@@ -97,7 +94,6 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         source: str | None = None
         fetched: FetchResult | None = None
         crawl_exc: Exception | None = None
-
         if mode == "never":
             fetched = await get_cached()
             if fetched is None:
@@ -266,7 +262,6 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                     },
                 )
                 source = "crawl"
-
         assert fetched is not None
         await self._emit_fetch_meter(ctx=ctx, source=str(source or "unknown"))
         ctx.artifacts.fetch_result = fetched

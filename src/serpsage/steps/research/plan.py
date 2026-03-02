@@ -34,72 +34,46 @@ if TYPE_CHECKING:
 
 class ResearchPlanStep(StepBase[ResearchStepContext]):
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
-
         super().__init__(rt=rt)
-
         self._llm = llm
-
         self.bind_deps(llm)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-
         if ctx.runtime.stop:
             return ctx
-
         budget = ctx.runtime.budget
-
         if ctx.runtime.round_index >= int(budget.max_rounds):
             ctx.runtime.stop = True
-
             ctx.runtime.stop_reason = "max_rounds"
-
             return ctx
-
         if ctx.runtime.search_calls >= int(budget.max_search_calls):
             ctx.runtime.stop = True
-
             ctx.runtime.stop_reason = "max_search_calls"
-
             return ctx
-
         round_index = int(ctx.runtime.round_index) + 1
-
         ctx.runtime.round_index = round_index
-
         ctx.current_round = ResearchRoundState(round_index=round_index)
-
         ctx.work.search_jobs = []
-
         ctx.work.abstract_review = AbstractOutputPayload()
-
         ctx.work.content_review = ContentOutputPayload()
-
         ctx.work.need_content_source_ids = []
-
         ctx.work.next_queries = []
-
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
-
         if not core_question:
             core_question = ctx.request.themes
-
         candidate_queries = merge_strings(
             list(ctx.plan.next_queries),
             [core_question],
             limit=max(8, int(budget.max_queries_per_round) * 3),
         )
-
         model = resolve_research_model(
             ctx=ctx,
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
-
         payload = PlanOutputPayload(query_strategy="mixed", search_jobs=[])
-
         try:
             chat_result = await self._llm.chat(
                 model=model,
@@ -114,7 +88,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
             payload = chat_result.data
-
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="research.plan.error",
@@ -128,19 +101,14 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-
         strategy = clean_whitespace(str(payload.query_strategy or "mixed"))
-
         ctx.current_round.query_strategy = strategy or "mixed"
-
         remain_search_calls = int(budget.max_search_calls) - int(
             ctx.runtime.search_calls
         )
-
         job_limit = max(
             0, min(int(budget.max_queries_per_round), int(remain_search_calls))
         )
-
         jobs = self._normalize_jobs(
             payload.search_jobs,
             job_limit=job_limit,
@@ -152,24 +120,15 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             candidate_queries=candidate_queries,
             job_limit=job_limit,
         )
-
         if not jobs:
             ctx.runtime.stop = True
-
             ctx.runtime.stop_reason = "no_queries"
-
             ctx.current_round.stop = True
-
             ctx.current_round.stop_reason = "no_queries"
-
             ctx.rounds.append(ctx.current_round)
-
             return ctx
-
         ctx.work.search_jobs = jobs
-
         ctx.current_round.queries = [job.query for job in jobs]
-
         return ctx
 
     def _normalize_jobs(
@@ -182,29 +141,19 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> list[ResearchSearchJob]:
         if job_limit <= 0:
             return []
-
         out: list[ResearchSearchJob] = []
-
         seen: set[str] = set()
-
         for item in raw:
             query = clean_whitespace(item.query)
-
             if not query:
                 continue
-
             key = query.casefold()
-
             if key in seen:
                 continue
-
             seen.add(key)
-
             intent = clean_whitespace(item.intent).casefold()
-
             if intent not in {"coverage", "deepen", "verify", "refresh"}:
                 intent = "coverage"
-
             mode = clean_whitespace(item.mode).casefold()
             if mode not in {"auto", "deep"}:
                 mode = "auto"
@@ -232,7 +181,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             )
             if len(out) >= job_limit:
                 break
-
         if out:
             return out
         fallback = merge_strings([core_question], fallback_queries, limit=job_limit)
@@ -302,19 +250,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         core_question: str,
         now_utc: datetime,
     ) -> list[dict[str, str]]:
-
         budget = ctx.runtime.budget
-
         out_lang = ctx.plan.output_language or "en"
-
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
-
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
-
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
-
         candidate_queries_markdown = render_queries_markdown(candidate_queries)
-
         return [
             {
                 "role": "system",
@@ -387,7 +328,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ]
 
     def _build_plan_schema(self) -> dict[str, Any]:
-
         return {
             "type": "object",
             "additionalProperties": False,

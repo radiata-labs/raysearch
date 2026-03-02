@@ -11,7 +11,6 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$")
 _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
@@ -49,7 +48,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-
         markdown = str(
             ctx.artifacts.extracted.md_for_abstract
             or ctx.artifacts.extracted.markdown
@@ -72,13 +70,11 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         text = (markdown or "").strip()
         if not text:
             return []
-
         out: list[PreparedAbstract] = []
         seen: set[str] = set()
         in_code = False
         current_heading = ""
         position = 0
-
         for raw_line in text.splitlines():
             line = raw_line.rstrip()
             stripped = line.strip()
@@ -89,14 +85,12 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                 continue
             if in_code:
                 continue
-
             heading_match = _HEADING_RE.match(stripped)
             if heading_match:
                 current_heading = clean_whitespace(heading_match.group(1) or "")
                 continue
             if _INLINE_CODE_ONLY_RE.match(stripped):
                 continue
-
             if _TABLE_ROW_RE.match(stripped):
                 row = self._parse_table_row(stripped)
                 if row:
@@ -112,12 +106,10 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                         )
                         position += 1
                 continue
-
             normalized = _LIST_PREFIX_RE.sub("", stripped)
             normalized = clean_whitespace(normalized)
             if not normalized:
                 continue
-
             for sentence in self._split_line_sentences(normalized):
                 if self._token_count(sentence) <= int(min_abstract_tokens):
                     continue
@@ -133,7 +125,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                     )
                 )
                 position += 1
-
         return out
 
     def _dedupe_key(self, text: str) -> str:
@@ -165,7 +156,6 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
             if sentence:
                 out.append(sentence)
             buf = []
-
         tail = clean_whitespace("".join(buf))
         if tail:
             out.append(tail)

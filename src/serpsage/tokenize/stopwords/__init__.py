@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 STOPWORDS_PATH = Path(__file__).parent / "files"
-
 Trie: Any | None
 try:
     from marisa_trie import Trie as _Trie  # type: ignore[import-not-found]
@@ -37,7 +36,6 @@ def _load_stopwords() -> list[str]:
 
 
 _stopwords = _load_stopwords()
-
 if _TRIE_AVAILABLE and Trie is not None:
     stopwords = Trie(_stopwords)
 else:

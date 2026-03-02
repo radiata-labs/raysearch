@@ -24,7 +24,6 @@ from serpsage.models.llm import (
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import LLMModelSettings
-
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
@@ -47,7 +46,6 @@ class DashScopeClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
-
     @overload
     async def _chat(
         self,
@@ -59,7 +57,6 @@ class DashScopeClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-
     @overload
     async def _chat(
         self,
@@ -71,7 +68,6 @@ class DashScopeClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
-
     @override
     async def _chat(
         self,
@@ -86,7 +82,6 @@ class DashScopeClient(LLMClientBase):
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
-
         response_schema, response_model = self.resolve_response_format(
             response_format,
             format_override=format_override,
@@ -97,14 +92,12 @@ class DashScopeClient(LLMClientBase):
             llm.enable_structured,
         )
         timeout_ms = int(float(timeout_s or llm.timeout_s) * 1000)
-
         if response_schema is not None:
             request_messages = self._inject_structure_instruction(
                 messages=request_messages,
                 schema=response_schema,
                 enable_structured=bool(llm.enable_structured),
             )
-
         response = await self._async_generation_call(
             model=model,
             messages=request_messages,
@@ -115,10 +108,8 @@ class DashScopeClient(LLMClientBase):
         )
         text = self._extract_text(response)
         usage = self._to_usage(response)
-
         if response_schema is None:
             return ChatTextResult(text=text, usage=usage)
-
         data = self._parse_json_object(text)
         if response_model is not None:
             return ChatModelResult(

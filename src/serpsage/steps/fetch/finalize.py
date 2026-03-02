@@ -39,7 +39,6 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-
         markdown = (
             ctx.artifacts.extracted.markdown
             if ctx.resolved.content_request.include_markdown_links
@@ -49,7 +48,6 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         if max_chars is not None and max_chars > 0:
             markdown = finalize_markdown(markdown=markdown, max_chars=max_chars)
         content = markdown if ctx.resolved.return_content else ""
-
         abstracts = [
             str(item.text) for item in list(ctx.artifacts.scored_abstracts or [])
         ]
@@ -63,7 +61,6 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             if ctx.request.others is not None:
                 others_result = {"others": ctx.output.others}
             subpages_result = list(ctx.subpages.results)
-
         ctx.output.result = FetchResultItem(
             url=ctx.url,
             title=str(ctx.artifacts.extracted.title or ""),
@@ -78,7 +75,6 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             subpages=subpages_result,
             **others_result,
         )
-
         return ctx
 
 

@@ -92,9 +92,7 @@ def build_engine(
     _validate_override_workunits(ov)
     telemetry = build_telemetry(rt=rt, overrides=ov)
     rt = rt.model_copy(update={"telemetry": telemetry})
-
     shared_http_unit = build_http_client(rt=rt, overrides=ov)
-
     cache: CacheBase = ov.cache or build_cache(rt=rt)
     rate_limiter: RateLimiterBase = ov.rate_limiter or build_rate_limiter(rt=rt)
     provider: SearchProviderBase = ov.provider or build_provider(
@@ -108,7 +106,6 @@ def build_engine(
     )
     ranker: RankerBase = ov.ranker or build_ranker(rt=rt)
     llm: LLMClientBase = ov.llm or build_overview_client(rt=rt, http=shared_http_unit)
-
     child_fetch_steps: list[StepBase[FetchStepContext]] = [
         FetchPrepareStep(rt=rt),
         FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
@@ -178,7 +175,6 @@ def build_engine(
     research_runner = RunnerBase[ResearchStepContext](
         rt=rt, steps=research_steps, kind="search"
     )
-
     return Engine(
         rt=rt,
         search_runner=search_runner,

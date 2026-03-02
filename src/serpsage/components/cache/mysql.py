@@ -14,8 +14,6 @@ from serpsage.components.cache.base import CacheBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-
-
 _SAFE_SQL_IDENT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -73,15 +71,11 @@ class MySQLCache(CacheBase):
     def __init__(self, *, rt: Runtime, driver: str | None = None) -> None:
         super().__init__(rt=rt)
         cfg = self.settings.cache.mysql
-
         self._driver_pref: Final[str] = str(driver or cfg.driver or "auto").lower()
-
         self._pool: Any | None = None
-
         # identifier sanitization + quoting (prevents injection via table name)
         self._table_ident: Final[str] = _ensure_identifier(str(cfg.table))
         self._table_quoted: Final[str] = _quote_ident(self._table_ident)
-
         self._sql: _SQL | None = None
 
     def _resolve_driver(self) -> Any:
@@ -92,7 +86,6 @@ class MySQLCache(CacheBase):
             if _module_available("aiomysql"):
                 return importlib.import_module("aiomysql")
             raise RuntimeError("neither asyncmy nor aiomysql is available")
-
         if pref not in {"asyncmy", "aiomysql"}:
             raise ValueError(f"unsupported mysql cache driver: {pref}")
         if not _module_available(pref):
@@ -131,10 +124,8 @@ class MySQLCache(CacheBase):
     async def on_init(self) -> None:
         if self._pool is not None:
             return
-
         cfg = self.settings.cache.mysql
         mod = self._resolve_driver()
-
         pool: Any = await mod.create_pool(
             host=str(cfg.host),
             port=int(cfg.port),
@@ -150,7 +141,6 @@ class MySQLCache(CacheBase):
         self._pool = pool
         self._sql = self._build_sql()
         ready_pool, ready_sql = self._require_ready()
-
         async with ready_pool.acquire() as con:
             async with con.cursor() as cur:
                 await cur.execute(ready_sql.create_table)
@@ -166,26 +156,21 @@ class MySQLCache(CacheBase):
         if self._pool is None:
             raise RuntimeError("mysql cache is not initialized")
         pool, sql = self._require_ready()
-
         now = int(self.clock.now_ms())
-
         async with pool.acquire() as con, con.cursor() as cur:
             await cur.execute(sql.select_one, (namespace, key))
             row = await cur.fetchone()
             if not row:
                 return None
-
             exp_ms, blob = int(row[0]), row[1]
             if exp_ms <= now:
                 await cur.execute(sql.delete_one, (namespace, key))
                 await con.commit()
                 return None
-
         # normalize blob
         if isinstance(blob, memoryview):
             blob = blob.tobytes()
         data = bytes(blob)
-
         try:
             return zlib.decompress(data)
         except zlib.error:
@@ -200,11 +185,9 @@ class MySQLCache(CacheBase):
         if self._pool is None:
             raise RuntimeError("mysql cache is not initialized")
         pool, sql = self._require_ready()
-
         now = int(self.clock.now_ms())
         exp_ms = now + int(ttl_s) * 1000
         compressed = zlib.compress(value, level=6)
-
         async with pool.acquire() as con:
             async with con.cursor() as cur:
                 await cur.execute(sql.upsert_one, (namespace, key, exp_ms, compressed))

@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from serpsage.components.http import HttpClientBase
     from serpsage.components.rate_limit import RateLimiterBase
     from serpsage.core.runtime import Runtime
-
 _MIN_BYTES = 32
 _PROBE_MAX_BYTES = 50_000
 _BLOCK_STATUSES = {401, 403, 429}
@@ -125,7 +124,6 @@ class AutoFetcher(FetcherBase):
             if score >= float(quality_cfg.quality_score_threshold):
                 return attempt
             raise RuntimeError(f"fetch_unusable:curl_cffi:{int(attempt.status_code)}")
-
         if strategy == "playwright":
             attempt = await self._run_playwright(
                 url=url,
@@ -136,13 +134,11 @@ class AutoFetcher(FetcherBase):
             if score >= float(quality_cfg.quality_score_threshold):
                 return attempt
             raise RuntimeError(f"fetch_unusable:playwright:{int(attempt.status_code)}")
-
         if strategy != "auto":
             raise ValueError(
                 "unsupported fetch backend "
                 f"`{strategy}`; expected curl_cffi|playwright|auto"
             )
-
         return await self._fetch_auto(
             url=url,
             deadline_ts=deadline_ts,
@@ -156,10 +152,8 @@ class AutoFetcher(FetcherBase):
     ) -> FetchAttempt:
         probe = await self._probe_http(url=url, deadline_ts=deadline_ts)
         selected_backend, selection_reason = self._choose_backend(probe)
-
         probe_chain = self._probe_chain_item(probe)
         decision_chain = f"decision:{selected_backend}:{selection_reason}"
-
         if selected_backend == "playwright":
             try:
                 attempt = await self._run_playwright(
@@ -179,7 +173,6 @@ class AutoFetcher(FetcherBase):
             raise RuntimeError(
                 f"fetch_unusable:auto:playwright:{int(attempt.status_code)}"
             )
-
         curl_attempt: FetchAttempt | None = None
         curl_error_type: str | None = None
         try:
@@ -189,13 +182,11 @@ class AutoFetcher(FetcherBase):
             )
         except Exception as exc:  # noqa: BLE001
             curl_error_type = type(exc).__name__
-
         force_playwright_for_nextjs = bool(
             curl_attempt is not None
             and curl_attempt.content_kind == "html"
             and has_nextjs_signals(bytes(curl_attempt.content or b""))
         )
-
         if (
             curl_attempt is not None
             and self._is_useful(curl_attempt)
@@ -205,7 +196,6 @@ class AutoFetcher(FetcherBase):
                 winner=curl_attempt,
                 chain_prefix=[probe_chain, decision_chain],
             )
-
         try:
             playwright_attempt = await self._run_playwright(
                 url=url,
@@ -216,7 +206,6 @@ class AutoFetcher(FetcherBase):
             raise RuntimeError(
                 f"fetch_unusable:auto:playwright_fallback_error:{type(exc).__name__}"
             ) from exc
-
         if self._is_useful(playwright_attempt):
             prefix = [probe_chain, decision_chain, "fallback:playwright"]
             if curl_error_type is not None:
@@ -260,7 +249,6 @@ class AutoFetcher(FetcherBase):
                 snap.final_url = str(resp.url)
                 snap.content_type = resp.headers.get("content-type")
                 body = await self._read_probe_body(resp=resp)
-
             quality = self.settings.fetch.quality
             content_kind = classify_content_kind(
                 content_type=snap.content_type,
@@ -298,7 +286,6 @@ class AutoFetcher(FetcherBase):
             snap.bytes_read = int(len(body))
         except Exception as exc:  # noqa: BLE001
             snap.error_type = type(exc).__name__
-
         return snap
 
     async def _read_probe_body(self, *, resp: httpx.Response) -> bytes:
@@ -389,27 +376,21 @@ class AutoFetcher(FetcherBase):
         """Calculate a quality score (0.0-1.0) for fetched content."""
         quality = self.settings.fetch.quality
         reasons: list[str] = []
-
         status = int(res.status_code or 0)
         content_len = len(res.content or b"")
         text_chars = int(res.text_chars or 0)
         content_score = float(res.content_score or 0.0)
-
         score = 0.0
-
         if status < 200 or status >= 400:
             reasons.append(f"bad_status:{status}")
             return 0.0, reasons
-
         if self._is_blocked(res):
             reasons.append("blocked")
             return 0.0, reasons
-
         len_ratio = min(1.0, max(0, content_len - _MIN_BYTES) / (1000 - _MIN_BYTES))
         score += len_ratio * 0.25
         if len_ratio < 0.3:
             reasons.append(f"short_content:{content_len}")
-
         if res.content_kind == "html":
             text_ratio = min(
                 1.0,
@@ -421,16 +402,13 @@ class AutoFetcher(FetcherBase):
                 reasons.append(f"low_text:{text_chars}")
         else:
             score += content_score * 0.45
-
         if res.content_kind not in {"binary", "unknown"}:
             score += 0.15
         else:
             reasons.append(f"unknown_content_kind:{res.content_kind}")
-
         script_ratio = float(res.script_ratio or 0.0)
         script_score = max(0, 1.0 - script_ratio * 2)
         score += script_score * 0.15
-
         return score, reasons
 
     def _attach_attempt_chain(

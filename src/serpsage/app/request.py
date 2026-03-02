@@ -14,7 +14,6 @@ FetchContentTag = Literal[
     "header", "navigation", "banner", "body", "sidebar", "footer", "metadata"
 ]
 CrawlMode = Literal["never", "fallback", "preferred", "always"]
-
 _LATIN_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]")
 
@@ -74,7 +73,6 @@ def _validate_json_schema(value: dict[str, Any] | None) -> dict[str, Any] | None
 
 class FetchOthersRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     max_links: int | None = None
     max_image_links: int | None = None
 
@@ -90,7 +88,6 @@ class FetchOthersRequest(BaseModel):
 
 class FetchContentRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     max_chars: int | None = None
     detail: FetchContentDetail = "concise"
     include_markdown_links: bool = False
@@ -119,7 +116,6 @@ class FetchContentRequest(BaseModel):
 
 class FetchAbstractsRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     query: str | None = None
     max_chars: int | None = None
 
@@ -141,7 +137,6 @@ class FetchAbstractsRequest(BaseModel):
 
 class FetchOverviewRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     query: str | None = None
     json_schema: dict[str, Any] | None = None
 
@@ -159,7 +154,6 @@ class FetchOverviewRequest(BaseModel):
 
 class FetchSubpagesRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     max_subpages: int | None = None
     subpage_keywords: str | None = None
 
@@ -183,7 +177,6 @@ class FetchSubpagesRequest(BaseModel):
 
 class FetchRequestBase(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout: float | None = None
     content: bool | FetchContentRequest = False
@@ -245,7 +238,6 @@ class FetchRequest(FetchRequestBase):
 
 class SearchRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-
     query: str
     additional_queries: list[str] | None = None
     mode: SearchMode = "auto"
@@ -322,7 +314,6 @@ class SearchRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
-
     query: str
     json_schema: dict[str, Any] | None = None
     content: bool = False
@@ -343,7 +334,6 @@ class AnswerRequest(BaseModel):
 
 class ResearchRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
-
     search_mode: ResearchSearchMode = "research"
     themes: str
     json_schema: dict[str, Any] | None = None

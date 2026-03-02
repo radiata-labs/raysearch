@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
@@ -25,7 +24,6 @@ def uniq_preserve_order(items: Iterable[str]) -> list[str]:
 
 def stable_json(obj: Any) -> str:
     """Deterministic JSON representation used for cache keys."""
-
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 

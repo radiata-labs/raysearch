@@ -46,7 +46,6 @@ def load_settings(
     path: str | None = None, *, env: dict[str, str] | None = None
 ) -> AppSettings:
     """Load settings from YAML/JSON and apply env overrides.
-
     Precedence:
     1) explicit `path`
     2) `SERPSAGE_CONFIG_PATH`
@@ -69,10 +68,8 @@ def load_settings(
             data = json.loads(raw)
         else:
             raise ValueError(f"Unsupported settings file type: {p.suffix}")
-
     settings = AppSettings.model_validate(data)
     raw_llm_models = _raw_llm_models(data)
-
     # Env overrides (centralized; components must not read env).
     base_url = env_map.get("SEARXNG_BASE_URL")
     api_key = env_map.get("SEARCH_API_KEY")
@@ -80,7 +77,6 @@ def load_settings(
         settings.provider.searxng.base_url = base_url
     if api_key:
         settings.provider.searxng.api_key = api_key
-
     # Optional Cloudflare Access headers for searxng (if user uses it).
     cf_id = env_map.get("SEARXNG_CF_ACCESS_CLIENT_ID")
     cf_secret = env_map.get("SEARXNG_CF_ACCESS_CLIENT_SECRET")
@@ -89,7 +85,6 @@ def load_settings(
         settings.provider.searxng.headers.setdefault(
             "CF-Access-Client-Secret", cf_secret
         )
-
     # LLM per-backend env fallback.
     # YAML explicit non-empty values always win over env.
     for idx, model in enumerate(settings.llm.models):
@@ -106,7 +101,6 @@ def load_settings(
             env_base_url = env_map.get(env_base_url_name)
             if env_base_url:
                 model.base_url = env_base_url
-
     return settings
 
 

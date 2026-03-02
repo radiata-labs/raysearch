@@ -27,13 +27,11 @@ _HR_LINE_RE = re.compile(r"^\s*(?:[-*_]\s*){3,}\s*$")
 def finalize_markdown(*, markdown: str, max_chars: int) -> str:
     if not markdown:
         return ""
-
     source_lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out: list[str] = []
     paragraph_buf: list[str] = []
     seen_paragraphs: set[str] = set()
     table_buf: list[str] = []
-
     mode = "normal"
     active_fence = ""
 
@@ -67,21 +65,18 @@ def finalize_markdown(*, markdown: str, max_chars: int) -> str:
 
     for raw_line in source_lines:
         fence = _fence_delimiter(raw_line)
-
         if mode == "fenced_code":
             out.append(raw_line)
             if fence and len(fence) >= len(active_fence):
                 mode = "normal"
                 active_fence = ""
             continue
-
         if mode == "table":
             if _is_table_line(raw_line):
                 table_buf.append(_normalize_table_line(raw_line))
                 continue
             flush_table()
             mode = "normal"
-
         if fence:
             flush_paragraph()
             append_blank_once()
@@ -89,33 +84,26 @@ def finalize_markdown(*, markdown: str, max_chars: int) -> str:
             mode = "fenced_code"
             active_fence = fence
             continue
-
         if _is_table_line(raw_line):
             flush_paragraph()
             append_blank_once()
             mode = "table"
             table_buf.append(_normalize_table_line(raw_line))
             continue
-
         normalized = _normalize_normal_line(raw_line)
         if not normalized:
             flush_paragraph()
             append_blank_once()
             continue
-
         if _NOISE_LINE_RE.search(_collapse_ws_outside_inline_code(normalized).strip()):
             continue
-
         if _SPECIAL_BLOCK_RE.match(normalized):
             flush_paragraph()
             out.append(normalized)
             continue
-
         paragraph_buf.append(normalized)
-
     flush_table()
     flush_paragraph()
-
     compact = _compact_blank_lines(out)
     result = "\n".join(compact).strip()
     if len(result) <= int(max_chars):
@@ -141,7 +129,6 @@ def markdown_to_text(markdown: str) -> str:
             if raw:
                 out.append(raw)
             continue
-
         line = _MD_PREFIX_RE.sub("", raw.strip())
         line = re.sub(r"`([^`]+)`", r"\1", line)
         line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", line)
@@ -168,7 +155,6 @@ def markdown_to_abstract_text(markdown: str) -> str:
             continue
         if in_code:
             continue
-
         line = raw.strip()
         if not line:
             continue
@@ -180,7 +166,6 @@ def markdown_to_abstract_text(markdown: str) -> str:
             continue
         if _TABLE_SEP_RE.match(line):
             continue
-
         line = _MD_PREFIX_RE.sub("", line)
         line = re.sub(r"`([^`]+)`", r"\1", line)
         line = _IMAGE_RE.sub("", line)
@@ -196,7 +181,6 @@ def markdown_to_abstract_text(markdown: str) -> str:
         if _ABSTRACT_NOISE_RE.match(line):
             continue
         out.append(line)
-
     return "\n".join(out).strip()
 
 
@@ -212,11 +196,9 @@ def merge_markdown(*, base: str, extra: str, max_chars: int) -> str:
 def extract_feature_snippets(*, markdown: str, feature: str) -> str:
     if not markdown.strip():
         return ""
-
     if feature == "code_block_count":
         snippets = _extract_fenced_blocks(markdown)
         return "\n\n".join(snippets[:6]).strip()
-
     if feature == "table_count":
         blocks: list[str] = []
         current: list[str] = []
@@ -234,13 +216,11 @@ def extract_feature_snippets(*, markdown: str, feature: str) -> str:
             if _table_has_separator(current):
                 blocks.append(block)
         return "\n\n".join(blocks[:6]).strip()
-
     if feature == "heading_count":
         heads = [
             ln.strip() for ln in markdown.splitlines() if ln.strip().startswith("#")
         ]
         return "\n".join(heads[:14]).strip()
-
     if feature == "ordered_list_count":
         items = [
             ln.rstrip()
@@ -248,7 +228,6 @@ def extract_feature_snippets(*, markdown: str, feature: str) -> str:
             if re.match(r"^\s*\d+[.)]\s+", ln)
         ]
         return "\n".join(items[:24]).strip()
-
     return ""
 
 
@@ -262,13 +241,11 @@ def _paragraph_key(block: str) -> str:
 def _normalize_normal_line(line: str) -> str:
     if not line.strip():
         return ""
-
     leading = line[: len(line) - len(line.lstrip(" \t"))]
     leading = leading.replace("\t", "    ")
     body = _collapse_ws_outside_inline_code(line[len(leading) :]).strip()
     if not body:
         return ""
-
     if _SPECIAL_BLOCK_RE.match(body):
         return f"{leading}{body}".rstrip()
     return body
@@ -335,21 +312,17 @@ def _collapse_ws_outside_inline_code(text: str) -> str:
                 code_fence_len = 0
             idx += run
             continue
-
         if in_code:
             out.append(ch)
             idx += 1
             continue
-
         if ch.isspace():
             if not out or out[-1] != " ":
                 out.append(" ")
             idx += 1
             continue
-
         out.append(ch)
         idx += 1
-
     return "".join(out)
 
 
@@ -367,23 +340,19 @@ def _extract_fenced_blocks(markdown: str) -> list[str]:
                 buf = []
                 active_fence = ""
             continue
-
         if fence:
             active_fence = fence
             buf = [line]
-
     return [b for b in blocks if b]
 
 
 def _clip_with_structure(*, result: str, max_chars: int) -> str:
     if len(result) <= max_chars:
         return result
-
     lines = result.splitlines(keepends=True)
     total = 0
     last_safe = 0
     open_fence = ""
-
     for line in lines:
         next_total = total + len(line)
         stripped = line.strip()
@@ -393,7 +362,6 @@ def _clip_with_structure(*, result: str, max_chars: int) -> str:
                 open_fence = fence
             elif len(fence) >= len(open_fence):
                 open_fence = ""
-
         if next_total <= max_chars and not open_fence:
             if (
                 stripped == ""
@@ -402,16 +370,12 @@ def _clip_with_structure(*, result: str, max_chars: int) -> str:
                 or bool(re.match(r"^\d+[.)]\s+", stripped))
             ):
                 last_safe = next_total
-
         if next_total > max_chars:
             break
-
         total = next_total
-
     cut = max_chars
     if last_safe > int(max_chars * 0.55):
         cut = last_safe
-
     clipped = result[:cut].rstrip()
     unclosed_start = _find_unclosed_fence_start(clipped)
     if unclosed_start >= 0:

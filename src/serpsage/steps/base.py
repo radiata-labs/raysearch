@@ -145,24 +145,20 @@ class RunnerBase(WorkUnit, Generic[TContext]):
         self._steps = list(steps)
         self._kind = kind
         self._seq = 0
-
         self._state: RunnerLifecycleState = "created"
         self._accepting = False
         self._send: ObjectSendStream[_RunnerTask[TContext]] | None = None
         self._recv: ObjectReceiveStream[_RunnerTask[TContext]] | None = None
         self._tg_cm: TaskGroup | None = None
         self._tg: TaskGroup | None = None
-
         self._results: dict[str, TContext | Exception] = {}
         self._result_events: dict[str, anyio.Event] = {}
         self._orphan_task_ids: set[str] = set()
         self._infra_error: Exception | None = None
-
         self._seq_lock = anyio.Lock()
         self._state_lock = anyio.Lock()
         self._orphan_lock = anyio.Lock()
         self._result_lock = self._orphan_lock
-
         self.bind_deps(*steps)
 
     @override
@@ -174,7 +170,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 raise RuntimeError("runner is closed and cannot be initialized again")
             if self._state == "draining":
                 raise RuntimeError("runner is draining and cannot be initialized")
-
             send, recv = anyio.create_memory_object_stream[_RunnerTask[TContext]](
                 max_buffer_size=self._queue_size()
             )
@@ -185,7 +180,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 await send.aclose()
                 await recv.aclose()
                 raise
-
             try:
                 for _ in range(self._max_concurrency()):
                     tg.start_soon(self._worker_loop, recv.clone())
@@ -195,7 +189,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 await send.aclose()
                 await recv.aclose()
                 raise
-
             self._send = send
             self._recv = recv
             self._tg_cm = tg_cm
@@ -212,7 +205,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
         send: ObjectSendStream[_RunnerTask[TContext]] | None = None
         recv: ObjectReceiveStream[_RunnerTask[TContext]] | None = None
         tg_cm: TaskGroup | None = None
-
         async with self._state_lock:
             if self._state == "closed":
                 return
@@ -224,7 +216,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 self._orphan_task_ids.clear()
                 self._state = "closed"
                 return
-
             self._state = "draining"
             self._accepting = False
             send = self._send
@@ -234,7 +225,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
             self._recv = None
             self._tg = None
             self._tg_cm = None
-
         try:
             if send is not None:
                 await send.aclose()
@@ -284,7 +274,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
         await self._ensure_running()
         if not contexts:
             return []
-
         task_ids: list[str] = []
         pending: set[str] = set()
         try:
@@ -292,7 +281,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 task_id = await self._push(ctx=ctx)
                 task_ids.append(task_id)
                 pending.add(task_id)
-
             done: dict[str, TContext | Exception] = {}
             for task_id in task_ids:
                 item = await self._wait_and_get(task_id=task_id)
@@ -300,7 +288,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                     raise RuntimeError(f"runner result missing for task_id={task_id}")
                 done[task_id] = item
                 pending.discard(task_id)
-
             return [self._into_result(tid, done[tid]) for tid in task_ids]
         except BaseException as exc:
             if pending:
@@ -349,7 +336,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
             if self._infra_error is None:
                 self._infra_error = exc
             self._accepting = False
-
         events_to_notify: list[anyio.Event] = []
         async with self._orphan_lock:
             for task_id, event in list(self._result_events.items()):
@@ -358,7 +344,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                     RuntimeError("runner infrastructure failed"),
                 )
                 events_to_notify.append(event)
-
         for event in events_to_notify:
             with suppress(Exception):
                 event.set()
@@ -374,21 +359,18 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                     event = self._result_events.pop(task_id, None)
                     if event is not None:
                         events_to_notify.append(event)
-
         for event in events_to_notify:
             with suppress(Exception):
                 event.set()
 
     async def _store_result(self, *, task_id: str, item: TContext | Exception) -> None:
         event: anyio.Event | None = None
-
         async with self._orphan_lock:
             if task_id in self._orphan_task_ids:
                 self._orphan_task_ids.remove(task_id)
             else:
                 self._results[task_id] = item
             event = self._result_events.get(task_id)
-
         if event is not None:
             event.set()
 
@@ -422,13 +404,11 @@ class RunnerBase(WorkUnit, Generic[TContext]):
         async with self._seq_lock:
             task_id = f"{request_id}#{self._seq}"
             self._seq += 1
-
         async with self._state_lock:
             state = self._state
             accepting = self._accepting
             send = self._send
             infra_error = self._infra_error
-
         if state != "running" or not accepting or send is None:
             raise RuntimeError(
                 f"runner enqueue rejected for task_id={task_id} request_id={request_id} state={state}"
@@ -437,10 +417,8 @@ class RunnerBase(WorkUnit, Generic[TContext]):
             raise RuntimeError(
                 f"runner enqueue rejected for task_id={task_id} request_id={request_id}"
             ) from infra_error
-
         async with self._orphan_lock:
             self._result_events[task_id] = anyio.Event()
-
         try:
             await send.send(
                 _RunnerTask[TContext](task_id=task_id, request_id=request_id, ctx=ctx)
@@ -466,17 +444,13 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                 self._result_events.pop(task_id, None)
                 return None
             event = self._result_events.get(task_id)
-
         if event is None:
             return None
-
         await event.wait()
-
         async with self._state_lock:
             infra_error = self._infra_error
         if infra_error is not None:
             raise RuntimeError("runner infrastructure failed") from infra_error
-
         async with self._orphan_lock:
             item = self._results.pop(task_id, None)
             self._result_events.pop(task_id, None)

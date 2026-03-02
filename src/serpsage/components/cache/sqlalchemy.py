@@ -9,7 +9,6 @@ from serpsage.components.cache.base import CacheBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-
 _SAFE_SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -30,12 +29,10 @@ class SQLAlchemyCache(CacheBase):
             )
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("sqlalchemy is required for SQLAlchemyCache") from exc
-
         cfg = self.settings.cache.sqlalchemy
         self._url = str(cfg.url)
         self._table_name = _ensure_identifier(str(cfg.table))
         self._validate_async_url(self._url)
-
         self._sa = sa
         self._create_async_engine = create_async_engine
         self._engine: Any | None = None
@@ -79,7 +76,6 @@ class SQLAlchemyCache(CacheBase):
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         if self._engine is None:
             raise RuntimeError("sqlalchemy engine is not initialized")
-
         now = int(self.clock.now_ms())
         stmt = self._sa.select(self._table.c.expires_at_ms, self._table.c.value).where(
             self._table.c.namespace == namespace,
@@ -89,7 +85,6 @@ class SQLAlchemyCache(CacheBase):
             self._table.c.namespace == namespace,
             self._table.c.key == key,
         )
-
         async with self._engine.begin() as con:
             row = (await con.execute(stmt)).first()
             if not row:
@@ -99,7 +94,6 @@ class SQLAlchemyCache(CacheBase):
             if exp_ms <= now:
                 await con.execute(delete_stmt)
                 return None
-
         if isinstance(blob, memoryview):
             blob = blob.tobytes()
         return zlib.decompress(bytes(blob))
@@ -110,11 +104,9 @@ class SQLAlchemyCache(CacheBase):
             return
         if self._engine is None:
             raise RuntimeError("sqlalchemy engine is not initialized")
-
         now = int(self.clock.now_ms())
         exp_ms = now + int(ttl_s) * 1000
         compressed = zlib.compress(value, level=6)
-
         delete_one_stmt = self._sa.delete(self._table).where(
             self._table.c.namespace == namespace,
             self._table.c.key == key,
@@ -128,7 +120,6 @@ class SQLAlchemyCache(CacheBase):
         cleanup_stmt = self._sa.delete(self._table).where(
             self._table.c.expires_at_ms <= now
         )
-
         async with self._engine.begin() as con:
             await con.execute(delete_one_stmt)
             await con.execute(insert_stmt)

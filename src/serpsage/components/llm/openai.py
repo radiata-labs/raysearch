@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from serpsage.components.http.base import HttpClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import LLMModelSettings
-
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
@@ -67,7 +66,6 @@ class OpenAIClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
-
     @overload
     async def _chat(
         self,
@@ -79,7 +77,6 @@ class OpenAIClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-
     @overload
     async def _chat(
         self,
@@ -91,7 +88,6 @@ class OpenAIClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
-
     @override
     async def _chat(
         self,
@@ -106,7 +102,6 @@ class OpenAIClient(LLMClientBase):
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
-
         response_schema, response_model = self.resolve_response_format(
             response_format,
             format_override=format_override,
@@ -147,7 +142,6 @@ class OpenAIClient(LLMClientBase):
             ),
             **kwargs,
         )
-
         text = self._extract_text(completion)
         usage = self._to_usage(getattr(completion, "usage", None))
         if response_schema is None:

@@ -24,12 +24,10 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.fatal:
             return ctx
-
         abstracts_req = ctx.resolved.abstracts_request
         overview_req = ctx.resolved.overview_request
         if abstracts_req is None and overview_req is None:
             return ctx
-
         candidates = list(ctx.artifacts.prepared_abstracts or [])
         if not candidates:
             await self.emit_tracking_event(
@@ -47,7 +45,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-
         abstracts_query = ""
         raw_scored_abstracts = []
         if abstracts_req is not None:
@@ -68,7 +65,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 candidates=candidates,
                 query_tokens=tokenize_for_query(abstracts_query),
             )
-
             if not raw_scored_abstracts:
                 await self.emit_tracking_event(
                     event_name="fetch.rank.error",
@@ -97,7 +93,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                         )
                     )
                 ]
-
         if overview_req is not None:
             overview_query = _resolve_effective_query(
                 requested_query=overview_req.query,
@@ -148,7 +143,6 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                         )
                     )
                 ]
-
         return ctx
 
     async def _score_abstracts(
@@ -160,13 +154,11 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
     ) -> list[tuple[float, PreparedAbstract]]:
         if not candidates:
             return []
-
         headings: list[str] = []
         for candidate in candidates:
             heading = clean_whitespace(candidate.heading or "")
             if heading and heading not in headings:
                 headings.append(heading)
-
         combined_texts = [candidate.text for candidate in candidates] + headings
         combined_scores = await self._ranker.score_texts(
             texts=combined_texts,
@@ -182,11 +174,9 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             )
             for idx, heading in enumerate(headings)
         }
-
         cfg = self.settings.fetch.abstract
         alpha = float(cfg.title_boost_alpha)
         min_score = float(cfg.min_abstract_score)
-
         scored: list[tuple[float, PreparedAbstract]] = []
         for idx, candidate in enumerate(candidates):
             base = float(base_scores[idx]) if idx < len(base_scores) else 0.0
@@ -199,12 +189,9 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             if final_score < min_score:
                 continue
             scored.append((final_score, candidate))
-
         if not scored:
             return []
-
         scored.sort(key=lambda item: (-item[0], int(item[1].position)))
-
         return scored
 
 
@@ -242,7 +229,6 @@ def _fit_budget(
 ) -> list[tuple[float, PreparedAbstract]]:
     if max_chars is None or max_chars <= 0:
         return list(ranked)
-
     out: list[tuple[float, PreparedAbstract]] = []
     total_chars = 0
     for score, candidate in ranked:

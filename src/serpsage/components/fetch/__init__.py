@@ -17,7 +17,6 @@ def build_fetcher(
     http: HttpClientBase,
 ) -> FetcherBase:
     backend = str(rt.settings.fetch.backend or "auto").lower()
-
     curl_fetcher = None
     if backend in {"auto", "curl_cffi"}:
         from serpsage.components.fetch.curl_cffi import (
@@ -30,7 +29,6 @@ def build_fetcher(
                 curl_fetcher = CurlCffiFetcher(rt=rt)
             except Exception:
                 curl_fetcher = None
-
     playwright_fetcher = None
     if backend in {"auto", "playwright"}:
         from serpsage.components.fetch.playwright import (
@@ -43,21 +41,18 @@ def build_fetcher(
                 playwright_fetcher = PlaywrightFetcher(rt=rt)
             except Exception:
                 playwright_fetcher = None
-
     if backend == "curl_cffi":
         if curl_fetcher is None:
             raise RuntimeError(
                 "fetch backend `curl_cffi` is unavailable: install curl_cffi"
             )
         return curl_fetcher
-
     if backend == "playwright":
         if playwright_fetcher is None:
             raise RuntimeError(
                 "fetch backend `playwright` is unavailable: install playwright and browsers"
             )
         return playwright_fetcher
-
     if backend == "auto":
         if curl_fetcher is None:
             raise RuntimeError(
@@ -78,7 +73,6 @@ def build_fetcher(
             curl_fetcher=curl_fetcher,
             playwright_fetcher=playwright_fetcher,
         )
-
     raise ValueError(
         f"unsupported fetch backend `{backend}`; expected curl_cffi|playwright|auto"
     )

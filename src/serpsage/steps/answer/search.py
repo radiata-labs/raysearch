@@ -15,8 +15,6 @@ from serpsage.steps.base import StepBase
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.steps.base import RunnerBase
-
-
 _DEEP_SUBPAGE_MAX = 2
 
 
@@ -27,32 +25,23 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         rt: Runtime,
         search_runner: RunnerBase[SearchStepContext],
     ) -> None:
-
         super().__init__(rt=rt)
-
         self._search_runner = search_runner
-
         self.bind_deps(search_runner)
 
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
-
         search_request = self._build_search_request(ctx)
-
         ctx.search.request = search_request
-
         ctx.search.search_mode = search_request.mode
-
         search_ctx = SearchStepContext(
             settings=ctx.settings,
             request=search_request,
             disable_internal_llm=True,
             request_id=ctx.request_id,
         )
-
         try:
             search_ctx = await self._search_runner.run(search_ctx)
-
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="answer.search.error",
@@ -66,21 +55,14 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
                     "message": str(exc),
                 },
             )
-
             ctx.search.results = []
-
             return ctx
-
         ctx.search.search_mode = str(search_ctx.request.mode)
-
         ctx.search.results = list(search_ctx.output.results or [])
-
         return ctx
 
     def _build_search_request(self, ctx: AnswerStepContext) -> SearchRequest:
-
         mode = str(ctx.plan.search_mode or "auto")
-
         subpages = (
             FetchSubpagesRequest(
                 max_subpages=_DEEP_SUBPAGE_MAX,
@@ -89,7 +71,6 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             if mode == "deep"
             else None
         )
-
         return SearchRequest(
             query=ctx.plan.search_query,
             mode="deep" if mode == "deep" else "auto",

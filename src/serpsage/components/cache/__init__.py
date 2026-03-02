@@ -48,13 +48,11 @@ def build_cache(*, rt: Runtime) -> CacheBase:
         from serpsage.components.cache.null import NullCache
 
         return NullCache(rt=rt)
-
     backend = (cfg.backend or "sqlite").lower()
     if backend == "memory":
         from serpsage.components.cache.memory import MemoryCache
 
         return MemoryCache(rt=rt)
-
     if backend == "sqlite":
         err = _check_dep("aiosqlite", "aiosqlite")
         if err is not None:
@@ -62,7 +60,6 @@ def build_cache(*, rt: Runtime) -> CacheBase:
         from serpsage.components.cache.sqlite import SqliteCache
 
         return SqliteCache(rt=rt)
-
     if backend == "redis":
         err = _check_dep("aioredis", "aioredis")
         if err is not None:
@@ -70,7 +67,6 @@ def build_cache(*, rt: Runtime) -> CacheBase:
         from serpsage.components.cache.redis import RedisCache
 
         return RedisCache(rt=rt)
-
     if backend == "mysql":
         driver, err = _pick_mysql_driver(pref=str(cfg.mysql.driver or "auto").lower())
         if err is not None or driver is None:
@@ -81,12 +77,10 @@ def build_cache(*, rt: Runtime) -> CacheBase:
         from serpsage.components.cache.mysql import MySQLCache
 
         return MySQLCache(rt=rt, driver=driver)
-
     if backend == "sqlalchemy":
         err = _check_dep("sqlalchemy", "sqlalchemy")
         if err is not None:
             raise RuntimeError(f"cache backend `sqlalchemy` is unavailable: {err}")
-
         url = str(cfg.sqlalchemy.url)
         driver = _extract_sqlalchemy_driver(url)
         if driver is None:
@@ -114,7 +108,6 @@ def build_cache(*, rt: Runtime) -> CacheBase:
         from serpsage.components.cache.sqlalchemy import SQLAlchemyCache
 
         return SQLAlchemyCache(rt=rt)
-
     raise ValueError(
         f"unsupported cache backend `{backend}`; expected "
         "sqlite|memory|redis|mysql|sqlalchemy"

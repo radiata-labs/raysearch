@@ -33,16 +33,13 @@ class SearxngProvider(SearchProviderBase):
         if not query or not str(query).strip():
             raise ValueError("query must not be empty")
         # In 3.0 we treat api_key as optional; some instances might not require it.
-
         payload: dict[str, str] = {"q": str(query), "format": "json"}
         if params:
             payload.update({k: str(v) for k, v in dict(params).items()})
-
         headers = dict(se.headers or {})
         headers.setdefault("User-Agent", str(self.settings.fetch.user_agent))
         if se.api_key:
             headers.setdefault("Authorization", f"Bearer {se.api_key}")
-
         resp = await self._http.get(
             se.base_url,
             params=payload,

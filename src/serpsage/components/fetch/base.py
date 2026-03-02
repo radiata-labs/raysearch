@@ -14,8 +14,6 @@ from serpsage.core.workunit import WorkUnit
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.models.fetch import FetchResult
-
-
 _NESTED_INFLIGHT_BYPASS: ContextVar[bool] = ContextVar(
     "fetcher_inflight_nested_bypass", default=False
 )
@@ -41,7 +39,6 @@ class FetcherBase(WorkUnit, ABC):
             return
         if bool(getattr(original, "__fetcherbase_wrapped__", False)):
             return
-
         if name == "on_init":
 
             @wraps(original)
@@ -52,7 +49,6 @@ class FetcherBase(WorkUnit, ABC):
                 else:
                     await original(self, *args, **kwargs)
                     await FetcherBase.on_init(self)
-
         else:
 
             @wraps(original)
@@ -94,12 +90,10 @@ class FetcherBase(WorkUnit, ABC):
         async with self._inflight_lock:
             entries = list(self._inflight_pool.values())
             self._inflight_pool.clear()
-
         for entry in entries:
             if entry.result is None and entry.error is None:
                 entry.error = RuntimeError("fetcher closed while waiting for result")
             entry.done.set()
-
         tg = self._inflight_tg
         tg_cm = self._inflight_tg_cm
         self._inflight_tg = None
@@ -120,7 +114,6 @@ class FetcherBase(WorkUnit, ABC):
             or _NESTED_INFLIGHT_BYPASS.get()
         ):
             return await self._run_inner_once(url=url, timeout_s=timeout_s)
-
         entry, created = await self._get_inflight_entry(url=url)
         if created:
             tg = self._inflight_tg
@@ -149,7 +142,6 @@ class FetcherBase(WorkUnit, ABC):
         else:
             with anyio.fail_after(float(timeout_s)):
                 await entry.done.wait()
-
         if entry.result is not None:
             return entry.result
         if entry.error is None:

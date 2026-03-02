@@ -29,7 +29,6 @@ class Runtime(FrozenModel):
         frozen=True,
         arbitrary_types_allowed=True,
     )
-
     settings: AppSettings
     clock: ClockBase
     telemetry: TelemetryEmitterBase | None = None
@@ -41,7 +40,6 @@ class Overrides(MutableModel):
         validate_assignment=True,
         arbitrary_types_allowed=True,
     )
-
     http: httpx.AsyncClient | None = None
     clock: ClockBase | None = None
     cache: CacheBase | None = None

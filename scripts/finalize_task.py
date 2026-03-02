@@ -34,10 +34,8 @@ def _find_task_bounds(lines: list[str], task_timestamp: str) -> tuple[int, int]:
                     f"Multiple tasks found for timestamp: {task_timestamp}"
                 )
             target_start = idx
-
     if target_start is None:
         raise FinalizeError(f"Task not found in SCOPES.md: {task_timestamp}")
-
     next_starts = [s for s in starts if s > target_start]
     target_end = min(next_starts) if next_starts else len(lines)
     return target_start, target_end
@@ -49,12 +47,10 @@ def _validate_task_statuses(task_lines: list[str], task_timestamp: str) -> None:
         match = STATUS_RE.search(line)
         if match:
             statuses.append(match.group("status"))
-
     if not statuses:
         raise FinalizeError(
             f"Task {task_timestamp} has no status rows; cannot finalize safely."
         )
-
     waiting = sum(1 for s in statuses if s == "WAITING")
     modifying = sum(1 for s in statuses if s == "MODIFYING")
     if waiting > 0 or modifying > 0:
@@ -76,7 +72,6 @@ def _append_task_to_archive(
 ) -> tuple[str, bool]:
     if _archive_has_timestamp(archive_text, task_timestamp):
         return archive_text, False
-
     base = archive_text.rstrip("\n")
     section = task_text.strip("\n")
     if not base:
@@ -104,28 +99,21 @@ def finalize_task(task_timestamp: str) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     scopes_path = repo_root / ".codex" / "SCOPES.md"
     archive_path = repo_root / ".codex" / "ARCHIVED.md"
-
     scopes_text = _normalize_newlines(scopes_path.read_text(encoding="utf-8"))
     archive_text = _normalize_newlines(archive_path.read_text(encoding="utf-8"))
-
     scopes_lines = scopes_text.split("\n")
     start, end = _find_task_bounds(scopes_lines, task_timestamp)
     task_lines = scopes_lines[start:end]
     task_text = "\n".join(task_lines).strip("\n")
-
     _validate_task_statuses(task_lines, task_timestamp)
-
     updated_archive, appended = _append_task_to_archive(
         archive_text, task_text, task_timestamp
     )
     if appended:
         archive_path.write_text(updated_archive, encoding="utf-8", newline="\n")
-
     updated_scopes = _remove_task_from_scopes(scopes_lines, start, end)
     scopes_path.write_text(updated_scopes, encoding="utf-8", newline="\n")
-
     _refresh_agents_tree(repo_root)
-
     action = "appended+moved" if appended else "moved (already archived)"
     print(f"Task finalized: {task_timestamp} ({action}).")
 
@@ -142,7 +130,6 @@ def main() -> None:
         help="Task timestamp in header format: YYYY-MM-DD HH:MM:SS",
     )
     args = parser.parse_args()
-
     try:
         finalize_task(args.task_timestamp)
     except FinalizeError as exc:

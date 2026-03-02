@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 DEFAULT_USER_AGENT = "serpsage-bot/4.0"
-
 # Real browser User-Agents for rotation (updated for 2024-2025)
 USER_AGENTS = [
     # Chrome 124 on Windows 11
@@ -28,7 +27,6 @@ USER_AGENTS = [
     # Safari 17 on macOS
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
 ]
-
 _BINARY_PREFIXES = (
     "application/octet-stream",
     "application/zip",
@@ -65,12 +63,10 @@ def browser_headers(
     randomize: bool = True,
 ) -> dict[str, str]:
     """Generate browser-like HTTP headers.
-
     Args:
         profile: Profile type (e.g., "browser" for full browser headers)
         user_agent: Custom user agent. If None and randomize=True, uses random UA.
         randomize: If True and user_agent is None, uses a random real browser UA.
-
     Returns:
         Dictionary of HTTP headers.
     """
@@ -81,7 +77,6 @@ def browser_headers(
         ua = get_random_user_agent()
     else:
         ua = DEFAULT_USER_AGENT
-
     headers: dict[str, str] = {
         "User-Agent": ua,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -124,31 +119,24 @@ def classify_content_kind(
 ) -> Literal["html", "pdf", "text", "binary", "unknown"]:
     ct = (content_type or "").lower()
     path = (urlparse(url).path or "").lower()
-
     # PDF detection (highest priority)
     if path.endswith(".pdf") or any(h in ct for h in _PDF_CT_HINTS):
         return "pdf"
-
     # HTML detection from content-type header
     if any(h in ct for h in _HTML_CT_HINTS):
         return "html"
-
     # Plain text detection from content-type header
     if any(h in ct for h in _TEXT_CT_HINTS):
         return "text"
-
     # Binary detection from content-type header
     if ct and any(ct.startswith(pref) for pref in _BINARY_PREFIXES):
         return "binary"
-
     # Content-based detection (when header is missing or ambiguous)
     sample = (content or b"")[:2048].lstrip()
     sample_lower = sample.lower()
-
     # PDF magic bytes
     if sample.startswith((b"%pdf", b"%PDF")):
         return "pdf"
-
     # HTML detection - enhanced with more patterns
     html_patterns = [
         b"<html",
@@ -168,11 +156,9 @@ def classify_content_kind(
     ]
     if any(pattern in sample_lower or pattern in sample for pattern in html_patterns):
         return "html"
-
     # Binary detection - null bytes or non-printable chars
     if b"\x00" in sample:
         return "binary"
-
     # Check for high ratio of non-printable characters
     try:
         text_sample = sample.decode("utf-8", errors="ignore")
@@ -184,7 +170,6 @@ def classify_content_kind(
                 return "binary"
     except Exception:
         pass
-
     # Default to unknown for ambiguous content
     return "unknown"
 
@@ -197,14 +182,12 @@ def estimate_text_quality(
     if content_kind in {"pdf", "binary"}:
         size = len(content)
         return size, min(1.0, size / 4096.0), 0.0
-
     sample = content[:450_000].decode("utf-8", errors="ignore")
     if content_kind == "text":
         txt = " ".join(sample.split())
         chars = len(txt)
         score = min(1.0, chars / 2600.0)
         return chars, score, 0.0
-
     try:
         soup = BeautifulSoup(sample, "html.parser")
         script_tags = soup.find_all("script")
@@ -250,11 +233,9 @@ def blocked_marker_hit(
     content: bytes, *, markers: tuple[str, ...] | list[str] | None = None
 ) -> bool:
     """Check if content contains blocked markers with context awareness.
-
     This function distinguishes between:
     - Actual blocking pages (Cloudflare challenge, access denied)
     - Technical content that mentions blocking services (e.g., tutorials about Cloudflare)
-
     A marker hit is only considered a block if:
     1. The marker appears in the title/heading
     2. The marker appears in the first 500 characters (prominent position)
@@ -269,10 +250,8 @@ def blocked_marker_hit(
     )
     if not use_markers:
         return False
-
     raw_sample = content[:30_000].decode("utf-8", errors="ignore")
     lowered = raw_sample.lower()
-
     # Check if content looks like HTML
     looks_like_html = bool(
         "<html" in lowered
@@ -280,46 +259,37 @@ def blocked_marker_hit(
         or "<body" in lowered
         or "<head" in lowered
     )
-
     # Extract visible text from HTML
     visible_text = lowered
     title_text = ""
     heading_text = ""
-
     if looks_like_html:
         try:
             soup = BeautifulSoup(raw_sample, "html.parser")
-
             # Extract title for special checking
             title_tag = soup.find("title")
             if title_tag:
                 title_text = title_tag.get_text(" ", strip=True).lower()
-
             # Extract headings (h1, h2) for special checking
             for h in soup.find_all(["h1", "h2"]):
                 heading_text += " " + h.get_text(" ", strip=True).lower()
-
             # Remove script, style, noscript for visible text
             for t in soup.find_all(["script", "style", "noscript"]):
                 t.decompose()
             visible_text = " ".join(soup.get_text(" ", strip=True).split()).lower()
-
             if not visible_text:
                 # Fall back to raw sample if no visible text
                 visible_text = lowered
         except Exception:
             pass
-
     # Count total marker hits
     total_hits = sum(1 for marker in use_markers if marker in visible_text)
     if total_hits == 0:
         return False
-
     # Check for "strong signals" - markers in title or headings
     strong_signals = sum(
         1 for marker in use_markers if marker in title_text or marker in heading_text
     )
-
     # Check for "weak signals" - markers only in body content (likely technical mention)
     weak_only_signals = sum(
         1
@@ -328,28 +298,22 @@ def blocked_marker_hit(
         and marker not in title_text
         and marker not in heading_text
     )
-
     # Decision logic:
     # 1. If marker in title + heading = definite block
     if strong_signals >= 2:
         return True
-
     # 2. If marker in title OR heading + at least one more hit = likely block
     if strong_signals >= 1 and total_hits >= 2:
         return True
-
     # 3. If only weak signals and content is long (>2000 chars), likely just technical mention
     if weak_only_signals == total_hits and len(visible_text) > 2000:
         return False
-
     # 4. If marker only appears once in visible text, consider it a technical mention
     if total_hits == 1 and strong_signals == 0:
         return False
-
     # 5. Multiple weak signals still indicates blocking
     if total_hits >= 2:
         return True
-
     # Default: single hit in visible text
     return total_hits >= 1
 

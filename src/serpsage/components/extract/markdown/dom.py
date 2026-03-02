@@ -10,7 +10,6 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from bs4.element import Tag
-
 _DROP_TAGS = {
     "script",
     "style",
@@ -137,7 +136,6 @@ def cleanup_dom(
             if role in _HARD_NOISE_ROLE and sem not in keep_semantic:
                 tag.decompose()
                 continue
-
             ident = " ".join(
                 [
                     str(tag.get("id") or ""),
@@ -152,17 +150,14 @@ def cleanup_dom(
                 if ident_sem not in keep_semantic:
                     tag.decompose()
                     continue
-
             if sem not in keep_semantic and _looks_like_search_or_ad(tag):
                 tag.decompose()
                 continue
-
             hidden = str(tag.get("aria-hidden") or "").lower() == "true"
             style = str(tag.get("style") or "").lower()
             if hidden or "display:none" in style or "visibility:hidden" in style:
                 tag.decompose()
                 continue
-
             if sem not in keep_semantic and _looks_like_link_farm(tag):
                 tag.decompose()
 
@@ -251,23 +246,19 @@ def _looks_like_link_farm(tag: Tag) -> bool:
     name = (tag.name or "").lower()
     if name not in {"div", "section", "aside", "ul", "ol", "nav"}:
         return False
-
     text = clean_whitespace(tag.get_text(" ", strip=True))
     chars = len(text)
     if chars < 140:
         return False
-
     links = tag.find_all("a")
     link_count = len(links)
     if link_count < 8:
         return False
-
     link_text = clean_whitespace(" ".join(a.get_text(" ", strip=True) for a in links))
     link_density = len(link_text) / max(1, chars)
     punct_density = len(_PUNCT_RE.findall(text)) / max(1, chars)
     paragraph_count = len(tag.find_all("p"))
     has_structure = bool(tag.find(["table", "pre", "code"]))
-
     return (
         not has_structure
         and link_density >= 0.38
@@ -280,11 +271,9 @@ def _looks_like_search_or_ad(tag: Tag) -> bool:
     role = str(tag.get("role") or "").lower()
     if role == "search":
         return True
-
     type_attr = str(tag.get("type") or "").lower()
     if type_attr == "search":
         return True
-
     aria_label = str(tag.get("aria-label") or "")
     placeholder = str(tag.get("placeholder") or "")
     ident = " ".join(
@@ -298,7 +287,6 @@ def _looks_like_search_or_ad(tag: Tag) -> bool:
     ).strip()
     if ident and (_looks_like_search_hint(ident) or _looks_like_ad_hint(ident)):
         return True
-
     for key in _NOISE_DATA_ATTR_KEYS:
         value = str(tag.get(key) or "").strip()
         key_norm = key.lower()

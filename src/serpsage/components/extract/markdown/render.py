@@ -19,7 +19,6 @@ from serpsage.utils import clean_whitespace
 RenderStatValue = int | float | bool | str
 RenderStats = dict[str, RenderStatValue]
 ConverterFn = Callable[[Tag | BeautifulSoup, str, set[str]], str]
-
 _COUNT_KEYS = (
     "heading_count",
     "list_count",
@@ -32,22 +31,17 @@ _COUNT_KEYS = (
     "image_count",
     "block_count",
 )
-
 ATX = "atx"
 ATX_CLOSED = "atx_closed"
 UNDERLINED = "underlined"
-
 SPACES = "spaces"
 BACKSLASH = "backslash"
-
 ASTERISK = "*"
 UNDERSCORE = "_"
-
 LSTRIP = "lstrip"
 RSTRIP = "rstrip"
 STRIP = "strip"
 STRIP_ONE = "strip_one"
-
 _BLOCK_TAGS = {
     "article",
     "aside",
@@ -83,7 +77,6 @@ _BLOCK_TAGS = {
     "tr",
     "ul",
 }
-
 _PSEUDO_BLOCK_NAMES = {
     "p",
     "pre",
@@ -97,7 +90,6 @@ _PSEUDO_BLOCK_NAMES = {
     "h5",
     "h6",
 }
-
 _DATA_BLOCK_ATTR_KEYS = (
     "data-as",
     "data-tag",
@@ -106,7 +98,6 @@ _DATA_BLOCK_ATTR_KEYS = (
     "data-block",
     "as",
 )
-
 _INLINE_TAGS = {
     "a",
     "abbr",
@@ -129,7 +120,6 @@ _INLINE_TAGS = {
     "u",
     "var",
 }
-
 _RE_HTML_HEADING = re.compile(r"h(\d+)")
 _RE_MAKE_CONV_FN = re.compile(r"[\[\]:-]")
 _RE_EXTRACT_NEWLINES = re.compile(r"^(\n*)((?:.*[^\n])?)(\n*)$", flags=re.DOTALL)
@@ -146,7 +136,6 @@ _RE_ESCAPE_MISC_CHARS = re.compile(r"([]\\&<`[>~=+|])")
 _RE_ESCAPE_MISC_DASH_SEQS = re.compile(r"(\s|^)(-+(?:\s|$))")
 _RE_ESCAPE_MISC_HASHES = re.compile(r"(\s|^)(#{1,6}(?:\s|$))")
 _RE_ESCAPE_MISC_LIST_ITEMS = re.compile(r"((?:\s|^)[0-9]{1,9})([.)](?:\s|$))")
-
 _RE_STYLE_DISPLAY = re.compile(r"display\s*:\s*([a-z-]+)", re.IGNORECASE)
 _STYLE_BLOCK_DISPLAY_VALUES = {
     "block",
@@ -172,7 +161,6 @@ _RE_HR_TOKEN = re.compile(
     r"(?:^|[^a-z0-9])(?:hr|divider|separator)(?:$|[^a-z0-9])",
     re.IGNORECASE,
 )
-
 _RE_STYLE_STRONG = re.compile(r"font-weight\s*:\s*(?:bold|[6-9]00)", re.IGNORECASE)
 _RE_STYLE_ITALIC = re.compile(r"font-style\s*:\s*italic", re.IGNORECASE)
 _RE_STYLE_DEL = re.compile(r"text-decoration[^;]*line-through", re.IGNORECASE)
@@ -191,7 +179,6 @@ _RE_LANG_CLASS = re.compile(r"(?:^|\b)(?:language|lang)-([A-Za-z0-9_+#.-]+)(?:\b
 _RE_ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 _RE_HINT_TOKEN = re.compile(r"[a-z0-9]+")
 _RE_SENTENCE_PUNCT = re.compile(r"[.!?;:\u3002\uff01\uff1f\uff1b]")
-
 _COMPACT_DIV_HINT_TOKENS = {
     "inline",
     "badge",
@@ -229,7 +216,6 @@ _DIV_INLINE_BLOCKING_TAGS = {
     "h6",
     "br",
 }
-
 _RECOVER_BLOCK_RECALL_RATIO = 0.60
 _RECOVER_MIN_SOURCE_CHARS = 80
 
@@ -322,7 +308,6 @@ class _ManualMarkdownConverter:
     def _process_tag(self, node: Tag | BeautifulSoup, *, parent_tags: set[str]) -> str:
         if isinstance(node, Tag) and self._is_skipped(node):
             return ""
-
         tag_name = (
             self._normalized_tag_name(node) if isinstance(node, Tag) else "[document]"
         )
@@ -332,14 +317,12 @@ class _ManualMarkdownConverter:
             for child in node.children
             if not self._can_ignore_child(child, remove_inside=remove_inside)
         ]
-
         child_tags = set(parent_tags)
         child_tags.add(tag_name)
         if _RE_HTML_HEADING.fullmatch(tag_name) is not None or tag_name in {"td", "th"}:
             child_tags.add("_inline")
         if tag_name in {"pre", "code", "kbd", "samp"}:
             child_tags.add("_noformat")
-
         parts = [
             self._process_element(child, parent_tags=child_tags) for child in children
         ]
@@ -347,11 +330,9 @@ class _ManualMarkdownConverter:
         if tag_name != "pre" and "pre" not in parent_tags:
             parts = self._collapse_boundary_newlines(parts)
         text = "".join(parts)
-
         conv_fn = self._get_conv_fn_cached(tag_name)
         if conv_fn is not None:
             text = conv_fn(node, text, parent_tags)
-
         if isinstance(node, Tag) and self._is_block_tag_name(tag_name) and text.strip():
             self.ctx.metrics.block_count += 1
         return text
@@ -366,7 +347,6 @@ class _ManualMarkdownConverter:
                 text = _RE_WHITESPACE.sub(" ", text)
         if "_noformat" not in parent_tags:
             text = self._escape(text)
-
         parent = node.parent if isinstance(node.parent, Tag) else None
         prev_sibling = node.previous_sibling
         next_sibling = node.next_sibling
@@ -812,12 +792,10 @@ class _ManualMarkdownConverter:
             return ""
         if not href:
             return f"{prefix}{body}{suffix}"
-
         self.ctx.metrics.link_count += 1
         if self.ctx.preserve_html_tags:
             title_attr = f' title="{html.escape(title, quote=True)}"' if title else ""
             return f'{prefix}<a href="{html.escape(href, quote=True)}"{title_attr}>{body}</a>{suffix}'
-
         normalized = body.replace(r"\_", "_")
         if (
             self.ctx.options.autolinks
@@ -936,7 +914,6 @@ class _ManualMarkdownConverter:
         )
         as_em = bool(_RE_CLASS_ITALIC.search(classes) or _RE_STYLE_ITALIC.search(style))
         as_del = bool(_RE_CLASS_DEL.search(classes) or _RE_STYLE_DEL.search(style))
-
         out = text
         if as_code:
             out = self.convert_code(el, out, parent_tags)
@@ -946,7 +923,6 @@ class _ManualMarkdownConverter:
             out = self.convert_em(el, out, parent_tags)
         if as_del:
             out = self.convert_del(el, out, parent_tags)
-
         if self.ctx.preserve_html_tags and not (
             as_code or as_strong or as_em or as_del
         ):
@@ -1059,7 +1035,6 @@ class _ManualMarkdownConverter:
             text = text.rstrip("\n")
         elif style is not None:
             raise ValueError(f"Invalid strip_pre: {style}")
-
         code = el.find("code")
         lang = (
             self._detect_code_language(el, code if isinstance(code, Tag) else None)
@@ -1069,7 +1044,6 @@ class _ManualMarkdownConverter:
         if callable(callback):
             with contextlib.suppress(Exception):
                 lang = str(callback(el) or lang)
-
         self.ctx.metrics.code_block_count += 1
         if self.ctx.preserve_html_tags:
             info_attr = f' class="language-{html.escape(lang)}"' if lang else ""
@@ -1115,7 +1089,6 @@ class _ManualMarkdownConverter:
                 node = node.parent
             bullets = self.ctx.options.bullets or "*"
             bullet = bullets[depth % len(bullets)] + " "
-
         self.ctx.metrics.list_count += 1
         width = len(bullet)
         indent = " " * width
@@ -1200,7 +1173,6 @@ class _ManualMarkdownConverter:
             full_colspan += (
                 max(1, min(1000, int(raw_colspan))) if raw_colspan.isdigit() else 1
             )
-
         overline = ""
         underline = ""
         is_head_row_missing = is_first_row and not is_headrow
@@ -1211,7 +1183,6 @@ class _ManualMarkdownConverter:
         elif is_head_row_missing and not self.ctx.options.table_infer_header:
             overline = "| " + " | ".join([""] * full_colspan) + " |\n"
             overline += "| " + " | ".join(["---"] * full_colspan) + " |\n"
-
         if any((cell.name or "").lower() == "td" for cell in cells):
             self.ctx.metrics.table_row_count += 1
         return overline + "|" + text + "\n" + underline
@@ -1325,7 +1296,6 @@ def render_markdown(
     fallback_used = False
     fallback_reasons: list[str] = []
     source_text = _source_text(root)
-
     try:
         markdown = _normalize_fragment(converter.convert_root(root))
     except Exception as exc:  # noqa: BLE001
@@ -1334,7 +1304,6 @@ def render_markdown(
         )
         fallback_used = True
         fallback_reasons.append(f"document_exception:{type(exc).__name__}")
-
     markdown = _recover_empty_doc(
         markdown=markdown,
         source_text=source_text,
@@ -1351,7 +1320,6 @@ def render_markdown(
             markdown = recovered
             fallback_used = True
             fallback_reasons.append("document_low_recall")
-
     stats: RenderStats = {
         "renderer_backend": "markdownify",
         "renderer_fallback_used": bool(fallback_used),
@@ -1375,7 +1343,6 @@ def render_secondary_markdown(
     ratio_sum = 0.0
     ratio_count = 0
     fallback_reasons: list[str] = []
-
     for root in secondary_roots:
         markdown, stats = render_markdown(
             root=root,
@@ -1395,14 +1362,12 @@ def render_secondary_markdown(
         reason = str(stats.get("renderer_fallback_reason", "")).strip()
         if reason:
             fallback_reasons.append(reason)
-
     merged["renderer_backend"] = "markdownify"
     merged["renderer_text_recall_ratio"] = (
         float(ratio_sum / float(ratio_count)) if ratio_count > 0 else 1.0
     )
     if fallback_reasons:
         merged["renderer_fallback_reason"] = ",".join(sorted(set(fallback_reasons)))
-
     return _normalize_fragment("\n\n".join(blocks).strip()), merged
 
 
@@ -1513,8 +1478,6 @@ def _recover_merge_markdown(
 
 
 BackendName = Literal["markdownify"]
-
-
 __all__ = [
     "BackendName",
     "RenderStats",

@@ -20,12 +20,10 @@ if TYPE_CHECKING:
 
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-
 _JACCARD_SIMILARITY_THRESHOLD = 0.85
 _RE_CJK = re.compile(r"[\u4e00-\u9fff]")
 _RE_KANA = re.compile(r"[\u3040-\u30ff]")
 _RE_VERSION_LIKE_TOKEN = re.compile(r"(?i)^[a-z]*\d+(?:[._-]\d+)+(?:[a-z0-9._-]*)$")
-
 _ZH_INTENT_SUFFIX = "\u5b98\u65b9 \u6587\u6863 \u6307\u5357 \u5bf9\u6bd4"
 _ZH_EVIDENCE_SUFFIX = "\u8bc4\u6d4b \u62a5\u544a \u6765\u6e90"
 _JA_INTENT_SUFFIX = (
@@ -54,10 +52,8 @@ class SearchExpandStep(StepBase[SearchStepContext]):
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         """Build deep-search query jobs from primary/manual/rule/LLM variants.
-
         Args:
             ctx: Search pipeline context containing request and deep state.
-
         Returns:
             Updated context with `deep.query_jobs` populated for deep mode.
         """
@@ -65,19 +61,15 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         req = ctx.request
         if not self._is_deep_enabled(req_mode=str(req.mode or "auto")):
             return ctx
-
         primary_query = clean_whitespace(str(req.query or ""))
         if not primary_query:
             await self._abort_empty_query(ctx=ctx, raw_query=req.query)
             return ctx
-
         deep_cfg = self.settings.search.deep
-
         manual_queries = self._get_manual_queries(
             req_additional_queries=req.additional_queries
         )
         disable_internal_llm = bool(ctx.disable_internal_llm)
-
         if disable_internal_llm:
             llm_queries: list[str] = []
             llm_elapsed_ms: int = 0
@@ -88,14 +80,12 @@ class SearchExpandStep(StepBase[SearchStepContext]):
                 max_queries=int(deep_cfg.llm_max_queries),
                 timeout_s=float(deep_cfg.expansion_timeout_s),
             )
-
         rule_queries = self._build_rule_queries(
             query=primary_query,
             max_queries=int(deep_cfg.rule_max_queries),
         )
         if bool(ctx.deep.aborted):
             return ctx
-
         query_jobs = self._merge_query_jobs(
             primary_query=primary_query,
             manual_queries=manual_queries,
@@ -145,7 +135,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         llm_limit = max(0, int(max_queries))
         if llm_limit <= 0:
             return [], 0
-
         model_name = self._resolve_expansion_model()
         start_ms = self.clock.now_ms()
         try:
@@ -299,11 +288,9 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         phrase_variant = self._build_phrase_variant(normalized)
         if phrase_variant:
             out.append(phrase_variant)
-
         compact_variant = self._build_compact_variant(tokens=tokens, language=language)
         if compact_variant:
             out.append(compact_variant)
-
         out.append(f"{normalized} {self._intent_suffix(language)}")
         out.append(f"{normalized} {self._evidence_suffix(language)}")
         return out
@@ -379,7 +366,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         kept_token_sets: list[set[str]] = []
         jobs: list[SearchQueryJob] = []
         additional_count = 0
-
         for item in candidates:
             query = clean_whitespace(item.query)
             if not query:
@@ -389,11 +375,9 @@ class SearchExpandStep(StepBase[SearchStepContext]):
                 continue
             if item.source != "primary" and additional_count >= limit:
                 continue
-
             token_set = set(tokenize_for_query(query))
             if self._is_near_duplicate(token_set, kept_token_sets):
                 continue
-
             exact_seen.add(key)
             kept_token_sets.append(token_set)
             jobs.append(

@@ -7,7 +7,6 @@ from pydantic import Field, field_validator, model_serializer
 from serpsage.core.model_base import FrozenModel
 
 EventStatus = Literal["start", "ok", "error"]
-
 _MAX_ATTR_DEPTH = 5
 _MAX_ATTR_ITEMS = 64
 _MAX_ATTR_TEXT_LEN = 4000

@@ -36,7 +36,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         enabled, req = self._resolve_overview_request(ctx)
         if not enabled or req is None:
             return ctx
-
         source_items = self._build_source_items(ctx)
         if not source_items:
             await self.emit_tracking_event(
@@ -54,7 +53,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-
         profile = self.settings.fetch.overview
         model_cfg = self.settings.llm.resolve_model(profile.use_model)
         schema = dict(req.json_schema) if isinstance(req.json_schema, dict) else None
@@ -89,11 +87,9 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 else:
                     ctx.artifacts.overview_output = decoded
                     return ctx
-
         retries = max(0, int(profile.self_heal_retries)) if schema is not None else 0
         retry_prompt = _self_heal_message() if schema is not None else ""
         retry_on = (ValueError, TypeError, RuntimeError)
-
         try:
             if schema is None:
                 text_res = await self._llm.chat(
@@ -265,7 +261,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
             "No explicit user query was provided. Generate a neutral page overview "
             "grounded in TITLE and SOURCE_ABSTRACTS, focusing on key facts and context."
         )
-
         blocks = []
         for idx, item in enumerate(source_items, 1):
             blocks.append(f"[A{idx}] {item}")

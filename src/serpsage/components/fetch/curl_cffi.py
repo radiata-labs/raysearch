@@ -24,7 +24,6 @@ try:
     CURL_CFFI_AVAILABLE = True
 except Exception:  # noqa: BLE001
     CURL_CFFI_AVAILABLE = False
-
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
@@ -97,7 +96,6 @@ class CurlCffiFetcher(FetcherBase):
             ),
         )
         delay_ms = int(getattr(retry, "delay_ms", 0) or 90)
-
         last_status: int | None = None
         last_url = url
         last_ct: str | None = None
@@ -106,7 +104,6 @@ class CurlCffiFetcher(FetcherBase):
         last_len_hdr: str | None = None
         last_headers: dict[str, str] = {}
         last_truncated = False
-
         for _attempt in range(1, max_attempts + 1):
             try:
                 resp = await self._session.get(
@@ -138,7 +135,6 @@ class CurlCffiFetcher(FetcherBase):
                     content_type=last_ct,
                     url=last_url,
                 )
-
                 if last_status == 429 or (500 <= last_status < 600):
                     if _attempt >= max_attempts:
                         break
@@ -153,7 +149,6 @@ class CurlCffiFetcher(FetcherBase):
                 delay = get_delay_s(delay_ms)
                 await anyio.sleep(delay)
                 continue
-
         content_kind = classify_content_kind(
             content_type=last_ct,
             url=last_url,
@@ -169,7 +164,6 @@ class CurlCffiFetcher(FetcherBase):
                 markers=tuple(self.settings.fetch.quality.blocked_markers),
             )
         )
-
         return FetchAttempt(
             url=last_url,
             status_code=int(last_status or 0),

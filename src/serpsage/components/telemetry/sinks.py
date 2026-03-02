@@ -16,7 +16,6 @@ try:
     AioSqliteModule = importlib.import_module("aiosqlite")
 except Exception:  # noqa: BLE001
     AioSqliteModule = None
-
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 

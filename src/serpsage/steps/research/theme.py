@@ -26,28 +26,20 @@ if TYPE_CHECKING:
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
-
         super().__init__(rt=rt)
-
         self._llm = llm
-
         self.bind_deps(llm)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-
         card_cap = max(1, int(self.settings.research.parallel.question_card_cap))
-
         seed_limit = max(6, int(ctx.runtime.budget.max_queries_per_round) * 3)
-
         model = resolve_research_model(
             ctx=ctx,
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
-
         payload = ThemeOutputPayload(
             detected_input_language="same as user input language",
             core_question=ctx.request.themes,
@@ -55,7 +47,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             required_entities=[],
             question_cards=[],
         )
-
         try:
             chat_result = await self._llm.chat(
                 model=model,
@@ -69,7 +60,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
             payload = chat_result.data
-
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="research.theme.error",
@@ -83,23 +73,16 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-
         input_language = clean_whitespace(str(payload.detected_input_language or ""))
-
         if not input_language:
             input_language = "same as user input language"
-
         core_question = clean_whitespace(
             str(payload.core_question or ctx.request.themes)
         )
-
         if not core_question:
             core_question = ctx.request.themes
-
         subthemes = normalize_strings(payload.subthemes, limit=12)
-
         required_entities = normalize_strings(payload.required_entities, limit=16)
-
         cards = self._normalize_question_cards(
             payload.question_cards,
             core_question=core_question,
@@ -111,15 +94,10 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 limit=max(24, card_cap * 2),
             ),
         )
-
         ctx.plan.input_language = input_language
-
         ctx.plan.output_language = input_language
-
         ctx.plan.core_question = core_question
-
         ctx.parallel.question_cards = [item.model_copy(deep=True) for item in cards]
-
         ctx.plan.theme_plan = ResearchThemePlan(
             core_question=core_question,
             subthemes=subthemes,
@@ -138,28 +116,20 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 for card in cards
             ],
         )
-
         seed_groups = [list(item.seed_queries) for item in cards]
-
         next_query_limit = max(8, int(ctx.runtime.budget.max_queries_per_round) * 3)
-
         ctx.plan.next_queries = merge_strings(
             *seed_groups,
             [core_question],
             limit=next_query_limit,
         )
-
         ctx.corpus.coverage_state.total_subthemes = int(len(subthemes))
-
         ctx.notes.append(
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
         )
-
         if required_entities:
             ctx.notes.append(f"Required entities: {', '.join(required_entities[:8])}.")
-
         ctx.notes.append(f"Output language fixed to {ctx.plan.output_language}.")
-
         await self.emit_tracking_event(
             event_name="research.theme.summary",
             request_id=ctx.request_id,
@@ -171,7 +141,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "next_queries": len(ctx.plan.next_queries),
             },
         )
-
         return ctx
 
     def _build_theme_messages(
@@ -181,9 +150,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
         card_cap: int,
     ) -> list[dict[str, str]]:
-
         budget = ctx.runtime.budget
-
         return [
             {
                 "role": "system",
@@ -282,7 +249,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ]
 
     def _build_theme_schema(self, *, card_cap: int) -> dict[str, Any]:
-
         return {
             "type": "object",
             "additionalProperties": False,
@@ -352,31 +318,20 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         seed_limit: int,
         fallback_branches: list[str],
     ) -> list[ResearchQuestionCard]:
-
         out: list[ResearchQuestionCard] = []
-
         seen: set[str] = set()
-
         for item in raw:
             question = clean_whitespace(item.question)
-
             if not question:
                 continue
-
             key = question.casefold()
-
             if key in seen:
                 continue
-
             seen.add(key)
-
             priority = max(1, min(5, item.priority))
-
             seed_queries = normalize_strings(item.seed_queries, limit=8)
-
             if not seed_queries:
                 seed_queries = [question]
-
             out.append(
                 ResearchQuestionCard(
                     question_id=f"q{len(out) + 1}",
@@ -391,13 +346,10 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     or "Increase evidence coverage for this question.",
                 )
             )
-
             if len(out) >= card_cap:
                 break
-
         if out:
             return out
-
         return self._build_cards_from_fallback(
             core_question=core_question,
             fallback_branches=fallback_branches,
@@ -413,29 +365,19 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         card_cap: int,
         seed_limit: int,
     ) -> list[ResearchQuestionCard]:
-
         out: list[ResearchQuestionCard] = []
-
         seen: set[str] = set()
-
         for branch in fallback_branches:
             question = clean_whitespace(branch)
-
             if not question:
                 continue
-
             if ":" in question:
                 _, tail = question.split(":", 1)
-
                 question = clean_whitespace(tail) or question
-
             key = question.casefold()
-
             if key in seen:
                 continue
-
             seen.add(key)
-
             out.append(
                 ResearchQuestionCard(
                     question_id=f"q{len(out) + 1}",
@@ -448,13 +390,10 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     expected_gain="Increase topic coverage.",
                 )
             )
-
             if len(out) >= card_cap:
                 return out
-
         if out:
             return out
-
         return [
             ResearchQuestionCard(
                 question_id="q1",

@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     )
 
     from serpsage.core.runtime import Runtime
-
 # Suppress "Future exception was never retrieved" warnings from Playwright
 # when background page loads are interrupted by timeouts or page.close().
 _original_call_exception_handler = getattr(
@@ -53,7 +52,6 @@ def _suppress_future_exception_warning(
 
 
 asyncio.BaseEventLoop.call_exception_handler = _suppress_future_exception_warning  # type: ignore[method-assign]
-
 PLAYWRIGHT_AVAILABLE = False
 _pw_factory = None
 try:
@@ -63,7 +61,6 @@ try:
     _pw_factory = async_playwright
 except Exception:  # noqa: BLE001
     PLAYWRIGHT_AVAILABLE = False
-
 _BLOCK_RESOURCE_TYPES = {"image", "media", "font", "video", "websocket"}
 _BLOCK_TRACKING_RE = (
     "googletagmanager",
@@ -163,11 +160,9 @@ class PlaywrightFetcher(FetcherBase):
     ) -> FetchAttempt:
         if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
-
         timeout_ms = int(self.settings.fetch.render.nav_timeout_ms)
         if timeout_s is not None:
             timeout_ms = min(timeout_ms, int(timeout_s * 1000))
-
         page = None
         async with self._sem:
             try:
@@ -190,7 +185,6 @@ class PlaywrightFetcher(FetcherBase):
                 if page is not None:
                     with contextlib.suppress(Exception):
                         await page.close()
-
         body = (html or "").encode("utf-8", errors="ignore")
         content_type = headers.get("content-type")
         content_kind = classify_content_kind(
@@ -207,7 +201,6 @@ class PlaywrightFetcher(FetcherBase):
                 markers=tuple(self.settings.fetch.quality.blocked_markers),
             )
         )
-
         return FetchAttempt(
             url=final_url,
             status_code=int(status),
@@ -238,7 +231,6 @@ class PlaywrightFetcher(FetcherBase):
             Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
             """
         )
-
         if not bool(self.settings.fetch.render.block_resources):
             return
 
@@ -267,7 +259,6 @@ class PlaywrightFetcher(FetcherBase):
         final_url = url
         headers: dict[str, str] = {}
         resp = None
-
         try:
             resp = await page.goto(
                 url,
@@ -278,20 +269,16 @@ class PlaywrightFetcher(FetcherBase):
             pass
         except Exception:
             pass
-
         try:
             with contextlib.suppress(TimeoutError):
                 await page.wait_for_selector("body", timeout=min(2000, timeout_ms))
         except Exception:
             pass
-
         final_url = str(page.url or url)
-
         if resp is None:
             html = await page.content()
             status = 200 if len(html) > 100 else 0
             return status, final_url, headers
-
         status = int(resp.status or 0)
         headers = {str(k): str(v) for k, v in resp.headers.items()}
         return status, final_url, headers

@@ -48,13 +48,11 @@ if TYPE_CHECKING:
 
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import AppSettings
-
 trafilatura: Any | None = None
 try:
     trafilatura = importlib.import_module("trafilatura")
 except Exception:  # noqa: BLE001
     trafilatura = None
-
 StatValue: TypeAlias = int | float | str | bool
 StatsMap: TypeAlias = dict[str, StatValue]
 SectionName: TypeAlias = Literal["primary", "secondary"]
@@ -157,7 +155,6 @@ class MarkdownExtractor(ExtractorBase):
             raise ValueError(
                 "MarkdownExtractor does not handle PDF; use AutoExtractor/PdfExtractor"
             )
-
         apparent = guess_apparent_encoding(content)
         decoded, decoded_kind = decode_best_effort(
             content,
@@ -166,7 +163,6 @@ class MarkdownExtractor(ExtractorBase):
         )
         if kind == "unknown":
             kind = "html" if decoded_kind == "html" else "text"
-
         options = content_options or ExtractContentOptions(
             detail="full" if include_secondary_content else "concise"
         )
@@ -176,7 +172,6 @@ class MarkdownExtractor(ExtractorBase):
                 include_secondary_content=(options.detail == "full"),
             )
             return self._attach_abstract_markdown(doc)
-
         if kind != "html":
             doc = ExtractedDocument(
                 content_kind="binary",
@@ -185,7 +180,6 @@ class MarkdownExtractor(ExtractorBase):
                 stats={"primary_chars": 0, "secondary_chars": 0},
             )
             return self._attach_abstract_markdown(doc)
-
         html_doc = decoded[: int(profile.max_html_chars)]
         if content_options is None:
             if options.detail == "full":
@@ -271,7 +265,6 @@ class MarkdownExtractor(ExtractorBase):
                 collect_links=collect_links,
                 collect_images=collect_images,
             )
-
         low_doc = self._extract_html(
             html_doc=html_doc,
             url=url,
@@ -280,7 +273,6 @@ class MarkdownExtractor(ExtractorBase):
             collect_links=collect_links,
             collect_images=collect_images,
         )
-
         include_secondary = False
         base_doc = low_doc
         if options.detail == "full":
@@ -308,7 +300,6 @@ class MarkdownExtractor(ExtractorBase):
                     collect_links=collect_links,
                     collect_images=collect_images,
                 )
-
         if not needs_semantic_render:
             return base_doc
         return self._extract_html_semantic(
@@ -346,7 +337,6 @@ class MarkdownExtractor(ExtractorBase):
         soup = parse_html_document(html_doc)
         cleanup_dom(soup, keep_semantic_tags=keep_tags)
         buckets = split_sections(soup=soup, min_primary_chars=profile.min_primary_chars)
-
         markdown, render_stats = self._render_selected_tags_markdown(
             soup=soup,
             buckets=buckets,
@@ -372,7 +362,6 @@ class MarkdownExtractor(ExtractorBase):
             markdown=markdown,
             min_text_chars=profile.min_text_chars,
         )
-
         merged_stats: StatsMap = dict(base_doc.stats)
         merged_stats.update(
             {
@@ -411,13 +400,11 @@ class MarkdownExtractor(ExtractorBase):
         fallback_reason = str(render_stats.get("renderer_fallback_reason", "")).strip()
         if fallback_reason:
             merged_stats["renderer_fallback_reason"] = fallback_reason
-
         merged_warnings = list(base_doc.warnings or [])
         if not text_value.strip() and selected_tags:
             merged_warnings.append("selected tags produced empty content")
         if bool(render_stats.get("renderer_fallback_used", False)):
             merged_warnings.append("renderer fallback used")
-
         links = (
             collect_links_inventory(
                 soup=soup,
@@ -504,7 +491,6 @@ class MarkdownExtractor(ExtractorBase):
             )
             if not block:
                 continue
-
             merged_stats["renderer_fallback_used"] = bool(
                 bool(merged_stats.get("renderer_fallback_used", False))
                 or bool(block_stats.get("renderer_fallback_used", False))
@@ -522,7 +508,6 @@ class MarkdownExtractor(ExtractorBase):
                     )
                 else:
                     merged_stats["renderer_fallback_reason"] = reason
-
             if preserve_html_tags:
                 out.append(f'<section data-serpsage-tag="{tag}">\n{block}\n</section>')
                 continue
@@ -603,7 +588,6 @@ class MarkdownExtractor(ExtractorBase):
             reason = str(stats.get("renderer_fallback_reason", "")).strip()
             if reason:
                 reasons.append(reason)
-
         merged_stats: StatsMap = {
             "renderer_backend": merged_backend,
             "renderer_fallback_used": bool(fallback_used),
@@ -636,7 +620,6 @@ class MarkdownExtractor(ExtractorBase):
             meta_pairs.append((key, value))
             if len(meta_pairs) >= 20:
                 break
-
         if preserve_html_tags:
             lines: list[str] = []
             if title:
@@ -647,7 +630,6 @@ class MarkdownExtractor(ExtractorBase):
                     f'content="{html.escape(value, quote=True)}" />'
                 )
             return "\n".join(lines).strip()
-
         lines = []
         if title:
             lines.append(f"- title: {title}")
@@ -681,7 +663,6 @@ class MarkdownExtractor(ExtractorBase):
         elif semantic_tag == "footer":
             roots.extend(soup.find_all("footer"))
             roots.extend(soup.select('[role="contentinfo"]'))
-
         deduped: list[Tag] = []
         for root in roots:
             if any(root is keep for keep in deduped):
@@ -711,7 +692,6 @@ class MarkdownExtractor(ExtractorBase):
             base_url=url,
             include_secondary_content=include_secondary_content,
         )
-
         markdown = finalize_markdown(
             markdown=best.markdown,
             max_chars=profile.max_markdown_chars,
@@ -730,7 +710,6 @@ class MarkdownExtractor(ExtractorBase):
             markdown=markdown,
             min_text_chars=profile.min_text_chars,
         )
-
         merged_stats: StatsMap = dict(best.stats)
         merged_stats.update(
             {
@@ -757,7 +736,6 @@ class MarkdownExtractor(ExtractorBase):
         fallback_reason = str(best.stats.get("renderer_fallback_reason", "")).strip()
         if fallback_reason:
             merged_stats["renderer_fallback_reason"] = fallback_reason
-
         merged_warnings = list(
             dict.fromkeys(
                 str(item).strip() for item in best.warnings if str(item).strip()
@@ -771,7 +749,6 @@ class MarkdownExtractor(ExtractorBase):
         if bool(best.stats.get("renderer_fallback_used", False)):
             merged_warnings.append("renderer fallback used")
         merged_warnings = list(dict.fromkeys(merged_warnings))
-
         links = (
             collect_links_inventory(
                 soup=soup,
@@ -796,7 +773,6 @@ class MarkdownExtractor(ExtractorBase):
             if collect_images
             else []
         )
-
         return ExtractedDocument(
             markdown=markdown,
             title=title,
@@ -843,7 +819,6 @@ class MarkdownExtractor(ExtractorBase):
             markdown=markdown,
             min_text_chars=profile.min_text_chars,
         )
-
         stats: StatsMap = {
             "engine_chain": "full_page",
             "content_detail": "full",
@@ -865,11 +840,9 @@ class MarkdownExtractor(ExtractorBase):
         fallback_reason = str(render_stats.get("renderer_fallback_reason", "")).strip()
         if fallback_reason:
             stats["renderer_fallback_reason"] = fallback_reason
-
         warnings: list[str] = []
         if bool(render_stats.get("renderer_fallback_used", False)):
             warnings.append("renderer fallback used")
-
         buckets = split_sections(soup=soup, min_primary_chars=profile.min_primary_chars)
         links = (
             collect_links_inventory(
@@ -895,7 +868,6 @@ class MarkdownExtractor(ExtractorBase):
             if collect_images
             else []
         )
-
         return ExtractedDocument(
             markdown=markdown,
             title=title,
@@ -935,11 +907,9 @@ class MarkdownExtractor(ExtractorBase):
         title_norm = clean_whitespace(title)
         if not title_norm:
             return markdown
-
         compact = clean_whitespace(markdown)
         if title_norm.lower() in compact[: max(240, len(title_norm) * 6)].lower():
             return markdown
-
         heading = (
             f"<h1>{html.escape(title_norm)}</h1>"
             if include_html_tags
@@ -985,7 +955,6 @@ def _pick_primary_root(
         node = soup.select_one(selector)
         if node is not None and text_len(node) >= min_seed_chars:
             return node
-
     best: Tag | BeautifulSoup = soup
     best_score = -1.0
     for cand in soup.find_all(["article", "main", "section", "div"]):
@@ -1043,7 +1012,6 @@ def collect_links_inventory(
     if base_norm is None:
         base_norm = base_url
     base_netloc = urlparse(base_norm).netloc.lower()
-
     position = 0
     for anchor in soup.find_all("a"):
         position += 1
@@ -1051,20 +1019,16 @@ def collect_links_inventory(
         text = clean_whitespace(anchor.get_text(" ", strip=True))
         if not href or not text:
             continue
-
         normalized = _normalize_url(url=href, base_url=base_url, keep_hash=keep_hash)
         if not normalized:
             continue
-
         section = _section_for_tag(anchor, buckets=buckets)
         if section == "secondary" and not include_secondary_content:
             continue
-
         key = (normalized, text.lower(), section)
         if key in seen:
             continue
         seen.add(key)
-
         parsed = urlparse(normalized)
         rel = {str(x).lower() for x in (anchor.get("rel") or [])}
         same_page = _strip_fragment(normalized) == _strip_fragment(base_norm)
@@ -1084,7 +1048,6 @@ def collect_links_inventory(
         )
         if len(out) >= max(1, int(max_links)):
             break
-
     return out
 
 
@@ -1103,14 +1066,12 @@ def collect_image_links_inventory(
     if base_norm is None:
         base_norm = base_url
     base_netloc = urlparse(base_norm).netloc.lower()
-
     position = 0
     for image in soup.find_all(["img", "source"]):
         position += 1
         section = _section_for_tag(image, buckets=buckets)
         if section == "secondary" and not include_secondary_content:
             continue
-
         alt_text = clean_whitespace(str(image.get("alt") or "").strip())
         candidates = _image_url_candidates(image=image)
         for raw in candidates:
@@ -1149,13 +1110,11 @@ def _normalize_url(*, url: str, base_url: str, keep_hash: bool) -> str | None:
         return None
     if raw.lower().startswith(("javascript:", "mailto:", "tel:", "data:")):
         return None
-
     try:
         joined = str(urljoin(base_url, raw))
         parsed = urlparse(joined)
         if parsed.scheme not in {"http", "https"}:
             return None
-
         clean_pairs = [
             (k, v)
             for k, v in parse_qsl(parsed.query, keep_blank_values=True)
@@ -1208,7 +1167,6 @@ def _source_hint(tag: Tag) -> str:
         ).strip()
         if ident:
             return ident[:120]
-
         parent = cur.parent
         if not isinstance(parent, Tag):
             break
@@ -1250,7 +1208,6 @@ def run_fastdom(
 ) -> CandidateDoc:
     if trafilatura is None:
         raise RuntimeError("trafilatura is required by the fastdom extractor")
-
     secondary_md = ""
     secondary_stats: dict[str, int | float | bool | str] = {
         "renderer_text_recall_ratio": 1.0,
@@ -1261,7 +1218,6 @@ def run_fastdom(
             secondary_roots=buckets.secondary_roots,
             base_url=base_url,
         )
-
     try:
         signal_text = (
             trafilatura.extract(
@@ -1289,7 +1245,6 @@ def run_fastdom(
             primary_chars=0,
             secondary_chars=0,
         )
-
     primary_md, primary_stats = render_markdown(
         root=buckets.primary_root,
         base_url=base_url,
@@ -1300,18 +1255,15 @@ def run_fastdom(
         signal_text=signal_text,
         min_chars=profile.min_primary_chars,
     )
-
     markdown = primary_md.strip()
     if include_secondary_content and secondary_md.strip():
         markdown = (
             f"{markdown}\n\n## Secondary Content\n\n{secondary_md.strip()}".strip()
         )
-
     markdown = finalize_markdown(
         markdown=markdown, max_chars=profile.max_markdown_chars
     )
     text_value = markdown_to_text(markdown)
-
     primary_chars = len(markdown_to_text(primary_md))
     secondary_chars = len(markdown_to_text(secondary_md)) if secondary_md else 0
     primary_ratio = float(primary_stats.get("renderer_text_recall_ratio", 1.0))
@@ -1323,7 +1275,6 @@ def run_fastdom(
     fallback_used = bool(primary_stats.get("renderer_fallback_used", False)) or bool(
         secondary_stats.get("renderer_fallback_used", False)
     )
-
     stats: StatsMap = {
         "engine": "fastdom",
         "primary_chars": int(primary_chars),
@@ -1345,7 +1296,6 @@ def run_fastdom(
         fallback_reason_parts.append(secondary_reason)
     if fallback_reason_parts:
         stats["renderer_fallback_reason"] = ",".join(sorted(set(fallback_reason_parts)))
-
     warnings: list[str] = []
     if primary_chars < int(profile.min_primary_chars):
         warnings.append("fastdom low primary text")
@@ -1353,7 +1303,6 @@ def run_fastdom(
         warnings.append("fastdom low text output")
     if fallback_used:
         warnings.append("renderer fallback used")
-
     return CandidateDoc(
         markdown=markdown,
         extractor_used="fastdom",
@@ -1372,56 +1321,44 @@ def _clip_markdown_with_signal(
 ) -> tuple[str, bool, str]:
     if not markdown.strip():
         return markdown, False, "markdown_empty"
-
     signal_norm = clean_whitespace(signal_text)
     if len(signal_norm) < 120:
         return markdown, False, "signal_short"
-
     anchors = _pick_signal_anchors(signal_text)
     if anchors is None:
         return markdown, False, "signal_anchors_missing"
     start_anchor, end_anchor = anchors
-
     blocks = _markdown_blocks(markdown)
     if len(blocks) < 4:
         return markdown, False, "markdown_too_short_for_clip"
-
     block_plain = [clean_whitespace(markdown_to_text(block)) for block in blocks]
     stitched = "\n\n".join(block_plain).lower()
-
     start_pos = _find_anchor_position(stitched, start_anchor)
     if start_pos < 0:
         return markdown, False, "start_anchor_not_found"
-
     end_pos = _find_anchor_position(stitched, end_anchor)
     if end_pos < start_pos:
         end_pos = start_pos + max(20, len(clean_whitespace(start_anchor)))
-
     starts: list[int] = []
     cursor = 0
     for txt in block_plain:
         starts.append(cursor)
         cursor += len(txt) + 2
-
     start_idx = 0
     for idx, st in enumerate(starts):
         if st + len(block_plain[idx]) >= start_pos:
             start_idx = max(0, idx - 1)
             break
-
     end_idx = len(blocks) - 1
     for idx, st in enumerate(starts):
         if st > end_pos:
             end_idx = min(len(blocks) - 1, idx)
             break
-
     while end_idx > start_idx and _looks_like_noise_block(block_plain[end_idx]):
         end_idx -= 1
-
     clipped = "\n\n".join(blocks[start_idx : end_idx + 1]).strip()
     if not clipped:
         return markdown, False, "clip_empty"
-
     plain_full = clean_whitespace(markdown_to_text(markdown))
     plain_clipped = clean_whitespace(markdown_to_text(clipped))
     if len(plain_clipped) < max(int(min_chars), int(len(plain_full) * 0.45)):
@@ -1442,14 +1379,12 @@ def _pick_signal_anchors(signal_text: str) -> tuple[str, str] | None:
     candidates = [p for p in paragraphs if _is_content_paragraph(p)]
     if len(candidates) < 2:
         return None
-
     start = candidates[0]
     end = candidates[-1]
     for para in reversed(candidates):
         if not _looks_like_noise_block(para):
             end = para
             break
-
     start_key = clean_whitespace(start).lower()
     end_key = clean_whitespace(end).lower()
     if start_key == end_key:

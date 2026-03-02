@@ -48,12 +48,10 @@ class BlendRanker(RankerBase):
     ) -> list[float]:
         if not texts:
             return []
-
         weights = self._provider_weights()
         heur_w = float(weights.get("heuristic", 0.0))
         bm25_w = float(weights.get("bm25", 0.0))
         need_bm25 = bm25_w > 0 and self._bm25 is not None
-
         heur: list[float] | None = None
         bm25_raw: list[float] | None = None
 
@@ -81,11 +79,9 @@ class BlendRanker(RankerBase):
                 heur = [0.0] * len(texts)
             if need_bm25:
                 tg.start_soon(run_bm25)
-
         heur = heur or [0.0] * len(texts)
         max_heur = max(heur) if heur else 0.0
         anchor = float(max_heur) if float(max_heur) > 0 else 1.0
-
         score_map: dict[str, list[float]] = {"heuristic": heur}
         transforms: dict[str, Callable[[list[float]], list[float]]] = {}
         if need_bm25 and bm25_raw is not None:
@@ -97,7 +93,6 @@ class BlendRanker(RankerBase):
                 return [float(x) * scale for x in rank_scales(scores)]
 
             transforms["bm25"] = _scale_bm25
-
         return blend_weighted(scores=score_map, weights=weights, transforms=transforms)
 
 

@@ -13,7 +13,6 @@ try:
     AioredisModule = _aioredis.Redis
 except Exception:  # noqa: BLE001
     AioredisModule = None
-
 if TYPE_CHECKING:
     import aioredis
 

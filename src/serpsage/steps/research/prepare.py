@@ -33,7 +33,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         themes = clean_whitespace(ctx.request.themes or "")
         profile = self._resolve_profile(mode)
         parallel = self.settings.research.parallel
-
         ctx.request = ctx.request.model_copy(
             update={"search_mode": mode, "themes": themes}
         )
@@ -91,7 +90,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         ctx.current_round = None
         ctx.notes = []
         ctx.output = ResearchOutputState(content="", structured=None)
-
         await self.emit_tracking_event(
             event_name="research.progress",
             request_id=ctx.request_id,

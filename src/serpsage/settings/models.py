@@ -69,7 +69,6 @@ def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
 
 class OverviewProfileBase(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     use_model: str = "gpt-4.1-mini"
     max_abstract_chars: int = 900
     cache_ttl_s: int = 0
@@ -83,7 +82,6 @@ class FetchOverviewSettings(OverviewProfileBase):
 
 class SearchDeepSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     enabled: bool = True
     max_expanded_queries: int = 6
     rule_max_queries: int = 4
@@ -143,7 +141,6 @@ class SearchDeepSettings(Model):
 
 class SearchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     max_results: int = 16
     additional_query_score_weight: float = 0.8
     deep: SearchDeepSettings = Field(default_factory=SearchDeepSettings)
@@ -159,7 +156,6 @@ class SearchSettings(Model):
 
 class AnswerStageSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     use_model: str = "gpt-4.1-mini"
 
 
@@ -176,14 +172,12 @@ class AnswerGenerateSettings(AnswerStageSettings):
 
 class AnswerSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     plan: AnswerStageSettings = Field(default_factory=AnswerStageSettings)
     generate: AnswerGenerateSettings = Field(default_factory=AnswerGenerateSettings)
 
 
 class ResearchModelsSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     plan: str = ""
     abstract_analyze: str = ""
     content_analyze: str = ""
@@ -193,7 +187,6 @@ class ResearchModelsSettings(Model):
 
 class ResearchModeSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     max_rounds: int = 5
     max_search_calls: int = 12
     max_fetch_calls: int = 24
@@ -229,7 +222,6 @@ class ResearchModeSettings(Model):
 
 class ResearchParallelSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     question_card_cap: int = 6
     budget_multiplier: float = 2.0
     bonus_ratio: float = 0.30
@@ -257,7 +249,6 @@ class ResearchParallelSettings(Model):
 
 class ResearchCorpusSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     abstract_context_topk: int = 18
     content_context_topk: int = 10
     subreport_context_topk: int = 12
@@ -348,7 +339,6 @@ def _default_research_pro_mode() -> ResearchModeSettings:
 
 class ResearchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     tool_max_attempts: int = 3
     llm_self_heal_retries: int = 2
     no_progress_rounds_to_stop: int = 2
@@ -390,7 +380,6 @@ def _default_blocked_markers() -> list[str]:
 
 class FetchConcurrencySettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     global_limit: int = 24
     per_host: int = 4
     politeness_delay_ms: int = 0
@@ -398,7 +387,6 @@ class FetchConcurrencySettings(Model):
 
 class FetchRenderSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     js_concurrency: int = 12
     nav_timeout_ms: int = 8_000
     block_resources: bool = True
@@ -413,7 +401,6 @@ class FetchRenderSettings(Model):
 
 class FetchQualitySettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     min_text_chars: int = 100
     script_ratio_threshold: float = 0.35
     quality_score_threshold: float = 0.15
@@ -443,7 +430,6 @@ class FetchQualitySettings(Model):
 
 class FetchExtractSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     max_markdown_chars: int = 160_000
     min_text_chars: int = 220
     min_primary_chars: int = 220
@@ -456,7 +442,6 @@ class FetchExtractSettings(Model):
 
 class FetchAbstractSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     max_abstract_chars: int = 2000
     min_abstract_score: float = 0.20
     min_abstract_tokens: int = 4
@@ -465,7 +450,6 @@ class FetchAbstractSettings(Model):
 
 class FetchSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     backend: FetchBackendKey = "auto"
     inflight_enabled: bool = True
     inflight_timeout_s: float = 60.0
@@ -491,7 +475,6 @@ class FetchSettings(Model):
 
 class RunnerSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     search_limit: int = Field(default=8, ge=1)
     fetch_limit: int = Field(default=24, ge=1)
     child_fetch_limit: int = Field(default=24, ge=1)
@@ -568,7 +551,6 @@ class CacheSettings(Model):
 
 class LLMModelSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     name: str = "gpt-4.1-mini"
     backend: OverviewModelBackendKey = "openai"
     base_url: str | None = None
@@ -587,14 +569,12 @@ def _default_overview_models() -> list[LLMModelSettings]:
 
 class LLMSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     models: list[LLMModelSettings] = Field(default_factory=_default_overview_models)
 
     @model_validator(mode="after")
     def _validate_models(self) -> LLMSettings:
         if not self.models:
             raise ValueError("llm.models must contain at least one model")
-
         names: set[str] = set()
         for idx, item in enumerate(self.models):
             if not item.name:
@@ -615,7 +595,6 @@ class LLMSettings(Model):
 
 class TelemetryObsSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     backend: TelemetryObsBackendKey = "null"
     jsonl_path: str = ".serpsage_events.jsonl"
 
@@ -630,7 +609,6 @@ class TelemetryObsSettings(Model):
 
 class TelemetryMeteringSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     backend: TelemetryMeteringBackendKey = "null"
     sqlite_db_path: str = ".serpsage_metering.sqlite3"
 
@@ -645,7 +623,6 @@ class TelemetryMeteringSettings(Model):
 
 class TelemetrySettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     enabled: bool = False
     queue_size: int = 2048
     drop_noncritical_when_full: bool = True
@@ -663,7 +640,6 @@ class TelemetrySettings(Model):
 
 class AppSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
     http: HttpSettings = Field(default_factory=HttpSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)

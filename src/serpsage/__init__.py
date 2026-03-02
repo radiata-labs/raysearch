@@ -1,6 +1,5 @@
 """
 SerpSage 3.0 (async-only).
-
 Public API:
 - Engine: async search pipeline orchestrator
 - load_settings: load AppSettings from YAML/JSON/env
@@ -12,8 +11,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from serpsage.app.engine import Engine
-
-
 from serpsage.app.request import (
     AnswerRequest,
     CrawlMode,

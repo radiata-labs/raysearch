@@ -38,7 +38,6 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         candidates = list(ctx.subpages.links or [])
         if not candidates:
             return ctx
-
         try:
             scores = await self._ranker.score_texts(
                 texts=[f"[{item.anchor_text}]({item.url})" for item in candidates],
@@ -62,7 +61,6 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-
         ranked_indexes = sorted(
             range(len(candidates)),
             key=lambda idx: (-_score_at(scores=scores, idx=idx), idx),
@@ -73,7 +71,6 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         ]
         if not selected_urls:
             return ctx
-
         to_fetch: list[FetchStepContext] = []
         for index, url in enumerate(selected_urls):
             child_request = ctx.request.model_copy(
@@ -99,7 +96,6 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                     ),
                 )
             )
-
         child_results = await self._fetch_runner.run_batch(to_fetch)
         out: list[FetchSubpagesResult | None] = [None] * len(selected_urls)
         out_md_for_abstract: list[str | None] = [None] * len(selected_urls)
@@ -135,7 +131,6 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                     child_context.artifacts.overview_scored_abstracts or []
                 )
             ]
-
         paired = [
             (item, md_text or "", overview_scores or [])
             for item, md_text, overview_scores in zip(

@@ -13,53 +13,37 @@ from serpsage.utils import clean_whitespace
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-
-
 _MAX_ADDITIONAL_QUERIES = 4
-
 _ANSWER_MODE = Literal["direct", "summary"]
 
 
 @dataclass(slots=True)
 class _PlannedSearch:
     answer_mode: _ANSWER_MODE
-
     freshness_intent: bool
-
     query_language: str
-
     search_query: str
-
     search_mode: Literal["auto", "deep"]
-
     max_results: int
-
     additional_queries: list[str] | None
 
 
 class AnswerPlanStep(StepBase[AnswerStepContext]):
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
-
         super().__init__(rt=rt)
-
         self._llm = llm
-
         self.bind_deps(llm)
 
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
-
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-
         max_results_cap = max(1, int(self.settings.search.max_results))
-
         try:
             plan = await self._plan_search(
                 query=ctx.request.query,
                 now_utc=now_utc,
                 max_results_cap=max_results_cap,
             )
-
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="answer.plan.error",
@@ -73,7 +57,6 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                     "message": str(exc),
                 },
             )
-
             plan = _PlannedSearch(
                 answer_mode="summary",
                 freshness_intent=False,
@@ -83,25 +66,17 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                 max_results=min(max_results_cap, 5),
                 additional_queries=None,
             )
-
         ctx.plan.answer_mode = str(plan.answer_mode)
-
         ctx.plan.freshness_intent = bool(plan.freshness_intent)
-
         ctx.plan.query_language = str(plan.query_language)
-
         ctx.plan.search_query = plan.search_query
-
         ctx.plan.search_mode = plan.search_mode
-
         ctx.plan.max_results = int(plan.max_results)
-
         ctx.plan.additional_queries = (
             list(plan.additional_queries)
             if plan.additional_queries is not None
             else None
         )
-
         return ctx
 
     async def _plan_search(
@@ -111,7 +86,6 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         now_utc: datetime,
         max_results_cap: int,
     ) -> _PlannedSearch:
-
         schema: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
@@ -140,13 +114,11 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                 },
             },
         }
-
         messages = self._build_messages(
             query=query,
             now_utc=now_utc,
             max_results_cap=max_results_cap,
         )
-
         result = await self._llm.chat(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
@@ -157,7 +129,6 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             if result.data is not None
             else _try_parse_json_value(result.text)
         )
-
         return self._normalize_plan(
             raw=raw,
             original_query=query,
@@ -171,7 +142,6 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         now_utc: datetime,
         max_results_cap: int,
     ) -> list[dict[str, str]]:
-
         return [
             {
                 "role": "system",
@@ -220,51 +190,34 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         original_query: str,
         max_results_cap: int,
     ) -> _PlannedSearch:
-
         data = raw if isinstance(raw, dict) else {}
-
         raw_mode = clean_whitespace(str(data.get("answer_mode") or "")).casefold()
-
         answer_mode: _ANSWER_MODE = "direct" if raw_mode == "direct" else "summary"
-
         freshness_intent = _coerce_bool(data.get("freshness_intent"), default=False)
-
         query_language = clean_whitespace(str(data.get("query_language") or ""))
-
         if not query_language:
             query_language = "same as query"
-
         optimize_query = _coerce_bool(data.get("optimize_query"), default=False)
-
         planned_query = clean_whitespace(str(data.get("search_query") or ""))
-
         search_query = (
             planned_query
             if optimize_query and planned_query
             else clean_whitespace(original_query)
         )
-
         raw_mode = clean_whitespace(str(data.get("search_mode") or "")).casefold()
-
         search_mode: Literal["auto", "deep"] = "deep" if raw_mode == "deep" else "auto"
-
         default_max_results = min(max_results_cap, 5)
-
         raw_max_results = _coerce_int(
             data.get("max_results"),
             default=default_max_results,
         )
-
         max_results = max(1, min(max_results_cap, int(raw_max_results)))
-
         additional_queries: list[str] | None = None
-
         if search_mode == "deep" and isinstance(data.get("additional_queries"), list):
             additional_queries = _normalize_query_list(
                 data.get("additional_queries") or [],
                 limit=_MAX_ADDITIONAL_QUERIES,
             )
-
         return _PlannedSearch(
             answer_mode=answer_mode,
             freshness_intent=freshness_intent,
@@ -277,52 +230,35 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
 
 
 def _normalize_query_list(raw_items: list[object], *, limit: int) -> list[str] | None:
-
     if limit <= 0:
         return None
-
     out: list[str] = []
-
     seen: set[str] = set()
-
     for item in raw_items:
         value = clean_whitespace(str(item or ""))
-
         if not value:
             continue
-
         key = value.casefold()
-
         if key in seen:
             continue
-
         seen.add(key)
-
         out.append(value)
-
         if len(out) >= limit:
             break
-
     return out or None
 
 
 def _coerce_bool(value: object, *, default: bool) -> bool:
-
     if isinstance(value, bool):
         return value
-
     if isinstance(value, (int, float)):
         return bool(value)
-
     if isinstance(value, str):
         token = clean_whitespace(value).casefold()
-
         if token in {"1", "true", "yes", "y"}:
             return True
-
         if token in {"0", "false", "no", "n", ""}:
             return False
-
     return default
 
 
@@ -345,18 +281,13 @@ def _coerce_int(value: object, *, default: int) -> int:
 
 
 def _try_parse_json_value(text: str) -> object:
-
     try:
         return json.loads(text)
-
     except json.JSONDecodeError:
         start = text.find("{")
-
         end = text.rfind("}")
-
         if 0 <= start < end:
             return json.loads(text[start : end + 1])
-
         raise
 
 

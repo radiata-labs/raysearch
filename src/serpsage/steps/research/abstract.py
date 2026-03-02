@@ -34,34 +34,22 @@ if TYPE_CHECKING:
 
 class ResearchAbstractStep(StepBase[ResearchStepContext]):
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
-
         super().__init__(rt=rt)
-
         self._llm = llm
-
         self.bind_deps(llm)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
-
         all_sources = list(ctx.corpus.sources)
-
         if not all_sources:
             ctx.work.abstract_review = self._empty_review()
-
             ctx.work.need_content_source_ids = []
-
             ctx.current_round.context_source_ids = []
-
             return ctx
-
         corpus_cfg = ctx.settings.research.corpus
-
         context_source_ids = select_context_source_ids(
             ctx=ctx,
             round_index=int(ctx.current_round.round_index),
@@ -69,31 +57,22 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             new_result_target_ratio=float(corpus_cfg.new_result_target_ratio),
             min_history_sources=int(corpus_cfg.min_history_sources),
         )
-
         ctx.current_round.context_source_ids = list(context_source_ids)
-
         sources = pick_sources_by_ids(
             sources=all_sources,
             source_ids=context_source_ids,
         )
-
         if not sources:
             ctx.work.abstract_review = self._empty_review()
-
             ctx.work.need_content_source_ids = []
-
             return ctx
-
         packet = build_abstract_packet(sources=sources, max_abstracts_per_source=5)
-
         model = resolve_research_model(
             ctx=ctx,
             stage="abstract",
             fallback=self.settings.answer.generate.use_model,
         )
-
         payload = self._empty_review()
-
         try:
             chat_result = await self._llm.chat(
                 model=model,
@@ -109,7 +88,6 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
             payload = chat_result.data
-
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="research.abstract.error",
@@ -123,9 +101,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-
             payload = self._empty_review()
-
         (
             entity_coverage_complete,
             covered_entities,
@@ -136,7 +112,6 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             entity_coverage_complete=payload.entity_coverage_complete,
             required_entities=ctx.plan.theme_plan.required_entities,
         )
-
         payload = payload.model_copy(
             update={
                 "entity_coverage_complete": bool(entity_coverage_complete),
@@ -144,25 +119,17 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "missing_entities": list(missing_entities),
             }
         )
-
         ctx.work.abstract_review = payload
-
         need_content_ids = self._normalize_source_ids(
             payload.need_content_source_ids,
             limit=20,
         )
-
         ctx.work.need_content_source_ids = need_content_ids
-
         findings = normalize_strings(payload.findings, limit=8)
-
         if findings:
             ctx.notes.extend(findings[:3])
-
             ctx.current_round.abstract_summary = " | ".join(findings[:3])
-
         ctx.current_round.confidence = self._normalize_confidence(payload.confidence)
-
         ctx.current_round.query_strategy = clean_whitespace(
             str(
                 payload.next_query_strategy
@@ -170,42 +137,30 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 or "mixed"
             )
         )
-
         covered_subthemes = normalize_strings(payload.covered_subthemes, limit=16)
-
         if covered_subthemes:
             ctx.corpus.coverage_state.covered_subthemes = merge_strings(
                 list(ctx.corpus.coverage_state.covered_subthemes),
                 covered_subthemes,
                 limit=64,
             )
-
         total = max(1, int(ctx.corpus.coverage_state.total_subthemes or 0))
-
         if total <= 0:
             total = max(1, len(ctx.corpus.coverage_state.covered_subthemes))
-
         coverage_ratio = min(
             1.0,
             float(len(ctx.corpus.coverage_state.covered_subthemes)) / float(total),
         )
-
         ctx.current_round.coverage_ratio = float(coverage_ratio)
-
         ctx.current_round.entity_coverage_complete = bool(entity_coverage_complete)
-
         ctx.current_round.missing_entities = list(missing_entities)
-
         unresolved_topics = self._extract_unresolved_topics(
             payload.conflict_arbitration
         )
-
         ctx.current_round.unresolved_conflicts = int(len(unresolved_topics))
-
         ctx.current_round.critical_gaps = int(
             len(normalize_strings(payload.critical_gaps, limit=20))
         )
-
         ctx.work.next_queries = merge_strings(
             normalize_strings(
                 payload.next_queries,
@@ -214,7 +169,6 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             [],
             limit=int(ctx.runtime.budget.max_queries_per_round),
         )
-
         return ctx
 
     def _build_abstract_messages(
@@ -224,19 +178,12 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         packet: str,
         now_utc: datetime,
     ) -> list[dict[str, str]]:
-
         out_lang = ctx.plan.output_language or "en"
-
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
-
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
-
         round_index = ctx.current_round.round_index if ctx.current_round else 0
-
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
-
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
-
         return [
             {
                 "role": "system",
@@ -300,7 +247,6 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         ]
 
     def _build_abstract_schema(self, *, max_queries: int) -> dict[str, Any]:
-
         return {
             "type": "object",
             "additionalProperties": False,
@@ -375,80 +321,54 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         }
 
     def _empty_review(self) -> AbstractOutputPayload:
-
         return AbstractOutputPayload()
 
     def _normalize_confidence(self, raw: object) -> float:
-
         try:
             if isinstance(raw, int | float | str):
                 value = float(raw)
-
             else:
                 return 0.0
-
         except Exception:  # noqa: S112
             return 0.0
-
         return min(1.0, max(0.0, value))
 
     def _extract_unresolved_topics(
         self,
         raw: list[AbstractConflictPayload],
     ) -> list[str]:
-
         out: list[str] = []
-
         seen: set[str] = set()
-
         for item in raw:
             status = clean_whitespace(item.status).casefold()
-
             if status != "unresolved":
                 continue
-
             topic = clean_whitespace(item.topic)
-
             if not topic:
                 continue
-
             key = topic.casefold()
-
             if key in seen:
                 continue
-
             seen.add(key)
-
             out.append(topic)
-
         return out
 
     def _normalize_source_ids(self, raw: list[int], *, limit: int) -> list[int]:
-
         out: list[int] = []
-
         seen: set[int] = set()
-
         for item in raw:
             try:
                 value = int(item)
-
             except Exception:  # noqa: S112
                 continue
-
             if value <= 0:
                 continue
-
             if value in seen:
                 continue
-
             seen.add(value)
-
             out.append(value)
-
             if len(out) >= max(1, int(limit)):
                 break
-
         return out
 
 

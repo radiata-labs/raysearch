@@ -12,7 +12,6 @@ try:
 except Exception:  # noqa: BLE001
     BM25Okapi = None
     BM25_AVAILABLE = False
-
 from serpsage.components.rank.base import RankerBase
 from serpsage.tokenize import tokenize
 
@@ -36,10 +35,8 @@ class Bm25Ranker(RankerBase):
             return []
         if not BM25_AVAILABLE or BM25Okapi is None:
             return [0.0 for _ in texts]
-
         if not query_tokens:
             return [0.0 for _ in texts]
-
         corpus = [tokenize(doc) for doc in texts]
         bm25 = await to_thread.run_sync(BM25Okapi, corpus)
         scores = await to_thread.run_sync(bm25.get_scores, query_tokens)

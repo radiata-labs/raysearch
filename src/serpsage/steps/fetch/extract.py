@@ -42,7 +42,6 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-
         collect_links = bool(
             ctx.enable_others_and_subpages
             and (
@@ -53,7 +52,6 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         collect_images = bool(
             ctx.enable_others_and_subpages and ctx.runtime.max_image_links is not None
         )
-
         try:
             assert ctx.artifacts.fetch_result is not None
             extracted = await self._extractor.extract(
@@ -84,7 +82,6 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-
         ctx.artifacts.extracted = extracted
         if ctx.enable_others_and_subpages:
             ctx.output.others.links = _prepare_links(

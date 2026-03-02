@@ -35,10 +35,8 @@ async def main(
             others=FetchOthersRequest(max_links=5, max_image_links=5),
         ),
     )
-
     async with Engine.from_settings(settings) as engine:
         resp = await engine.search(req)
-
     return {
         "search_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2),
     }
@@ -50,6 +48,5 @@ if __name__ == "__main__":
     t1 = time.time()
     out = anyio.run(main, "latest ai papers", "auto", 5)
     t2 = time.time()
-
     print(out["search_result"])
     print(f"Search took {t2 - t1:.2f} seconds")

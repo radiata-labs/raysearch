@@ -109,13 +109,11 @@ def normalize_entity_coverage(
     required_entities: list[str],
 ) -> tuple[bool, list[str], list[str]]:
     """Normalize and compute entity coverage status.
-
     Args:
         covered_entities: Entities reported as covered by the LLM.
         missing_entities: Entities reported as missing by the LLM.
         entity_coverage_complete: Coverage complete flag from LLM output.
         required_entities: The canonical list of required entities.
-
     Returns:
         Tuple of (is_complete, covered_list, missing_list).
     """
@@ -123,7 +121,6 @@ def normalize_entity_coverage(
     covered = normalize_strings(covered_entities, limit=24)
     if not required:
         return True, covered, []
-
     required_map = {item.casefold(): item for item in required}
     missing = [
         required_map[item.casefold()]

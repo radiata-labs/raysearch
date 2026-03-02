@@ -32,17 +32,14 @@ def build_tree_text(repo_root: Path) -> str:
     def walk(current: Path, prefix: str) -> None:
         children = _sorted_children(current, repo_root)
         dirs = [child for child in children if child.is_dir()]
-
         # Keep `src` concise: show directory structure only.
         if _is_in_src_subtree(current):
             visible_files: list[Path] = []
         else:
             visible_files = [child for child in children if child.is_file()]
-
         for child in dirs:
             lines.append(f"{prefix}|- {child.name}/")
             walk(child, prefix + "|  ")
-
         lines.extend(f"{prefix}|- {child.name}" for child in visible_files)
 
     walk(repo_root, "")
@@ -54,7 +51,6 @@ def replace_tree_block(content: str, tree_text: str) -> str:
     end = content.find(END_MARKER)
     if start < 0 or end < 0 or end < start:
         raise ValueError("AGENTS.md is missing file-tree markers.")
-
     replacement = f"{START_MARKER}\n```text\n{tree_text}\n```\n{END_MARKER}"
     return content[:start] + replacement + content[end + len(END_MARKER) :]
 
@@ -62,11 +58,9 @@ def replace_tree_block(content: str, tree_text: str) -> str:
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     agents_path = repo_root / "AGENTS.md"
-
     current = agents_path.read_text(encoding="utf-8")
     tree_text = build_tree_text(repo_root)
     updated = replace_tree_block(current, tree_text)
-
     if updated != current:
         agents_path.write_text(updated, encoding="utf-8", newline="\n")
         print("Updated AGENTS.md file-tree block.")

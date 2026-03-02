@@ -14,7 +14,6 @@ try:
     AioSqliteModule = _aiosqlite
 except Exception:  # noqa: BLE001
     AioSqliteModule = None
-
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
@@ -57,7 +56,6 @@ class SqliteCache(CacheBase):
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         if self._con is None:
             raise RuntimeError("sqlite cache connection is not initialized")
-
         now = int(self.clock.now_ms())
         cur = await self._con.execute(
             "SELECT expires_at_ms, value FROM cache WHERE namespace=? AND key=?",
@@ -88,7 +86,6 @@ class SqliteCache(CacheBase):
             return
         if self._con is None:
             raise RuntimeError("sqlite cache connection is not initialized")
-
         exp_ms = int(self.clock.now_ms()) + int(ttl_s) * 1000
         compressed = zlib.compress(value, level=6)
         await self._con.execute(

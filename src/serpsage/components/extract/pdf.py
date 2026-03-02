@@ -23,7 +23,6 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-
 fitz: Any | None = None
 try:
     fitz = importlib.import_module("fitz")
@@ -31,7 +30,6 @@ try:
 except Exception:  # noqa: BLE001
     fitz = None
     PYMUPDF_AVAILABLE = False
-
 _LINE_SPLIT_RE = re.compile(r"\r?\n+")
 
 
@@ -67,22 +65,18 @@ class PdfExtractor(ExtractorBase):
                     warnings=["empty pdf content"],
                 )
             )
-
         warnings: list[str] = []
         pages_pypdf: list[list[str]] = []
         pages_pymupdf: list[list[str]] = []
-
         try:
             pages_pypdf = await self._extract_lines_pypdf(content)
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"pypdf_failed:{type(exc).__name__}")
-
         if PYMUPDF_AVAILABLE:
             try:
                 pages_pymupdf = await self._extract_lines_pymupdf(content)
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"pymupdf_failed:{type(exc).__name__}")
-
         if not pages_pypdf and not pages_pymupdf:
             return self._attach_abstract_markdown(
                 ExtractedDocument(
@@ -91,10 +85,8 @@ class PdfExtractor(ExtractorBase):
                     warnings=warnings or ["pdf extraction failed"],
                 )
             )
-
         chosen_pages, engine = self._pick_pages(pages_pypdf, pages_pymupdf)
         header_footer = self._detect_repeated_header_footer(chosen_pages)
-
         md_parts: list[str] = []
         text_parts: list[str] = []
         pages_kept = 0
@@ -107,7 +99,6 @@ class PdfExtractor(ExtractorBase):
             md_parts.append(f"## Page {idx}")
             md_parts.extend(paras)
             text_parts.extend(paras)
-
         markdown = "\n\n".join(md_parts).strip()
         text_chars = len("\n\n".join(text_parts).strip())
         if text_chars < 180:
@@ -143,11 +134,9 @@ class PdfExtractor(ExtractorBase):
         total_timeout: float = 30.0,
     ) -> list[list[str]]:
         """Extract text from PDF using pypdf.
-
         Uses async threading for non-blocking I/O with configurable timeouts.
         """
         # Import pypdf errors for specific exception handling
-
         try:
             reader = PdfReader(BytesIO(content))
             pages = list(reader.pages)
@@ -157,7 +146,6 @@ class PdfExtractor(ExtractorBase):
             raise
         except Exception as exc:
             raise ValueError(f"Failed to read PDF: {type(exc).__name__}") from exc
-
         if not pages:
             return []
 
@@ -177,10 +165,8 @@ class PdfExtractor(ExtractorBase):
                 result = await to_thread.run_sync(_read_page, i)
                 results.append(result)
             return [r[1] for r in results]
-
         out: list[list[str]] = [[] for _ in range(len(pages))]
         results_dict: dict[int, list[str]] = {}
-
         # For larger PDFs, use parallel extraction with total timeout
         try:
             with anyio.fail_after(total_timeout):
@@ -192,7 +178,6 @@ class PdfExtractor(ExtractorBase):
 
                     for i in range(len(pages)):
                         tg.start_soon(extract_page, i)
-
             for idx, lines in results_dict.items():
                 out[idx] = lines
         except TimeoutError:

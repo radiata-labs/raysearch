@@ -33,62 +33,44 @@ if TYPE_CHECKING:
 
 class ResearchContentStep(StepBase[ResearchStepContext]):
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
-
         super().__init__(rt=rt)
-
         self._llm = llm
-
         self.bind_deps(llm)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
-
         cfg = ctx.settings.research.corpus
-
         source_ids = list(ctx.work.need_content_source_ids or [])
-
         if not source_ids:
             source_ids = list(ctx.current_round.context_source_ids or [])
-
         source_ids = sort_source_ids_by_score(
             ctx=ctx,
             source_ids=source_ids,
         )[: max(1, int(cfg.content_context_topk))]
-
         if not source_ids:
             ctx.work.content_review = self._empty_review()
-
             return ctx
-
         selected_sources = pick_sources_by_ids(
             sources=ctx.corpus.sources,
             source_ids=source_ids,
         )
-
         if not selected_sources:
             ctx.work.content_review = self._empty_review()
-
             return ctx
-
         packet = self._build_content_packet(
             sources=selected_sources,
             source_ids=source_ids,
             max_chars=9000,
         )
-
         model = resolve_research_model(
             ctx=ctx,
             stage="content",
             fallback=self.settings.answer.generate.use_model,
         )
-
         payload = self._empty_review()
-
         try:
             chat_result = await self._llm.chat(
                 model=model,
@@ -104,7 +86,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
             payload = chat_result.data
-
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="research.content.error",
@@ -118,9 +99,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-
             payload = self._empty_review()
-
         (
             entity_coverage_complete,
             covered_entities,
@@ -131,7 +110,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             entity_coverage_complete=payload.entity_coverage_complete,
             required_entities=ctx.plan.theme_plan.required_entities,
         )
-
         payload = payload.model_copy(
             update={
                 "entity_coverage_complete": bool(entity_coverage_complete),
@@ -139,38 +117,26 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 "missing_entities": list(missing_entities),
             }
         )
-
         ctx.work.content_review = payload
-
         findings = normalize_strings(payload.resolved_findings, limit=8)
-
         if findings:
             ctx.current_round.content_summary = " | ".join(findings[:3])
-
             ctx.notes.extend(findings[:3])
-
         adjustment = self._normalize_adjustment(payload.confidence_adjustment)
-
         ctx.current_round.confidence = min(
             1.0,
             max(0.0, float(ctx.current_round.confidence) + adjustment),
         )
-
         unresolved_count = self._count_unresolved(payload.conflict_resolutions)
-
         ctx.current_round.unresolved_conflicts = min(
             int(ctx.current_round.unresolved_conflicts),
             int(unresolved_count),
         )
-
         ctx.current_round.critical_gaps = int(
             len(normalize_strings(payload.remaining_gaps, limit=20))
         )
-
         ctx.current_round.entity_coverage_complete = bool(entity_coverage_complete)
-
         ctx.current_round.missing_entities = list(missing_entities)
-
         ctx.work.next_queries = merge_strings(
             list(ctx.work.next_queries),
             normalize_strings(
@@ -179,12 +145,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             ),
             limit=int(ctx.runtime.budget.max_queries_per_round),
         )
-
         strategy = clean_whitespace(str(payload.next_query_strategy or ""))
-
         if strategy:
             ctx.current_round.query_strategy = strategy
-
         return ctx
 
     def _build_content_messages(
@@ -194,21 +157,14 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         packet: str,
         now_utc: datetime,
     ) -> list[dict[str, str]]:
-
         out_lang = ctx.plan.output_language or "en"
-
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
-
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
-
         round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
-
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
-
         abstract_review_markdown = render_abstract_review_markdown(
             ctx.work.abstract_review
         )
-
         return [
             {
                 "role": "system",
@@ -276,7 +232,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         ]
 
     def _build_content_schema(self, *, max_queries: int) -> dict[str, Any]:
-
         return {
             "type": "object",
             "additionalProperties": False,
@@ -338,29 +293,21 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         }
 
     def _empty_review(self) -> ContentOutputPayload:
-
         return ContentOutputPayload()
 
     def _normalize_adjustment(self, raw: object) -> float:
-
         try:
             value = float(raw)  # type: ignore[arg-type]
-
         except Exception:  # noqa: S112
             return 0.0
-
         return min(1.0, max(-1.0, value))
 
     def _count_unresolved(self, raw: list[ContentConflictPayload]) -> int:
-
         total = 0
-
         for item in raw:
             status = clean_whitespace(item.status).casefold()
-
             if status == "unresolved":
                 total += 1
-
         return total
 
     def _build_content_packet(
@@ -370,27 +317,20 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         source_ids: list[int],
         max_chars: int,
     ) -> str:
-
         wanted = set(source_ids)
-
         blocks: list[str] = []
-
         for source in sorted(sources, key=lambda item: item.source_id):
             if source.source_id not in wanted:
                 continue
-
             content = (
                 str(source.content or "")
                 .replace("\r\n", "\n")
                 .replace("\r", "\n")
                 .strip()
             )
-
             if len(content) > max_chars:
                 content = content[:max_chars]
-
             content_lines = (content or "(empty)").split("\n")
-
             blocks.append(
                 "\n".join(
                     [
@@ -404,7 +344,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     ]
                 )
             )
-
         return "\n\n".join(blocks)
 
 

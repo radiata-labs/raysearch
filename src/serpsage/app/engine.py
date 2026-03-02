@@ -172,7 +172,6 @@ class Engine(WorkUnit):
             ]
             if contexts:
                 contexts = await self._fetch_runner.run_batch(contexts)
-
             results = [
                 ctx.output.result
                 for ctx in contexts

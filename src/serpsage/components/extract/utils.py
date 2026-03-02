@@ -6,7 +6,6 @@ from contextlib import suppress
 from typing import Literal
 
 ContentKind = Literal["html", "text"]
-
 _WS_RE = re.compile(r"\s+")
 _META_CHARSET_RE = re.compile(
     r"""<meta[^>]+charset\s*=\s*["']?\s*([a-zA-Z0-9_\-]+)""", re.IGNORECASE
@@ -40,7 +39,6 @@ def guess_apparent_encoding(data: bytes) -> str | None:
         enc = getattr(best, "encoding", None) if best is not None else None
         if enc:
             return str(enc)
-
     with suppress(Exception):
         import chardet  # noqa: PLC0415
 
@@ -48,7 +46,6 @@ def guess_apparent_encoding(data: bytes) -> str | None:
         enc = det.get("encoding") if isinstance(det, dict) else None
         if enc:
             return str(enc)
-
     return None
 
 
@@ -61,36 +58,29 @@ def decode_best_effort(
 ) -> tuple[str, ContentKind]:
     if not data:
         return "", "text"
-
     kind: ContentKind = "html" if looks_like_html(data) else "text"
-
     candidates: list[str] = []
     declared: list[str] = []
-
     if data.startswith(codecs.BOM_UTF8):
         candidates.append("utf-8-sig")
         declared.append("utf-8-sig")
     if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
         candidates.append("utf-16")
         declared.append("utf-16")
-
     if content_type:
         m = _CT_CHARSET_RE.search(content_type)
         if m:
             cs = m.group(1)
             candidates.append(cs)
             declared.append(cs)
-
     meta = extract_meta_charset(data)
     if meta:
         candidates.append(meta)
         declared.append(meta)
-
     if resp_encoding:
         candidates.append(resp_encoding)
     if apparent_encoding:
         candidates.append(apparent_encoding)
-
     candidates.extend(
         [
             "utf-8",
@@ -103,7 +93,6 @@ def decode_best_effort(
             "latin-1",
         ]
     )
-
     seen: set[str] = set()
     ordered: list[str] = []
     for c in candidates:
@@ -115,7 +104,6 @@ def decode_best_effort(
             continue
         seen.add(lc)
         ordered.append(c)
-
     # Prefer declared charset when it produces "clean" output.
     for enc in declared:
         try:
@@ -131,10 +119,8 @@ def decode_best_effort(
             if kind == "text":
                 text = _WS_RE.sub(" ", text)
             return text, kind
-
     best_text = ""
     best_key: tuple[float, float, float, float] | None = None
-
     for enc in ordered:
         try:
             text = data.decode(enc, errors="replace")
@@ -150,10 +136,8 @@ def decode_best_effort(
         if best_key is None or key < best_key:
             best_key = key
             best_text = text
-
     if not best_text:
         best_text = data.decode("utf-8", errors="replace").replace("\x00", "")
-
     best_text = best_text.replace("\r\n", "\n").replace("\r", "\n")
     if kind == "text":
         best_text = _WS_RE.sub(" ", best_text)

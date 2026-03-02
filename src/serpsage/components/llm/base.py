@@ -18,7 +18,6 @@ from serpsage.models.llm import (
 
 TModel = TypeVar("TModel", bound=BaseModel)
 RetryPredicate = Callable[[Exception], bool]
-
 RetryOn: TypeAlias = (
     type[Exception]
     | tuple[type[Exception], ...]
@@ -40,7 +39,6 @@ class LLMClientBase(WorkUnit, ABC):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
-
     @overload
     async def _chat(
         self,
@@ -52,7 +50,6 @@ class LLMClientBase(WorkUnit, ABC):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-
     # `format_override` is only meaningful for BaseModel response_format.
     @overload
     async def _chat(
@@ -65,7 +62,6 @@ class LLMClientBase(WorkUnit, ABC):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
-
     @abstractmethod
     async def _chat(
         self,
@@ -78,7 +74,6 @@ class LLMClientBase(WorkUnit, ABC):
         **kwargs: Any,
     ) -> ChatResultBase:
         """Provider chat implementation.
-
         `format_override` is only valid when `response_format` is `type[BaseModel]`.
         Providers must use this override schema for constrained output and still
         parse the response into that BaseModel.
@@ -99,7 +94,6 @@ class LLMClientBase(WorkUnit, ABC):
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
-
     @overload
     async def chat(
         self,
@@ -114,7 +108,6 @@ class LLMClientBase(WorkUnit, ABC):
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-
     # `format_override` can be used only when response_format is BaseModel type.
     @overload
     async def chat(
@@ -130,7 +123,6 @@ class LLMClientBase(WorkUnit, ABC):
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
-
     async def chat(
         self,
         *,
@@ -145,7 +137,6 @@ class LLMClientBase(WorkUnit, ABC):
         **kwargs: Any,
     ) -> ChatResultBase:
         """Public chat entrypoint with retries.
-
         `format_override` is only allowed when `response_format` is
         `type[BaseModel]`. When provided, the override schema is used instead of
         `BaseModel.model_json_schema()`, but output is still validated into the
@@ -158,7 +149,6 @@ class LLMClientBase(WorkUnit, ABC):
         attempts = max(1, int(retries) + 1)
         delay_s = max(0.0, float(retry_delay_s))
         retry_func = self._normalize_retry_on(retry_on)
-
         for attempt_index in range(attempts):
             try:
                 if response_format is None:
@@ -274,13 +264,11 @@ class LLMClientBase(WorkUnit, ABC):
     @staticmethod
     def get_format_instructions(pydantic_object: type[BaseModel]) -> str:
         """Return the format instructions for the JSON output.
-
         Returns:
             The format instructions for the JSON output.
         """
         # Copy schema to avoid altering original Pydantic schema.
         schema = dict(pydantic_object.model_json_schema().items())
-
         # Remove extraneous fields.
         reduced_schema = schema
         if "title" in reduced_schema:
@@ -289,15 +277,12 @@ class LLMClientBase(WorkUnit, ABC):
             del reduced_schema["type"]
         # Ensure json in context is well-formed with double quotes.
         schema_str = json.dumps(reduced_schema, ensure_ascii=False)
-
         return _PYDANTIC_FORMAT_INSTRUCTIONS.format(schema=schema_str)
 
 
 _PYDANTIC_FORMAT_INSTRUCTIONS = """The output should be formatted as a JSON instance that conforms to the JSON schema below.
-
 As an example, for the schema {{"properties": {{"foo": {{"title": "Foo", "description": "a list of strings", "type": "array", "items": {{"type": "string"}}}}}}, "required": ["foo"]}}
 the object {{"foo": ["bar", "baz"]}} is a well-formatted instance of the schema. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not well-formatted.
-
 Here is the output schema:
 ```
 {schema}

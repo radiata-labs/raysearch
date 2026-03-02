@@ -15,7 +15,6 @@ from serpsage.models.llm import (
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
@@ -36,7 +35,6 @@ class NullLLMClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
-
     @overload
     async def _chat(
         self,
@@ -48,7 +46,6 @@ class NullLLMClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-
     @overload
     async def _chat(
         self,
@@ -60,7 +57,6 @@ class NullLLMClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
-
     @override
     async def _chat(
         self,

@@ -27,7 +27,6 @@ from serpsage.models.llm import (
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import LLMModelSettings
-
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
@@ -40,7 +39,6 @@ class GeminiClient(LLMClientBase):
     def __init__(self, *, rt: Runtime, model_cfg: LLMModelSettings) -> None:
         super().__init__(rt=rt)
         self._model_cfg = model_cfg
-
         llm = self._model_cfg
         timeout_ms = max(1, int(float(llm.timeout_s) * 1000))
         attempts = max(1, int(llm.max_retries) + 1)
@@ -65,7 +63,6 @@ class GeminiClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
-
     @overload
     async def _chat(
         self,
@@ -77,7 +74,6 @@ class GeminiClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-
     @overload
     async def _chat(
         self,
@@ -89,7 +85,6 @@ class GeminiClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
-
     @override
     async def _chat(
         self,
@@ -104,7 +99,6 @@ class GeminiClient(LLMClientBase):
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
-
         response_schema, response_model = self.resolve_response_format(
             response_format,
             format_override=format_override,
@@ -126,12 +120,10 @@ class GeminiClient(LLMClientBase):
             contents=contents,
             config=config,
         )
-
         text = str(getattr(response, "text", "") or "")
         usage = self._to_usage(getattr(response, "usage_metadata", None))
         if response_schema is None:
             return ChatTextResult(text=text, usage=usage)
-
         data = self._extract_json_object(resp=response, fallback_text=text)
         if response_model is not None:
             return ChatModelResult(
@@ -213,7 +205,6 @@ class GeminiClient(LLMClientBase):
                     parts=[types.Part.from_text(text=text)],
                 )
             )
-
         if not contents:
             contents.append(
                 types.Content(
@@ -221,7 +212,6 @@ class GeminiClient(LLMClientBase):
                     parts=[types.Part.from_text(text="")],
                 )
             )
-
         if not system_parts:
             return None, contents
         return "\n\n".join(system_parts), contents
@@ -239,7 +229,6 @@ class GeminiClient(LLMClientBase):
                 data = json.loads(data)
             if isinstance(data, dict):
                 return {str(k): v for k, v in data.items()}
-
         payload: object
         try:
             payload = json.loads(fallback_text)

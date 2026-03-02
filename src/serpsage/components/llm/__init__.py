@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 else:
     Runtime = Any
-
 RouteTuple: TypeAlias = tuple[LLMClientBase, str]
 RouteBuilder: TypeAlias = Callable[
     [Runtime, HttpClientBase, LLMModelSettings], RouteTuple
@@ -108,7 +107,6 @@ def build_overview_client(*, rt: Runtime, http: HttpClientBase) -> LLMClientBase
                 f"`{backend}`; expected openai|gemini|dashscope"
             )
         routes[model_cfg.name] = builder(rt, http, model_cfg)
-
     if not routes:
         return NullLLMClient(rt=rt)
     return RoutedLLMClient(rt=rt, routes=routes)
