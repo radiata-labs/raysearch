@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from serpsage.models.pipeline import SearchFetchedCandidate
 _DEFAULT_MAX_CONTEXT_DOCS = 12
 _DEEP_MAX_CONTEXT_DOCS = 18
-_DEEP_MIN_CONTEXT_DOC_CHARS = 24
+_DEEP_MIN_CONTEXT_DOC_CHARS = 16
 _TOP_K_SCORES = 3
 _MAIN_CONTENT_SUBPAGE_INDEX = -1  # Sentinel value for main content vs subpage indices
 
@@ -402,7 +402,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
                 docs=docs,
                 seen=seen,
                 text=snippet_text,
-                min_chars=min_chars,
+                min_chars=0,
                 max_docs=max_docs,
             )
         for abstract_item in list(result.abstracts or []):

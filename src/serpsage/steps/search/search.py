@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -29,6 +30,7 @@ _AUTO_RULE_QUERY_WEIGHT = 0.35
 _AUTO_PREFETCH_MULTIPLIER = 1.6
 _AUTO_PREFETCH_EXTRA_CAP = 8
 _MAX_SNIPPET_CONTEXT_PER_URL = 3
+_RE_CJK_TOKEN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]")
 
 
 @dataclass(slots=True)
@@ -133,6 +135,7 @@ class SearchStep(StepBase[SearchStepContext]):
                 mode=mode,
                 hit_scores=list(bucket.hit_scores),
                 hit_query_count=query_hit_count,
+                total_query_jobs=len(query_jobs),
             )
             bonus = (
                 float(coverage_bonus_weight * math.log1p(float(query_hit_count)))
@@ -337,6 +340,7 @@ class SearchStep(StepBase[SearchStepContext]):
         tokens = tokenize_for_query(query)
         seen: set[str] = set()
         compact_tokens: list[str] = []
+        has_cjk = self._contains_cjk(text=query)
         for raw in tokens:
             token = clean_whitespace(str(raw or ""))
             if not token:
@@ -345,7 +349,7 @@ class SearchStep(StepBase[SearchStepContext]):
             if key in seen:
                 continue
             seen.add(key)
-            if self._is_cjk_token(token):
+            if has_cjk and self._is_cjk_token(token):
                 if len(token) < 2:
                     continue
             else:
@@ -358,6 +362,13 @@ class SearchStep(StepBase[SearchStepContext]):
                 break
         candidate = clean_whitespace(" ".join(compact_tokens))
         if not candidate:
+            return ""
+        if len(compact_tokens) < 2:
+            return ""
+        if has_cjk:
+            if sum(len(tok) for tok in compact_tokens) < 4:
+                return ""
+        elif sum(len(tok) for tok in compact_tokens) < 8:
             return ""
         if candidate.casefold() == clean_whitespace(query).casefold():
             return ""
@@ -389,26 +400,28 @@ class SearchStep(StepBase[SearchStepContext]):
         mode: Literal["fast", "auto", "deep"],
         hit_scores: list[float],
         hit_query_count: int,
+        total_query_jobs: int,
     ) -> float:
         ordered_scores = sorted((float(x) for x in hit_scores), reverse=True)
         if not ordered_scores:
             return 0.0
         max_score = float(ordered_scores[0])
+        coverage = self._coverage_signal(
+            hit_query_count=hit_query_count,
+            total_query_jobs=total_query_jobs,
+        )
         if mode == "fast":
             return max_score
         if mode == "auto":
             top2_mean = self._mean_top_k(ordered_scores, k=2)
-            return float(
-                0.65 * max_score
-                + 0.20 * top2_mean
-                + 0.15 * math.log1p(float(max(0, hit_query_count)))
-            )
+            return float(0.65 * max_score + 0.20 * top2_mean + 0.15 * coverage)
         top3_mean = self._mean_top_k(ordered_scores, k=3)
-        return float(
-            0.50 * max_score
-            + 0.20 * top3_mean
-            + 0.30 * math.log1p(float(max(0, hit_query_count)))
-        )
+        return float(0.50 * max_score + 0.20 * top3_mean + 0.30 * coverage)
+
+    def _coverage_signal(self, *, hit_query_count: int, total_query_jobs: int) -> float:
+        safe_hit = max(0, int(hit_query_count))
+        safe_total = max(1, int(total_query_jobs))
+        return float(math.log1p(float(safe_hit)) / math.log1p(float(safe_total)))
 
     def _mean_top_k(self, values: list[float], *, k: int) -> float:
         top_k = list(values[: max(1, int(k))])
@@ -515,12 +528,11 @@ class SearchStep(StepBase[SearchStepContext]):
         except Exception:  # noqa: BLE001
             return token
         scheme = clean_whitespace(parsed.scheme).lower() or "https"
-        host = clean_whitespace(parsed.netloc).lower()
-        if "@" in host:
-            host = host.split("@", 1)[1]
-        host = host.split(":", 1)[0].strip().removeprefix("www.")
+        host = clean_whitespace(str(parsed.hostname or "")).lower()
         if not host:
             return token
+        port = self._resolve_port(parsed)
+        netloc = self._compose_netloc(scheme=scheme, host=host, port=port)
         path = clean_whitespace(parsed.path) or "/"
         while "//" in path:
             path = path.replace("//", "/")
@@ -539,10 +551,27 @@ class SearchStep(StepBase[SearchStepContext]):
             pairs.append((normalized_key, clean_whitespace(value)))
         pairs.sort(key=lambda item: (item[0].casefold(), item[1]))
         query = urlencode(pairs, doseq=True)
-        return urlunsplit((scheme, host, path, query, ""))
+        return urlunsplit((scheme, netloc, path, query, ""))
 
     def _is_cjk_token(self, token: str) -> bool:
-        return any(ord(ch) > 127 for ch in token)
+        return bool(_RE_CJK_TOKEN.search(token))
+
+    def _contains_cjk(self, *, text: str) -> bool:
+        return bool(_RE_CJK_TOKEN.search(text))
+
+    def _resolve_port(self, parsed: Any) -> int | None:
+        try:
+            value = parsed.port
+        except Exception:  # noqa: BLE001
+            return None
+        return int(value) if value is not None else None
+
+    def _compose_netloc(self, *, scheme: str, host: str, port: int | None) -> str:
+        if port is None:
+            return host
+        if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+            return host
+        return f"{host}:{int(port)}"
 
     def _normalize_mode(self, value: object) -> Literal["fast", "auto", "deep"]:
         token = clean_whitespace(str(value or "")).casefold()

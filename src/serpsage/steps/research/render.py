@@ -18,6 +18,8 @@ from serpsage.models.research import (
     RenderArchitectSectionPlan,
     ReportStyle,
     ResearchThemePlan,
+    TaskComplexity,
+    TaskIntent,
     TrackInsightCardPayload,
 )
 from serpsage.steps.base import StepBase
@@ -157,6 +159,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "output_length_ratio_vs_target": float(
                         ctx.runtime.output_length_ratio_vs_target
                     ),
+                    "density_min_accept_ratio": float(
+                        self._density_min_accept_ratio(
+                            mode_key=str(ctx.runtime.mode_depth.mode_key)
+                        )
+                    ),
                     "report_style_selected": str(report_style),
                     "style_applied_stage": "render" if style_applied else "none",
                 },
@@ -204,11 +211,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             now_utc=now_utc,
             context_packet_markdown=context_packet_markdown,
         )
-        architect_output = await self._validate_architect_question_coverage(
+        architect_output = self._enforce_section_range(
             ctx=ctx,
             architect_output=architect_output,
         )
-        architect_output = self._enforce_section_range(
+        architect_output = await self._validate_architect_question_coverage(
             ctx=ctx,
             architect_output=architect_output,
         )
@@ -381,6 +388,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 for index, section in enumerate(architect_output.sections):
                     tg.start_soon(
                         self._run_writer_for_section,
+                        ctx,
                         model,
                         target_language,
                         now_utc,
@@ -414,6 +422,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
     async def _run_writer_for_section(
         self,
+        ctx: ResearchStepContext,
         model: str,
         target_language: str,
         now_utc: datetime,
@@ -426,6 +435,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         index: int,
     ) -> None:
         messages = self._build_writer_messages(
+            ctx=ctx,
             report_style=report_style,
             style_applied=style_applied,
             target_language=target_language,
@@ -516,6 +526,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_output_language_label=target_language_name,
             current_utc_date=now_utc.date().isoformat(),
             mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            task_intent=self._resolve_task_intent(ctx.plan.theme_plan.task_intent),
+            complexity_tier=self._resolve_task_complexity(
+                ctx.plan.theme_plan.complexity_tier
+            ),
             report_style=report_style,
             style_applied=bool(style_applied),
             section_min=int(section_min),
@@ -526,6 +540,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     def _build_writer_messages(
         self,
         *,
+        ctx: ResearchStepContext,
         report_style: ReportStyle,
         style_applied: bool,
         target_language: str,
@@ -543,6 +558,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_output_language=target_language,
             target_output_language_label=target_language_name,
             current_utc_date=now_utc.date().isoformat(),
+            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            task_intent=self._resolve_task_intent(ctx.plan.theme_plan.task_intent),
+            complexity_tier=self._resolve_task_complexity(
+                ctx.plan.theme_plan.complexity_tier
+            ),
             report_style=report_style,
             style_applied=bool(style_applied),
             section_subhead=section_subhead,
@@ -667,12 +687,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             )
         if mode_name == "research-pro":
             return (
-                "Produce a rich, high-density synthesis with explicit tradeoffs, "
-                "boundary conditions, and action-ready implications."
+                "Answer the core user task directly first, then expand to boundary "
+                "conditions, tradeoffs, and action-ready implications."
             )
         return (
-            "Produce a stable high-density synthesis with clear conclusions, conflicts, "
-            "uncertainty boundaries, and actionable implications."
+            "Answer the core user task directly first, then provide a stable "
+            "high-density synthesis with clear conclusions, conflicts, uncertainty "
+            "boundaries, and actionable implications."
         )
 
     def _enforce_section_range(
@@ -684,7 +705,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         section_min = max(1, int(ctx.runtime.mode_depth.render_section_min))
         section_max = max(section_min, int(ctx.runtime.mode_depth.render_section_max))
         sections = list(architect_output.sections or [])
-        if not sections:
+        if len(sections) < 2:
             return architect_output
         opening = sections[0]
         closing = sections[-1]
@@ -692,27 +713,85 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         if len(sections) > section_max:
             keep_body = max(0, section_max - 2)
             body_sections = body_sections[:keep_body]
-            sections = [opening, *body_sections, closing]
-        while len(sections) < section_min:
-            idx = len(body_sections) + 1
-            body_sections.append(
-                RenderArchitectSectionPlan(
-                    section_id=f"body_{idx}",
-                    subhead=f"Additional Insight {idx}",
-                    section_role="body",
-                    question_ids=[],
-                    scope_requirements=[
-                        "Add one high-impact information layer not covered above."
-                    ],
-                    writing_boundaries=["Avoid repeating prior section content."],
-                    must_cover_points=[
-                        "One new conclusion with explicit condition and implication."
-                    ],
-                    angle="density_extension",
-                    progression_hint="Expand with non-overlapping incremental value.",
+        required_question_ids = self._resolve_question_ids(ctx)
+        unresolved_question_ids = self._resolve_uncovered_question_ids(
+            required_question_ids=required_question_ids,
+            body_sections=body_sections,
+        )
+        if unresolved_question_ids:
+            question_texts = self._resolve_question_text_map(ctx)
+            while (
+                unresolved_question_ids
+                and len([opening, *body_sections, closing]) < section_max
+            ):
+                question_id = unresolved_question_ids.pop(0)
+                question_text = clean_whitespace(question_texts.get(question_id, ""))
+                answer_target = question_text or question_id
+                body_sections.append(
+                    RenderArchitectSectionPlan(
+                        section_id=f"body_resolve_{question_id}",
+                        subhead=f"Resolve {question_id.upper()}",
+                        section_role="body",
+                        question_ids=[question_id],
+                        scope_requirements=[
+                            (
+                                "Close unresolved core slot with a direct answer: "
+                                f"{answer_target}"
+                            )
+                        ],
+                        writing_boundaries=[
+                            "Stay strictly on this unresolved core question.",
+                            "Do not add optional expansion before core closure.",
+                        ],
+                        must_cover_points=[
+                            f"Direct answer for: {answer_target}.",
+                            "State boundary conditions where the answer changes.",
+                            "State user-facing implication of this answer.",
+                        ],
+                        angle="core_slot_closure",
+                        progression_hint=(
+                            "Close unresolved core coverage before any extension."
+                        ),
+                    )
                 )
-            )
-            sections = [opening, *body_sections, closing]
+            if unresolved_question_ids and body_sections:
+                target = body_sections[-1]
+                merged_question_ids = self._merge_question_ids(
+                    list(target.question_ids),
+                    unresolved_question_ids,
+                )
+                extra_points = [
+                    (
+                        "Direct answer for unresolved question "
+                        f"{qid}: {clean_whitespace(question_texts.get(qid, '')) or qid}."
+                    )
+                    for qid in unresolved_question_ids
+                ]
+                body_sections[-1] = target.model_copy(
+                    update={
+                        "question_ids": merged_question_ids,
+                        "scope_requirements": self._merge_nonempty_strings(
+                            list(target.scope_requirements),
+                            [
+                                "Close remaining unresolved core slots before any optional extension."
+                            ],
+                            limit=12,
+                        ),
+                        "writing_boundaries": self._merge_nonempty_strings(
+                            list(target.writing_boundaries),
+                            [
+                                "Prioritize unresolved core questions and avoid side expansions."
+                            ],
+                            limit=12,
+                        ),
+                        "must_cover_points": self._merge_nonempty_strings(
+                            list(target.must_cover_points),
+                            extra_points,
+                            limit=12,
+                        ),
+                    }
+                )
+        sections = [opening, *body_sections, closing]
         return architect_output.model_copy(update={"sections": sections})
 
     async def _apply_density_gate(
@@ -738,6 +817,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         current = str(markdown or "")
         target_ratio = float(mode_depth.target_length_ratio_vs_current)
         target_chars = max(0, int(len(current) * target_ratio))
+        min_accept_ratio = self._density_min_accept_ratio(
+            mode_key=str(mode_depth.mode_key)
+        )
         if target_chars > 0:
             ctx.runtime.target_output_chars = int(target_chars)
         for pass_index in range(pass_cap):
@@ -767,13 +849,16 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     attrs={
                         "pass_index": int(pass_index + 1),
                         "model": str(model),
+                        "density_min_accept_ratio": float(min_accept_ratio),
                         "message": str(exc),
                     },
                 )
                 break
             if not candidate:
                 continue
-            if target_chars > 0 and len(candidate) < int(target_chars * 0.75):
+            if target_chars > 0 and len(candidate) < int(
+                target_chars * min_accept_ratio
+            ):
                 continue
             current = candidate
             ctx.runtime.density_gate_passes_applied += 1
@@ -828,6 +913,34 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             strict_style_lock=bool(cfg.strict_style_lock),
         )
         return style, bool(cfg.enabled and cfg.apply_render)
+
+    def _resolve_task_intent(self, raw: object | None) -> TaskIntent:
+        token = clean_whitespace(str(raw or "")).casefold().replace("-", "_")
+        mapping: dict[str, TaskIntent] = {
+            "how_to": "how_to",
+            "howto": "how_to",
+            "comparison": "comparison",
+            "compare": "comparison",
+            "explainer": "explainer",
+            "diagnosis": "diagnosis",
+            "other": "other",
+        }
+        return mapping.get(token, "other")
+
+    def _resolve_task_complexity(self, raw: object | None) -> TaskComplexity:
+        token = clean_whitespace(str(raw or "")).casefold()
+        mapping: dict[str, TaskComplexity] = {
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+        }
+        return mapping.get(token, "medium")
+
+    def _density_min_accept_ratio(self, *, mode_key: str) -> float:
+        mode_name = clean_whitespace(mode_key).casefold()
+        if mode_name == "research-pro":
+            return 0.5
+        return 0.75
 
     def _build_track_result_packet(
         self, track_results: list[ResearchTrackResult]
@@ -891,6 +1004,75 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 continue
             seen.add(token)
             out.append(token)
+        return out
+
+    def _resolve_uncovered_question_ids(
+        self,
+        *,
+        required_question_ids: list[str],
+        body_sections: list[RenderArchitectSectionPlan],
+    ) -> list[str]:
+        if not required_question_ids:
+            return []
+        required: set[str] = {
+            clean_whitespace(item)
+            for item in required_question_ids
+            if clean_whitespace(item)
+        }
+        covered: set[str] = set()
+        for section in body_sections:
+            for raw_question_id in section.question_ids:
+                token = clean_whitespace(raw_question_id)
+                if not token:
+                    continue
+                if token not in required:
+                    continue
+                covered.add(token)
+        return [item for item in required_question_ids if item not in covered]
+
+    def _resolve_question_text_map(self, ctx: ResearchStepContext) -> dict[str, str]:
+        out: dict[str, str] = {}
+        cards = list(ctx.parallel.question_cards)
+        if not cards:
+            cards = [
+                ResearchQuestionCard(
+                    question_id=item.question_id,
+                    question=item.question,
+                    priority=item.priority,
+                    seed_queries=list(item.seed_queries),
+                    evidence_focus=list(item.evidence_focus),
+                    expected_gain=item.expected_gain,
+                )
+                for item in ctx.plan.theme_plan.question_cards
+            ]
+        for card in cards:
+            question_id = clean_whitespace(card.question_id)
+            question = clean_whitespace(card.question)
+            if not question_id or not question:
+                continue
+            out[question_id] = question
+        return out
+
+    def _merge_nonempty_strings(
+        self,
+        left: list[str],
+        right: list[str],
+        *,
+        limit: int,
+    ) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in [*left, *right]:
+            token = clean_whitespace(raw)
+            if not token:
+                continue
+            key = token.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(token)
+            if len(out) >= max(1, int(limit)):
+                break
         return out
 
     def _render_track_results_markdown(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from serpsage.models.research import ReportStyle
+from serpsage.models.research import ReportStyle, TaskComplexity, TaskIntent
 from serpsage.utils import clean_whitespace
 
 PromptStage = Literal[
@@ -279,6 +279,7 @@ def theme_depth_contract(*, mode_key: str) -> str:
     if mode_name == "research-pro":
         return (
             "- pro mode: decompose deeply with boundary conditions, failure scenarios, and tie-break discriminators.\n"
+            "- for simple how-to tasks, enforce shortest executable path first, then expand to risk/governance only if core path is complete.\n"
             "- include high-yield cards that unlock large downstream information gain."
         )
     return (
@@ -297,11 +298,36 @@ def mode_depth_planning_contract(*, mode_key: str) -> str:
     if mode_name == "research-pro":
         return (
             "- pro: include deeper discriminators, boundary-case routes, and failure-mode checks.\n"
+            "- for simple how-to tasks, prioritize quick-start and critical step sequence queries before governance/cost extensions.\n"
             "- prioritize queries that unlock multiple downstream sections in one pass."
         )
     return (
         "- research: balance coverage and depth, ensuring each query contributes a distinct information slot.\n"
+        "- research: prioritize unresolved core-answer slots before optional side expansion.\n"
         "- include at least one verification-oriented query when conflicts remain."
+    )
+
+
+def research_mode_scope_lock_contract(
+    *,
+    mode_key: str,
+    task_intent: TaskIntent,
+) -> str:
+    mode_name = clean_whitespace(mode_key).casefold()
+    if mode_name != "research":
+        return ""
+    if task_intent == "how_to":
+        return (
+            "Research-mode scope lock:\n"
+            "1) First body section must provide the shortest executable path.\n"
+            "2) Second body section must cover critical steps and failure-prevention checks.\n"
+            "3) Optional expansion is allowed only after the core path is fully covered and may appear at most once."
+        )
+    return (
+        "Research-mode scope lock:\n"
+        "1) First meaningful block must directly answer the core user task.\n"
+        "2) Prioritize unresolved core question_ids before any optional expansion.\n"
+        "3) Optional expansion is allowed only after core coverage and may appear at most once."
     )
 
 
@@ -317,23 +343,28 @@ def build_theme_messages(
     max_queries_per_round: int,
     card_cap: int,
     hinted_style: ReportStyle,
+    hinted_task_intent: TaskIntent,
+    hinted_complexity_tier: TaskComplexity,
 ) -> list[dict[str, str]]:
     depth_contract = theme_depth_contract(mode_key=mode_depth_profile)
     system_contract = (
         "Role: Senior Research Architect.\n"
-        "Mission: Decompose THEME into executable, non-overlapping research question cards and classify one report_style.\n"
+        "Mission: Decompose THEME into executable, non-overlapping research question cards and classify report_style, task_intent, and complexity_tier.\n"
         "Instruction Priority:\n"
         "P1) Schema correctness.\n"
         "P2) Question-card execution quality.\n"
         "P3) Decomposition power and coverage.\n"
-        "P4) Report-style fit for user task intent.\n"
-        "P5) Language consistency.\n"
+        "P4) Intent/complexity classification fit for user task.\n"
+        "P5) Report-style fit for user task intent.\n"
+        "P6) Language consistency.\n"
         "Step-by-step decomposition method:\n"
         "1) Classify THEME into one primary type: comparison/selection, planning/how-to, diagnosis, trend/forecast, or factual mapping.\n"
-        "2) Predict best report_style for user value: decision/explainer/execution.\n"
-        "3) Define evidence dimensions before writing cards (for example: performance, cost, reliability, ecosystem, constraints, risk, recency).\n"
-        "4) Identify subthemes that ensure high coverage with low overlap.\n"
-        "5) Convert subthemes into executable question_cards, each card covering one distinct evidence objective.\n"
+        "2) Predict task_intent as one of how_to/comparison/explainer/diagnosis/other.\n"
+        "3) Predict complexity_tier as one of low/medium/high based on user task complexity.\n"
+        "4) Predict best report_style for user value: decision/explainer/execution.\n"
+        "5) Define evidence dimensions before writing cards (for example: performance, cost, reliability, ecosystem, constraints, risk, recency).\n"
+        "6) Identify subthemes that ensure high coverage with low overlap.\n"
+        "7) Convert subthemes into executable question_cards, each card covering one distinct evidence objective.\n"
         "Question-type playbook:\n"
         "A) Comparison / Selection question:\n"
         "- If THEME compares N candidates, create candidate cards (one per candidate) and one synthesis card.\n"
@@ -356,12 +387,16 @@ def build_theme_messages(
         f"7) Return at most {card_cap} question cards.\n"
         "8) Do not return top-level seed_queries; seed queries must be inside question_cards items.\n"
         "9) report_style must be exactly one of: decision, explainer, execution.\n"
-        "10) Return JSON only.\n"
+        "10) task_intent must be exactly one of: how_to, comparison, explainer, diagnosis, other.\n"
+        "11) complexity_tier must be exactly one of: low, medium, high.\n"
+        "12) Return JSON only.\n"
         "Output Contract (STRICT JSON SHAPE):\n"
         "Top-level keys allowed:\n"
         "- detected_input_language (string)\n"
         "- core_question (string)\n"
         "- report_style (decision|explainer|execution)\n"
+        "- task_intent (how_to|comparison|explainer|diagnosis|other)\n"
+        "- complexity_tier (low|medium|high)\n"
         "- subthemes (string[])\n"
         "- required_entities (string[])\n"
         "- question_cards (object[])\n"
@@ -416,11 +451,17 @@ def build_theme_messages(
                 "Output Notes:\n"
                 "- core_question: one-sentence anchor question.\n"
                 "- report_style: classify best user-facing report style as decision/explainer/execution.\n"
+                "- task_intent: classify user task intent as how_to/comparison/explainer/diagnosis/other.\n"
+                "- complexity_tier: classify task complexity as low/medium/high.\n"
                 "- required_entities: exact strings that must be covered by evidence and later summaries.\n"
                 "- question_cards: each card is one executable sub-question for one track.\n"
                 "- Do not produce top-level seed_queries.\n"
                 "- evidence_focus: list what evidence dimensions to prioritize.\n"
                 "- expected_gain: concrete learning value from this card.\n\n"
+                "Classification Hints:\n"
+                f"- hinted_report_style={hinted_style}\n"
+                f"- hinted_task_intent={hinted_task_intent}\n"
+                f"- hinted_complexity_tier={hinted_complexity_tier}\n\n"
                 "Comparison Pattern Example (generic):\n"
                 "- Card 1: evaluate candidate A under shared criteria.\n"
                 "- Card 2: evaluate candidate B under the same criteria.\n"
@@ -1002,6 +1043,8 @@ def build_render_architect_messages(
     target_output_language_label: str,
     current_utc_date: str,
     mode_depth_profile: str,
+    task_intent: TaskIntent,
+    complexity_tier: TaskComplexity,
     report_style: ReportStyle,
     style_applied: bool,
     section_min: int,
@@ -1016,6 +1059,15 @@ def build_render_architect_messages(
     style_lock_line = (
         f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
     )
+    scope_lock_contract = research_mode_scope_lock_contract(
+        mode_key=mode_depth_profile,
+        task_intent=task_intent,
+    )
+    scope_lock_block = (
+        f"\nResearch-mode addendum:\n{scope_lock_contract}"
+        if scope_lock_contract
+        else ""
+    )
     system_contract = (
         "Role: Final-report architect.\n"
         "Mission: produce a JSON-only section blueprint for a polished end-user report.\n"
@@ -1025,6 +1077,9 @@ def build_render_architect_messages(
         "3) Ordering is strict: one opening first, body sections in the middle, one closing last.\n"
         "4) section_role must be one of opening/body/closing.\n"
         "5) Every section must include section_id, subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
+        "6) Non-core expansion body sections are capped at 1.\n"
+        "7) If required question coverage is already complete, do not add expansion sections.\n"
+        "8) Under how_to intent, the first two body sections must cover quick-start path and key step sequence.\n"
         "Content-quality requirements:\n"
         "1) Subheads must be concrete, non-overlapping, and non-generic.\n"
         "2) Body sections must form a progressive reasoning flow, not repeated parallel slices.\n"
@@ -1036,6 +1091,7 @@ def build_render_architect_messages(
         "2) Do not design sections about runtime mechanics or internal audits.\n"
         "3) Never include internal metadata in user-facing section intent: question IDs, track IDs, rounds, search/fetch calls, stop reasons, section IDs, or coverage audit.\n"
         "4) Keep language concise and implementation-ready."
+        f"{scope_lock_block}"
     )
     return [
         {
@@ -1052,6 +1108,8 @@ def build_render_architect_messages(
                 f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_output_language} ({target_output_language_label})\n\n"
                 f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
                 f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
+                f"TASK_INTENT:\n{task_intent}\n\n"
+                f"COMPLEXITY_TIER:\n{complexity_tier}\n\n"
                 f"{style_lock_line}"
                 "ARCHITECT_TASK:\n"
                 "- Plan only. Do not write report prose.\n"
@@ -1070,6 +1128,9 @@ def build_render_writer_messages(
     target_output_language: str,
     target_output_language_label: str,
     current_utc_date: str,
+    mode_depth_profile: str,
+    task_intent: TaskIntent,
+    complexity_tier: TaskComplexity,
     report_style: ReportStyle,
     style_applied: bool,
     section_subhead: str,
@@ -1085,6 +1146,15 @@ def build_render_writer_messages(
     )
     style_lock_line = (
         f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
+    )
+    scope_lock_contract = research_mode_scope_lock_contract(
+        mode_key=mode_depth_profile,
+        task_intent=task_intent,
+    )
+    scope_lock_block = (
+        f"\nResearch-mode addendum:\n{scope_lock_contract}"
+        if scope_lock_contract
+        else ""
     )
     system_contract = (
         "Role: Section writer.\n"
@@ -1109,7 +1179,10 @@ def build_render_writer_messages(
         "1) Avoid filler, template language, and repetitive phrasing.\n"
         "2) Avoid phrases like 'this report' or 'this section' unless needed for clarity.\n"
         "3) If evidence is insufficient, state limits plainly without exposing internal process.\n"
-        "4) Every paragraph must add at least one new high-value information unit."
+        "4) Every paragraph must add at least one new high-value information unit.\n"
+        "5) The first sentence of each paragraph must state direct task value for the user.\n"
+        "6) If a paragraph cannot map to core questions, shrink or remove it instead of expanding."
+        f"{scope_lock_block}"
     )
     return [
         {
@@ -1125,6 +1198,9 @@ def build_render_writer_messages(
             "content": (
                 f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_output_language} ({target_output_language_label})\n\n"
                 f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
+                f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
+                f"TASK_INTENT:\n{task_intent}\n\n"
+                f"COMPLEXITY_TIER:\n{complexity_tier}\n\n"
                 "MODE_DEPTH_POLICY:\n"
                 "- Keep density high and avoid redundant expansion.\n\n"
                 f"{style_lock_line}"
@@ -1218,8 +1294,9 @@ def build_density_gate_messages(
                 "1) Keep all core conclusions, uncertainties, and actions.\n"
                 "2) Remove filler, repetition, and weak transitions.\n"
                 "3) Each paragraph must add non-overlapping value.\n"
-                "4) Do not reveal internal process information.\n"
-                "5) Return markdown only."
+                "4) Delete off-topic content before preserving target length.\n"
+                "5) Do not reveal internal process information.\n"
+                "6) Return markdown only."
             ),
         },
         {

@@ -9,6 +9,8 @@ from serpsage.models.research import (
     ReportStyle,
     ResearchThemePlan,
     ResearchThemePlanCard,
+    TaskComplexity,
+    TaskIntent,
     ThemeOutputPayload,
     ThemeQuestionCardPayload,
 )
@@ -42,12 +44,22 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         mode_depth = ctx.runtime.mode_depth
-        card_cap = max(1, int(mode_depth.max_question_cards_effective))
+        prompt_card_cap = max(1, int(mode_depth.max_question_cards_effective))
         seed_limit = max(6, int(ctx.runtime.budget.max_queries_per_round) * 3)
         style_cfg = self.settings.research.report_style
         hinted_style = infer_report_style_from_theme(
             ctx.request.themes,
             default=self._normalize_style_fallback(style_cfg.fallback_style),
+        )
+        fallback_task_intent = self._normalize_task_intent(
+            raw=None,
+            theme=ctx.request.themes,
+            report_style=hinted_style,
+        )
+        fallback_complexity = self._normalize_task_complexity(
+            raw=None,
+            theme=ctx.request.themes,
+            task_intent=fallback_task_intent,
         )
         model = resolve_research_model(
             ctx=ctx,
@@ -58,6 +70,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             detected_input_language="same as user input language",
             core_question=ctx.request.themes,
             report_style=hinted_style,
+            task_intent=fallback_task_intent,
+            complexity_tier=fallback_complexity,
             subthemes=[],
             required_entities=[],
             question_cards=[],
@@ -68,10 +82,10 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 messages=self._build_theme_messages(
                     ctx,
                     now_utc=now_utc,
-                    card_cap=card_cap,
+                    card_cap=prompt_card_cap,
                 ),
                 response_format=ThemeOutputPayload,
-                format_override=self._build_theme_schema(card_cap=card_cap),
+                format_override=self._build_theme_schema(card_cap=prompt_card_cap),
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
             payload = chat_result.data
@@ -105,6 +119,30 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         raw_style_token = clean_whitespace(str(payload.report_style or "")).casefold()
         style_fallback_used = bool(raw_style_token != str(report_style))
+        task_intent = self._normalize_task_intent(
+            raw=payload.task_intent,
+            theme=core_question or ctx.request.themes,
+            report_style=report_style,
+        )
+        raw_task_intent_token = clean_whitespace(
+            str(payload.task_intent or "")
+        ).casefold()
+        intent_fallback_used = bool(raw_task_intent_token != str(task_intent))
+        complexity_tier = self._normalize_task_complexity(
+            raw=payload.complexity_tier,
+            theme=core_question or ctx.request.themes,
+            task_intent=task_intent,
+        )
+        raw_complexity_token = clean_whitespace(
+            str(payload.complexity_tier or "")
+        ).casefold()
+        complexity_fallback_used = bool(raw_complexity_token != str(complexity_tier))
+        adaptive_applied = self._apply_pro_adaptive_mode_depth(
+            ctx=ctx,
+            complexity_tier=complexity_tier,
+        )
+        mode_depth = ctx.runtime.mode_depth
+        card_cap = max(1, int(mode_depth.max_question_cards_effective))
         subthemes = normalize_strings(payload.subthemes, limit=12)
         required_entities = normalize_strings(payload.required_entities, limit=16)
         cards = self._normalize_question_cards(
@@ -125,6 +163,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.plan.theme_plan = ResearchThemePlan(
             core_question=core_question,
             report_style=report_style,
+            task_intent=task_intent,
+            complexity_tier=complexity_tier,
             subthemes=subthemes,
             required_entities=required_entities,
             input_language=input_language,
@@ -153,6 +193,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
         )
         ctx.notes.append(f"Report style fixed to `{report_style}`.")
+        ctx.notes.append(
+            f"Task intent fixed to `{task_intent}` with complexity tier `{complexity_tier}`."
+        )
+        if adaptive_applied:
+            ctx.notes.append(
+                "Adaptive research-pro depth applied based on theme complexity."
+            )
         if required_entities:
             ctx.notes.append(f"Required entities: {', '.join(required_entities[:8])}.")
         ctx.notes.append(f"Output language fixed to {ctx.plan.output_language}.")
@@ -163,8 +210,36 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             attrs={
                 "report_style_selected": str(report_style),
                 "report_style_fallback_used": bool(style_fallback_used),
+                "task_intent_selected": str(task_intent),
+                "task_intent_fallback_used": bool(intent_fallback_used),
+                "complexity_tier_selected": str(complexity_tier),
+                "complexity_tier_fallback_used": bool(complexity_fallback_used),
             },
         )
+        if clean_whitespace(str(mode_depth.mode_key)).casefold() == "research-pro":
+            await self.emit_tracking_event(
+                event_name="research.mode_depth.adaptive_applied",
+                request_id=ctx.request_id,
+                stage="theme_plan",
+                attrs={
+                    "mode_depth_profile": str(mode_depth.mode_key),
+                    "task_intent": str(task_intent),
+                    "complexity_tier": str(complexity_tier),
+                    "effective_complexity_tier": str(complexity_tier),
+                    "adaptive_applied": bool(adaptive_applied),
+                    "max_question_cards_effective": int(
+                        mode_depth.max_question_cards_effective
+                    ),
+                    "min_rounds_per_track": int(mode_depth.min_rounds_per_track),
+                    "gap_closure_passes": int(mode_depth.gap_closure_passes),
+                    "density_gate_passes": int(mode_depth.density_gate_passes),
+                    "render_section_min": int(mode_depth.render_section_min),
+                    "render_section_max": int(mode_depth.render_section_max),
+                    "target_length_ratio_vs_current": float(
+                        mode_depth.target_length_ratio_vs_current
+                    ),
+                },
+            )
         await self.emit_tracking_event(
             event_name="research.theme.summary",
             request_id=ctx.request_id,
@@ -178,6 +253,11 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "mode_depth_question_card_cap": int(card_cap),
                 "report_style_selected": str(report_style),
                 "report_style_fallback_used": bool(style_fallback_used),
+                "task_intent_selected": str(task_intent),
+                "task_intent_fallback_used": bool(intent_fallback_used),
+                "complexity_tier_selected": str(complexity_tier),
+                "complexity_tier_fallback_used": bool(complexity_fallback_used),
+                "mode_depth_adaptive_applied": bool(adaptive_applied),
             },
         )
         return ctx
@@ -197,6 +277,16 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 self.settings.research.report_style.fallback_style
             ),
         )
+        hinted_intent = self._normalize_task_intent(
+            raw=None,
+            theme=ctx.request.themes,
+            report_style=hinted_style,
+        )
+        hinted_complexity = self._normalize_task_complexity(
+            raw=None,
+            theme=ctx.request.themes,
+            task_intent=hinted_intent,
+        )
         return build_theme_prompt_messages(
             theme=ctx.request.themes,
             search_mode=ctx.request.search_mode,
@@ -208,6 +298,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             max_queries_per_round=int(budget.max_queries_per_round),
             card_cap=int(card_cap),
             hinted_style=hinted_style,
+            hinted_task_intent=hinted_intent,
+            hinted_complexity_tier=hinted_complexity,
         )
 
     def _build_theme_schema(self, *, card_cap: int) -> dict[str, Any]:
@@ -218,6 +310,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "detected_input_language",
                 "core_question",
                 "report_style",
+                "task_intent",
+                "complexity_tier",
                 "subthemes",
                 "required_entities",
                 "question_cards",
@@ -228,6 +322,14 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "report_style": {
                     "type": "string",
                     "enum": ["decision", "explainer", "execution"],
+                },
+                "task_intent": {
+                    "type": "string",
+                    "enum": ["how_to", "comparison", "explainer", "diagnosis", "other"],
+                },
+                "complexity_tier": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
                 },
                 "subthemes": {
                     "type": "array",
@@ -377,6 +479,190 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         if token in {"decision", "explainer", "execution"}:
             return token  # type: ignore[return-value]
         return "explainer"
+
+    def _normalize_task_intent(
+        self,
+        *,
+        raw: object | None,
+        theme: str,
+        report_style: ReportStyle,
+    ) -> TaskIntent:
+        token = clean_whitespace(str(raw or "")).casefold().replace("-", "_")
+        mapping: dict[str, TaskIntent] = {
+            "how_to": "how_to",
+            "howto": "how_to",
+            "comparison": "comparison",
+            "compare": "comparison",
+            "explainer": "explainer",
+            "diagnosis": "diagnosis",
+            "other": "other",
+        }
+        if token in mapping:
+            return mapping[token]
+        return self._fallback_task_intent(theme=theme, report_style=report_style)
+
+    def _fallback_task_intent(
+        self,
+        *,
+        theme: str,
+        report_style: ReportStyle,
+    ) -> TaskIntent:
+        token = clean_whitespace(theme).casefold()
+        if not token:
+            return "other"
+        diagnosis_hints = (
+            "error",
+            "issue",
+            "bug",
+            "troubleshoot",
+            "root cause",
+            "why failed",
+            "failure",
+            "diagnose",
+        )
+        comparison_hints = (
+            " vs ",
+            " versus ",
+            "compare",
+            "comparison",
+            "which",
+            "better",
+            "best",
+            "choose",
+            "selection",
+            "trade-off",
+            "tradeoff",
+        )
+        how_to_hints = (
+            "how to",
+            "how do i",
+            "step",
+            "guide",
+            "tutorial",
+            "setup",
+            "install",
+            "use ",
+            "workflow",
+            "runbook",
+            "playbook",
+        )
+        explainer_hints = (
+            "what is",
+            "explain",
+            "principle",
+            "mechanism",
+            "overview",
+            "introduction",
+        )
+        if any(item in token for item in diagnosis_hints):
+            return "diagnosis"
+        if any(item in token for item in comparison_hints):
+            return "comparison"
+        if any(item in token for item in how_to_hints):
+            return "how_to"
+        if any(item in token for item in explainer_hints):
+            return "explainer"
+        if report_style == "decision":
+            return "comparison"
+        if report_style == "execution":
+            return "how_to"
+        if report_style == "explainer":
+            return "explainer"
+        return "other"
+
+    def _normalize_task_complexity(
+        self,
+        *,
+        raw: object | None,
+        theme: str,
+        task_intent: TaskIntent,
+    ) -> TaskComplexity:
+        token = clean_whitespace(str(raw or "")).casefold()
+        if token in {"low", "medium", "high"}:
+            return token  # type: ignore[return-value]
+        return self._fallback_task_complexity(theme=theme, task_intent=task_intent)
+
+    def _fallback_task_complexity(
+        self,
+        *,
+        theme: str,
+        task_intent: TaskIntent,
+    ) -> TaskComplexity:
+        token = clean_whitespace(theme).casefold()
+        if not token:
+            return "medium"
+        high_hints = (
+            "enterprise",
+            "compliance",
+            "governance",
+            "architecture",
+            "multi-tenant",
+            "multi tenant",
+            "regulated",
+            "security",
+            "threat model",
+            "migration",
+            "multi-region",
+            "sre",
+        )
+        medium_hints = (
+            "compare",
+            "vs",
+            "versus",
+            "trade-off",
+            "tradeoff",
+            "benchmark",
+            "production",
+            "deploy",
+            "integration",
+            "cost",
+            "performance",
+            "scale",
+            "reliability",
+            "team",
+            "workflow",
+            "best practice",
+        )
+        if any(item in token for item in high_hints):
+            return "high"
+        if token.count(" vs ") >= 2 or token.count(" versus ") >= 2:
+            return "high"
+        if any(item in token for item in medium_hints):
+            return "medium"
+        if task_intent == "how_to":
+            return "low"
+        if task_intent in {"comparison", "diagnosis"}:
+            return "medium"
+        return "medium"
+
+    def _apply_pro_adaptive_mode_depth(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        complexity_tier: TaskComplexity,
+    ) -> bool:
+        mode_depth = ctx.runtime.mode_depth
+        if clean_whitespace(str(mode_depth.mode_key)).casefold() != "research-pro":
+            return False
+        if complexity_tier == "high":
+            return False
+        if complexity_tier == "low":
+            mode_depth.max_question_cards_effective = 3
+            mode_depth.min_rounds_per_track = 2
+            mode_depth.gap_closure_passes = 1
+            mode_depth.density_gate_passes = 1
+            mode_depth.render_section_min = 6
+            mode_depth.render_section_max = 7
+            mode_depth.target_length_ratio_vs_current = 1.0
+            return True
+        mode_depth.max_question_cards_effective = 4
+        mode_depth.min_rounds_per_track = 2
+        mode_depth.gap_closure_passes = 1
+        mode_depth.density_gate_passes = 1
+        mode_depth.render_section_min = 7
+        mode_depth.render_section_max = 8
+        mode_depth.target_length_ratio_vs_current = 1.05
+        return True
 
 
 __all__ = ["ResearchThemeStep"]
