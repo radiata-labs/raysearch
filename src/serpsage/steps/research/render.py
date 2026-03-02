@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 import anyio
@@ -16,6 +16,7 @@ from serpsage.models.pipeline import (
 from serpsage.models.research import (
     RenderArchitectOutput,
     RenderArchitectSectionPlan,
+    ReportStyle,
     ResearchThemePlan,
 )
 from serpsage.steps.base import StepBase
@@ -25,6 +26,12 @@ from serpsage.steps.research.prompt_markdown import (
     render_question_cards_markdown,
     render_section_plan_markdown,
     render_theme_plan_markdown,
+)
+from serpsage.steps.research.prompt_style import (
+    UNIVERSAL_GUARDRAILS,
+    build_style_overlay,
+    compose_system_prompt,
+    resolve_report_style,
 )
 from serpsage.steps.research.utils import resolve_research_model
 from serpsage.utils import clean_whitespace
@@ -109,6 +116,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         target_language = self._resolve_target_language(ctx)
+        report_style, style_applied = self._resolve_report_style(ctx)
         schema = (
             dict(ctx.request.json_schema)
             if isinstance(ctx.request.json_schema, dict)
@@ -128,6 +136,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "mode": "final_markdown",
                     "track_results": int(len(ctx.parallel.track_results)),
                     "content_chars": int(len(str(ctx.output.content or ""))),
+                    "report_style_selected": str(report_style),
+                    "style_applied_stage": "render" if style_applied else "none",
                 },
             )
             return ctx
@@ -145,6 +155,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "mode": "final_structured",
                 "track_results": int(len(ctx.parallel.track_results)),
                 "has_structured": bool(ctx.output.structured is not None),
+                "report_style_selected": str(report_style),
+                "style_applied_stage": "render" if style_applied else "none",
             },
         )
         return ctx
@@ -202,10 +214,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="synthesize",
             fallback=self.settings.answer.generate.use_model,
         )
+        report_style, style_applied = self._resolve_report_style(ctx)
         try:
             chat_result = await self._llm.chat(
                 model=model,
                 messages=self._build_architect_messages(
+                    report_style=report_style,
+                    style_applied=style_applied,
                     target_language=target_language,
                     now_utc=now_utc,
                     context_packet_markdown=context_packet_markdown,
@@ -313,6 +328,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
+        report_style, style_applied = self._resolve_report_style(ctx)
         outputs = [""] * len(architect_output.sections)
         try:
             async with anyio.create_task_group() as tg:
@@ -325,6 +341,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         context_packet_markdown,
                         architect_output,
                         section,
+                        report_style,
+                        style_applied,
                         outputs,
                         index,
                     )
@@ -356,10 +374,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown: str,
         architect_output: RenderArchitectOutput,
         section: RenderArchitectSectionPlan,
+        report_style: ReportStyle,
+        style_applied: bool,
         outputs: list[str],
         index: int,
     ) -> None:
         messages = self._build_writer_messages(
+            report_style=report_style,
+            style_applied=style_applied,
             target_language=target_language,
             now_utc=now_utc,
             context_packet_markdown=context_packet_markdown,
@@ -433,73 +455,49 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     def _build_architect_messages(
         self,
         *,
+        report_style: ReportStyle,
+        style_applied: bool,
         target_language: str,
         now_utc: datetime,
         context_packet_markdown: str,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
+        style_overlay = (
+            build_style_overlay(stage="render_architect", style=report_style)
+            if style_applied
+            else ""
+        )
+        style_lock_line = (
+            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
+        )
+        system_contract = (
+            "Role: Final-report architect.\n"
+            "Mission: produce a JSON-only section blueprint for a polished end-user report.\n"
+            "Output requirements:\n"
+            "1) Return valid JSON only.\n"
+            "2) Return 5-10 sections.\n"
+            "3) Ordering is strict: one opening first, body sections in the middle, one closing last.\n"
+            "4) section_role must be one of opening/body/closing.\n"
+            "5) Every section must include section_id, subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
+            "Content-quality requirements:\n"
+            "1) Subheads must be concrete, non-overlapping, and non-generic.\n"
+            "2) Body sections must form a progressive reasoning flow, not repeated parallel slices.\n"
+            "3) must_cover_points must be specific and evidence-seeking.\n"
+            "4) writing_boundaries must explicitly block drift and overclaiming.\n"
+            "5) If evidence is limited, narrow scope instead of inventing content.\n"
+            "Privacy requirements:\n"
+            "1) The final report is external-facing; do not expose internal process details.\n"
+            "2) Do not design sections about runtime mechanics or internal audits.\n"
+            "3) Never include internal metadata in user-facing section intent: question IDs, track IDs, rounds, search/fetch calls, stop reasons, section IDs, or coverage audit.\n"
+            "4) Keep language concise and implementation-ready."
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    "Role: Architect of the final theme report.\n"
-                    "Identity: Senior research writing instructor and report architect.\n"
-                    "Mission: Produce a strict section blueprint (JSON only) for a high-information markdown report.\n"
-                    "Instruction Priority:\n"
-                    "P1) Structural correctness for final assembly: schema-valid output, strict role ordering, and executable section contracts.\n"
-                    "P2) Logical progression quality: enforce General-Body-General and a clear reasoning staircase in body sections.\n"
-                    "P3) Multi-angle analytical coverage: technology, cost, risk, timeliness, scenario fit, constraints, and decision impact.\n"
-                    "P4) Evidence-grounded scope control: reduce breadth when evidence is weak; never invent structure based on assumptions.\n"
-                    "Execution protocol (follow internally, do not print reasoning):\n"
-                    "Phase A - Frame the problem:\n"
-                    "1) Extract the core question, decision target, and uncertainty boundaries from FINAL_CONTEXT_PACKET.\n"
-                    "2) Determine which analytical angles are mandatory: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"
-                    "3) If evidence is thin, narrow scope instead of inventing topics.\n"
-                    "Phase B - Design macro structure:\n"
-                    "1) Use strict General-Body-General structure.\n"
-                    "2) Exactly one opening section first, exactly one closing section last.\n"
-                    "3) Create 3-8 body sections between them to total 5-10 sections.\n"
-                    "Phase C - Build body progression ladder:\n"
-                    "1) Body sections must be progressive and interlocked, never parallel repetition.\n"
-                    "2) Preferred reasoning staircase: mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (adapt to theme).\n"
-                    "3) Each body section must answer a distinct analytical question and prepare the next section.\n"
-                    "Phase D - Define section contracts:\n"
-                    "1) For each section provide concrete subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
-                    "2) writing_boundaries must explicitly block topic drift and unsupported claims.\n"
-                    "3) must_cover_points must be actionable and specific, not generic slogans.\n"
-                    "Hard Constraints (must):\n"
-                    "1) Output JSON only and match schema exactly; no markdown, no prose, no commentary.\n"
-                    "2) Output 5-10 section plans total.\n"
-                    "3) Exactly one opening section at index 1, exactly one closing section at last index.\n"
-                    "4) All intermediate sections must be body sections.\n"
-                    "5) section_role values must be exactly one of: opening, body, closing.\n"
-                    "6) Enforce strict General-Body-General structure in final ordering.\n"
-                    "7) Body sections must be logically progressive and interlocked; no parallel repetition.\n"
-                    "8) Body progression must generally follow mechanism/facts -> comparison/evidence -> risk/boundary -> decision/action (theme-adaptive).\n"
-                    "9) Subheads must be concrete, non-overlapping, high-information, and non-synonymous.\n"
-                    "10) Subheads must represent what will be analyzed, not decorative labels.\n"
-                    "11) Each section must include question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
-                    "12) scope_requirements and must_cover_points must be specific and executable, not abstract slogans.\n"
-                    "13) writing_boundaries must explicitly prevent topic drift and unsupported claims.\n"
-                    "14) Opening section must establish objective, scope boundaries, and reading map.\n"
-                    "15) Closing section must synthesize tradeoffs, decision implications, and execution priorities.\n"
-                    "16) Across body sections, ensure multi-angle coverage where relevant: technology, cost, risk, timeliness, scenario fit, constraints, decision impact.\n"
-                    "17) For body sections, question_ids must reference one or more question cards from FINAL_CONTEXT_PACKET only.\n"
-                    "18) Every question_id from question cards must appear in at least one body section.\n"
-                    "19) Keep plan strictly grounded in FINAL_CONTEXT_PACKET; do not fabricate assumptions.\n"
-                    "20) If evidence is sparse, reduce section breadth or section count; do not invent pseudo-coverage.\n"
-                    "21) Keep language concise but high-information in every field.\n"
-                    "22) No duplicate section intent across sections.\n"
-                    "Self-checklist:\n"
-                    "- Does the section order strictly satisfy opening -> body... -> closing?\n"
-                    "- Are all body sections in a clear reasoning staircase rather than side-by-side repetition?\n"
-                    "- Is each section contract directly writable by a Writer without reinterpretation?\n"
-                    "- Do body sections collectively cover every question_id at least once?\n"
-                    "- Are multi-angle viewpoints distributed across body sections?\n"
-                    "- Do subheads avoid overlap and generic wording?\n"
-                    "- Do writing_boundaries clearly block drift and overclaiming?\n"
-                    "- Is the closing truly integrative rather than a summary copy?\n"
-                    "- Is the output strictly valid JSON with no extra narrative?"
+                "content": compose_system_prompt(
+                    base_contract=system_contract,
+                    style_overlay=style_overlay,
+                    universal_guardrails=UNIVERSAL_GUARDRAILS,
                 ),
             },
             {
@@ -507,13 +505,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    f"{style_lock_line}"
                     "ARCHITECT_TASK:\n"
-                    "- Plan only, no narrative writing.\n"
-                    "- Design a section structure that supports very rich, high-density writing.\n"
-                    "- Ensure middle sections form a clear reasoning staircase with multi-angle coverage.\n"
-                    "- Assign question_ids to body sections so every question card is covered at least once.\n"
-                    "- Build section contracts that a Writer can execute directly without reinterpretation.\n"
-                    "- Do not output explanations; output schema JSON only.\n\n"
+                    "- Plan only. Do not write report prose.\n"
+                    "- Optimize for clarity, analytical depth, and decision value.\n"
+                    "- Keep the blueprint user-facing, not system-facing.\n"
+                    "- Ensure every question card is covered by at least one body section.\n"
+                    "- Output schema JSON only.\n\n"
                     f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
                 ),
             },
@@ -522,6 +520,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     def _build_writer_messages(
         self,
         *,
+        report_style: ReportStyle,
+        style_applied: bool,
         target_language: str,
         now_utc: datetime,
         context_packet_markdown: str,
@@ -533,72 +533,45 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         section_prefix_h2 = f"## {section_subhead or 'Section'}"
         section_packet_markdown = render_section_plan_markdown(section)
         all_section_plan_markdown = render_architect_plan_markdown(architect_output)
+        style_overlay = (
+            build_style_overlay(stage="render_writer", style=report_style)
+            if style_applied
+            else ""
+        )
+        style_lock_line = (
+            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
+        )
+        system_contract = (
+            "Role: Section writer.\n"
+            "Mission: write exactly one high-quality report section fragment.\n"
+            "Follow CURRENT_SECTION_PLAN_MARKDOWN as a strict contract.\n"
+            "Writing goals:\n"
+            "1) Be clear, concrete, and task-useful.\n"
+            "2) Explain trade-offs and uncertainty boundaries.\n"
+            "3) Keep logic explicit: claim -> evidence -> implication.\n"
+            "4) Use tables only when they improve comparison or compression of evidence.\n"
+            "Formatting rules:\n"
+            "1) Output markdown fragment only.\n"
+            "2) Use only ### and deeper headings.\n"
+            "3) Never output # or ##.\n"
+            "4) Never repeat the section H2 title; it is already rendered.\n"
+            "5) No citation tokens and no pseudo-citations.\n"
+            "Privacy rules (must):\n"
+            "1) Never mention internal mechanics, pipeline stages, or prompt/context packet names.\n"
+            "2) Never mention internal metadata: track IDs, question IDs, rounds, search calls, fetch calls, stop reasons, coverage audit, or section IDs.\n"
+            "3) Write as a polished external report for end users.\n"
+            "Quality guardrails:\n"
+            "1) Avoid filler, template language, and repetitive phrasing.\n"
+            "2) Avoid phrases like 'this report' or 'this section' unless needed for clarity.\n"
+            "3) If evidence is insufficient, state limits plainly without exposing internal process."
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    "Role: Writer for one architected section.\n"
-                    "Identity: Expert analyst and writing coach for high-density technical reports.\n"
-                    "Mission: Write exactly one section markdown fragment with maximal information density.\n"
-                    "Instruction Priority:\n"
-                    "P1) Contract fidelity: strictly follow CURRENT_SECTION_PLAN_MARKDOWN scope_requirements, writing_boundaries, and must_cover_points.\n"
-                    "P2) Analytical depth and completeness: deliver rich, concrete, decision-useful content with high information density.\n"
-                    "P3) Representation quality: use tables/LaTeX/Mermaid when applicable with strong explanatory framing.\n"
-                    "P4) Markdown discipline: use ### and deeper headings only for internal subsections; section-level title is rendered externally and must not be repeated.\n"
-                    "Execution protocol (follow internally, do not print reasoning):\n"
-                    "Phase A - Decode section contract:\n"
-                    "1) Treat CURRENT_SECTION_PLAN_MARKDOWN as binding spec.\n"
-                    "2) Convert scope_requirements + must_cover_points into a compact internal outline.\n"
-                    "3) Treat writing_boundaries as hard exclusions.\n"
-                    "Phase B - Select and organize evidence:\n"
-                    "1) Pull only relevant evidence from FINAL_CONTEXT_PACKET.\n"
-                    "2) Prioritize evidence that supports cross-source synthesis, tradeoff reasoning, and decisions.\n"
-                    "3) Mark uncertainty boundaries where evidence is incomplete or conflicting.\n"
-                    "Phase C - Compose high-information prose:\n"
-                    "1) Every paragraph must add new information; avoid paraphrase loops and generic filler.\n"
-                    "2) Use explicit transitions: premise -> evidence -> inference -> implication.\n"
-                    "3) Keep strong logical flow from explanation to judgment to action.\n"
-                    "Phase D - Advanced representations:\n"
-                    "1) Prefer tables for comparisons and data-heavy analysis.\n"
-                    "2) For every table, include dense context before the table and equally dense analysis/summary after the table.\n"
-                    "3) Use LaTeX for formulas and quantitative relationships when involved.\n"
-                    "4) For process/workflow content, first describe in natural language, then provide Mermaid.\n"
-                    "Phase E - Final quality pass:\n"
-                    "1) Ensure strict alignment with section boundaries; do not drift to unrelated topics.\n"
-                    "2) Ensure concrete conclusions and bounded recommendations are evidence-grounded.\n"
-                    "3) Ensure clarity under high density: no vague claims, no rhetorical padding.\n"
-                    "Hard Constraints (must):\n"
-                    "1) Write exactly one section fragment for CURRENT_SECTION_PLAN_MARKDOWN; never write other sections.\n"
-                    "2) Follow scope_requirements, writing_boundaries, must_cover_points exactly.\n"
-                    "3) Keep strict topic focus; no unrelated expansions.\n"
-                    "4) Ensure content is rich, complete, and high-information; avoid filler and paraphrase loops.\n"
-                    "5) Use explicit reasoning chain: premise -> evidence -> inference -> implication.\n"
-                    "6) Prefer tables for comparison/data-heavy reasoning.\n"
-                    "7) For each table, include equally dense analysis before and after the table.\n"
-                    "8) Do not output decorative tables with low analytical value.\n"
-                    "9) Quantitative relationships/formulas must be written in LaTeX when involved.\n"
-                    "10) For process/workflow content, first provide natural-language explanation, then Mermaid.\n"
-                    "11) Markdown heading rule: only ### and deeper headings are allowed (####, #####, ######).\n"
-                    "12) Never output # or ## headings.\n"
-                    "13) Never output a heading that repeats CURRENT_SECTION_PLAN_MARKDOWN.subhead (including near-identical wording).\n"
-                    "14) The first non-empty line must not restate CURRENT_SECTION_PLAN_MARKDOWN.subhead.\n"
-                    "15) Keep wording precise; avoid vague terms without analytical support.\n"
-                    "16) Include uncertainty boundaries when evidence is incomplete or conflicting.\n"
-                    "17) Do not overclaim beyond evidence available in FINAL_CONTEXT_PACKET.\n"
-                    "18) No citation tokens and no pseudo-citation placeholders.\n"
-                    "19) No meta commentary, no process narration, no wrappers.\n"
-                    "20) Output markdown fragment only.\n"
-                    "Self-checklist:\n"
-                    "- Did I cover every must_cover_point with concrete analysis?\n"
-                    "- Did I respect every writing_boundary and avoid drift?\n"
-                    "- Is each paragraph adding net-new information?\n"
-                    "- If I used a table, did I provide dense explanation before and after it?\n"
-                    "- If formulas were needed, did I use LaTeX correctly?\n"
-                    "- If workflow was discussed, did I provide language-first then Mermaid?\n"
-                    "- Did I avoid # and ## headings entirely?\n"
-                    "- Did I avoid repeating CURRENT_SECTION_PLAN_MARKDOWN.subhead as a heading?\n"
-                    "- Is the first heading (if any) different from CURRENT_SECTION_PLAN_MARKDOWN.subhead?\n"
-                    "- Is the fragment decision-useful, evidence-grounded, and uncertainty-aware?"
+                "content": compose_system_prompt(
+                    base_contract=system_contract,
+                    style_overlay=style_overlay,
+                    universal_guardrails=UNIVERSAL_GUARDRAILS,
                 ),
             },
             {
@@ -606,9 +579,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    f"{style_lock_line}"
                     "SECTION_RENDERING_NOTE:\n"
                     "- Final assembler already renders CURRENT_SECTION_PLAN_MARKDOWN.subhead as a `##` title.\n"
                     "- Your fragment must not repeat that title.\n\n"
+                    "PRIVATE_CONTEXT_NOTE:\n"
+                    "- FINAL_CONTEXT_PACKET_MARKDOWN is private working context.\n"
+                    "- Do not disclose private metadata in output.\n\n"
                     "SECTION_PREFIX_ALREADY_RENDERED:\n"
                     f"{section_prefix_h2}\n\n"
                     "WRITING_START_RULE:\n"
@@ -630,6 +607,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
+        report_style, style_applied = self._resolve_report_style(ctx)
         context_packet = self._build_final_context_packet(
             ctx=ctx,
             target_language=target_language,
@@ -638,42 +616,32 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown = self._render_final_context_packet_markdown(
             context_packet
         )
+        style_overlay = (
+            build_style_overlay(stage="render_structured", style=report_style)
+            if style_applied
+            else ""
+        )
+        style_lock_line = (
+            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
+        )
+        system_contract = (
+            "Role: Structured Research Synthesizer.\n"
+            "Mission: Build one schema-valid JSON object from FINAL_CONTEXT_PACKET.\n"
+            "Rules:\n"
+            "1) Output must strictly validate the provided schema.\n"
+            "2) Keep all free-text in TARGET_OUTPUT_LANGUAGE.\n"
+            "3) Keep claims evidence-grounded and uncertainty-aware.\n"
+            "4) Resolve relative time terms against CURRENT_UTC_DATE.\n"
+            "5) Do not include markdown, code fences, citations, or commentary.\n"
+            "6) Do not leak internal process metadata or private context labels."
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    "Role: Structured Research Synthesizer.\n"
-                    "Identity: Senior structured-output instructor.\n"
-                    "Mission: Build one JSON object for THEME from FINAL_CONTEXT_PACKET in a single pass.\n"
-                    "Instruction Priority:\n"
-                    "P1) Schema validity.\n"
-                    "P2) Theme-aligned synthesis quality.\n"
-                    "P3) Language consistency.\n"
-                    "Execution protocol (follow internally, do not print reasoning):\n"
-                    "Phase A - Schema-first planning:\n"
-                    "1) Enumerate required fields and value types from provided schema.\n"
-                    "2) Map each required field to evidence in FINAL_CONTEXT_PACKET before writing.\n"
-                    "3) If evidence is absent, return bounded/empty-safe values that remain schema-valid.\n"
-                    "Phase B - Evidence synthesis:\n"
-                    "1) Identify direct answers, consensus, conflicts, and uncertainty boundaries.\n"
-                    "2) Merge cross-track evidence into concise, non-redundant field values.\n"
-                    "3) Keep claims proportional to evidence strength.\n"
-                    "Phase C - Serialization discipline:\n"
-                    "1) Output must strictly validate the schema.\n"
-                    "2) Keep free-text in TARGET_OUTPUT_LANGUAGE.\n"
-                    "3) Do not include markdown, code fences, citation tokens, or commentary.\n"
-                    "4) Resolve relative time expressions against CURRENT_UTC_DATE.\n"
-                    "Hard Constraints:\n"
-                    "1) Output must strictly validate provided schema.\n"
-                    "2) Use FINAL_CONTEXT_PACKET as the main evidence basis.\n"
-                    "3) Do not include markdown or citation tokens.\n"
-                    "4) Keep free-text values in TARGET_OUTPUT_LANGUAGE.\n"
-                    "5) Preserve uncertainty when evidence is incomplete.\n"
-                    "6) Resolve relative time words against CURRENT_UTC_DATE.\n"
-                    "Self-checklist:\n"
-                    "- Are all required schema fields present and valid?\n"
-                    "- Are claims grounded in FINAL_CONTEXT_PACKET evidence?\n"
-                    "- Are uncertainty boundaries preserved where needed?"
+                "content": compose_system_prompt(
+                    base_contract=system_contract,
+                    style_overlay=style_overlay,
+                    universal_guardrails=UNIVERSAL_GUARDRAILS,
                 ),
             },
             {
@@ -681,6 +649,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    f"{style_lock_line}"
                     f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
                 ),
             },
@@ -705,52 +674,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             subhead = clean_whitespace(section_plan.subhead or section_plan.section_id)
             parts.append(f"## {subhead or 'Section'}")
             parts.append(str(section_content or "").strip())
-        parts.append(
-            self._render_coverage_audit_markdown(
-                ctx=ctx,
-                architect_output=architect_output,
-            )
-        )
         return "\n\n".join(parts).strip()
-
-    def _render_coverage_audit_markdown(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        architect_output: RenderArchitectOutput,
-    ) -> str:
-        required_question_ids = self._resolve_question_ids(ctx)
-        lines: list[str] = ["## Coverage Audit"]
-        if not required_question_ids:
-            lines.append("- No question cards available.")
-            return "\n".join(lines).strip()
-        section_map: dict[str, list[str]] = {item: [] for item in required_question_ids}
-        required_set = set(required_question_ids)
-        for idx, section in enumerate(architect_output.sections, start=1):
-            section_id = clean_whitespace(section.section_id) or f"s{idx}"
-            for raw in section.question_ids:
-                question_id = clean_whitespace(raw)
-                if not question_id or question_id not in required_set:
-                    continue
-                refs = section_map[question_id]
-                if section_id in refs:
-                    continue
-                refs.append(section_id)
-        track_result_ids = {
-            clean_whitespace(item.question_id)
-            for item in ctx.parallel.track_results
-            if clean_whitespace(item.question_id)
-        }
-        lines.append(f"- Total question cards: {len(required_question_ids)}")
-        for question_id in required_question_ids:
-            refs = section_map.get(question_id, [])
-            status = "covered" if refs else "missing"
-            section_text = ", ".join(refs) if refs else "none"
-            has_track_result = "yes" if question_id in track_result_ids else "no"
-            lines.append(
-                f"- {question_id}: {status}; sections={section_text}; track_result={has_track_result}"
-            )
-        return "\n".join(lines).strip()
 
     def _build_final_context_packet(
         self,
@@ -795,6 +719,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 include_title=False,
                 include_question_cards=False,
             ),
+            "## Private Rendering Rules",
+            "- Internal metadata is private and must never appear in final user-facing report text.",
+            "- Private fields include question IDs, track IDs, rounds, search/fetch call counts, stop reasons, section IDs, and coverage audit status.",
             "## Question Cards",
             render_question_cards_markdown(packet.question_cards),
             "## Track Results",
@@ -809,6 +736,23 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         if token:
             return token
         return "same as user input language"
+
+    def _resolve_report_style(
+        self,
+        ctx: ResearchStepContext,
+    ) -> tuple[ReportStyle, bool]:
+        cfg = self.settings.research.report_style
+        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
+        if fallback_style_key not in {"decision", "explainer", "execution"}:
+            fallback_style_key = "explainer"
+        style = resolve_report_style(
+            raw_style=ctx.plan.theme_plan.report_style,
+            theme=ctx.plan.core_question or ctx.request.themes,
+            enabled=bool(cfg.enabled),
+            fallback_style=cast("ReportStyle", fallback_style_key),
+            strict_style_lock=bool(cfg.strict_style_lock),
+        )
+        return style, bool(cfg.enabled and cfg.apply_render)
 
     def _build_track_result_packet(
         self, track_results: list[ResearchTrackResult]
@@ -881,15 +825,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             question = normalize_block_text(item.question) or "n/a"
             lines.extend(
                 [
-                    f"### Track {index}: {question}",
-                    f"- Question ID: {normalize_block_text(item.question_id) or 'n/a'}",
-                    f"- Stop reason: {normalize_block_text(item.stop_reason) or 'n/a'}",
-                    f"- Rounds: {int(item.rounds)}",
-                    f"- Search calls: {int(item.search_calls)}",
-                    f"- Fetch calls: {int(item.fetch_calls)}",
-                    f"- Confidence: {float(item.confidence):.3f}",
-                    f"- Coverage ratio: {float(item.coverage_ratio):.3f}",
-                    f"- Unresolved conflicts: {int(item.unresolved_conflicts)}",
+                    f"### Evidence Cluster {index}",
+                    f"- Research question: {question}",
                     "- Key findings:",
                 ]
             )

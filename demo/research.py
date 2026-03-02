@@ -34,5 +34,5 @@ async def main(
 
 
 if __name__ == "__main__":
-    out = anyio.run(main, "qwen3.5 vs glm4.7", "research-fast", None)
+    out = anyio.run(main, "how to use dify?", "research-deep", None)
     print(out["research_result"])

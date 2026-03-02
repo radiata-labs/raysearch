@@ -22,6 +22,7 @@ CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
 OverviewModelBackendKey = Literal["openai", "gemini", "dashscope"]
 TelemetryObsBackendKey = Literal["null", "jsonl"]
 TelemetryMeteringBackendKey = Literal["null", "sqlite"]
+ReportStyleKey = Literal["decision", "explainer", "execution"]
 
 
 class RetrySettings(Model):
@@ -185,6 +186,15 @@ class ResearchModelsSettings(Model):
     markdown: str = ""
 
 
+class ResearchReportStyleSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    enabled: bool = True
+    fallback_style: ReportStyleKey = "explainer"
+    strict_style_lock: bool = True
+    apply_subreport: bool = True
+    apply_render: bool = True
+
+
 class ResearchModeSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_rounds: int = 5
@@ -343,6 +353,9 @@ class ResearchSettings(Model):
     llm_self_heal_retries: int = 2
     no_progress_rounds_to_stop: int = 2
     models: ResearchModelsSettings = Field(default_factory=ResearchModelsSettings)
+    report_style: ResearchReportStyleSettings = Field(
+        default_factory=ResearchReportStyleSettings
+    )
     parallel: ResearchParallelSettings = Field(default_factory=ResearchParallelSettings)
     corpus: ResearchCorpusSettings = Field(default_factory=ResearchCorpusSettings)
     research_fast: ResearchModeSettings = Field(
@@ -728,7 +741,9 @@ __all__ = [
     "OverviewModelBackendKey",
     "LLMModelSettings",
     "ProviderSettings",
+    "ReportStyleKey",
     "ResearchModelsSettings",
+    "ResearchReportStyleSettings",
     "ResearchModeSettings",
     "ResearchCorpusSettings",
     "ResearchParallelSettings",

@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchStepContext
 from serpsage.models.research import (
     OverviewConflictPayload,
     OverviewOutputPayload,
+    ReportStyle,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt_markdown import (
     render_rounds_markdown,
     render_theme_plan_markdown,
+)
+from serpsage.steps.research.prompt_style import (
+    UNIVERSAL_GUARDRAILS,
+    build_style_overlay,
+    compose_system_prompt,
+    resolve_report_style,
 )
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
@@ -32,7 +39,7 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
 
-class ResearchAbstractStep(StepBase[ResearchStepContext]):
+class ResearchOverviewStep(StepBase[ResearchStepContext]):
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -169,6 +176,16 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             [],
             limit=int(ctx.runtime.budget.max_queries_per_round),
         )
+        report_style = self._resolve_report_style(ctx)
+        await self.emit_tracking_event(
+            event_name="research.style.applied",
+            request_id=ctx.request_id,
+            stage="overview_review",
+            attrs={
+                "report_style_selected": str(report_style),
+                "style_applied_stage": "overview",
+            },
+        )
         return ctx
 
     def _build_overview_messages(
@@ -182,38 +199,50 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
         round_index = ctx.current_round.round_index if ctx.current_round else 0
+        report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
+        system_contract = (
+            "Role: Evidence Analyst (Overview-First) and Methodology Instructor.\n"
+            "Mission: Evaluate evidence quality, theme coverage, and uncertainty using overview evidence.\n"
+            "Instruction Priority:\n"
+            "P1) Schema correctness.\n"
+            "P2) Evidence-grounded reasoning and conflict transparency.\n"
+            "P3) Language consistency.\n"
+            "Hard Constraints:\n"
+            "1) Use only SOURCE_OVERVIEW_PACKET.\n"
+            "2) Keep analysis scoped to CORE_QUESTION and its evidence dimensions.\n"
+            "3) Distinguish observations from inferences.\n"
+            "4) Identify unresolved conflicts and critical evidence gaps.\n"
+            "5) Select source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
+            "6) Use URL/domain/path/title cues from SOURCE_OVERVIEW_PACKET to estimate source authority and evidence type.\n"
+            "7) For need_content_source_ids, prioritize authoritative evidence URLs first: official documentation, standards/specs, papers/preprints, repositories/model hubs, government/education, and vendor technical docs.\n"
+            "8) De-prioritize low-authority commentary or marketing-style pages unless they provide unique, decision-critical evidence.\n"
+            "9) Evaluate temporal relevance for recency-sensitive claims.\n"
+            "10) Free-text fields must be in the required output language.\n"
+            "11) next_queries must remain strictly focused on CORE_QUESTION and must not introduce new standalone topics.\n"
+            "12) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
+            "13) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
+            "14) If no valid focused query exists, return next_queries as an empty array.\n"
+            "15) Return JSON only, exactly matching schema.\n"
+            "16) Overview evidence is provisional: avoid final certainty when content verification is still needed.\n"
+            "Allowed Evidence:\n"
+            "- Theme, theme plan, round summaries, overview packet.\n"
+            "Failure Policy:\n"
+            "- If evidence is weak or temporally stale for a recency query, lower confidence and propose targeted next queries.\n"
+            "Quality Checklist:\n"
+            "- Coverage progression, conflict clarity, economical content escalation, calibrated confidence."
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    "Role: Evidence Analyst (Overview-First) and Methodology Instructor.\n"
-                    "Mission: Evaluate evidence quality, theme coverage, and uncertainty using overview evidence.\n"
-                    "Instruction Priority:\n"
-                    "P1) Schema correctness.\n"
-                    "P2) Evidence-grounded reasoning and conflict transparency.\n"
-                    "P3) Language consistency.\n"
-                    "Hard Constraints:\n"
-                    "1) Use only SOURCE_OVERVIEW_PACKET.\n"
-                    "2) Keep analysis scoped to CORE_QUESTION and its evidence dimensions.\n"
-                    "3) Distinguish observations from inferences.\n"
-                    "4) Identify unresolved conflicts and critical evidence gaps.\n"
-                    "5) Select source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
-                    "6) Evaluate temporal relevance for recency-sensitive claims.\n"
-                    "7) Free-text fields must be in the required output language.\n"
-                    "8) next_queries must remain strictly focused on CORE_QUESTION and must not introduce new standalone topics.\n"
-                    "9) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
-                    "10) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
-                    "11) If no valid focused query exists, return next_queries as an empty array.\n"
-                    "12) Return JSON only, exactly matching schema.\n"
-                    "13) Overview evidence is provisional: avoid final certainty when content verification is still needed.\n"
-                    "Allowed Evidence:\n"
-                    "- Theme, theme plan, round summaries, overview packet.\n"
-                    "Failure Policy:\n"
-                    "- If evidence is weak or temporally stale for a recency query, lower confidence and propose targeted next queries.\n"
-                    "Quality Checklist:\n"
-                    "- Coverage progression, conflict clarity, economical content escalation, calibrated confidence."
+                "content": compose_system_prompt(
+                    base_contract=system_contract,
+                    style_overlay=build_style_overlay(
+                        stage="overview",
+                        style=report_style,
+                    ),
+                    universal_guardrails=UNIVERSAL_GUARDRAILS,
                 ),
             },
             {
@@ -221,6 +250,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"THEME:\n{ctx.request.themes}\n\n"
                     f"CORE_QUESTION:\n{core_question}\n\n"
+                    f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
                     f"ROUND_INDEX:\n{round_index}\n\n"
                     "TIME_CONTEXT:\n"
                     f"- current_utc_timestamp={now_utc.isoformat()}\n"
@@ -230,6 +260,10 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "- Treat relative time words (today/this month/this year/recent/latest) against current_utc_date.\n"
                     "- For stale evidence under recency intent, request follow-up queries in next_queries.\n"
                     "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
+                    "SOURCE_SELECTION_POLICY:\n"
+                    "- Use URL host, path, and URL evidence hint to estimate authority and evidence type.\n"
+                    "- Prefer authoritative sources for content escalation: docs/specs, papers/preprints, repositories/model hubs, and institutional domains.\n"
+                    "- Escalate low-authority media/blog pages only when they contain unique evidence not present in authoritative sources.\n\n"
                     "LANGUAGE_POLICY:\n"
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep all free-text fields in the required output language.\n\n"
@@ -240,7 +274,9 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     f"SOURCE_OVERVIEW_PACKET:\n{packet}\n\n"
                     "Escalation rubric for need_content_source_ids:\n"
                     "- Include IDs for sources tied to key conclusions, major conflicts, or model-selection decisions.\n"
+                    "- Prefer IDs from authoritative URLs (official docs/specs, papers/preprints, repositories/model hubs, government/education domains, vendor technical docs).\n"
                     "- Include IDs when overview evidence is vague but potentially important.\n"
+                    "- For media/blog/secondary pages, include IDs only when they carry unique high-impact facts absent elsewhere.\n"
                     "- Include IDs when evidence freshness is uncertain for latest/current requests."
                 ),
             },
@@ -371,5 +407,18 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 break
         return out
 
+    def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
+        cfg = self.settings.research.report_style
+        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
+        if fallback_style_key not in {"decision", "explainer", "execution"}:
+            fallback_style_key = "explainer"
+        return resolve_report_style(
+            raw_style=ctx.plan.theme_plan.report_style,
+            theme=ctx.plan.core_question or ctx.request.themes,
+            enabled=bool(cfg.enabled),
+            fallback_style=cast("ReportStyle", fallback_style_key),
+            strict_style_lock=bool(cfg.strict_style_lock),
+        )
 
-__all__ = ["ResearchAbstractStep"]
+
+__all__ = ["ResearchOverviewStep"]

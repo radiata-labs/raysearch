@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.models.research import (
     ContentConflictPayload,
     ContentOutputPayload,
+    ReportStyle,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt_markdown import (
     render_overview_review_markdown,
     render_theme_plan_markdown,
+)
+from serpsage.steps.research.prompt_style import (
+    UNIVERSAL_GUARDRAILS,
+    build_style_overlay,
+    compose_system_prompt,
+    resolve_report_style,
 )
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
@@ -148,6 +155,16 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         strategy = clean_whitespace(str(payload.next_query_strategy or ""))
         if strategy:
             ctx.current_round.query_strategy = strategy
+        report_style = self._resolve_report_style(ctx)
+        await self.emit_tracking_event(
+            event_name="research.style.applied",
+            request_id=ctx.request_id,
+            stage="content_review",
+            attrs={
+                "report_style_selected": str(report_style),
+                "style_applied_stage": "content",
+            },
+        )
         return ctx
 
     def _build_content_messages(
@@ -161,41 +178,50 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
         round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
+        report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         overview_review_markdown = render_overview_review_markdown(
             ctx.work.overview_review
         )
+        system_contract = (
+            "Role: Evidence Arbiter (Full-Content Stage).\n"
+            "Mission: Resolve contradictions and raise evidence completeness for ONE core question.\n"
+            "Instruction Priority:\n"
+            "P1) Schema correctness.\n"
+            "P2) Content-grounded arbitration quality.\n"
+            "P3) Language consistency.\n"
+            "Hard Constraints:\n"
+            "1) Use only SOURCE_CONTENT_PACKET.\n"
+            "2) Keep every judgment aligned to CORE_QUESTION; do not branch into a new standalone topic.\n"
+            "3) Mark conflict status conservatively as resolved, unresolved, or insufficient.\n"
+            "4) Prefer direct content evidence over overview-level assumptions.\n"
+            "5) If uncertainty remains, list concrete remaining gaps.\n"
+            "6) next_queries must remain strictly focused on CORE_QUESTION and non-redundant.\n"
+            "7) For recency-sensitive claims, explicitly account for publication/update-time relevance.\n"
+            "8) Free-text fields must be in the required output language.\n"
+            "9) resolved_findings should be information-dense: include implication, condition, and edge-case when available.\n"
+            "10) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
+            "11) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
+            "12) If no valid focused next query exists, return next_queries as an empty array.\n"
+            "13) Return JSON only and match schema exactly.\n"
+            "Allowed Evidence:\n"
+            "- Theme, theme plan, overview review, selected content packet.\n"
+            "Failure Policy:\n"
+            "- If evidence is insufficient or stale for recency intent, avoid overclaiming and lower confidence.\n"
+            "Quality Checklist:\n"
+            "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency.\n"
+            "- Preserve detail that can later be rendered as tables (fact, evidence, conflict, constraint, gap)."
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    "Role: Evidence Arbiter (Full-Content Stage).\n"
-                    "Mission: Resolve contradictions and raise evidence completeness for ONE core question.\n"
-                    "Instruction Priority:\n"
-                    "P1) Schema correctness.\n"
-                    "P2) Content-grounded arbitration quality.\n"
-                    "P3) Language consistency.\n"
-                    "Hard Constraints:\n"
-                    "1) Use only SOURCE_CONTENT_PACKET.\n"
-                    "2) Keep every judgment aligned to CORE_QUESTION; do not branch into a new standalone topic.\n"
-                    "3) Mark conflict status conservatively as resolved, unresolved, or insufficient.\n"
-                    "4) Prefer direct content evidence over overview-level assumptions.\n"
-                    "5) If uncertainty remains, list concrete remaining gaps.\n"
-                    "6) next_queries must remain strictly focused on CORE_QUESTION and non-redundant.\n"
-                    "7) For recency-sensitive claims, explicitly account for publication/update-time relevance.\n"
-                    "8) Free-text fields must be in the required output language.\n"
-                    "9) resolved_findings should be information-dense: include implication, condition, and edge-case when available.\n"
-                    "10) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
-                    "11) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
-                    "12) If no valid focused next query exists, return next_queries as an empty array.\n"
-                    "13) Return JSON only and match schema exactly.\n"
-                    "Allowed Evidence:\n"
-                    "- Theme, theme plan, overview review, selected content packet.\n"
-                    "Failure Policy:\n"
-                    "- If evidence is insufficient or stale for recency intent, avoid overclaiming and lower confidence.\n"
-                    "Quality Checklist:\n"
-                    "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency.\n"
-                    "- Preserve detail that can later be rendered as tables (fact, evidence, conflict, constraint, gap)."
+                "content": compose_system_prompt(
+                    base_contract=system_contract,
+                    style_overlay=build_style_overlay(
+                        stage="content",
+                        style=report_style,
+                    ),
+                    universal_guardrails=UNIVERSAL_GUARDRAILS,
                 ),
             },
             {
@@ -203,6 +229,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"THEME:\n{ctx.request.themes}\n\n"
                     f"CORE_QUESTION:\n{core_question}\n\n"
+                    f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
                     f"ROUND_INDEX:\n{round_index}\n\n"
                     "TIME_CONTEXT:\n"
                     f"- current_utc_timestamp={now_utc.isoformat()}\n"
@@ -230,6 +257,19 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 ),
             },
         ]
+
+    def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
+        cfg = self.settings.research.report_style
+        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
+        if fallback_style_key not in {"decision", "explainer", "execution"}:
+            fallback_style_key = "explainer"
+        return resolve_report_style(
+            raw_style=ctx.plan.theme_plan.report_style,
+            theme=ctx.plan.core_question or ctx.request.themes,
+            enabled=bool(cfg.enabled),
+            fallback_style=cast("ReportStyle", fallback_style_key),
+            strict_style_lock=bool(cfg.strict_style_lock),
+        )
 
     def _build_content_schema(self, *, max_queries: int) -> dict[str, Any]:
         return {

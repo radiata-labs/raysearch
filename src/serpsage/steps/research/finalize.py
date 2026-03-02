@@ -16,6 +16,7 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
+        style_cfg = ctx.settings.research.report_style
         await self.emit_tracking_event(
             event_name="research.finalize.summary",
             request_id=ctx.request_id,
@@ -25,6 +26,10 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                 "stop_reason": str(ctx.runtime.stop_reason or "n/a"),
                 "content_chars": int(len(str(ctx.output.content or ""))),
                 "has_structured": bool(ctx.output.structured is not None),
+                "report_style_selected": str(ctx.plan.theme_plan.report_style or ""),
+                "report_style_enabled": bool(style_cfg.enabled),
+                "report_style_apply_subreport": bool(style_cfg.apply_subreport),
+                "report_style_apply_render": bool(style_cfg.apply_render),
             },
         )
         return ctx

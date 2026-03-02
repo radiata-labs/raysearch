@@ -37,11 +37,11 @@ from serpsage.steps.fetch import (
     FetchPrepareStep,
 )
 from serpsage.steps.research import (
-    ResearchAbstractStep,
     ResearchContentStep,
     ResearchDecideStep,
     ResearchFinalizeStep,
     ResearchLoopStep,
+    ResearchOverviewStep,
     ResearchPlanStep,
     ResearchPrepareStep,
     ResearchRenderStep,
@@ -157,7 +157,7 @@ def build_engine(
     research_round_steps: list[StepBase[ResearchStepContext]] = [
         ResearchPlanStep(rt=rt, llm=llm),
         ResearchSearchStep(rt=rt, search_runner=search_runner),
-        ResearchAbstractStep(rt=rt, llm=llm),
+        ResearchOverviewStep(rt=rt, llm=llm),
         ResearchContentStep(rt=rt, llm=llm),
         ResearchDecideStep(rt=rt),
     ]

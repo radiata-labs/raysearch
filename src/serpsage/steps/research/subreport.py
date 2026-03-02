@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
-from serpsage.models.research import ResearchThemePlan
+from serpsage.models.research import ReportStyle, ResearchThemePlan
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt_markdown import render_theme_plan_markdown
+from serpsage.steps.research.prompt_style import (
+    UNIVERSAL_GUARDRAILS,
+    build_style_overlay,
+    compose_system_prompt,
+    resolve_report_style,
+)
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     select_context_source_ids,
@@ -50,6 +56,7 @@ class _SubreportSourceEvidenceItem:
 class _SubreportContextPacket:
     theme: str
     core_question: str
+    report_style: str
     target_output_language: str
     utc_timestamp: str
     utc_date: str
@@ -124,6 +131,16 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             raw_text = self._build_subreport_fallback(ctx)
         ctx.output.structured = None
         ctx.output.content = self._normalize_markdown(raw_text)
+        report_style, style_applied = self._resolve_report_style(ctx)
+        await self.emit_tracking_event(
+            event_name="research.style.applied",
+            request_id=ctx.request_id,
+            stage="subreport",
+            attrs={
+                "report_style_selected": str(report_style),
+                "style_applied_stage": "subreport" if style_applied else "none",
+            },
+        )
 
     def _build_subreport_messages(
         self,
@@ -134,52 +151,64 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        report_style, style_applied = self._resolve_report_style(ctx)
         context_packet_markdown = self._build_subreport_context_packet_markdown(
             ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
             core_question=core_question,
         )
+        style_overlay = (
+            build_style_overlay(stage="subreport", style=report_style)
+            if style_applied
+            else ""
+        )
+        style_lock_line = (
+            f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
+        )
+        flow_contract = self._subreport_flow_contract(
+            report_style=report_style,
+            style_applied=style_applied,
+        )
+        system_contract = (
+            "Role: Senior research analyst.\n"
+            "Mission: Write one external-facing subreport that answers CORE_QUESTION with evidence and explicit uncertainty boundaries.\n"
+            "Core principles:\n"
+            "1) Stay strictly on CORE_QUESTION.\n"
+            "2) Ground every key claim in evidence from SUBREPORT_CONTEXT_PACKET_MARKDOWN.\n"
+            "3) Distinguish support, conflict, and unknowns.\n"
+            "4) Prefer specific facts, dates, conditions, and numbers over generic summary language.\n"
+            "5) If evidence is weak or mixed, narrow the claim and say so directly.\n"
+            "Writing quality requirements:\n"
+            "1) Start with a direct answer status (confirmed, partial, or unresolved) in plain language.\n"
+            "2) Use clear reasoning flow: claim -> evidence -> implication.\n"
+            "3) Explain what disagreements mean for user outcomes.\n"
+            "4) Keep prose concise, concrete, and non-repetitive.\n"
+            "5) End with targeted next checks that reduce the highest-impact uncertainty.\n"
+            f"{flow_contract}\n"
+            "Privacy requirements (strict):\n"
+            "1) Output is user-facing; never reveal internal workflow or implementation details.\n"
+            "2) Never mention prompt/context packet names, pipeline stages, rounds, query lists, search/fetch calls, stop reasons, confidence/coverage metrics, IDs, or telemetry/audit mechanics.\n"
+            "3) Never echo internal field names or debug-style labels.\n"
+            "4) Do not output sections such as coverage audit or process log.\n"
+            "Formatting and time rules:\n"
+            "1) Output markdown only.\n"
+            "2) Do not use citation tokens or pseudo-citations.\n"
+            "3) Use tables only when they materially improve comparison clarity.\n"
+            "4) Resolve relative time expressions against CURRENT_UTC_DATE.\n"
+            "5) Keep all free text in TARGET_OUTPUT_LANGUAGE.\n"
+            "Self-check before final output:\n"
+            "- Did each paragraph stay on CORE_QUESTION?\n"
+            "- Are uncertainty boundaries explicit and non-overclaiming?\n"
+            "- Did I avoid internal-process leakage?"
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    "Role: Single-Question Evidence Archive Instructor.\n"
-                    "Mission: Produce one detailed subreport for CORE_QUESTION only.\n"
-                    "You are writing an evidence archive for one core question.\n"
-                    "Instruction Priority:\n"
-                    "P1) Single-question focus.\n"
-                    "P2) Evidence completeness and detail.\n"
-                    "P3) Language consistency.\n"
-                    "Step-by-step method:\n"
-                    "1) Extract the direct answer status for CORE_QUESTION (confirmed, partial, or unresolved).\n"
-                    "2) Organize evidence by source support, conflicts, and gaps.\n"
-                    "3) Explain implications and constraints without drifting away from CORE_QUESTION.\n"
-                    "4) Close with targeted next checks that reduce the largest uncertainty.\n"
-                    "Hard Constraints:\n"
-                    "1) Focus on CORE_QUESTION only.\n"
-                    "2) Use SUBREPORT_CONTEXT_PACKET as the primary evidence context.\n"
-                    "3) Prioritize evidence completeness and traceable detail over polished summarization.\n"
-                    "4) Do not use citation tokens.\n"
-                    "5) Resolve relative time words against CURRENT_UTC_DATE.\n"
-                    "6) Keep free-text output in TARGET_OUTPUT_LANGUAGE.\n"
-                    "7) Do not generate decorative/placeholder tables.\n"
-                    "8) Do not force rigid templates when they reduce clarity.\n"
-                    "Output Contract:\n"
-                    "- Provide: evidence-backed findings, conflict status, remaining gaps, and targeted next checks.\n"
-                    "- Keep narrative sections for causal explanation and constraints.\n"
-                    "Table Policy:\n"
-                    "1) Table is optional, not required.\n"
-                    "2) Use a table only when it improves clarity over prose.\n"
-                    "3) Use table only when it materially improves evidence mapping clarity.\n"
-                    "4) For sparse or non-comparable evidence, prefer prose/bullets.\n"
-                    "Final Output Format:\n"
-                    "- Output markdown only.\n"
-                    "No citation tokens. Markdown only.\n"
-                    "Self-checklist:\n"
-                    "- Did I stay strictly on CORE_QUESTION?\n"
-                    "- Did I preserve evidence detail and uncertainty boundaries?\n"
-                    "- Did I avoid forcing table output?"
+                "content": compose_system_prompt(
+                    base_contract=system_contract,
+                    style_overlay=style_overlay,
+                    universal_guardrails=UNIVERSAL_GUARDRAILS,
                 ),
             },
             {
@@ -187,6 +216,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_language} ({target_language_name})\n\n"
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    f"CORE_QUESTION:\n{core_question}\n\n"
+                    f"{style_lock_line}"
+                    "PRIVATE_CONTEXT_NOTICE:\n"
+                    "- SUBREPORT_CONTEXT_PACKET_MARKDOWN is private working context.\n"
+                    "- Convert private evidence into polished user-facing analysis.\n"
+                    "- Do not expose private metadata, field names, IDs, or process traces.\n\n"
                     f"SUBREPORT_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
                 ),
             },
@@ -195,45 +230,260 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     def _build_subreport_fallback(self, ctx: ResearchStepContext) -> str:
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
         sources = self._select_sources_for_render(ctx, max_sources=10)
-        findings = [
-            token for item in ctx.notes[-8:] if (token := clean_whitespace(item))
-        ]
-        if not findings:
-            findings = ["Evidence was collected and reviewed for this core question."]
         round_state = ctx.rounds[-1] if ctx.rounds else None
-        conflict_line = "- No decisive conflict captured yet; targeted verification is still needed."
-        if round_state and round_state.unresolved_conflicts <= 0:
-            conflict_line = "- Major conflict cluster appears resolved in the latest round evidence."
-        gap_line = "- Remaining gaps still affect confidence bounds."
-        if round_state and round_state.critical_gaps <= 0:
-            gap_line = "- No major gap remains in the latest round summary."
-        sections = [
-            f"## Subreport: {core_question}",
-            "This subreport keeps detail completeness first and summarizes evidence grounded in this track.",
-            "### Key findings",
-            "\n".join(f"- {item}" for item in findings[:8]),
-        ]
-        evidence_lines = [
-            (
-                f"- source_id={int(source.source_id)}; "
-                f"title={clean_whitespace(source.title or 'n/a')}; "
-                f"url={source.url}; "
-                f"round={int(source.round_index)}"
+        report_style, style_applied = self._resolve_report_style(ctx)
+        answer_status = self._fallback_answer_status(
+            round_state=round_state,
+            has_sources=bool(sources),
+        )
+        evidence_lines = self._fallback_evidence_lines(sources, limit=6)
+        uncertainty_lines = self._fallback_uncertainty_lines(
+            round_state=round_state,
+            has_sources=bool(sources),
+        )
+        next_checks = self._fallback_next_checks(round_state=round_state)
+        sections = [f"## {core_question or 'Core Question'}"]
+        if not style_applied:
+            sections.extend(
+                [
+                    "### Direct answer",
+                    f"- {answer_status}",
+                    "### Evidence highlights",
+                    "\n".join(evidence_lines),
+                    "### Conflicts and uncertainty",
+                    "\n".join(uncertainty_lines),
+                    "### Targeted next checks",
+                    "\n".join(next_checks),
+                ]
             )
-            for source in sources
-        ]
-        if not evidence_lines:
-            evidence_lines = ["- No source snapshot is available."]
-        sections.extend(["### Evidence snapshot", "\n".join(evidence_lines)])
+            return "\n\n".join(sections)
         sections.extend(
-            [
-                "### Conflicts and gaps",
-                f"{conflict_line}\n{gap_line}",
-                "### Next focused checks",
-                "- Continue with queries that directly reduce remaining uncertainty around the core question.",
-            ]
+            self._build_style_fallback_sections(
+                report_style=report_style,
+                answer_status=answer_status,
+                evidence_lines=evidence_lines,
+                uncertainty_lines=uncertainty_lines,
+                next_checks=next_checks,
+            )
         )
         return "\n\n".join(sections)
+
+    def _fallback_answer_status(
+        self,
+        *,
+        round_state: object | None,
+        has_sources: bool,
+    ) -> str:
+        if not has_sources:
+            return (
+                "Current evidence is insufficient for a confident answer; the question "
+                "remains unresolved."
+            )
+        if round_state is None:
+            return (
+                "Current evidence supports a partial answer, but verification is still "
+                "needed for higher confidence."
+            )
+        unresolved_conflicts = int(getattr(round_state, "unresolved_conflicts", 0))
+        critical_gaps = int(getattr(round_state, "critical_gaps", 0))
+        if unresolved_conflicts <= 0 and critical_gaps <= 0:
+            return (
+                "Current evidence supports a stable answer, with no major unresolved "
+                "conflicts or critical gaps in the latest review."
+            )
+        if unresolved_conflicts > 0:
+            return (
+                "The answer is still partial because key claims remain in conflict "
+                "across sources."
+            )
+        return (
+            "The answer is directionally clear, but material evidence gaps still "
+            "limit confidence."
+        )
+
+    def _fallback_evidence_lines(
+        self,
+        sources: list[ResearchSource],
+        *,
+        limit: int,
+    ) -> list[str]:
+        if not sources:
+            return ["- No source evidence is available yet."]
+        out: list[str] = []
+        max_items = max(1, int(limit))
+        for source in sources[:max_items]:
+            title = clean_whitespace(source.title or "") or "Untitled source"
+            url = clean_whitespace(str(source.url or ""))
+            snippet_raw = clean_whitespace(str(source.overview or ""))
+            if not snippet_raw:
+                snippet_raw = clean_whitespace(str(source.content or ""))
+            snippet = self._truncate_inline_text(snippet_raw, max_chars=240)
+            if not snippet:
+                snippet = "Relevant context is available from this source."
+            if url:
+                out.append(f"- [{title}]({url}): {snippet}")
+                continue
+            out.append(f"- {title}: {snippet}")
+        return out or ["- No source evidence is available yet."]
+
+    def _fallback_uncertainty_lines(
+        self,
+        *,
+        round_state: object | None,
+        has_sources: bool,
+    ) -> list[str]:
+        if not has_sources:
+            return [
+                "- No reliable evidence cluster is available yet.",
+                "- Any conclusion at this stage would be speculative.",
+            ]
+        if round_state is None:
+            return [
+                "- Evidence quality varies across sources and still needs targeted verification.",
+                "- Confidence remains provisional until conflicts and missing data are resolved.",
+            ]
+        unresolved_conflicts = int(getattr(round_state, "unresolved_conflicts", 0))
+        critical_gaps = int(getattr(round_state, "critical_gaps", 0))
+        lines: list[str] = []
+        if unresolved_conflicts > 0:
+            lines.append(
+                "- Conflicting claims remain on key points and prevent a fully decisive conclusion."
+            )
+        else:
+            lines.append(
+                "- No major claim conflict is currently blocking the main conclusion."
+            )
+        if critical_gaps > 0:
+            lines.append(
+                "- Important evidence gaps remain and still affect confidence boundaries."
+            )
+        else:
+            lines.append(
+                "- No major critical gap is currently identified in available evidence."
+            )
+        return lines
+
+    def _fallback_next_checks(self, *, round_state: object | None) -> list[str]:
+        lines = [
+            "- Validate the most consequential claim with one additional high-authority primary source.",
+            "- Cross-check numerical or time-sensitive statements against the most recent official publication.",
+        ]
+        if round_state is None:
+            return lines
+        raw_entities = getattr(round_state, "missing_entities", [])
+        missing_entities = [
+            token
+            for item in list(raw_entities)[:4]
+            if (token := clean_whitespace(str(item)))
+        ]
+        if missing_entities:
+            entity_text = ", ".join(missing_entities)
+            lines.append(f"- Add direct evidence for missing entities: {entity_text}.")
+        return lines
+
+    def _subreport_flow_contract(
+        self,
+        *,
+        report_style: ReportStyle,
+        style_applied: bool,
+    ) -> str:
+        if not style_applied:
+            return (
+                "Recommended section flow (adapt if needed):\n"
+                "- Direct Answer\n"
+                "- Evidence and Reasoning\n"
+                "- Conflicts and Uncertainty\n"
+                "- Practical Implications\n"
+                "- Targeted Next Checks"
+            )
+        if report_style == "decision":
+            return (
+                "Required section flow:\n"
+                "- Verdict Snapshot\n"
+                "- Trade-offs\n"
+                "- Scenario Recommendation\n"
+                "- Risk Triggers\n"
+                "- Next Checks"
+            )
+        if report_style == "execution":
+            return (
+                "Required section flow:\n"
+                "- Goal and Prerequisites\n"
+                "- Step Sequence\n"
+                "- Validation Criteria\n"
+                "- Failure Handling\n"
+                "- Next Actions"
+            )
+        return (
+            "Required section flow:\n"
+            "- Core Model\n"
+            "- Mechanisms\n"
+            "- Boundary Cases\n"
+            "- Common Misconceptions\n"
+            "- Practical Takeaway"
+        )
+
+    def _build_style_fallback_sections(
+        self,
+        *,
+        report_style: ReportStyle,
+        answer_status: str,
+        evidence_lines: list[str],
+        uncertainty_lines: list[str],
+        next_checks: list[str],
+    ) -> list[str]:
+        if report_style == "decision":
+            return [
+                "### Verdict snapshot",
+                f"- {answer_status}",
+                "### Trade-offs",
+                "\n".join(evidence_lines),
+                "### Scenario recommendation",
+                "- Recommendation remains conditional on scenario constraints and evidence quality.",
+                "### Risk triggers",
+                "\n".join(uncertainty_lines),
+                "### Next checks",
+                "\n".join(next_checks),
+            ]
+        if report_style == "execution":
+            return [
+                "### Goal and prerequisites",
+                f"- {answer_status}",
+                "### Step sequence",
+                "\n".join(evidence_lines),
+                "### Validation criteria",
+                "- Confirm each critical claim against at least one authoritative primary source before execution.",
+                "- Re-check time-sensitive requirements against the latest official publication date.",
+                "### Failure handling",
+                "\n".join(uncertainty_lines),
+                "### Next actions",
+                "\n".join(next_checks),
+            ]
+        return [
+            "### Core model",
+            f"- {answer_status}",
+            "### Mechanisms",
+            "\n".join(evidence_lines),
+            "### Boundary cases",
+            "\n".join(uncertainty_lines),
+            "### Common misconceptions",
+            "- Evidence consensus can still hide condition-sensitive exceptions.",
+            "- High-level summaries should not be treated as universal across all contexts.",
+            "### Practical takeaway",
+            "\n".join(next_checks),
+        ]
+
+    def _truncate_inline_text(self, text: str, *, max_chars: int) -> str:
+        raw = clean_whitespace(str(text or ""))
+        if not raw:
+            return ""
+        limit = max(1, int(max_chars))
+        if len(raw) <= limit:
+            return raw
+        clipped = raw[: limit - 1].rstrip()
+        if not clipped:
+            return raw[:limit]
+        return f"{clipped}..."
 
     def _build_subreport_context_packet_markdown(
         self,
@@ -255,6 +505,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             self._normalize_block_text(packet.theme) or "n/a",
             "## Core Question",
             self._normalize_block_text(packet.core_question) or "n/a",
+            "## Report Style",
+            self._normalize_block_text(packet.report_style) or "n/a",
             "## Target Output Language",
             self._normalize_block_text(packet.target_output_language) or "n/a",
             "## Time Context",
@@ -262,6 +514,9 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             f"- UTC date: {packet.utc_date}",
             "## Subreport Objective",
             packet.subreport_objective,
+            "## Private Rendering Rules",
+            "- SUBREPORT_CONTEXT_PACKET is private working context and must not be exposed verbatim in user-facing output.",
+            "- Never expose internal metadata: source IDs, round indexes, query logs, stop reasons, confidence/coverage metrics, or packet labels.",
             "## Theme Plan",
         ]
         lines.append(render_theme_plan_markdown(packet.theme_plan, include_title=False))
@@ -359,9 +614,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             ctx,
             max_sources=self._MAX_SOURCES_FOR_CONTEXT,
         )
+        report_style, style_applied = self._resolve_report_style(ctx)
+        style_label = report_style if style_applied else "baseline"
         return _SubreportContextPacket(
             theme=self._normalize_block_text(str(ctx.request.themes)),
             core_question=self._normalize_block_text(core_question),
+            report_style=self._normalize_block_text(style_label),
             target_output_language=self._normalize_block_text(target_language),
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
@@ -369,10 +627,36 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             round_trajectory=self._build_round_trajectory_packet(ctx),
             source_evidence=self._build_source_evidence_packet(selected_sources),
             notes=self._collect_recent_notes(ctx, limit=12),
-            subreport_objective=(
+            subreport_objective=self._subreport_objective_for_style(
+                report_style=report_style,
+                style_applied=style_applied,
+            ),
+        )
+
+    def _subreport_objective_for_style(
+        self,
+        *,
+        report_style: ReportStyle,
+        style_applied: bool,
+    ) -> str:
+        if not style_applied:
+            return (
                 "Build an evidence archive for one core question with complete, "
                 "traceable detail and explicit uncertainty boundaries."
-            ),
+            )
+        if report_style == "decision":
+            return (
+                "Produce a decision-focused subreport with scenario-fit recommendations, "
+                "trade-offs, and explicit risk triggers."
+            )
+        if report_style == "execution":
+            return (
+                "Produce an execution-focused subreport with prerequisites, step sequence, "
+                "validation criteria, and failure handling boundaries."
+            )
+        return (
+            "Produce an explainer-focused subreport that clarifies mechanisms, "
+            "boundary conditions, and practical understanding."
         )
 
     def _build_round_trajectory_packet(
@@ -523,6 +807,23 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             blank_count = 0
             lines.append(line)
         return "\n".join(lines).strip()
+
+    def _resolve_report_style(
+        self,
+        ctx: ResearchStepContext,
+    ) -> tuple[ReportStyle, bool]:
+        cfg = self.settings.research.report_style
+        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
+        if fallback_style_key not in {"decision", "explainer", "execution"}:
+            fallback_style_key = "explainer"
+        style = resolve_report_style(
+            raw_style=ctx.plan.theme_plan.report_style,
+            theme=ctx.plan.core_question or ctx.request.themes,
+            enabled=bool(cfg.enabled),
+            fallback_style=cast("ReportStyle", fallback_style_key),
+            strict_style_lock=bool(cfg.strict_style_lock),
+        )
+        return style, bool(cfg.enabled and cfg.apply_subreport)
 
 
 __all__ = ["ResearchSubreportStep"]

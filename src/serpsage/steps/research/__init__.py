@@ -1,4 +1,4 @@
-from serpsage.steps.research.abstract import ResearchAbstractStep
+from serpsage.steps.research.overview import ResearchOverviewStep
 from serpsage.steps.research.content import ResearchContentStep
 from serpsage.steps.research.decide import ResearchDecideStep
 from serpsage.steps.research.finalize import ResearchFinalizeStep
@@ -11,7 +11,7 @@ from serpsage.steps.research.subreport import ResearchSubreportStep
 from serpsage.steps.research.theme import ResearchThemeStep
 
 __all__ = [
-    "ResearchAbstractStep",
+    "ResearchOverviewStep",
     "ResearchContentStep",
     "ResearchDecideStep",
     "ResearchFinalizeStep",

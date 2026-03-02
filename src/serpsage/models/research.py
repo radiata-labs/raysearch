@@ -6,6 +6,8 @@ from pydantic import ConfigDict, Field
 
 from serpsage.core.model_base import MutableModel
 
+ReportStyle = Literal["decision", "explainer", "execution"]
+
 
 class ThemeQuestionCardPayload(MutableModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
@@ -20,6 +22,7 @@ class ThemeOutputPayload(MutableModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
     detected_input_language: str = "same as user input language"
     core_question: str = ""
+    report_style: ReportStyle = "explainer"
     subthemes: list[str] = Field(default_factory=list, max_length=12)
     required_entities: list[str] = Field(default_factory=list, max_length=16)
     question_cards: list[ThemeQuestionCardPayload] = Field(
@@ -39,6 +42,7 @@ class ResearchThemePlanCard(MutableModel):
 
 class ResearchThemePlan(MutableModel):
     core_question: str = ""
+    report_style: ReportStyle = "explainer"
     subthemes: list[str] = Field(default_factory=list, max_length=12)
     required_entities: list[str] = Field(default_factory=list, max_length=16)
     input_language: str = ""
@@ -130,6 +134,7 @@ class RenderArchitectOutput(MutableModel):
 
 
 __all__ = [
+    "ReportStyle",
     "OverviewConflictPayload",
     "OverviewOutputPayload",
     "ContentConflictPayload",

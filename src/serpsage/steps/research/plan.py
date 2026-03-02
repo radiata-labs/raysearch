@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 from serpsage.models.pipeline import (
@@ -14,12 +14,19 @@ from serpsage.models.research import (
     OverviewOutputPayload,
     PlanOutputPayload,
     PlanSearchJobPayload,
+    ReportStyle,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt_markdown import (
     render_queries_markdown,
     render_rounds_markdown,
     render_theme_plan_markdown,
+)
+from serpsage.steps.research.prompt_style import (
+    UNIVERSAL_GUARDRAILS,
+    build_style_overlay,
+    compose_system_prompt,
+    resolve_report_style,
 )
 from serpsage.steps.research.utils import (
     merge_strings,
@@ -253,40 +260,49 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         budget = ctx.runtime.budget
         out_lang = ctx.plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
         candidate_queries_markdown = render_queries_markdown(candidate_queries)
+        system_contract = (
+            "Role: Principal Research Planner and Evidence Operations Lead.\n"
+            "Mission: Generate high-information, low-overlap search jobs for the next research round.\n"
+            "Instruction Priority:\n"
+            "P1) Schema correctness and budget adherence.\n"
+            "P2) Evidence gain per query.\n"
+            "P3) Output language consistency.\n"
+            "Hard Constraints:\n"
+            "1) All search_jobs must serve CORE_QUESTION. Do not introduce a new independent research question.\n"
+            "2) Minimize overlap between jobs while maximizing information gain.\n"
+            "3) Respect remaining budget and prioritize unresolved evidence gaps.\n"
+            "4) Use deep mode when higher recall or conflict verification is needed.\n"
+            "5) Free-text fields must be in the required output language.\n"
+            "6) Temporal grounding: interpret relative time words against current UTC date.\n"
+            "7) If recency intent exists, include explicit temporal constraints in query text.\n"
+            "8) For high-impact claims, prioritize authoritative evidence routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
+            "9) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
+            "10) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
+            "11) Domain/text route constraints are executable: include_domains, exclude_domains, include_text, exclude_text.\n"
+            "12) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
+            "13) Return JSON only; no markdown or explanations.\n"
+            "Allowed Evidence:\n"
+            "- User theme, theme plan, previous round summaries, candidate queries.\n"
+            "Failure Policy:\n"
+            "- If uncertain, produce fewer but higher-value jobs.\n"
+            "- If all candidate queries are off-topic relative to CORE_QUESTION, return search_jobs as an empty array.\n"
+            "Quality Checklist:\n"
+            "- Distinct intent per job, no near duplicates, conflict-aware targeting."
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    "Role: Principal Research Planner and Evidence Operations Lead.\n"
-                    "Mission: Generate high-information, low-overlap search jobs for the next research round.\n"
-                    "Instruction Priority:\n"
-                    "P1) Schema correctness and budget adherence.\n"
-                    "P2) Evidence gain per query.\n"
-                    "P3) Output language consistency.\n"
-                    "Hard Constraints:\n"
-                    "1) All search_jobs must serve CORE_QUESTION. Do not introduce a new independent research question.\n"
-                    "2) Minimize overlap between jobs while maximizing information gain.\n"
-                    "3) Respect remaining budget and prioritize unresolved evidence gaps.\n"
-                    "4) Use deep mode when higher recall or conflict verification is needed.\n"
-                    "5) Free-text fields must be in the required output language.\n"
-                    "6) Temporal grounding: interpret relative time words against current UTC date.\n"
-                    "7) If recency intent exists, include explicit temporal constraints in query text.\n"
-                    "8) For high-impact claims, prioritize authoritative evidence routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
-                    "9) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
-                    "10) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
-                    "11) Domain/text route constraints are executable: include_domains, exclude_domains, include_text, exclude_text.\n"
-                    "12) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
-                    "13) Return JSON only; no markdown or explanations.\n"
-                    "Allowed Evidence:\n"
-                    "- User theme, theme plan, previous round summaries, candidate queries.\n"
-                    "Failure Policy:\n"
-                    "- If uncertain, produce fewer but higher-value jobs.\n"
-                    "- If all candidate queries are off-topic relative to CORE_QUESTION, return search_jobs as an empty array.\n"
-                    "Quality Checklist:\n"
-                    "- Distinct intent per job, no near duplicates, conflict-aware targeting."
+                "content": compose_system_prompt(
+                    base_contract=system_contract,
+                    style_overlay=build_style_overlay(
+                        stage="plan",
+                        style=report_style,
+                    ),
+                    universal_guardrails=UNIVERSAL_GUARDRAILS,
                 ),
             },
             {
@@ -294,6 +310,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 "content": (
                     f"THEME:\n{ctx.request.themes}\n\n"
                     f"CORE_QUESTION:\n{core_question}\n\n"
+                    f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
                     f"ROUND_INDEX:\n{ctx.runtime.round_index}\n\n"
                     "TIME_CONTEXT:\n"
                     f"- current_utc_timestamp={now_utc.isoformat()}\n"
@@ -375,6 +392,19 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 },
             },
         }
+
+    def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
+        cfg = self.settings.research.report_style
+        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
+        if fallback_style_key not in {"decision", "explainer", "execution"}:
+            fallback_style_key = "explainer"
+        return resolve_report_style(
+            raw_style=ctx.plan.theme_plan.report_style,
+            theme=ctx.plan.core_question or ctx.request.themes,
+            enabled=bool(cfg.enabled),
+            fallback_style=cast("ReportStyle", fallback_style_key),
+            strict_style_lock=bool(cfg.strict_style_lock),
+        )
 
 
 __all__ = ["ResearchPlanStep"]
