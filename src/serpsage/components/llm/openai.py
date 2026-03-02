@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 from typing_extensions import override
 
 from openai import AsyncOpenAI
@@ -63,7 +63,9 @@ class OpenAIClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: None = None,
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatTextResult: ...
 
     @overload
@@ -73,7 +75,9 @@ class OpenAIClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object],
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatDictResult: ...
 
     @overload
@@ -83,7 +87,9 @@ class OpenAIClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: type[TModel],
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
 
     @override
@@ -93,20 +99,30 @@ class OpenAIClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object] | type[BaseModel] | None = None,
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatResultBase:
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
 
-        response_schema, response_model = self.resolve_response_format(response_format)
-        if response_model is not None and llm.enable_structured:
+        response_schema, response_model = self.resolve_response_format(
+            response_format,
+            format_override=format_override,
+        )
+        if (
+            response_model is not None
+            and llm.enable_structured
+            and format_override is None
+        ):
             pydantic_completion = await self._create_pydantic_completion(
                 model=model,
                 messages=self._to_openai_messages(messages),
                 temperature=float(llm.temperature),
                 timeout=float(timeout_s or llm.timeout_s),
                 response_format=response_model,
+                **kwargs,
             )
             text = self._extract_text(pydantic_completion)
             parsed = self._extract_pydantic_text(pydantic_completion)
@@ -129,6 +145,7 @@ class OpenAIClient(LLMClientBase):
                 schema=response_schema,
                 enable_structured=bool(llm.enable_structured),
             ),
+            **kwargs,
         )
 
         text = self._extract_text(completion)
@@ -152,6 +169,7 @@ class OpenAIClient(LLMClientBase):
         temperature: float,
         timeout: float,
         response_format: type[TModel],
+        **kwargs: Any,
     ) -> ParsedChatCompletion[TModel]:
         return await self.client.chat.completions.parse(
             model=model,
@@ -159,6 +177,7 @@ class OpenAIClient(LLMClientBase):
             temperature=temperature,
             timeout=timeout,
             response_format=response_format,
+            **kwargs,
         )
 
     async def _create_completion(
@@ -169,21 +188,26 @@ class OpenAIClient(LLMClientBase):
         temperature: float,
         timeout: float,
         response_format: ResponseFormatJSONSchema | ResponseFormatJSONObject | None,
+        **kwargs: Any,
     ) -> ChatCompletion:
         if response_format is None:
-            return await self.client.chat.completions.create(
+            completion: ChatCompletion = await self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 timeout=timeout,
+                **kwargs,
             )
-        return await self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            timeout=timeout,
-            response_format=response_format,
-        )
+        else:
+            completion = await self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                timeout=timeout,
+                response_format=response_format,
+                **kwargs,
+            )
+        return completion
 
     @classmethod
     def _build_response_format_payload(

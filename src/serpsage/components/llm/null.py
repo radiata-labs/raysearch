@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NoReturn, TypeVar, overload
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
@@ -32,7 +32,9 @@ class NullLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: None = None,
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatTextResult: ...
 
     @overload
@@ -42,7 +44,9 @@ class NullLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object],
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatDictResult: ...
 
     @overload
@@ -52,7 +56,9 @@ class NullLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: type[TModel],
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
 
     @override
@@ -62,9 +68,11 @@ class NullLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object] | type[BaseModel] | None = None,
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatResultBase:
-        _ = model, messages, response_format, timeout_s
+        _ = model, messages, response_format, format_override, timeout_s, kwargs
         self._raise_not_configured()
 
     @classmethod

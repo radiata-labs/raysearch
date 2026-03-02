@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TypeAlias, TypeVar, cast, overload
+from typing import Any, TypeAlias, TypeVar, cast, overload
 
 import anyio
 from pydantic import BaseModel
@@ -36,7 +36,9 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: None = None,
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatTextResult: ...
 
     @overload
@@ -46,9 +48,12 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object],
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatDictResult: ...
 
+    # `format_override` is only meaningful for BaseModel response_format.
     @overload
     async def _chat(
         self,
@@ -56,7 +61,9 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: type[TModel],
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
 
     @abstractmethod
@@ -66,8 +73,16 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object] | type[BaseModel] | None = None,
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatResultBase:
+        """Provider chat implementation.
+
+        `format_override` is only valid when `response_format` is `type[BaseModel]`.
+        Providers must use this override schema for constrained output and still
+        parse the response into that BaseModel.
+        """
         raise NotImplementedError
 
     @overload
@@ -77,10 +92,12 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: None = None,
+        format_override: None = None,
         timeout_s: float | None = None,
         retries: int = 0,
         retry_delay_s: float = 0.0,
         retry_on: RetryOn | None = None,
+        **kwargs: Any,
     ) -> ChatTextResult: ...
 
     @overload
@@ -90,12 +107,15 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object],
+        format_override: None = None,
         timeout_s: float | None = None,
         retries: int = 0,
         retry_delay_s: float = 0.0,
         retry_on: RetryOn | None = None,
+        **kwargs: Any,
     ) -> ChatDictResult: ...
 
+    # `format_override` can be used only when response_format is BaseModel type.
     @overload
     async def chat(
         self,
@@ -103,10 +123,12 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: type[TModel],
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
         retries: int = 0,
         retry_delay_s: float = 0.0,
         retry_on: RetryOn | None = None,
+        **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
 
     async def chat(
@@ -115,22 +137,61 @@ class LLMClientBase(WorkUnit, ABC):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object] | type[BaseModel] | None = None,
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
         retries: int = 0,
         retry_delay_s: float = 0.0,
         retry_on: RetryOn | None = None,
+        **kwargs: Any,
     ) -> ChatResultBase:
+        """Public chat entrypoint with retries.
+
+        `format_override` is only allowed when `response_format` is
+        `type[BaseModel]`. When provided, the override schema is used instead of
+        `BaseModel.model_json_schema()`, but output is still validated into the
+        same BaseModel type.
+        """
+        self._validate_format_override(
+            response_format=response_format,
+            format_override=format_override,
+        )
         attempts = max(1, int(retries) + 1)
         delay_s = max(0.0, float(retry_delay_s))
         retry_func = self._normalize_retry_on(retry_on)
 
         for attempt_index in range(attempts):
             try:
-                return await self._chat(
-                    model=model,
-                    messages=messages,
-                    response_format=response_format,
-                    timeout_s=timeout_s,
+                if response_format is None:
+                    return await self._chat(
+                        model=model,
+                        messages=messages,
+                        response_format=None,
+                        format_override=None,
+                        timeout_s=timeout_s,
+                        **kwargs,
+                    )
+                if isinstance(response_format, dict):
+                    return await self._chat(
+                        model=model,
+                        messages=messages,
+                        response_format=response_format,
+                        format_override=None,
+                        timeout_s=timeout_s,
+                        **kwargs,
+                    )
+                if isinstance(response_format, type) and issubclass(
+                    response_format, BaseModel
+                ):
+                    return await self._chat(
+                        model=model,
+                        messages=messages,
+                        response_format=response_format,
+                        format_override=format_override,
+                        timeout_s=timeout_s,
+                        **kwargs,
+                    )
+                raise TypeError(
+                    "response_format must be dict[str, object] | type[BaseModel] | None"
                 )
             except Exception as exc:  # noqa: BLE001
                 if attempt_index >= attempts - 1:
@@ -176,16 +237,39 @@ class LLMClientBase(WorkUnit, ABC):
     @staticmethod
     def resolve_response_format(
         response_format: dict[str, object] | type[BaseModel] | None,
+        format_override: dict[str, object] | None = None,
     ) -> tuple[dict[str, object] | None, type[BaseModel] | None]:
+        LLMClientBase._validate_format_override(
+            response_format=response_format,
+            format_override=format_override,
+        )
         if response_format is None:
             return None, None
         if isinstance(response_format, dict):
             return dict(response_format), None
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            if format_override is not None:
+                return dict(format_override), response_format
             return response_format.model_json_schema(), response_format
         raise TypeError(
             "response_format must be dict[str, object] | type[BaseModel] | None"
         )
+
+    @staticmethod
+    def _validate_format_override(
+        *,
+        response_format: dict[str, object] | type[BaseModel] | None,
+        format_override: dict[str, object] | None,
+    ) -> None:
+        if format_override is None:
+            return
+        if not (
+            isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        ):
+            raise TypeError(
+                "format_override is only allowed when response_format is "
+                "type[BaseModel]"
+            )
 
     @staticmethod
     def get_format_instructions(pydantic_object: type[BaseModel]) -> str:

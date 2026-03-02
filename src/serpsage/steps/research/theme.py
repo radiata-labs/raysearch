@@ -13,7 +13,6 @@ from serpsage.models.research import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.utils import (
-    chat_pydantic,
     merge_strings,
     normalize_strings,
     resolve_research_model,
@@ -58,18 +57,18 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
 
         try:
-            payload = await chat_pydantic(
-                llm=self._llm,
+            chat_result = await self._llm.chat(
                 model=model,
                 messages=self._build_theme_messages(
                     ctx,
                     now_utc=now_utc,
                     card_cap=card_cap,
                 ),
-                schema_model=ThemeOutputPayload,
+                response_format=ThemeOutputPayload,
+                format_override=self._build_theme_schema(card_cap=card_cap),
                 retries=int(self.settings.research.llm_self_heal_retries),
-                schema_json=self._build_theme_schema(card_cap=card_cap),
             )
+            payload = chat_result.data
 
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 from typing_extensions import override
 
 from dashscope.aigc.generation import AioGeneration  # type: ignore[import-untyped]
@@ -43,7 +43,9 @@ class DashScopeClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: None = None,
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatTextResult: ...
 
     @overload
@@ -53,7 +55,9 @@ class DashScopeClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object],
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatDictResult: ...
 
     @overload
@@ -63,7 +67,9 @@ class DashScopeClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: type[TModel],
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
 
     @override
@@ -73,14 +79,23 @@ class DashScopeClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object] | type[BaseModel] | None = None,
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatResultBase:
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
 
-        response_schema, response_model = self.resolve_response_format(response_format)
-        request_messages = self._to_dashscope_messages(messages)
+        response_schema, response_model = self.resolve_response_format(
+            response_format,
+            format_override=format_override,
+        )
+        request_messages = self._to_dashscope_messages(
+            messages,
+            response_model,
+            llm.enable_structured,
+        )
         timeout_ms = int(float(timeout_s or llm.timeout_s) * 1000)
 
         if response_schema is not None:
@@ -96,6 +111,7 @@ class DashScopeClient(LLMClientBase):
             temperature=float(llm.temperature),
             timeout=timeout_ms,
             result_format="message",
+            **kwargs,
         )
         text = self._extract_text(response)
         usage = self._to_usage(response)
@@ -120,6 +136,7 @@ class DashScopeClient(LLMClientBase):
         temperature: float,
         timeout: int,
         result_format: str,
+        **kwargs: Any,
     ) -> GenerationResponse:
         if not self._api_key:
             raise RuntimeError("missing LLM api_key")
@@ -133,6 +150,7 @@ class DashScopeClient(LLMClientBase):
             timeout=timeout,
             result_format=result_format,
             api_key=self._api_key,
+            **kwargs,
         )
         if inspect.isasyncgen(response):
             raise TypeError("DashScope streaming response is not supported")

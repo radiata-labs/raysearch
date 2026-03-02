@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Protocol, TypeVar, overload, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    TypeVar,
+    overload,
+    runtime_checkable,
+)
 from typing_extensions import override
 
 from google import genai
@@ -54,7 +61,9 @@ class GeminiClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: None = None,
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatTextResult: ...
 
     @overload
@@ -64,7 +73,9 @@ class GeminiClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object],
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatDictResult: ...
 
     @overload
@@ -74,7 +85,9 @@ class GeminiClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: type[TModel],
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
 
     @override
@@ -84,13 +97,18 @@ class GeminiClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object] | type[BaseModel] | None = None,
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatResultBase:
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
 
-        response_schema, response_model = self.resolve_response_format(response_format)
+        response_schema, response_model = self.resolve_response_format(
+            response_format,
+            format_override=format_override,
+        )
         system_instruction, contents = self._to_gemini_messages(
             messages, response_model, llm.enable_structured
         )
@@ -102,6 +120,7 @@ class GeminiClient(LLMClientBase):
             schema=response_schema,
             enable_structured=bool(llm.enable_structured),
         )
+        config = self._merge_config_kwargs(config=config, kwargs=kwargs)
         response = await self.client.aio.models.generate_content(
             model=model,
             contents=contents,
@@ -152,6 +171,21 @@ class GeminiClient(LLMClientBase):
             http_options=http_options,
             system_instruction=system_instruction or None,
         )
+
+    @staticmethod
+    def _merge_config_kwargs(
+        *,
+        config: types.GenerateContentConfig,
+        kwargs: dict[str, Any],
+    ) -> types.GenerateContentConfig:
+        if not kwargs:
+            return config
+        dumped = config.model_dump(exclude_none=True)
+        merged: dict[str, Any] = {}
+        if isinstance(dumped, dict):
+            merged.update(dumped)
+        merged.update(kwargs)
+        return types.GenerateContentConfig(**merged)
 
     def _to_gemini_messages(
         self,

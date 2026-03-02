@@ -26,7 +26,7 @@ from serpsage.steps.research.prompt_markdown import (
     render_section_plan_markdown,
     render_theme_plan_markdown,
 )
-from serpsage.steps.research.utils import chat_pydantic, resolve_research_model
+from serpsage.steps.research.utils import resolve_research_model
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
@@ -254,17 +254,17 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         )
 
         try:
-            return await chat_pydantic(
-                llm=self._llm,
+            chat_result = await self._llm.chat(
                 model=model,
                 messages=self._build_architect_messages(
                     target_language=target_language,
                     now_utc=now_utc,
                     context_packet_markdown=context_packet_markdown,
                 ),
-                schema_model=RenderArchitectOutput,
+                response_format=RenderArchitectOutput,
                 retries=int(self.settings.research.llm_self_heal_retries),
             )
+            return chat_result.data
 
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(

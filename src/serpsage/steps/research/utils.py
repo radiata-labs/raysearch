@@ -1,22 +1,7 @@
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
-
-from pydantic import BaseModel
-
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.utils import clean_whitespace
-
-if TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase
-
-ChatMessage: TypeAlias = dict[str, str]
-TModel = TypeVar("TModel", bound=BaseModel)
-_LLM_RETRY_SELF_HEAL_MESSAGE = (
-    "The previous output was invalid. Return JSON only and strictly match "
-    "the schema. Do not include comments, markdown fences, or extra keys."
-)
 
 
 def resolve_research_model(
@@ -32,53 +17,6 @@ def resolve_research_model(
     }
     token = clean_whitespace(stage_to_model.get(stage, ""))
     return token or fallback
-
-
-async def chat_pydantic(
-    *,
-    llm: LLMClientBase,
-    model: str,
-    messages: list[ChatMessage],
-    schema_model: type[TModel],
-    retries: int,
-    schema_json: dict[str, Any] | None = None,
-) -> TModel:
-    retry_count = max(0, int(retries))
-    payload = list(messages)
-    attempts = max(1, retry_count + 1)
-    retry_on = (ValueError, TypeError, RuntimeError)
-
-    if isinstance(schema_json, dict):
-        for attempt_index in range(attempts):
-            try:
-                result = await llm.chat(
-                    model=model,
-                    messages=payload,
-                    response_format=dict(schema_json),
-                    retries=0,
-                )
-                raw = _decode_json_payload(
-                    result.data if isinstance(result.data, dict) else None,
-                    result.text,
-                )
-                return schema_model.model_validate(raw)
-            except Exception as exc:  # noqa: BLE001
-                if attempt_index >= attempts - 1:
-                    raise
-                if not isinstance(exc, retry_on):
-                    raise
-                payload = payload + [
-                    {"role": "user", "content": _LLM_RETRY_SELF_HEAL_MESSAGE}
-                ]
-
-    model_result = await llm.chat(
-        model=model,
-        messages=payload,
-        response_format=schema_model,
-        retries=retry_count,
-        retry_on=retry_on,
-    )
-    return schema_model.model_validate(model_result.data)
 
 
 def normalize_strings(raw: object, *, limit: int) -> list[str]:
@@ -116,29 +54,6 @@ def merge_strings(*groups: list[str], limit: int) -> list[str]:
             if len(out) >= max(1, int(limit)):
                 return out
     return out
-
-
-def _decode_json_payload(data: dict[str, Any] | None, text: str) -> dict[str, Any]:
-    if data is not None:
-        if not isinstance(data, dict):
-            raise TypeError("structured LLM response must be a JSON object")
-        return data
-    raw_text = str(text or "")
-    if not raw_text:
-        return {}
-    payload: Any
-    try:
-        payload = json.loads(raw_text)
-    except json.JSONDecodeError:
-        start = raw_text.find("{")
-        end = raw_text.rfind("}")
-        if 0 <= start < end:
-            payload = json.loads(raw_text[start : end + 1])
-        else:
-            raise
-    if not isinstance(payload, dict):
-        raise TypeError("structured LLM response must be a JSON object")
-    return payload
 
 
 def build_abstract_packet(

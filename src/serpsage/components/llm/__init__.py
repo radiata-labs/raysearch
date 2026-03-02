@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import importlib.util
 from collections.abc import Callable
-from typing import TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.llm.router import RoutedLLMClient
-from serpsage.core.runtime import Runtime
 from serpsage.settings.models import LLMModelSettings
+
+if TYPE_CHECKING:
+    from serpsage.core.runtime import Runtime
+else:
+    Runtime = Any
 
 RouteTuple: TypeAlias = tuple[LLMClientBase, str]
 RouteBuilder: TypeAlias = Callable[

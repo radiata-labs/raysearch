@@ -31,7 +31,7 @@ async def main(
         crawl_timeout=30,
         crawl_mode="fallback",
         content=FetchContentRequest(detail="full"),
-        abstracts=FetchAbstractsRequest(query=query, max_chars=300) if query else False,
+        abstracts=FetchAbstractsRequest(query=query, max_chars=300),
         overview=FetchOverviewRequest(query=query) if overview else False,
         subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
         others=FetchOthersRequest(max_links=5, max_image_links=5),
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     out = anyio.run(
         main,
         "https://api-docs.deepseek.com/zh-cn/news/news251201",
-        "What is DeepSeek-V3.2?",
+        None,
         True,
     )
     print(out["fetch_result"])

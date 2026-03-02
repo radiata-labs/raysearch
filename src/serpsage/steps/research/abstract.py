@@ -20,7 +20,6 @@ from serpsage.steps.research.search import (
 )
 from serpsage.steps.research.utils import (
     build_abstract_packet,
-    chat_pydantic,
     merge_strings,
     normalize_entity_coverage,
     normalize_strings,
@@ -96,20 +95,20 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         payload = self._empty_review()
 
         try:
-            payload = await chat_pydantic(
-                llm=self._llm,
+            chat_result = await self._llm.chat(
                 model=model,
                 messages=self._build_abstract_messages(
                     ctx=ctx,
                     packet=packet,
                     now_utc=now_utc,
                 ),
-                schema_model=AbstractOutputPayload,
-                retries=int(self.settings.research.llm_self_heal_retries),
-                schema_json=self._build_abstract_schema(
+                response_format=AbstractOutputPayload,
+                format_override=self._build_abstract_schema(
                     max_queries=int(ctx.runtime.budget.max_queries_per_round)
                 ),
+                retries=int(self.settings.research.llm_self_heal_retries),
             )
+            payload = chat_result.data
 
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(

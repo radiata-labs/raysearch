@@ -19,7 +19,6 @@ from serpsage.steps.research.search import (
     sort_source_ids_by_score,
 )
 from serpsage.steps.research.utils import (
-    chat_pydantic,
     merge_strings,
     normalize_entity_coverage,
     normalize_strings,
@@ -91,20 +90,20 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         payload = self._empty_review()
 
         try:
-            payload = await chat_pydantic(
-                llm=self._llm,
+            chat_result = await self._llm.chat(
                 model=model,
                 messages=self._build_content_messages(
                     ctx=ctx,
                     packet=packet,
                     now_utc=now_utc,
                 ),
-                schema_model=ContentOutputPayload,
-                retries=int(self.settings.research.llm_self_heal_retries),
-                schema_json=self._build_content_schema(
+                response_format=ContentOutputPayload,
+                format_override=self._build_content_schema(
                     max_queries=int(ctx.runtime.budget.max_queries_per_round)
                 ),
+                retries=int(self.settings.research.llm_self_heal_retries),
             )
+            payload = chat_result.data
 
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(

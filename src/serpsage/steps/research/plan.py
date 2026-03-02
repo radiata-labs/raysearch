@@ -22,7 +22,6 @@ from serpsage.steps.research.prompt_markdown import (
     render_theme_plan_markdown,
 )
 from serpsage.steps.research.utils import (
-    chat_pydantic,
     merge_strings,
     resolve_research_model,
 )
@@ -102,8 +101,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         payload = PlanOutputPayload(query_strategy="mixed", search_jobs=[])
 
         try:
-            payload = await chat_pydantic(
-                llm=self._llm,
+            chat_result = await self._llm.chat(
                 model=model,
                 messages=self._build_plan_messages(
                     ctx=ctx,
@@ -111,10 +109,11 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     core_question=core_question,
                     now_utc=now_utc,
                 ),
-                schema_model=PlanOutputPayload,
+                response_format=PlanOutputPayload,
+                format_override=self._build_plan_schema(),
                 retries=int(self.settings.research.llm_self_heal_retries),
-                schema_json=self._build_plan_schema(),
             )
+            payload = chat_result.data
 
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import TYPE_CHECKING, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
@@ -39,7 +39,9 @@ class RoutedLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: None = None,
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatTextResult: ...
 
     @overload
@@ -49,7 +51,9 @@ class RoutedLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object],
+        format_override: None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatDictResult: ...
 
     @overload
@@ -59,7 +63,9 @@ class RoutedLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: type[TModel],
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
 
     @override
@@ -69,7 +75,9 @@ class RoutedLLMClient(LLMClientBase):
         model: str,
         messages: list[dict[str, str]],
         response_format: dict[str, object] | type[BaseModel] | None = None,
+        format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
+        **kwargs: Any,
     ) -> ChatResultBase:
         route_key = str(model)
         route = self._routes.get(route_key)
@@ -91,12 +99,40 @@ class RoutedLLMClient(LLMClientBase):
             attrs={**route_attrs, "message_count": len(messages)},
         )
         try:
-            result = await client.chat(
-                model=provider_model,
-                messages=messages,
-                response_format=response_format,
-                timeout_s=timeout_s,
-            )
+            result: ChatResultBase
+            if response_format is None:
+                result = await client.chat(
+                    model=provider_model,
+                    messages=messages,
+                    response_format=None,
+                    format_override=None,
+                    timeout_s=timeout_s,
+                    **kwargs,
+                )
+            elif isinstance(response_format, dict):
+                result = await client.chat(
+                    model=provider_model,
+                    messages=messages,
+                    response_format=response_format,
+                    format_override=None,
+                    timeout_s=timeout_s,
+                    **kwargs,
+                )
+            elif isinstance(response_format, type) and issubclass(
+                response_format, BaseModel
+            ):
+                result = await client.chat(
+                    model=provider_model,
+                    messages=messages,
+                    response_format=response_format,
+                    format_override=format_override,
+                    timeout_s=timeout_s,
+                    **kwargs,
+                )
+            else:
+                raise TypeError(
+                    "response_format must be dict[str, object] | type[BaseModel] | None"
+                )
             usage = result.usage
             await self._emit_safe(
                 event_name="llm.result",
