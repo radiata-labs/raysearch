@@ -115,6 +115,7 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
         now_utc: datetime,
         mode: Literal["fast", "auto", "deep"],
     ) -> list[dict[str, str]]:
+        mode_guidance = self._build_mode_guidance(mode=mode)
         return [
             {
                 "role": "system",
@@ -139,6 +140,8 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
                         "- if freshness_intent=true, include explicit time constraints in search_query as needed.",
                         "- keep same language/script as the question.",
                         "- preserve core entities and intent; keep query concise and web-search friendly.",
+                        "Mode guidance:",
+                        *mode_guidance,
                         "Output fields:",
                         "- search_query: optimized query",
                         "- optimize_query: boolean",
@@ -147,6 +150,21 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
                     ]
                 ),
             },
+        ]
+
+    def _build_mode_guidance(
+        self, *, mode: Literal["fast", "auto", "deep"]
+    ) -> list[str]:
+        if mode == "deep":
+            return [
+                "- prioritize recall while keeping the same entities and intent boundaries.",
+                "- include closely related facets only when they are likely to improve retrieval coverage.",
+                "- avoid unrelated broadening or introducing new core entities.",
+            ]
+        return [
+            "- prioritize precision and avoid semantic drift.",
+            "- keep only constraints and qualifiers directly required by the original question.",
+            "- do not broaden scope beyond the user's explicit intent.",
         ]
 
     def _normalize_output(self, *, raw: object, original_query: str) -> _OptimizedQuery:

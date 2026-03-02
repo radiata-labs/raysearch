@@ -17,7 +17,9 @@ if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
     from serpsage.models.pipeline import SearchFetchedCandidate
-_MAX_CONTEXT_DOCS = 12
+_DEFAULT_MAX_CONTEXT_DOCS = 12
+_DEEP_MAX_CONTEXT_DOCS = 18
+_DEEP_MIN_CONTEXT_DOC_CHARS = 24
 _TOP_K_SCORES = 3
 _MAIN_CONTENT_SUBPAGE_INDEX = -1  # Sentinel value for main content vs subpage indices
 
@@ -33,6 +35,8 @@ class _RankOptions:
     query_tokens: list[str]
     context_query_tokens: list[str]
     deep_enabled: bool
+    context_docs_limit: int
+    context_doc_min_chars: int
     max_results: int
     page_weight: float
     context_weight: float
@@ -117,6 +121,12 @@ class SearchRankStep(StepBase[SearchStepContext]):
             ctx.settings.search.deep.enabled
         )
         deep_cfg = ctx.settings.search.deep
+        context_docs_limit = (
+            int(_DEEP_MAX_CONTEXT_DOCS)
+            if deep_enabled
+            else int(_DEFAULT_MAX_CONTEXT_DOCS)
+        )
+        context_doc_min_chars = int(_DEEP_MIN_CONTEXT_DOC_CHARS) if deep_enabled else 0
         return _RankOptions(
             content_enabled=bool(content_enabled),
             abstracts_enabled=bool(abstracts_enabled),
@@ -127,6 +137,8 @@ class SearchRankStep(StepBase[SearchStepContext]):
             query_tokens=query_tokens,
             context_query_tokens=context_query_tokens,
             deep_enabled=bool(deep_enabled),
+            context_docs_limit=int(context_docs_limit),
+            context_doc_min_chars=int(context_doc_min_chars),
             max_results=max(
                 1, int(ctx.request.max_results or self.settings.search.max_results)
             ),
@@ -196,6 +208,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
             query=ctx.request.query,
             query_tokens=options.context_query_tokens,
             enabled=bool(options.deep_enabled),
+            options=options,
         )
         for idx, scoped in enumerate(ready):
             candidate = scoped.candidate
@@ -300,13 +313,18 @@ class SearchRankStep(StepBase[SearchStepContext]):
         query: str,
         query_tokens: list[str],
         enabled: bool,
+        options: _RankOptions,
     ) -> dict[int, float]:
         if not enabled:
             return {}
         texts: list[str] = []
         spans: dict[int, tuple[int, int]] = {}
         for idx, scoped in enumerate(candidates):
-            docs = self._collect_context_docs(ctx=ctx, candidate=scoped.candidate)
+            docs = self._collect_context_docs(
+                ctx=ctx,
+                candidate=scoped.candidate,
+                options=options,
+            )
             if not docs:
                 continue
             start = len(texts)
@@ -370,24 +388,71 @@ class SearchRankStep(StepBase[SearchStepContext]):
         *,
         ctx: SearchStepContext,
         candidate: SearchFetchedCandidate,
+        options: _RankOptions,
     ) -> list[str]:
         result = candidate.result
         docs: list[str] = []
+        seen: set[str] = set()
+        max_docs = max(1, int(options.context_docs_limit))
+        min_chars = max(0, int(options.context_doc_min_chars))
         snippets = list(ctx.deep.snippet_context.get(str(result.url), []))
         for item in snippets:
             snippet_text = clean_whitespace(str(item.snippet or ""))
-            if snippet_text:
-                docs.append(snippet_text)
+            self._append_context_doc(
+                docs=docs,
+                seen=seen,
+                text=snippet_text,
+                min_chars=min_chars,
+                max_docs=max_docs,
+            )
         for abstract_item in list(result.abstracts or []):
             abstract_text = clean_whitespace(str(abstract_item))
-            if abstract_text:
-                docs.append(abstract_text)
+            self._append_context_doc(
+                docs=docs,
+                seen=seen,
+                text=abstract_text,
+                min_chars=min_chars,
+                max_docs=max_docs,
+            )
+            if len(docs) >= max_docs:
+                break
         for subpage in list(result.subpages or []):
             for subpage_abstract in list(subpage.abstracts or []):
                 abstract_text = clean_whitespace(str(subpage_abstract))
-                if abstract_text:
-                    docs.append(abstract_text)
-        return docs[:_MAX_CONTEXT_DOCS]
+                self._append_context_doc(
+                    docs=docs,
+                    seen=seen,
+                    text=abstract_text,
+                    min_chars=min_chars,
+                    max_docs=max_docs,
+                )
+                if len(docs) >= max_docs:
+                    break
+            if len(docs) >= max_docs:
+                break
+        return docs[:max_docs]
+
+    def _append_context_doc(
+        self,
+        *,
+        docs: list[str],
+        seen: set[str],
+        text: str,
+        min_chars: int,
+        max_docs: int,
+    ) -> None:
+        normalized = clean_whitespace(text)
+        if not normalized:
+            return
+        if min_chars > 0 and len(normalized) < min_chars:
+            return
+        key = normalized.casefold()
+        if key in seen:
+            return
+        if len(docs) >= max_docs:
+            return
+        seen.add(key)
+        docs.append(normalized)
 
     def _score_page_with_prefetched_content(
         self,

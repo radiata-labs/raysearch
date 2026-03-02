@@ -3,11 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.request import (
-    FetchAbstractsRequest,
-    FetchOverviewRequest,
-    FetchRequest,
-)
+from serpsage.app.request import FetchRequest
 from serpsage.models.pipeline import (
     FetchRuntimeConfig,
     FetchStepContext,
@@ -110,37 +106,14 @@ class SearchFetchStep(StepBase[SearchStepContext]):
 
     def _build_fetch_request(self, *, ctx: SearchStepContext, url: str) -> FetchRequest:
         template = ctx.request.fetchs
-        search_query = ctx.request.query
-        abstracts = template.abstracts
-        if isinstance(abstracts, bool):
-            if abstracts:
-                abstracts_out: bool | FetchAbstractsRequest = FetchAbstractsRequest(
-                    query=search_query
-                )
-            else:
-                abstracts_out = False
-        else:
-            abstracts_query = abstracts.query or search_query
-            abstracts_out = abstracts.model_copy(update={"query": abstracts_query})
-        overview = template.overview
-        if isinstance(overview, bool):
-            if overview:
-                overview_out: bool | FetchOverviewRequest = FetchOverviewRequest(
-                    query=search_query
-                )
-            else:
-                overview_out = False
-        else:
-            overview_query = overview.query or search_query
-            overview_out = overview.model_copy(update={"query": overview_query})
         return FetchRequest(
             urls=[url],
             crawl_mode=template.crawl_mode,
             crawl_timeout=template.crawl_timeout,
             content=template.content,
-            abstracts=abstracts_out,
+            abstracts=template.abstracts,
             subpages=template.subpages,
-            overview=overview_out,
+            overview=template.overview,
             others=template.others,
         )
 

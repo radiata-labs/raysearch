@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-_JACCARD_SIMILARITY_THRESHOLD = 0.85
+_JACCARD_SIMILARITY_THRESHOLD = 0.82
+_MANUAL_SOURCE_CAP = 2
+_RULE_SOURCE_CAP = 2
 _RE_CJK = re.compile(r"[\u4e00-\u9fff]")
 _RE_KANA = re.compile(r"[\u3040-\u30ff]")
 _RE_VERSION_LIKE_TOKEN = re.compile(r"(?i)^[a-z]*\d+(?:[._-]\d+)+(?:[a-z0-9._-]*)$")
@@ -72,9 +74,8 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         disable_internal_llm = bool(ctx.disable_internal_llm)
         if disable_internal_llm:
             llm_queries: list[str] = []
-            llm_elapsed_ms: int = 0
         else:
-            llm_queries, llm_elapsed_ms = await self._collect_llm_queries(
+            llm_queries = await self._collect_llm_queries(
                 ctx=ctx,
                 query=primary_query,
                 max_queries=int(deep_cfg.llm_max_queries),
@@ -84,8 +85,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             query=primary_query,
             max_queries=int(deep_cfg.rule_max_queries),
         )
-        if bool(ctx.deep.aborted):
-            return ctx
         query_jobs = self._merge_query_jobs(
             primary_query=primary_query,
             manual_queries=manual_queries,
@@ -131,31 +130,34 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         query: str,
         max_queries: int,
         timeout_s: float,
-    ) -> tuple[list[str], int]:
+    ) -> list[str]:
         llm_limit = max(0, int(max_queries))
         if llm_limit <= 0:
-            return [], 0
+            return []
         model_name = self._resolve_expansion_model()
-        start_ms = self.clock.now_ms()
         try:
-            queries = await self._expand_with_llm(
+            return await self._expand_with_llm(
                 query=query,
                 model_name=model_name,
                 max_queries=llm_limit,
                 timeout_s=timeout_s,
             )
-        except Exception as exc:
-            elapsed_ms = max(0, self.clock.now_ms() - start_ms)
-            await self._abort(
-                ctx=ctx,
-                message=str(exc),
-                query=query,
-                model_name=model_name,
+        except Exception as exc:  # noqa: BLE001
+            await self.emit_tracking_event(
+                event_name="search.expand.error",
+                request_id=ctx.request_id,
+                stage="search_expand",
+                status="error",
+                error_code="search_query_expansion_failed",
                 error_type=type(exc).__name__,
+                attrs={
+                    "query": query,
+                    "model": model_name,
+                    "message": str(exc),
+                    "fallback": "primary_manual_rule",
+                },
             )
-            return [], elapsed_ms
-        elapsed_ms = max(0, self.clock.now_ms() - start_ms)
-        return queries, elapsed_ms
+            return []
 
     def _resolve_expansion_model(self) -> str:
         model_name = clean_whitespace(
@@ -164,39 +166,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         if model_name:
             return model_name
         return str(self.settings.answer.plan.use_model)
-
-    async def _abort(
-        self,
-        *,
-        ctx: SearchStepContext,
-        message: str,
-        query: str,
-        model_name: str,
-        error_type: str = "",
-    ) -> None:
-        ctx.deep.aborted = True
-        ctx.deep.abort_reason = message
-        ctx.deep.query_jobs = []
-        ctx.deep.snippet_context = {}
-        ctx.deep.query_hit_stats = {}
-        ctx.deep.context_scores = {}
-        ctx.prefetch.urls = []
-        ctx.prefetch.scores = {}
-        ctx.fetch.candidates = []
-        ctx.output.results = []
-        await self.emit_tracking_event(
-            event_name="search.expand.error",
-            request_id=ctx.request_id,
-            stage="search_expand",
-            status="error",
-            error_code="search_query_expansion_failed",
-            error_type=error_type,
-            attrs={
-                "query": query,
-                "model": model_name,
-                "message": message,
-            },
-        )
 
     async def _expand_with_llm(
         self,
@@ -366,6 +335,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         kept_token_sets: list[set[str]] = []
         jobs: list[SearchQueryJob] = []
         additional_count = 0
+        source_counts: dict[str, int] = {"manual": 0, "rule": 0, "llm": 0}
         for item in candidates:
             query = clean_whitespace(item.query)
             if not query:
@@ -374,6 +344,13 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             if key in exact_seen:
                 continue
             if item.source != "primary" and additional_count >= limit:
+                continue
+            if (
+                item.source == "manual"
+                and source_counts["manual"] >= _MANUAL_SOURCE_CAP
+            ):
+                continue
+            if item.source == "rule" and source_counts["rule"] >= _RULE_SOURCE_CAP:
                 continue
             token_set = set(tokenize_for_query(query))
             if self._is_near_duplicate(token_set, kept_token_sets):
@@ -389,6 +366,8 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             )
             if item.source != "primary":
                 additional_count += 1
+                if item.source in source_counts:
+                    source_counts[item.source] += 1
         return jobs
 
     def _is_near_duplicate(
