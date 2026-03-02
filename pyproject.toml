@@ -156,16 +156,24 @@ keep-runtime-typing = true
 exclude = ["**/.conda", "**/.venv", "**/__pycache__", "**/node_modules", "**/.*"]
 pythonVersion = "3.11"
 pythonPlatform = "All"
-#typeCheckingMode = "strict"
-python.linting.enabled = false
+typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportCallInDefaultInitializer = true
 reportImplicitOverride = true
 reportPropertyTypeMismatch = true
 reportInvalidTypeVarUse = false
-reportShadowedImports = true
 reportUninitializedInstanceVariable = false
 reportPrivateUsage = false
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+reportUnknownLambdaType = false
+reportMissingTypeStubs = false
+reportConstantRedefinition = false
+reportUnusedVariable = false
+reportUnnecessaryComparison = false
+reportUnnecessaryCast = false
 
 [tool.mypy]
 python_version = "3.11"

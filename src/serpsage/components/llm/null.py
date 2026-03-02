@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar, overload
+from typing import TYPE_CHECKING, NoReturn, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
@@ -20,6 +20,8 @@ TModel = TypeVar("TModel", bound=BaseModel)
 
 
 class NullLLMClient(LLMClientBase):
+    _NOT_CONFIGURED_MESSAGE = "LLM is not configured (missing api_key or disabled)."
+
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
 
@@ -63,7 +65,11 @@ class NullLLMClient(LLMClientBase):
         timeout_s: float | None = None,
     ) -> ChatResultBase:
         _ = model, messages, response_format, timeout_s
-        raise RuntimeError("LLM is not configured (missing api_key or disabled).")
+        self._raise_not_configured()
+
+    @classmethod
+    def _raise_not_configured(cls) -> NoReturn:
+        raise RuntimeError(cls._NOT_CONFIGURED_MESSAGE)
 
 
 __all__ = ["NullLLMClient"]

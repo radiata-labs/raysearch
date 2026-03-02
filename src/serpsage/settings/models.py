@@ -578,7 +578,7 @@ class LLMModelSettings(Model):
     max_retries: int = 2
     temperature: float = 0.0
     headers: dict[str, str] = Field(default_factory=dict)
-    schema_strict: bool = True
+    enable_structured: bool = True
 
 
 def _default_overview_models() -> list[LLMModelSettings]:

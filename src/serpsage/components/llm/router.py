@@ -71,22 +71,24 @@ class RoutedLLMClient(LLMClientBase):
         response_format: dict[str, object] | type[BaseModel] | None = None,
         timeout_s: float | None = None,
     ) -> ChatResultBase:
-        route = self._routes.get(str(model))
+        route_key = str(model)
+        route = self._routes.get(route_key)
         if route is None:
             raise ValueError(f"llm model route `{model}` is not configured")
         client, provider_model = route
+        provider_client = type(client).__name__
+        route_attrs = self._route_attrs(
+            route_model=route_key,
+            provider_model=provider_model,
+            provider_client=provider_client,
+        )
         started_ms = int(self.clock.now_ms())
         await self._emit_safe(
             event_name="llm.call",
             status="start",
             component="llm_router",
             stage="chat",
-            attrs={
-                "route_model": str(model),
-                "provider_model": str(provider_model),
-                "provider_client": type(client).__name__,
-                "message_count": len(messages),
-            },
+            attrs={**route_attrs, "message_count": len(messages)},
         )
         try:
             result = await client.chat(
@@ -102,11 +104,7 @@ class RoutedLLMClient(LLMClientBase):
                 component="llm_router",
                 stage="chat",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                attrs={
-                    "route_model": str(model),
-                    "provider_model": str(provider_model),
-                    "provider_client": type(client).__name__,
-                },
+                attrs=route_attrs,
             )
             await self._emit_safe(
                 event_name="meter.usage.llm_tokens",
@@ -114,18 +112,14 @@ class RoutedLLMClient(LLMClientBase):
                 component="llm_router",
                 stage="chat",
                 idempotency_key=(
-                    f"{model}:{provider_model}:{started_ms}:{usage.total_tokens}"
+                    f"{route_key}:{provider_model}:{started_ms}:{usage.total_tokens}"
                 ),
-                attrs={
-                    "route_model": str(model),
-                    "provider_model": str(provider_model),
-                    "provider_client": type(client).__name__,
-                },
+                attrs=route_attrs,
                 meter=MeterPayload(
                     meter_type="llm_tokens",
                     unit="token",
                     quantity=float(usage.total_tokens),
-                    provider=type(client).__name__,
+                    provider=provider_client,
                     model=str(provider_model),
                     prompt_tokens=int(usage.prompt_tokens),
                     completion_tokens=int(usage.completion_tokens),
@@ -141,13 +135,22 @@ class RoutedLLMClient(LLMClientBase):
                 stage="chat",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
                 error_type=type(exc).__name__,
-                attrs={
-                    "route_model": str(model),
-                    "provider_model": str(provider_model),
-                    "provider_client": type(client).__name__,
-                },
+                attrs=route_attrs,
             )
             raise
+
+    @staticmethod
+    def _route_attrs(
+        *,
+        route_model: str,
+        provider_model: str,
+        provider_client: str,
+    ) -> dict[str, object]:
+        return {
+            "route_model": str(route_model),
+            "provider_model": str(provider_model),
+            "provider_client": str(provider_client),
+        }
 
     async def _emit_safe(
         self,

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Protocol, TypeVar, overload, runtime_checkable
 from typing_extensions import override
 
 from google import genai
-from google.genai import errors, types
+from google.genai import types
 from pydantic import BaseModel
 
 from serpsage.components.llm.base import LLMClientBase
@@ -90,198 +90,151 @@ class GeminiClient(LLMClientBase):
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
 
-        response_schema: dict[str, object] | None = None
-        response_model: type[BaseModel] | None = None
-        if response_format is None:
-            response_schema = None
-        elif isinstance(response_format, dict):
-            response_schema = dict(response_format)
-        elif isinstance(response_format, type) and issubclass(
-            response_format, BaseModel
-        ):
-            response_model = response_format
-            response_schema = response_model.model_json_schema()
-        else:
-            raise TypeError(
-                "response_format must be dict[str, object] | type[BaseModel] | None"
-            )
-
-        system_instruction, contents = _to_gemini_messages(messages)
+        response_schema, response_model = self.resolve_response_format(response_format)
+        system_instruction, contents = self._to_gemini_messages(
+            messages, response_model, llm.enable_structured
+        )
         timeout_ms = max(1, int(float(timeout_s or llm.timeout_s) * 1000))
+        config = self._build_config(
+            system_instruction=system_instruction,
+            temperature=float(llm.temperature),
+            timeout_ms=timeout_ms,
+            schema=response_schema,
+            enable_structured=bool(llm.enable_structured),
+        )
+        response = await self.client.aio.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
 
-        try:
-            resp = await self.client.aio.models.generate_content(
-                model=model,
-                contents=contents,
-                config=_build_config(
-                    system_instruction=system_instruction,
-                    temperature=float(llm.temperature),
-                    timeout_ms=timeout_ms,
-                    schema=response_schema,
-                    schema_strict=bool(llm.schema_strict),
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
-            if (
-                response_schema is not None
-                and llm.schema_strict
-                and _looks_like_schema_error(exc)
-            ):
-                resp = await self.client.aio.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=_build_config(
-                        system_instruction=system_instruction,
-                        temperature=float(llm.temperature),
-                        timeout_ms=timeout_ms,
-                        schema=response_schema,
-                        schema_strict=False,
-                    ),
-                )
-            else:
-                raise
-
-        usage = _to_usage(getattr(resp, "usage_metadata", None))
-
-        text = getattr(resp, "text", "") or ""
-        if not isinstance(text, str):
-            raise TypeError("LLM response content is not a string")
+        text = str(getattr(response, "text", "") or "")
+        usage = self._to_usage(getattr(response, "usage_metadata", None))
         if response_schema is None:
             return ChatTextResult(text=text, usage=usage)
-        data = _extract_json_object(resp=resp, fallback_text=text)
+
+        data = self._extract_json_object(resp=response, fallback_text=text)
         if response_model is not None:
-            model_data = response_model.model_validate(data)
-            return ChatModelResult(text=text, data=model_data, usage=usage)
+            return ChatModelResult(
+                text=text,
+                data=response_model.model_validate(data),
+                usage=usage,
+            )
         return ChatDictResult(text=text, data=data, usage=usage)
 
-
-def _build_config(
-    *,
-    system_instruction: str | None,
-    temperature: float,
-    timeout_ms: int,
-    schema: dict[str, object] | None,
-    schema_strict: bool,
-) -> types.GenerateContentConfig:
-    http_options = types.HttpOptions(timeout=int(timeout_ms))
-    if schema is not None and schema_strict:
+    @staticmethod
+    def _build_config(
+        *,
+        system_instruction: str | None,
+        temperature: float,
+        timeout_ms: int,
+        schema: dict[str, object] | None,
+        enable_structured: bool,
+    ) -> types.GenerateContentConfig:
+        http_options = types.HttpOptions(timeout=int(timeout_ms))
+        if schema is not None and enable_structured:
+            return types.GenerateContentConfig(
+                temperature=float(temperature),
+                http_options=http_options,
+                system_instruction=system_instruction or None,
+                response_mime_type="application/json",
+                response_json_schema=schema,
+            )
+        if schema is not None:
+            return types.GenerateContentConfig(
+                temperature=float(temperature),
+                http_options=http_options,
+                system_instruction=system_instruction or None,
+                response_mime_type="application/json",
+            )
         return types.GenerateContentConfig(
             temperature=float(temperature),
             http_options=http_options,
             system_instruction=system_instruction or None,
-            response_mime_type="application/json",
-            response_json_schema=schema,
         )
-    if schema is not None:
-        return types.GenerateContentConfig(
-            temperature=float(temperature),
-            http_options=http_options,
-            system_instruction=system_instruction or None,
-            response_mime_type="application/json",
-        )
-    return types.GenerateContentConfig(
-        temperature=float(temperature),
-        http_options=http_options,
-        system_instruction=system_instruction or None,
-    )
 
-
-def _to_gemini_messages(
-    messages: list[dict[str, str]],
-) -> tuple[str | None, list[types.ContentUnion]]:
-    system_parts: list[str] = []
-    contents: list[types.ContentUnion] = []
-
-    for msg in messages:
-        role = str(msg.get("role") or "user").strip().lower()
-        text = str(msg.get("content") or "")
-        if role == "system":
-            if text:
-                system_parts.append(text)
-            continue
-        gem_role = "model" if role == "assistant" else "user"
-        contents.append(
-            types.Content(
-                role=gem_role,
-                parts=[types.Part.from_text(text=text)],
+    def _to_gemini_messages(
+        self,
+        messages: list[dict[str, str]],
+        response_model: type[BaseModel] | None = None,
+        enable_structured: bool = True,
+    ) -> tuple[str | None, list[types.ContentUnion]]:
+        system_parts: list[str] = []
+        contents: list[types.ContentUnion] = []
+        if not enable_structured and response_model is not None:
+            structure_prompt = self.get_format_instructions(response_model)
+            if structure_prompt:
+                system_parts.append(structure_prompt)
+        for msg in messages:
+            role = str(msg.get("role") or "user").strip().lower()
+            text = str(msg.get("content") or "")
+            if role == "system":
+                if text:
+                    system_parts.append(text)
+                continue
+            gem_role = "model" if role == "assistant" else "user"
+            contents.append(
+                types.Content(
+                    role=gem_role,
+                    parts=[types.Part.from_text(text=text)],
+                )
             )
-        )
 
-    if not contents:
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text="")],
+        if not contents:
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text="")],
+                )
             )
-        )
 
-    system_instruction = None
-    if system_parts:
-        system_instruction = "\n\n".join(system_parts)
-    return system_instruction, contents
+        if not system_parts:
+            return None, contents
+        return "\n\n".join(system_parts), contents
 
+    @staticmethod
+    def _extract_json_object(
+        *, resp: types.GenerateContentResponse, fallback_text: str
+    ) -> dict[str, object]:
+        parsed = getattr(resp, "parsed", None)
+        if parsed is not None:
+            data: object = parsed
+            if isinstance(data, _ModelDumpable):
+                data = data.model_dump()
+            if isinstance(data, str):
+                data = json.loads(data)
+            if isinstance(data, dict):
+                return {str(k): v for k, v in data.items()}
 
-def _extract_json_object(
-    *, resp: types.GenerateContentResponse, fallback_text: str
-) -> dict[str, object]:
-    parsed = getattr(resp, "parsed", None)
-    if parsed is not None:
-        data: object = parsed
-        if isinstance(data, _ModelDumpable):
-            data = data.model_dump()
-        if isinstance(data, str):
-            data = json.loads(data)
-        if isinstance(data, dict):
-            return {str(k): v for k, v in data.items()}
-
-    payload: object
-    try:
-        payload = json.loads(fallback_text)
-    except json.JSONDecodeError:
-        start = fallback_text.find("{")
-        end = fallback_text.rfind("}")
-        if 0 <= start < end:
-            payload = json.loads(fallback_text[start : end + 1])
-        else:
-            raise
-    if not isinstance(payload, dict):
-        raise TypeError("structured LLM response must be a JSON object")
-    return {str(k): v for k, v in payload.items()}
-
-
-def _to_usage(usage_meta: object) -> LLMUsage:
-    if usage_meta is None:
-        return LLMUsage()
-    prompt_tokens = int(getattr(usage_meta, "prompt_token_count", 0) or 0)
-    completion_tokens = int(getattr(usage_meta, "candidates_token_count", 0) or 0)
-    total_tokens = int(
-        getattr(usage_meta, "total_token_count", prompt_tokens + completion_tokens) or 0
-    )
-    return LLMUsage(
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-    )
-
-
-def _looks_like_schema_error(exc: Exception) -> bool:
-    code = getattr(exc, "code", None)
-    if code is not None:
+        payload: object
         try:
-            sc = int(code)
-        except Exception:  # noqa: BLE001
-            sc = None
-        if sc is not None and not (400 <= sc < 500):
-            return False
+            payload = json.loads(fallback_text)
+        except json.JSONDecodeError:
+            start = fallback_text.find("{")
+            end = fallback_text.rfind("}")
+            if 0 <= start < end:
+                payload = json.loads(fallback_text[start : end + 1])
+            else:
+                raise
+        if not isinstance(payload, dict):
+            raise TypeError("structured LLM response must be a JSON object")
+        return {str(k): v for k, v in payload.items()}
 
-    text = str(exc).lower()
-    if "schema" in text:
-        return True
-    if "response_json_schema" in text or "response_schema" in text:
-        return True
-    if isinstance(exc, (errors.ClientError, errors.APIError)):
-        return "invalid" in text and "response" in text
-    return False
+    @staticmethod
+    def _to_usage(usage_meta: object) -> LLMUsage:
+        if usage_meta is None:
+            return LLMUsage()
+        prompt_tokens = int(getattr(usage_meta, "prompt_token_count", 0) or 0)
+        completion_tokens = int(getattr(usage_meta, "candidates_token_count", 0) or 0)
+        total_tokens = int(
+            getattr(usage_meta, "total_token_count", prompt_tokens + completion_tokens)
+            or 0
+        )
+        return LLMUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
 
 
 __all__ = ["GeminiClient"]

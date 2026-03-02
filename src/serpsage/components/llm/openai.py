@@ -4,7 +4,6 @@ import json
 from typing import TYPE_CHECKING, TypeVar, overload
 from typing_extensions import override
 
-import openai
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -22,6 +21,7 @@ if TYPE_CHECKING:
     from openai.types.chat.chat_completion_message_param import (
         ChatCompletionMessageParam,
     )
+    from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
     from openai.types.completion_usage import CompletionUsage
     from openai.types.shared_params.response_format_json_object import (
         ResponseFormatJSONObject,
@@ -38,6 +38,8 @@ TModel = TypeVar("TModel", bound=BaseModel)
 
 
 class OpenAIClient(LLMClientBase):
+    _SCHEMA_NAME = "SerpSageOverview"
+
     def __init__(
         self, *, rt: Runtime, http: HttpClientBase, model_cfg: LLMModelSettings
     ) -> None:
@@ -97,67 +99,67 @@ class OpenAIClient(LLMClientBase):
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
 
-        response_schema: dict[str, object] | None = None
-        response_model: type[BaseModel] | None = None
-        if response_format is None:
-            response_schema = None
-        elif isinstance(response_format, dict):
-            response_schema = dict(response_format)
-        elif isinstance(response_format, type) and issubclass(
-            response_format, BaseModel
-        ):
-            response_model = response_format
-            response_schema = response_model.model_json_schema()
-        else:
-            raise TypeError(
-                "response_format must be dict[str, object] | type[BaseModel] | None"
+        response_schema, response_model = self.resolve_response_format(response_format)
+        if response_model is not None and llm.enable_structured:
+            pydantic_completion = await self._create_pydantic_completion(
+                model=model,
+                messages=self._to_openai_messages(messages),
+                temperature=float(llm.temperature),
+                timeout=float(timeout_s or llm.timeout_s),
+                response_format=response_model,
             )
-
-        request_messages = _to_openai_messages(messages)
-        request_timeout = float(timeout_s or llm.timeout_s)
-        request_temp = float(llm.temperature)
-        response_format_payload = _build_response_format_payload(
-            schema=response_schema,
-            strict=bool(llm.schema_strict),
+            text = self._extract_text(pydantic_completion)
+            parsed = self._extract_pydantic_text(pydantic_completion)
+            usage = self._to_usage(getattr(pydantic_completion, "usage", None))
+            if parsed is None:
+                parsed = response_model.model_validate_json(text)
+            return ChatModelResult(
+                text=text,
+                data=parsed,
+                usage=usage,
+            )
+        completion = await self._create_completion(
+            model=model,
+            messages=self._to_openai_messages(
+                messages, response_model, llm.enable_structured
+            ),
+            temperature=float(llm.temperature),
+            timeout=float(timeout_s or llm.timeout_s),
+            response_format=self._build_response_format_payload(
+                schema=response_schema,
+                enable_structured=bool(llm.enable_structured),
+            ),
         )
 
-        try:
-            resp = await self._create_completion(
-                model=model,
-                messages=request_messages,
-                temperature=request_temp,
-                timeout=request_timeout,
-                response_format=response_format_payload,
-            )
-        except Exception as exc:  # noqa: BLE001
-            if (
-                response_schema is not None
-                and llm.schema_strict
-                and _looks_like_schema_error(exc)
-            ):
-                resp = await self._create_completion(
-                    model=model,
-                    messages=request_messages,
-                    temperature=request_temp,
-                    timeout=request_timeout,
-                    response_format={"type": "json_object"},
-                )
-            else:
-                raise
-
-        usage_out = _to_usage(getattr(resp, "usage", None))
-        content = _extract_text(resp)
-        if not isinstance(content, str):
-            raise TypeError("LLM response content is not a string")
-
+        text = self._extract_text(completion)
+        usage = self._to_usage(getattr(completion, "usage", None))
         if response_schema is None:
-            return ChatTextResult(text=content, usage=usage_out)
-
-        data = _try_parse_json_object(content)
+            return ChatTextResult(text=text, usage=usage)
         if response_model is not None:
-            model_data = response_model.model_validate(data)
-            return ChatModelResult(text=content, data=model_data, usage=usage_out)
-        return ChatDictResult(text=content, data=data, usage=usage_out)
+            return ChatModelResult(
+                text=text,
+                data=response_model.model_validate_json(text),
+                usage=usage,
+            )
+        data = self._parse_json_object(text)
+        return ChatDictResult(text=text, data=data, usage=usage)
+
+    async def _create_pydantic_completion(
+        self,
+        *,
+        model: str,
+        messages: list[ChatCompletionMessageParam],
+        temperature: float,
+        timeout: float,
+        response_format: type[TModel],
+    ) -> ParsedChatCompletion[TModel]:
+        return await self.client.chat.completions.parse(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            timeout=timeout,
+            response_format=response_format,
+        )
 
     async def _create_completion(
         self,
@@ -183,105 +185,95 @@ class OpenAIClient(LLMClientBase):
             response_format=response_format,
         )
 
+    @classmethod
+    def _build_response_format_payload(
+        cls,
+        *,
+        schema: dict[str, object] | None,
+        enable_structured: bool,
+    ) -> ResponseFormatJSONSchema | ResponseFormatJSONObject | None:
+        if schema is None:
+            return None
+        if enable_structured:
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": cls._SCHEMA_NAME,
+                    "schema": schema,
+                    "strict": True,
+                },
+            }
+        return {"type": "json_object"}
 
-def _to_openai_messages(
-    messages: list[dict[str, str]],
-) -> list[ChatCompletionMessageParam]:
-    out: list[ChatCompletionMessageParam] = []
-    for msg in messages:
-        role = str(msg.get("role") or "user").strip().lower()
-        content = str(msg.get("content") or "")
-        if role == "system":
-            out.append({"role": "system", "content": content})
-            continue
-        if role == "assistant":
-            out.append({"role": "assistant", "content": content})
-            continue
-        out.append({"role": "user", "content": content})
-    if not out:
-        out.append({"role": "user", "content": ""})
-    return out
+    def _to_openai_messages(
+        self,
+        messages: list[dict[str, str]],
+        response_model: type[BaseModel] | None = None,
+        enable_structured: bool = True,
+    ) -> list[ChatCompletionMessageParam]:
+        out: list[ChatCompletionMessageParam] = []
+        if not enable_structured and response_model is not None:
+            structure_prompt = self.get_format_instructions(response_model)
+            if structure_prompt:
+                out.append({"role": "system", "content": structure_prompt})
+        for msg in messages:
+            role = str(msg.get("role") or "user").strip().lower()
+            content = str(msg.get("content") or "")
+            if role == "system":
+                out.append({"role": "system", "content": content})
+                continue
+            if role == "assistant":
+                out.append({"role": "assistant", "content": content})
+                continue
+            out.append({"role": "user", "content": content})
+        if not out:
+            out.append({"role": "user", "content": ""})
+        return out
 
+    @staticmethod
+    def _extract_pydantic_text(resp: ParsedChatCompletion[TModel]) -> TModel | None:
+        choices = list(getattr(resp, "choices", []) or [])
+        if not choices:
+            return None
+        head = choices[0]
+        message = getattr(head, "message", None)
+        return getattr(message, "parsed", None)
 
-def _build_response_format_payload(
-    *,
-    schema: dict[str, object] | None,
-    strict: bool,
-) -> ResponseFormatJSONSchema | ResponseFormatJSONObject | None:
-    if schema is None:
-        return None
-    if strict:
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "SerpSageOverview",
-                "schema": schema,
-                "strict": True,
-            },
-        }
-    return {"type": "json_object"}
+    @staticmethod
+    def _extract_text(resp: ChatCompletion | ParsedChatCompletion[TModel]) -> str:
+        choices = list(getattr(resp, "choices", []) or [])
+        if not choices:
+            return ""
+        head = choices[0]
+        message = getattr(head, "message", None)
+        content = getattr(message, "content", "") if message is not None else ""
+        return str(content or "")
 
+    @staticmethod
+    def _to_usage(usage: CompletionUsage | None) -> LLMUsage:
+        if usage is None:
+            return LLMUsage()
+        return LLMUsage(
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
+        )
 
-def _extract_text(resp: ChatCompletion) -> str:
-    choices = list(getattr(resp, "choices", []) or [])
-    if not choices:
-        return ""
-    head = choices[0]
-    message = getattr(head, "message", None)
-    content = getattr(message, "content", "") if message is not None else ""
-    return str(content or "")
-
-
-def _to_usage(usage: CompletionUsage | None) -> LLMUsage:
-    if usage is None:
-        return LLMUsage()
-    return LLMUsage(
-        prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-        completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
-        total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
-    )
-
-
-def _try_parse_json_object(content: str) -> dict[str, object]:
-    payload: object
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if 0 <= start < end:
-            payload = json.loads(content[start : end + 1])
-        else:
-            raise
-    if not isinstance(payload, dict):
-        raise TypeError("structured LLM response must be a JSON object")
-    return {str(k): v for k, v in payload.items()}
-
-
-def _looks_like_schema_error(exc: Exception) -> bool:
-    msg = str(exc) or ""
-    if "Invalid schema for response_format" in msg:
-        return True
-    if "additionalProperties" in msg and "response_format" in msg:
-        return True
-    if isinstance(exc, openai.BadRequestError):
-        param = getattr(exc, "param", None)
-        if param == "response_format":
-            return True
-        body = getattr(exc, "body", None)
-        if _is_response_format_error_body(body):
-            return True
-    return False
-
-
-def _is_response_format_error_body(body: object) -> bool:
-    if not isinstance(body, dict):
-        return False
-    raw_error = body.get("error")
-    if not isinstance(raw_error, dict):
-        return False
-    raw_param = raw_error.get("param")
-    return isinstance(raw_param, str) and raw_param == "response_format"
+    @staticmethod
+    def _parse_json_object(content: str) -> dict[str, object]:
+        payload: object
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if 0 <= start < end:
+                payload = json.loads(content[start : end + 1])
+            else:
+                raise
+        if not isinstance(payload, dict):
+            raise TypeError("structured LLM response must be a JSON object")
+        return {str(k): v for k, v in payload.items()}
 
 
 __all__ = ["OpenAIClient"]
