@@ -11,7 +11,7 @@ from serpsage.models.research import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt_markdown import (
-    render_abstract_review_markdown,
+    render_overview_review_markdown,
     render_theme_plan_markdown,
 )
 from serpsage.steps.research.search import (
@@ -162,8 +162,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
         round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
-        abstract_review_markdown = render_abstract_review_markdown(
-            ctx.work.abstract_review
+        overview_review_markdown = render_overview_review_markdown(
+            ctx.work.overview_review
         )
         return [
             {
@@ -179,7 +179,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "1) Use only SOURCE_CONTENT_PACKET.\n"
                     "2) Keep every judgment aligned to CORE_QUESTION; do not branch into a new standalone topic.\n"
                     "3) Mark conflict status conservatively as resolved, unresolved, or insufficient.\n"
-                    "4) Prefer direct content evidence over abstract-level assumptions.\n"
+                    "4) Prefer direct content evidence over overview-level assumptions.\n"
                     "5) If uncertainty remains, list concrete remaining gaps.\n"
                     "6) next_queries must remain strictly focused on CORE_QUESTION and non-redundant.\n"
                     "7) For recency-sensitive claims, explicitly account for publication/update-time relevance.\n"
@@ -190,7 +190,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "12) If no valid focused next query exists, return next_queries as an empty array.\n"
                     "13) Return JSON only and match schema exactly.\n"
                     "Allowed Evidence:\n"
-                    "- Theme, theme plan, abstract review, selected content packet.\n"
+                    "- Theme, theme plan, overview review, selected content packet.\n"
                     "Failure Policy:\n"
                     "- If evidence is insufficient or stale for recency intent, avoid overclaiming and lower confidence.\n"
                     "Quality Checklist:\n"
@@ -215,7 +215,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     f"- required_output_language={out_lang} ({out_lang_name})\n"
                     "- Keep all free-text fields in the required output language.\n\n"
                     f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
-                    f"ABSTRACT_REVIEW_MARKDOWN:\n{abstract_review_markdown}\n\n"
+                    f"OVERVIEW_REVIEW_MARKDOWN:\n{overview_review_markdown}\n\n"
                     "REQUIRED_ENTITIES:\n"
                     f"{ctx.plan.theme_plan.required_entities}\n\n"
                     f"SOURCE_CONTENT_PACKET:\n{packet}\n\n"

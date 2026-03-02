@@ -29,8 +29,8 @@ from serpsage.models.extract import (
 )
 from serpsage.models.fetch import FetchResult
 from serpsage.models.research import (
-    AbstractOutputPayload,
     ContentOutputPayload,
+    OverviewOutputPayload,
     ResearchThemePlan,
 )
 from serpsage.settings.models import AppSettings
@@ -235,7 +235,7 @@ class ResearchSource(MutableModel):
     url: str
     canonical_url: str = ""
     title: str = ""
-    abstracts: list[str] = Field(default_factory=list)
+    overview: str | object | None = None
     content: str = ""
     round_index: int = 0
     is_subpage: bool = False
@@ -319,8 +319,8 @@ class ResearchCorpusState(MutableModel):
 
 class ResearchRoundWorkState(MutableModel):
     search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
-    abstract_review: AbstractOutputPayload = Field(
-        default_factory=AbstractOutputPayload
+    overview_review: OverviewOutputPayload = Field(
+        default_factory=OverviewOutputPayload
     )
     content_review: ContentOutputPayload = Field(default_factory=ContentOutputPayload)
     need_content_source_ids: list[int] = Field(default_factory=list)
@@ -335,7 +335,7 @@ class ResearchRoundState(MutableModel):
     new_source_ids: list[int] = Field(default_factory=list)
     context_source_ids: list[int] = Field(default_factory=list)
     corpus_score_gain: float = 0.0
-    abstract_summary: str = ""
+    overview_summary: str = ""
     content_summary: str = ""
     confidence: float = 0.0
     coverage_ratio: float = 0.0

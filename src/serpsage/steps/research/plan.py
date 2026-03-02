@@ -10,8 +10,8 @@ from serpsage.models.pipeline import (
     ResearchStepContext,
 )
 from serpsage.models.research import (
-    AbstractOutputPayload,
     ContentOutputPayload,
+    OverviewOutputPayload,
     PlanOutputPayload,
     PlanSearchJobPayload,
 )
@@ -56,7 +56,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx.runtime.round_index = round_index
         ctx.current_round = ResearchRoundState(round_index=round_index)
         ctx.work.search_jobs = []
-        ctx.work.abstract_review = AbstractOutputPayload()
+        ctx.work.overview_review = OverviewOutputPayload()
         ctx.work.content_review = ContentOutputPayload()
         ctx.work.need_content_source_ids = []
         ctx.work.next_queries = []

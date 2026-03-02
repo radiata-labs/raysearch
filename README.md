@@ -32,7 +32,7 @@ Top-level settings:
 - `llm`
 - `cache`
 
-Reference file: `src/search_config_example.yaml`.
+Reference file: `demo/search_config_example.yaml`.
 
 Env overrides:
 

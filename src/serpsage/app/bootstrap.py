@@ -33,8 +33,8 @@ from serpsage.steps.fetch import (
     FetchFinalizeStep,
     FetchLoadStep,
     FetchOverviewStep,
+    FetchParallelEnrichStep,
     FetchPrepareStep,
-    FetchSubpageStep,
 )
 from serpsage.steps.research import (
     ResearchAbstractStep,
@@ -124,8 +124,13 @@ def build_engine(
         FetchExtractStep(rt=rt, extractor=extractor),
         FetchAbstractBuildStep(rt=rt),
         FetchAbstractRankStep(rt=rt, ranker=ranker),
-        FetchOverviewStep(rt=rt, llm=llm, cache=cache),
-        FetchSubpageStep(rt=rt, fetch_runner=child_fetch_runner, ranker=ranker),
+        FetchParallelEnrichStep(
+            rt=rt,
+            llm=llm,
+            cache=cache,
+            fetch_runner=child_fetch_runner,
+            ranker=ranker,
+        ),
         FetchFinalizeStep(rt=rt),
     ]
     fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps, kind="fetch")

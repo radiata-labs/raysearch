@@ -42,7 +42,7 @@ class _SubreportSourceEvidenceItem:
     title: str
     round_index: int
     is_subpage: bool
-    abstracts: list[str] = field(default_factory=list)
+    overview: str = ""
     content_excerpt: str = ""
 
 
@@ -62,7 +62,7 @@ class _SubreportContextPacket:
 
 class ResearchSubreportStep(StepBase[ResearchStepContext]):
     _MAX_SOURCES_FOR_CONTEXT = 12
-    _MAX_ABSTRACTS_PER_SOURCE = 3
+    _MAX_OVERVIEW_CHARS = 3200
     _MAX_CONTENT_EXCERPT_CHARS = 2200
     _MAX_TOTAL_CONTENT_CHARS = 22000
 
@@ -316,22 +316,16 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                         f"- Is subpage: {is_subpage}",
                     ]
                 )
-                if source.abstracts:
-                    lines.append("- Abstracts:")
-                    for abstract_item in source.abstracts:
-                        token = self._normalize_block_text(str(abstract_item))
-                        if not token:
-                            continue
-                        if "\n" not in token:
-                            lines.append(f"  - {token}")
-                            continue
-                        lines.extend(
-                            ["  -", "    ```text"]
-                            + [f"    {line}" for line in token.split("\n")]
-                            + ["    ```"]
-                        )
+                overview = self._normalize_block_text(source.overview)
+                lines.append("- Overview:")
+                if overview:
+                    lines.extend(
+                        ["  ```text"]
+                        + [f"  {line}" for line in overview.split("\n")]
+                        + ["  ```"]
+                    )
                 else:
-                    lines.append("- Abstracts: (none)")
+                    lines.append("  - (none)")
                 excerpt = self._normalize_block_text(source.content_excerpt)
                 if excerpt:
                     lines.extend(
@@ -427,10 +421,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                     title=clean_whitespace(source.title or ""),
                     round_index=int(source.round_index),
                     is_subpage=bool(source.is_subpage),
-                    abstracts=[
-                        token
-                        for item in source.abstracts[: self._MAX_ABSTRACTS_PER_SOURCE]
-                        if (token := self._normalize_block_text(item))
+                    overview=self._normalize_block_text(str(source.overview or ""))[
+                        : self._MAX_OVERVIEW_CHARS
                     ],
                     content_excerpt=content_excerpt,
                 )

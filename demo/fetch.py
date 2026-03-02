@@ -25,13 +25,13 @@ async def main(
     query: str | None = None,
     overview: bool = False,
 ) -> dict[str, Any]:
-    settings = load_settings("src/search_config_example.yaml")
+    settings = load_settings("demo/search_config_example.yaml")
     req = FetchRequest(
         urls=[url],
         crawl_timeout=30,
         crawl_mode="fallback",
         content=FetchContentRequest(detail="full"),
-        abstracts=FetchAbstractsRequest(query=query, max_chars=300),
+        abstracts=FetchAbstractsRequest(query=query, max_chars=900),
         overview=FetchOverviewRequest(query=query) if overview else False,
         subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
         others=FetchOthersRequest(max_links=5, max_image_links=5),

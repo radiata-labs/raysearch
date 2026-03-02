@@ -65,14 +65,14 @@ class PlanOutputPayload(MutableModel):
     search_jobs: list[PlanSearchJobPayload] = Field(default_factory=list, max_length=8)
 
 
-class AbstractConflictPayload(MutableModel):
+class OverviewConflictPayload(MutableModel):
     topic: str
     status: str
 
 
-class AbstractOutputPayload(MutableModel):
+class OverviewOutputPayload(MutableModel):
     findings: list[str] = Field(default_factory=list, max_length=20)
-    conflict_arbitration: list[AbstractConflictPayload] = Field(
+    conflict_arbitration: list[OverviewConflictPayload] = Field(
         default_factory=list,
         max_length=16,
     )
@@ -130,8 +130,8 @@ class RenderArchitectOutput(MutableModel):
 
 
 __all__ = [
-    "AbstractConflictPayload",
-    "AbstractOutputPayload",
+    "OverviewConflictPayload",
+    "OverviewOutputPayload",
     "ContentConflictPayload",
     "ContentOutputPayload",
     "PlanOutputPayload",

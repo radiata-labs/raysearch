@@ -544,7 +544,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         out: list[str] = []
         seen: set[str] = set()
         for round_state in track_ctx.rounds[-8:]:
-            for token in str(round_state.abstract_summary or "").split("|"):
+            for token in str(round_state.overview_summary or "").split("|"):
                 item = clean_whitespace(token)
                 if not item:
                     continue

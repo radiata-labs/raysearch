@@ -1,4 +1,5 @@
 from serpsage.steps.fetch.abstracts import FetchAbstractBuildStep
+from serpsage.steps.fetch.enrich import FetchParallelEnrichStep
 from serpsage.steps.fetch.extract import FetchExtractStep
 from serpsage.steps.fetch.finalize import FetchFinalizeStep
 from serpsage.steps.fetch.load import FetchLoadStep
@@ -13,6 +14,7 @@ __all__ = [
     "FetchExtractStep",
     "FetchFinalizeStep",
     "FetchLoadStep",
+    "FetchParallelEnrichStep",
     "FetchOverviewStep",
     "FetchPrepareStep",
     "FetchSubpageStep",

@@ -16,7 +16,7 @@ async def main(
     search_mode: str = "research",
     json_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    settings = load_settings("src/search_config_example.yaml")
+    settings = load_settings("demo/search_config_example.yaml")
     req = ResearchRequest(
         search_mode=search_mode,  # type: ignore[arg-type]
         themes=themes,

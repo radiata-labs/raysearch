@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.utils import clean_whitespace
 
@@ -10,6 +12,7 @@ def resolve_research_model(
     model_settings = ctx.settings.research.models
     stage_to_model = {
         "plan": model_settings.plan,
+        "overview": model_settings.abstract_analyze,
         "abstract": model_settings.abstract_analyze,
         "content": model_settings.content_analyze,
         "synthesize": model_settings.synthesize,
@@ -56,32 +59,15 @@ def merge_strings(*groups: list[str], limit: int) -> list[str]:
     return out
 
 
-def build_abstract_packet(
-    *, sources: list[ResearchSource], max_abstracts_per_source: int = 5
+def build_overview_packet(
+    *, sources: list[ResearchSource], max_overview_chars: int = 5000
 ) -> str:
     blocks: list[str] = []
     for source in sorted(sources, key=lambda item: item.source_id):
-        abstracts = [
-            text
-            for x in source.abstracts[:max_abstracts_per_source]
-            if (text := _normalize_block_text(str(x)))
-        ]
-        abstract_lines: list[str] = []
-        if abstracts:
-            for index, item in enumerate(abstracts, start=1):
-                if "\n" in item:
-                    abstract_lines.extend(
-                        [
-                            f"  - Abstract {index}:",
-                            "    ```text",
-                            *[f"    {line}" for line in item.split("\n")],
-                            "    ```",
-                        ]
-                    )
-                else:
-                    abstract_lines.append(f"  - {item}")
-        else:
-            abstract_lines.append("  - (none)")
+        overview_text = _normalize_overview_text(source.overview)
+        if len(overview_text) > max(1, int(max_overview_chars)):
+            overview_text = overview_text[: max(1, int(max_overview_chars))]
+        overview_lines = (overview_text or "(none)").split("\n")
         blocks.append(
             "\n".join(
                 [
@@ -89,8 +75,10 @@ def build_abstract_packet(
                     f"- URL: {source.url}",
                     f"- Title: {clean_whitespace(source.title)}",
                     f"- Is subpage: {str(bool(source.is_subpage)).lower()}",
-                    "- Abstracts:",
-                    "\n".join(abstract_lines),
+                    "- Overview:",
+                    "  ```text",
+                    *[f"  {line}" for line in overview_lines],
+                    "  ```",
                 ]
             )
         )
@@ -99,6 +87,19 @@ def build_abstract_packet(
 
 def _normalize_block_text(text: str) -> str:
     return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _normalize_overview_text(raw: object) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return _normalize_block_text(raw)
+    try:
+        return _normalize_block_text(
+            json.dumps(raw, ensure_ascii=False, sort_keys=True, indent=2)
+        )
+    except Exception:  # noqa: S112
+        return _normalize_block_text(str(raw))
 
 
 def normalize_entity_coverage(

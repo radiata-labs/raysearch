@@ -7,7 +7,7 @@ from serpsage.models.pipeline import (
     ResearchRoundState,
 )
 from serpsage.models.research import (
-    AbstractOutputPayload,
+    OverviewOutputPayload,
     RenderArchitectOutput,
     RenderArchitectSectionPlan,
     ResearchThemePlan,
@@ -141,13 +141,13 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
         lines.extend(
             _render_markdown_bullets(round_state.queries, indent="  ") or ["  - (none)"]
         )
-        abstract_summary = normalize_block_text(str(round_state.abstract_summary or ""))
+        overview_summary = normalize_block_text(str(round_state.overview_summary or ""))
         content_summary = normalize_block_text(str(round_state.content_summary or ""))
-        lines.append("- Abstract summary:")
-        if abstract_summary:
+        lines.append("- Overview summary:")
+        if overview_summary:
             lines.extend(
                 ["  ```text"]
-                + [f"  {line}" for line in abstract_summary.split("\n")]
+                + [f"  {line}" for line in overview_summary.split("\n")]
                 + ["  ```"]
             )
         else:
@@ -169,9 +169,9 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
     return "\n".join(lines).strip()
 
 
-def render_abstract_review_markdown(review: AbstractOutputPayload) -> str:
+def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
     lines: list[str] = [
-        "### Abstract Review",
+        "### Overview Review",
         f"- Confidence: {float(review.confidence):.3f}",
         f"- Entity coverage complete: {bool(review.entity_coverage_complete)}",
         f"- Next query strategy: {_normalize_scalar_text(review.next_query_strategy) or 'n/a'}",
@@ -325,7 +325,7 @@ def render_section_plan_markdown(section: RenderArchitectSectionPlan) -> str:
 
 __all__ = [
     "normalize_block_text",
-    "render_abstract_review_markdown",
+    "render_overview_review_markdown",
     "render_architect_plan_markdown",
     "render_question_cards_markdown",
     "render_queries_markdown",

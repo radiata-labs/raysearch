@@ -24,7 +24,7 @@ async def main(
     mode: Literal["fast", "auto", "deep"] = "deep",
     max_results: int = 5,
 ) -> dict[str, Any]:
-    settings = load_settings("src/search_config_example.yaml")
+    settings = load_settings("demo/search_config_example.yaml")
     req = SearchRequest(
         query=query,
         mode=mode,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -9,7 +10,6 @@ from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from serpsage.app.request import (
-    FetchAbstractsRequest,
     FetchContentRequest,
     FetchRequestBase,
     FetchSubpagesRequest,
@@ -114,11 +114,9 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                         include_markdown_links=False,
                         include_html_tags=False,
                     ),
-                    abstracts=FetchAbstractsRequest(
-                        query=ctx.request.themes, max_chars=2200
-                    ),
+                    abstracts=False,
                     subpages=subpages_request,
-                    overview=False,
+                    overview=True,
                     others=None,
                 ),
             )
@@ -211,7 +209,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             url=str(result.url),
             title=str(result.title),
-            abstracts=list(result.abstracts or []),
+            overview=result.overview,
             content=str(result.content or ""),
             round_index=int(round_index),
             is_subpage=False,
@@ -243,7 +241,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             url=str(sub.url),
             title=str(sub.title),
-            abstracts=list(sub.abstracts or []),
+            overview=sub.overview,
             content=str(sub.content or ""),
             round_index=int(round_index),
             is_subpage=True,
@@ -286,18 +284,18 @@ def append_source_version(
     ctx: ResearchStepContext,
     url: str,
     title: str,
-    abstracts: list[str],
+    overview: object | None,
     content: str,
     round_index: int,
     is_subpage: bool,
 ) -> CorpusUpsertResult:
     canonical_url = canonicalize_url(url) or clean_whitespace(url)
     normalized_title = clean_whitespace(title)
-    normalized_abstracts = _normalize_strings(abstracts, limit=32)
+    normalized_overview = _normalize_overview(overview)
     normalized_content = _normalize_text(content)
     fingerprint = build_content_fingerprint(
         content=normalized_content,
-        abstracts=normalized_abstracts,
+        overview=normalized_overview,
     )
     synchronize_corpus_indexes(ctx=ctx)
     source_idx_by_id = _build_source_idx_by_id(ctx.corpus.sources)
@@ -311,15 +309,10 @@ def append_source_version(
             continue
         if clean_whitespace(source.content_fingerprint) != fingerprint:
             continue
-        merged_abstracts = _merge_strings(
-            list(source.abstracts),
-            normalized_abstracts,
-            limit=32,
-        )
         updated = source.model_copy(
             update={
                 "title": clean_whitespace(source.title) or normalized_title,
-                "abstracts": merged_abstracts,
+                "overview": source.overview or normalized_overview,
                 "content": source.content or normalized_content,
                 "seen_count": max(1, int(source.seen_count)) + 1,
                 "canonical_url": canonical_url,
@@ -340,7 +333,7 @@ def append_source_version(
             url=clean_whitespace(url),
             canonical_url=canonical_url,
             title=normalized_title,
-            abstracts=normalized_abstracts,
+            overview=normalized_overview,
             content=normalized_content,
             round_index=int(round_index),
             is_subpage=bool(is_subpage),
@@ -597,10 +590,12 @@ def synchronize_corpus_indexes(*, ctx: ResearchStepContext) -> None:
     ctx.corpus.source_url_to_ids = url_to_ids
 
 
-def build_content_fingerprint(*, content: str, abstracts: list[str]) -> str:
+def build_content_fingerprint(*, content: str, overview: object | None) -> str:
     normalized_content = _normalize_text(content)
     lines = [normalized_content[:5000]]
-    lines.extend(_normalize_strings(abstracts, limit=8))
+    overview_text = _normalize_overview_text(overview)
+    if overview_text:
+        lines.append(overview_text[:5000])
     payload = "\n".join(lines).strip() or "__empty__"
     return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
 
@@ -688,7 +683,7 @@ def _compute_relevance_score(
     parts = [
         clean_whitespace(source.title),
         clean_whitespace(source.url),
-        " ".join(_normalize_strings(source.abstracts, limit=8)),
+        _normalize_overview_text(source.overview)[:1800],
         _normalize_text(source.content)[:1800],
     ]
     haystack = " ".join(parts).casefold()
@@ -701,9 +696,9 @@ def _compute_relevance_score(
 def _compute_depth_score(source: ResearchSource) -> float:
     content_len = len(_normalize_text(source.content))
     content_score = min(1.0, float(content_len) / 2400.0)
-    abstract_count = len(_normalize_strings(source.abstracts, limit=8))
-    abstract_score = min(1.0, float(abstract_count) / 5.0)
-    return min(1.0, 0.7 * content_score + 0.3 * abstract_score)
+    overview_len = len(_normalize_overview_text(source.overview))
+    overview_score = min(1.0, float(overview_len) / 1200.0)
+    return min(1.0, 0.7 * content_score + 0.3 * overview_score)
 
 
 def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
@@ -728,41 +723,24 @@ def _normalize_text(raw: object) -> str:
     return str(raw or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
-def _normalize_strings(raw: object, *, limit: int) -> list[str]:
-    if not isinstance(raw, list):
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        token = clean_whitespace(str(item or ""))
-        if not token:
-            continue
-        key = token.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(token)
-        if len(out) >= max(1, int(limit)):
-            break
-    return out
+def _normalize_overview(raw: object | None) -> str | object | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        token = _normalize_text(raw)
+        return token or None
+    return raw
 
 
-def _merge_strings(*groups: list[str], limit: int) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for group in groups:
-        for item in group:
-            token = clean_whitespace(str(item or ""))
-            if not token:
-                continue
-            key = token.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(token)
-            if len(out) >= max(1, int(limit)):
-                return out
-    return out
+def _normalize_overview_text(raw: object | None) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return _normalize_text(raw)
+    try:
+        return _normalize_text(json.dumps(raw, ensure_ascii=False, sort_keys=True))
+    except Exception:  # noqa: S112
+        return _normalize_text(str(raw))
 
 
 __all__ = [

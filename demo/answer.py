@@ -16,7 +16,7 @@ async def main(
     content: bool = True,
     json_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    settings = load_settings("src/search_config_example.yaml")
+    settings = load_settings("demo/search_config_example.yaml")
     req = AnswerRequest(
         query=query,
         content=content,

@@ -6,8 +6,8 @@ from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchStepContext
 from serpsage.models.research import (
-    AbstractConflictPayload,
-    AbstractOutputPayload,
+    OverviewConflictPayload,
+    OverviewOutputPayload,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt_markdown import (
@@ -19,7 +19,7 @@ from serpsage.steps.research.search import (
     select_context_source_ids,
 )
 from serpsage.steps.research.utils import (
-    build_abstract_packet,
+    build_overview_packet,
     merge_strings,
     normalize_entity_coverage,
     normalize_strings,
@@ -45,7 +45,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             return ctx
         all_sources = list(ctx.corpus.sources)
         if not all_sources:
-            ctx.work.abstract_review = self._empty_review()
+            ctx.work.overview_review = self._empty_review()
             ctx.work.need_content_source_ids = []
             ctx.current_round.context_source_ids = []
             return ctx
@@ -63,26 +63,26 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             source_ids=context_source_ids,
         )
         if not sources:
-            ctx.work.abstract_review = self._empty_review()
+            ctx.work.overview_review = self._empty_review()
             ctx.work.need_content_source_ids = []
             return ctx
-        packet = build_abstract_packet(sources=sources, max_abstracts_per_source=5)
+        packet = build_overview_packet(sources=sources, max_overview_chars=5000)
         model = resolve_research_model(
             ctx=ctx,
-            stage="abstract",
+            stage="overview",
             fallback=self.settings.answer.generate.use_model,
         )
         payload = self._empty_review()
         try:
             chat_result = await self._llm.chat(
                 model=model,
-                messages=self._build_abstract_messages(
+                messages=self._build_overview_messages(
                     ctx=ctx,
                     packet=packet,
                     now_utc=now_utc,
                 ),
-                response_format=AbstractOutputPayload,
-                format_override=self._build_abstract_schema(
+                response_format=OverviewOutputPayload,
+                format_override=self._build_overview_schema(
                     max_queries=int(ctx.runtime.budget.max_queries_per_round)
                 ),
                 retries=int(self.settings.research.llm_self_heal_retries),
@@ -90,11 +90,11 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             payload = chat_result.data
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
-                event_name="research.abstract.error",
+                event_name="research.overview.error",
                 request_id=ctx.request_id,
-                stage="abstract_review",
+                stage="overview_review",
                 status="error",
-                error_code="research_abstract_review_failed",
+                error_code="research_overview_review_failed",
                 error_type=type(exc).__name__,
                 attrs={
                     "round_index": int(ctx.current_round.round_index),
@@ -119,7 +119,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                 "missing_entities": list(missing_entities),
             }
         )
-        ctx.work.abstract_review = payload
+        ctx.work.overview_review = payload
         need_content_ids = self._normalize_source_ids(
             payload.need_content_source_ids,
             limit=20,
@@ -128,7 +128,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         findings = normalize_strings(payload.findings, limit=8)
         if findings:
             ctx.notes.extend(findings[:3])
-            ctx.current_round.abstract_summary = " | ".join(findings[:3])
+            ctx.current_round.overview_summary = " | ".join(findings[:3])
         ctx.current_round.confidence = self._normalize_confidence(payload.confidence)
         ctx.current_round.query_strategy = clean_whitespace(
             str(
@@ -171,7 +171,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
         )
         return ctx
 
-    def _build_abstract_messages(
+    def _build_overview_messages(
         self,
         *,
         ctx: ResearchStepContext,
@@ -188,14 +188,14 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             {
                 "role": "system",
                 "content": (
-                    "Role: Evidence Analyst (Abstract-First) and Methodology Instructor.\n"
-                    "Mission: Evaluate evidence quality, theme coverage, and uncertainty using abstracts only.\n"
+                    "Role: Evidence Analyst (Overview-First) and Methodology Instructor.\n"
+                    "Mission: Evaluate evidence quality, theme coverage, and uncertainty using overview evidence.\n"
                     "Instruction Priority:\n"
                     "P1) Schema correctness.\n"
                     "P2) Evidence-grounded reasoning and conflict transparency.\n"
                     "P3) Language consistency.\n"
                     "Hard Constraints:\n"
-                    "1) Use only SOURCE_ABSTRACT_PACKET.\n"
+                    "1) Use only SOURCE_OVERVIEW_PACKET.\n"
                     "2) Keep analysis scoped to CORE_QUESTION and its evidence dimensions.\n"
                     "3) Distinguish observations from inferences.\n"
                     "4) Identify unresolved conflicts and critical evidence gaps.\n"
@@ -207,9 +207,9 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     "10) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
                     "11) If no valid focused query exists, return next_queries as an empty array.\n"
                     "12) Return JSON only, exactly matching schema.\n"
-                    "13) Abstract evidence is provisional: avoid final certainty when content verification is still needed.\n"
+                    "13) Overview evidence is provisional: avoid final certainty when content verification is still needed.\n"
                     "Allowed Evidence:\n"
-                    "- Theme, theme plan, round summaries, abstract packet.\n"
+                    "- Theme, theme plan, round summaries, overview packet.\n"
                     "Failure Policy:\n"
                     "- If evidence is weak or temporally stale for a recency query, lower confidence and propose targeted next queries.\n"
                     "Quality Checklist:\n"
@@ -226,7 +226,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     f"- current_utc_timestamp={now_utc.isoformat()}\n"
                     f"- current_utc_date={now_utc.date().isoformat()}\n\n"
                     "TEMPORAL_POLICY:\n"
-                    "- If THEME or prior plans indicate latest/current intent, judge whether each abstract is fresh enough.\n"
+                    "- If THEME or prior plans indicate latest/current intent, judge whether each overview is fresh enough.\n"
                     "- Treat relative time words (today/this month/this year/recent/latest) against current_utc_date.\n"
                     "- For stale evidence under recency intent, request follow-up queries in next_queries.\n"
                     "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
@@ -237,16 +237,16 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
                     f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
                     "REQUIRED_ENTITIES:\n"
                     f"{ctx.plan.theme_plan.required_entities}\n\n"
-                    f"SOURCE_ABSTRACT_PACKET:\n{packet}\n\n"
+                    f"SOURCE_OVERVIEW_PACKET:\n{packet}\n\n"
                     "Escalation rubric for need_content_source_ids:\n"
                     "- Include IDs for sources tied to key conclusions, major conflicts, or model-selection decisions.\n"
-                    "- Include IDs when abstract wording is vague but potentially important.\n"
+                    "- Include IDs when overview evidence is vague but potentially important.\n"
                     "- Include IDs when evidence freshness is uncertain for latest/current requests."
                 ),
             },
         ]
 
-    def _build_abstract_schema(self, *, max_queries: int) -> dict[str, Any]:
+    def _build_overview_schema(self, *, max_queries: int) -> dict[str, Any]:
         return {
             "type": "object",
             "additionalProperties": False,
@@ -320,8 +320,8 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
             },
         }
 
-    def _empty_review(self) -> AbstractOutputPayload:
-        return AbstractOutputPayload()
+    def _empty_review(self) -> OverviewOutputPayload:
+        return OverviewOutputPayload()
 
     def _normalize_confidence(self, raw: object) -> float:
         try:
@@ -335,7 +335,7 @@ class ResearchAbstractStep(StepBase[ResearchStepContext]):
 
     def _extract_unresolved_topics(
         self,
-        raw: list[AbstractConflictPayload],
+        raw: list[OverviewConflictPayload],
     ) -> list[str]:
         out: list[str] = []
         seen: set[str] = set()

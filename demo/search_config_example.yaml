@@ -9,7 +9,7 @@
 
 http:
   proxy: http://127.0.0.1:7890
-  trust_env: false
+  trust_env: true
   max_connections: 100
   max_keepalive_connections: 20
   keepalive_expiry_s: 5.0
@@ -177,7 +177,7 @@ llm:
       max_retries: 2
       temperature: 0.0
       headers: {}
-      schema_strict: true
+      enable_structured: true
     - name: gemini-3-flash
       backend: gemini
       base_url: null
@@ -187,7 +187,7 @@ llm:
       max_retries: 2
       temperature: 0.0
       headers: {}
-      schema_strict: true
+      enable_structured: true
     - name: kimi-k2-0905-preview
       backend: openai
       base_url: https://api.moonshot.cn/v1
@@ -197,7 +197,7 @@ llm:
       max_retries: 2
       temperature: 0.0
       headers: {}
-      schema_strict: true
+      enable_structured: true
     - name: kimi-k2.5
       backend: openai
       base_url: https://coding.dashscope.aliyuncs.com/v1
@@ -207,7 +207,7 @@ llm:
       max_retries: 2
       temperature: 0.0
       headers: {}
-      schema_strict: true
+      enable_structured: true
 
 cache:
   enabled: false
