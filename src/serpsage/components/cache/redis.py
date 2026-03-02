@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import zlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 from serpsage.components.cache.base import CacheBase
@@ -75,7 +75,7 @@ class RedisCache(CacheBase):
         if self._client is None:
             return
         try:
-            await self._client.close()
+            await cast("Any", self._client).close()
         finally:
             self._client = None
 

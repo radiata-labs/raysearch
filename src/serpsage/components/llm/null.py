@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
@@ -24,7 +24,7 @@ class NullLLMClient(LLMClientBase):
         super().__init__(rt=rt)
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
@@ -34,17 +34,17 @@ class NullLLMClient(LLMClientBase):
     ) -> ChatTextResult: ...
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: dict[str, Any],
+        response_format: dict[str, object],
         timeout_s: float | None = None,
     ) -> ChatDictResult: ...
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
@@ -54,12 +54,12 @@ class NullLLMClient(LLMClientBase):
     ) -> ChatModelResult[TModel]: ...
 
     @override
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        response_format: dict[str, object] | type[BaseModel] | None = None,
         timeout_s: float | None = None,
     ) -> ChatResultBase:
         _ = model, messages, response_format, timeout_s

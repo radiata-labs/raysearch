@@ -41,7 +41,7 @@ from serpsage.settings.load import load_settings
 from serpsage.settings.models import AppSettings
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> object:
     if name == "Engine":
         from serpsage.app.engine import Engine
 

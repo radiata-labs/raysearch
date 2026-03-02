@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import re
 from functools import lru_cache
 from typing import Any, cast
@@ -50,7 +51,7 @@ try:
     from sudachipy import (  # type: ignore[import-untyped]
         dictionary as sudachi_dictionary,
     )
-    from sudachipy import tokenizer as sudachi_tokenizer  # type: ignore[import-untyped]
+    from sudachipy import tokenizer as sudachi_tokenizer
 
     sudachi = sudachi_dictionary.Dictionary().create()
     sudachi_mode = sudachi_tokenizer.Tokenizer.SplitMode.A
@@ -60,9 +61,9 @@ except Exception:  # noqa: BLE001
     sudachi_mode = None
     SUDACHI_AVAILABLE = False
 
+opencc: Any | None = None
 try:
-    import opencc  # type: ignore[import-untyped]
-
+    opencc = importlib.import_module("opencc")
     OPENCC_AVAILABLE = True
 except Exception:  # noqa: BLE001
     opencc = None
@@ -192,7 +193,7 @@ def _get_zhconv_module() -> object | None:
     if _ConverterCache._zhconv_module is not None:
         return _ConverterCache._zhconv_module
     try:
-        import zhconv as _zhconv  # type: ignore[import-not-found]
+        _zhconv = importlib.import_module("zhconv")
     except Exception:  # noqa: BLE001
         _ConverterCache._zhconv_unavailable = True
         return None

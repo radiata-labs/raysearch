@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 STOPWORDS_PATH = Path(__file__).parent / "files"
 
+Trie: Any | None
 try:
-    from marisa_trie import Trie  # type: ignore[import-not-found]
+    from marisa_trie import Trie as _Trie  # type: ignore[import-not-found]
 
+    Trie = _Trie
     _TRIE_AVAILABLE = True
 except Exception:  # noqa: BLE001
-    Trie = None  # type: ignore[assignment]
+    Trie = None
     _TRIE_AVAILABLE = False
 
 

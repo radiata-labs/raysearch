@@ -16,8 +16,6 @@ except Exception:  # noqa: BLE001
     AioSqliteModule = None
 
 if TYPE_CHECKING:
-    import aiosqlite
-
     from serpsage.core.runtime import Runtime
 
 
@@ -27,7 +25,7 @@ class SqliteCache(CacheBase):
         if AioSqliteModule is None:
             raise RuntimeError("aiosqlite is required for SqliteCache")
         self._path = Path(self.settings.cache.sqlite.db_path)
-        self._con: aiosqlite.Connection | None = None
+        self._con: Any | None = None
 
     @override
     async def on_init(self) -> None:
@@ -36,7 +34,7 @@ class SqliteCache(CacheBase):
         if AioSqliteModule is None:
             raise RuntimeError("aiosqlite is required for SqliteCache")
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = await cast("aiosqlite", AioSqliteModule).connect(str(self._path))
+        self._con = await cast("Any", AioSqliteModule).connect(str(self._path))
         assert self._con is not None
         await self._con.execute("PRAGMA journal_mode=WAL;")
         await self._con.execute(

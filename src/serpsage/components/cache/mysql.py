@@ -7,15 +7,12 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Final,
-    cast,
 )
 from typing_extensions import override
 
 from serpsage.components.cache.base import CacheBase
 
 if TYPE_CHECKING:
-    import aiomysql
-
     from serpsage.core.runtime import Runtime
 
 
@@ -79,7 +76,7 @@ class MySQLCache(CacheBase):
 
         self._driver_pref: Final[str] = str(driver or cfg.driver or "auto").lower()
 
-        self._pool: aiomysql.Pool | None = None
+        self._pool: Any | None = None
 
         # identifier sanitization + quoting (prevents injection via table name)
         self._table_ident: Final[str] = _ensure_identifier(str(cfg.table))
@@ -138,7 +135,7 @@ class MySQLCache(CacheBase):
         cfg = self.settings.cache.mysql
         mod = self._resolve_driver()
 
-        pool: aiomysql.Pool = await mod.create_pool(
+        pool: Any = await mod.create_pool(
             host=str(cfg.host),
             port=int(cfg.port),
             user=str(cfg.user),
@@ -150,16 +147,16 @@ class MySQLCache(CacheBase):
             charset=str(cfg.charset),
             autocommit=False,
         )
-        # Narrow Any -> _Pool via structural typing; runtime behavior still depends on driver.
-        self._pool = cast("aiomysql.Pool", pool)
+        self._pool = pool
         self._sql = self._build_sql()
+        ready_pool, ready_sql = self._require_ready()
 
-        async with self._pool.acquire() as con:
+        async with ready_pool.acquire() as con:
             async with con.cursor() as cur:
-                await cur.execute(self._sql.create_table)
+                await cur.execute(ready_sql.create_table)
             await con.commit()
 
-    def _require_ready(self) -> tuple[aiomysql.Pool, _SQL]:
+    def _require_ready(self) -> tuple[Any, _SQL]:
         if self._pool is None or self._sql is None:
             raise RuntimeError("mysql cache is not initialized")
         return self._pool, self._sql

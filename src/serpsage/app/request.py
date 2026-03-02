@@ -65,7 +65,7 @@ def _validate_json_schema(value: dict[str, Any] | None) -> dict[str, Any] | None
     if not isinstance(value, dict):
         raise TypeError("json_schema must be a JSON object")
     try:
-        from jsonschema import Draft202012Validator
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
     except Exception as exc:  # noqa: BLE001
         raise ValueError("jsonschema dependency is required") from exc
     Draft202012Validator.check_schema(value)

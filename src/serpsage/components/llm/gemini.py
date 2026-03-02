@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Protocol, TypeVar, overload, runtime_checkable
 from typing_extensions import override
 
 from google import genai
@@ -19,13 +19,18 @@ from serpsage.models.llm import (
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import OverviewModelSettings
+    from serpsage.settings.models import LLMModelSettings
 
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
+@runtime_checkable
+class _ModelDumpable(Protocol):
+    def model_dump(self) -> object: ...
+
+
 class GeminiClient(LLMClientBase):
-    def __init__(self, *, rt: Runtime, model_cfg: OverviewModelSettings) -> None:
+    def __init__(self, *, rt: Runtime, model_cfg: LLMModelSettings) -> None:
         super().__init__(rt=rt)
         self._model_cfg = model_cfg
 
@@ -43,7 +48,7 @@ class GeminiClient(LLMClientBase):
         )
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
@@ -53,17 +58,17 @@ class GeminiClient(LLMClientBase):
     ) -> ChatTextResult: ...
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: dict[str, Any],
+        response_format: dict[str, object],
         timeout_s: float | None = None,
     ) -> ChatDictResult: ...
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
@@ -73,19 +78,19 @@ class GeminiClient(LLMClientBase):
     ) -> ChatModelResult[TModel]: ...
 
     @override
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        response_format: dict[str, object] | type[BaseModel] | None = None,
         timeout_s: float | None = None,
     ) -> ChatResultBase:
         llm = self._model_cfg
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
 
-        response_schema: dict[str, Any] | None = None
+        response_schema: dict[str, object] | None = None
         response_model: type[BaseModel] | None = None
         if response_format is None:
             response_schema = None
@@ -98,7 +103,7 @@ class GeminiClient(LLMClientBase):
             response_schema = response_model.model_json_schema()
         else:
             raise TypeError(
-                "response_format must be dict[str, Any] | type[BaseModel] | None"
+                "response_format must be dict[str, object] | type[BaseModel] | None"
             )
 
         system_instruction, contents = _to_gemini_messages(messages)
@@ -155,27 +160,37 @@ def _build_config(
     system_instruction: str | None,
     temperature: float,
     timeout_ms: int,
-    schema: dict[str, Any] | None,
+    schema: dict[str, object] | None,
     schema_strict: bool,
 ) -> types.GenerateContentConfig:
-    cfg: dict[str, Any] = {
-        "temperature": float(temperature),
-        "http_options": types.HttpOptions(timeout=int(timeout_ms)),
-    }
-    if system_instruction:
-        cfg["system_instruction"] = system_instruction
+    http_options = types.HttpOptions(timeout=int(timeout_ms))
+    if schema is not None and schema_strict:
+        return types.GenerateContentConfig(
+            temperature=float(temperature),
+            http_options=http_options,
+            system_instruction=system_instruction or None,
+            response_mime_type="application/json",
+            response_json_schema=schema,
+        )
     if schema is not None:
-        cfg["response_mime_type"] = "application/json"
-        if schema_strict:
-            cfg["response_json_schema"] = schema
-    return types.GenerateContentConfig(**cfg)
+        return types.GenerateContentConfig(
+            temperature=float(temperature),
+            http_options=http_options,
+            system_instruction=system_instruction or None,
+            response_mime_type="application/json",
+        )
+    return types.GenerateContentConfig(
+        temperature=float(temperature),
+        http_options=http_options,
+        system_instruction=system_instruction or None,
+    )
 
 
 def _to_gemini_messages(
     messages: list[dict[str, str]],
-) -> tuple[str | None, list[types.Content]]:
+) -> tuple[str | None, list[types.ContentUnion]]:
     system_parts: list[str] = []
-    contents: list[types.Content] = []
+    contents: list[types.ContentUnion] = []
 
     for msg in messages:
         role = str(msg.get("role") or "user").strip().lower()
@@ -208,18 +223,18 @@ def _to_gemini_messages(
 
 def _extract_json_object(
     *, resp: types.GenerateContentResponse, fallback_text: str
-) -> dict[str, Any]:
+) -> dict[str, object]:
     parsed = getattr(resp, "parsed", None)
     if parsed is not None:
-        data: Any = parsed
-        if hasattr(data, "model_dump"):
+        data: object = parsed
+        if isinstance(data, _ModelDumpable):
             data = data.model_dump()
         if isinstance(data, str):
             data = json.loads(data)
         if isinstance(data, dict):
-            return data
+            return {str(k): v for k, v in data.items()}
 
-    payload: Any
+    payload: object
     try:
         payload = json.loads(fallback_text)
     except json.JSONDecodeError:
@@ -231,10 +246,10 @@ def _extract_json_object(
             raise
     if not isinstance(payload, dict):
         raise TypeError("structured LLM response must be a JSON object")
-    return payload
+    return {str(k): v for k, v in payload.items()}
 
 
-def _to_usage(usage_meta: Any) -> LLMUsage:
+def _to_usage(usage_meta: object) -> LLMUsage:
     if usage_meta is None:
         return LLMUsage()
     prompt_tokens = int(getattr(usage_meta, "prompt_token_count", 0) or 0)

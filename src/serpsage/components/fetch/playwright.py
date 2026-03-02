@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 import anyio
@@ -31,9 +32,16 @@ if TYPE_CHECKING:
 _original_call_exception_handler = getattr(
     asyncio.BaseEventLoop, "call_exception_handler", None
 )
+LoopExceptionHandler = Callable[[asyncio.AbstractEventLoop, dict[str, object]], None]
+_original_call_exception_handler = cast(
+    "LoopExceptionHandler | None", _original_call_exception_handler
+)
 
 
-def _suppress_future_exception_warning(self, context):
+def _suppress_future_exception_warning(
+    self: asyncio.AbstractEventLoop,
+    context: dict[str, object],
+) -> None:
     """Custom exception handler to suppress Playwright future warnings."""
     exc = context.get("exception")
     if exc is not None:
@@ -44,7 +52,7 @@ def _suppress_future_exception_warning(self, context):
         _original_call_exception_handler(self, context)
 
 
-asyncio.BaseEventLoop.call_exception_handler = _suppress_future_exception_warning
+asyncio.BaseEventLoop.call_exception_handler = _suppress_future_exception_warning  # type: ignore[method-assign]
 
 PLAYWRIGHT_AVAILABLE = False
 _pw_factory = None

@@ -820,7 +820,7 @@ def _try_parse_json(text: str) -> object:
 def _validate_json_schema(*, schema: dict[str, Any], value: object) -> None:
 
     try:
-        from jsonschema import Draft202012Validator
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError("jsonschema dependency is required") from exc

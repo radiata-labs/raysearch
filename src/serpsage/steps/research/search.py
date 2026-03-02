@@ -540,10 +540,10 @@ def rebuild_corpus_ranking(
     for canonical, ids in ctx.corpus.source_url_to_ids.items():
         canonical_score = 0.0
 
-        latest_id = canonical_to_latest.get(canonical)
+        latest_source_id = canonical_to_latest.get(canonical)
 
-        if latest_id is not None:
-            canonical_score = float(score_map.get(int(latest_id), 0.0))
+        if latest_source_id is not None:
+            canonical_score = float(score_map.get(int(latest_source_id), 0.0))
 
         for source_id in ids:
             full_score_map[int(source_id)] = canonical_score

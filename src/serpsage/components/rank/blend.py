@@ -90,9 +90,13 @@ class BlendRanker(RankerBase):
         transforms: dict[str, Callable[[list[float]], list[float]]] = {}
         if need_bm25 and bm25_raw is not None:
             score_map["bm25"] = bm25_raw
-            transforms["bm25"] = lambda s, a=anchor: [
-                float(x) * a for x in rank_scales(s)
-            ]
+
+            def _scale_bm25(
+                scores: list[float], *, scale: float = anchor
+            ) -> list[float]:
+                return [float(x) * scale for x in rank_scales(scores)]
+
+            transforms["bm25"] = _scale_bm25
 
         return blend_weighted(scores=score_map, weights=weights, transforms=transforms)
 

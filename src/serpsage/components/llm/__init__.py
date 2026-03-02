@@ -9,7 +9,7 @@ from serpsage.components.llm.router import RoutedLLMClient
 if TYPE_CHECKING:
     from serpsage.components.http.base import HttpClientBase
     from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import OverviewModelSettings
+    from serpsage.settings.models import LLMModelSettings
 
 
 def _ensure_optional_dep(
@@ -28,7 +28,7 @@ def _ensure_optional_dep(
     )
 
 
-def _require_api_key(model_cfg: OverviewModelSettings) -> bool:
+def _require_api_key(model_cfg: LLMModelSettings) -> bool:
     return bool(model_cfg.api_key)
 
 

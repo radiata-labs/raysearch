@@ -500,15 +500,15 @@ class SearchRankStep(StepBase[SearchStepContext]):
             if snippet_text:
                 docs.append(snippet_text)
 
-        for item in list(result.abstracts or []):
-            abstract_text = clean_whitespace(str(item))
+        for abstract_item in list(result.abstracts or []):
+            abstract_text = clean_whitespace(str(abstract_item))
 
             if abstract_text:
                 docs.append(abstract_text)
 
         for subpage in list(result.subpages or []):
-            for item in list(subpage.abstracts or []):
-                abstract_text = clean_whitespace(str(item))
+            for subpage_abstract in list(subpage.abstracts or []):
+                abstract_text = clean_whitespace(str(subpage_abstract))
 
                 if abstract_text:
                     docs.append(abstract_text)

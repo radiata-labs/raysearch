@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
@@ -13,7 +13,7 @@ from serpsage.models.llm import (
     ChatResultBase,
     ChatTextResult,
 )
-from serpsage.models.telemetry import MeterPayload
+from serpsage.models.telemetry import EventStatus, MeterPayload
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -33,7 +33,7 @@ class RoutedLLMClient(LLMClientBase):
         self.bind_deps(*[unit for unit, _ in self._routes.values()])
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
@@ -43,17 +43,17 @@ class RoutedLLMClient(LLMClientBase):
     ) -> ChatTextResult: ...
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: dict[str, Any],
+        response_format: dict[str, object],
         timeout_s: float | None = None,
     ) -> ChatDictResult: ...
 
     @overload
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
@@ -63,12 +63,12 @@ class RoutedLLMClient(LLMClientBase):
     ) -> ChatModelResult[TModel]: ...
 
     @override
-    async def chat(
+    async def _chat(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        response_format: dict[str, object] | type[BaseModel] | None = None,
         timeout_s: float | None = None,
     ) -> ChatResultBase:
         route = self._routes.get(str(model))
@@ -149,12 +149,42 @@ class RoutedLLMClient(LLMClientBase):
             )
             raise
 
-    async def _emit_safe(self, **kwargs: Any) -> None:
+    async def _emit_safe(
+        self,
+        *,
+        event_name: str,
+        status: EventStatus = "ok",
+        request_id: str = "",
+        trace_id: str = "",
+        span_id: str = "",
+        component: str = "",
+        stage: str = "",
+        duration_ms: int | None = None,
+        error_code: str = "",
+        error_type: str = "",
+        attrs: dict[str, object] | None = None,
+        meter: MeterPayload | None = None,
+        idempotency_key: str = "",
+    ) -> None:
         telemetry = self.telemetry
         if telemetry is None:
             return
         with suppress(Exception):
-            await telemetry.emit(**kwargs)
+            await telemetry.emit(
+                event_name=event_name,
+                status=status,
+                request_id=request_id,
+                trace_id=trace_id,
+                span_id=span_id,
+                component=component,
+                stage=stage,
+                duration_ms=duration_ms,
+                error_code=error_code,
+                error_type=error_type,
+                attrs=attrs,
+                meter=meter,
+                idempotency_key=idempotency_key,
+            )
 
 
 __all__ = ["RoutedLLMClient"]

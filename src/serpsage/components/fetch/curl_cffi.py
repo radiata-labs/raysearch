@@ -16,7 +16,7 @@ from serpsage.components.fetch.utils import (
 )
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
-CurlSessionFactory: type[AsyncSession] | None = None
+CurlSessionFactory: type[Any] | None = None
 try:
     from curl_cffi.requests import AsyncSession as _CurlAsyncSession
 
@@ -26,8 +26,6 @@ except Exception:  # noqa: BLE001
     CURL_CFFI_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from curl_cffi.requests import AsyncSession
-
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
 
@@ -37,7 +35,7 @@ class CurlCffiFetcher(FetcherBase):
         super().__init__(rt=rt)
         if not CURL_CFFI_AVAILABLE:
             raise RuntimeError("curl_cffi is not available; install curl_cffi")
-        self._session: AsyncSession | None = None
+        self._session: Any | None = None
 
     @override
     async def on_init(self) -> None:

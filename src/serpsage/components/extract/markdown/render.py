@@ -3,9 +3,10 @@ from __future__ import annotations
 import contextlib
 import html
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from textwrap import fill
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -17,6 +18,7 @@ from serpsage.utils import clean_whitespace
 
 RenderStatValue = int | float | bool | str
 RenderStats = dict[str, RenderStatValue]
+ConverterFn = Callable[[Tag | BeautifulSoup, str, set[str]], str]
 
 _COUNT_KEYS = (
     "heading_count",
@@ -300,7 +302,7 @@ class _ManualMarkdownConverter:
             metrics=_RenderMetrics(),
         )
         self._skip_roots = list(skip_roots or [])
-        self._conv_fn_cache: dict[str, object | None] = {}
+        self._conv_fn_cache: dict[str, ConverterFn | None] = {}
 
     def convert_root(self, root: Tag | BeautifulSoup) -> str:
         text = self._process_element(root, parent_tags=set())
@@ -348,7 +350,7 @@ class _ManualMarkdownConverter:
 
         conv_fn = self._get_conv_fn_cached(tag_name)
         if conv_fn is not None:
-            text = conv_fn(node, text, parent_tags)  # type: ignore[misc]
+            text = conv_fn(node, text, parent_tags)
 
         if isinstance(node, Tag) and self._is_block_tag_name(tag_name) and text.strip():
             self.ctx.metrics.block_count += 1
@@ -399,24 +401,30 @@ class _ManualMarkdownConverter:
             out.extend([leading, content, trailing])
         return out
 
-    def _get_conv_fn_cached(self, tag_name: str) -> object | None:
+    def _get_conv_fn_cached(self, tag_name: str) -> ConverterFn | None:
         if tag_name not in self._conv_fn_cache:
             self._conv_fn_cache[tag_name] = self._get_conv_fn(tag_name)
         return self._conv_fn_cache[tag_name]
 
-    def _get_conv_fn(self, tag_name: str) -> object | None:
+    def _get_conv_fn(self, tag_name: str) -> ConverterFn | None:
         if not self._should_convert_tag(tag_name):
             return None
         conv_fn_name = f"convert_{_RE_MAKE_CONV_FN.sub('_', tag_name)}"
-        conv_fn = getattr(self, conv_fn_name, None)
-        if conv_fn is not None:
-            return conv_fn
+        maybe_conv_fn = getattr(self, conv_fn_name, None)
+        if maybe_conv_fn is not None and callable(maybe_conv_fn):
+            return cast("ConverterFn", maybe_conv_fn)
         match = _RE_HTML_HEADING.fullmatch(tag_name)
         if match is not None:
             n = int(match.group(1))
-            return lambda el, text, parent_tags: self.convert_hN(
-                n, el, text, parent_tags
-            )
+
+            def _convert_heading(
+                el: Tag | BeautifulSoup, text: str, parent_tags: set[str]
+            ) -> str:
+                if not isinstance(el, Tag):
+                    return text
+                return self.convert_hN(n, el, text, parent_tags)
+
+            return _convert_heading
         return None
 
     def _should_convert_tag(self, tag_name: str) -> bool:

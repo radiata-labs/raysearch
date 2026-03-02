@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import html
+import importlib
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
@@ -48,8 +49,9 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import AppSettings
 
+trafilatura: Any | None = None
 try:
-    import trafilatura
+    trafilatura = importlib.import_module("trafilatura")
 except Exception:  # noqa: BLE001
     trafilatura = None
 
@@ -199,7 +201,7 @@ class MarkdownExtractor(ExtractorBase):
                 html_doc=html_doc,
                 url=url,
                 profile=profile,
-                include_secondary_content=(options.detail == "full"),
+                include_secondary_content=False,
                 collect_links=bool(collect_links),
                 collect_images=bool(collect_images),
             )
@@ -460,6 +462,7 @@ class MarkdownExtractor(ExtractorBase):
         options: ExtractContentOptions,
         include_secondary: bool,
     ) -> set[ExtractContentTag]:
+        selected: set[ExtractContentTag]
         if options.include_tags:
             selected = set(options.include_tags)
         else:
@@ -467,7 +470,7 @@ class MarkdownExtractor(ExtractorBase):
             if include_secondary:
                 selected.add("sidebar")
         selected -= set(options.exclude_tags)
-        return cast("set[ExtractContentTag]", selected)
+        return selected
 
     def _render_selected_tags_markdown(
         self,

@@ -24,8 +24,8 @@ class SQLAlchemyCache(CacheBase):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         try:
-            import sqlalchemy as sa  # type: ignore[import-untyped] # noqa: PLC0415
-            from sqlalchemy.ext.asyncio import (  # type: ignore[import-untyped] # noqa: PLC0415
+            import sqlalchemy as sa  # noqa: PLC0415
+            from sqlalchemy.ext.asyncio import (  # noqa: PLC0415
                 create_async_engine,
             )
         except Exception as exc:  # noqa: BLE001

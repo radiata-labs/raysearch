@@ -566,7 +566,7 @@ class CacheSettings(Model):
     sqlalchemy: CacheSQLAlchemySettings = Field(default_factory=CacheSQLAlchemySettings)
 
 
-class OverviewModelSettings(Model):
+class LLMModelSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     name: str = "gpt-4.1-mini"
@@ -581,16 +581,14 @@ class OverviewModelSettings(Model):
     schema_strict: bool = True
 
 
-def _default_overview_models() -> list[OverviewModelSettings]:
-    return [OverviewModelSettings()]
+def _default_overview_models() -> list[LLMModelSettings]:
+    return [LLMModelSettings()]
 
 
 class LLMSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    models: list[OverviewModelSettings] = Field(
-        default_factory=_default_overview_models
-    )
+    models: list[LLMModelSettings] = Field(default_factory=_default_overview_models)
 
     @model_validator(mode="after")
     def _validate_models(self) -> LLMSettings:
@@ -608,7 +606,7 @@ class LLMSettings(Model):
             names.add(item.name)
         return self
 
-    def resolve_model(self, name: str) -> OverviewModelSettings:
+    def resolve_model(self, name: str) -> LLMModelSettings:
         for item in self.models:
             if item.name == name:
                 return item
@@ -752,7 +750,7 @@ __all__ = [
     "HeuristicRankSettings",
     "LLMSettings",
     "OverviewModelBackendKey",
-    "OverviewModelSettings",
+    "LLMModelSettings",
     "ProviderSettings",
     "ResearchModelsSettings",
     "ResearchModeSettings",

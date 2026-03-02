@@ -90,83 +90,110 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     ctx.artifacts.overview_output = decoded
                     return ctx
 
-        retries = max(0, int(profile.self_heal_retries))
-        for attempt in range(retries + 1):
-            try:
-                res = await self._llm.chat(
+        retries = max(0, int(profile.self_heal_retries)) if schema is not None else 0
+        retry_prompt = _self_heal_message() if schema is not None else ""
+        retry_on = (ValueError, TypeError, RuntimeError)
+
+        try:
+            if schema is None:
+                text_res = await self._llm.chat(
                     model=str(model_cfg.name),
                     messages=messages,
                     response_format=schema,
                     timeout_s=float(model_cfg.timeout_s),
+                    retries=retries,
+                    retry_on=retry_on,
                 )
-                if schema is None:
-                    output_text = str(res.text or "")
-                    if not output_text.strip():
-                        raise ValueError("overview output is empty")
-                    ctx.artifacts.overview_output = output_text
-                else:
-                    output_obj = _coerce_json_output(
-                        result_data=res.data, raw_text=res.text
-                    )
-                    _validate_json_output(schema=schema, value=output_obj)
-                    ctx.artifacts.overview_output = output_obj
-                if (
-                    cache_ttl_s > 0
-                    and cache_key
-                    and ctx.artifacts.overview_output is not None
-                ):
-                    await self._cache.aset(
-                        namespace="overview:fetch:v4",
-                        key=cache_key,
-                        value=json.dumps(
-                            ctx.artifacts.overview_output,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        ).encode("utf-8"),
-                        ttl_s=cache_ttl_s,
-                    )
-                return ctx
-            except _SchemaMismatchError as exc:
-                if attempt < retries:
-                    messages = messages + [_self_heal_message()]
-                    continue
-                await self.emit_tracking_event(
-                    event_name="fetch.overview.error",
-                    request_id=ctx.request_id,
-                    stage="overview",
-                    status="error",
-                    error_code="overview_schema_mismatch",
-                    error_type=type(exc).__name__,
-                    attrs={
-                        "url": ctx.url,
-                        "url_index": int(ctx.url_index),
-                        "fatal": False,
-                        "crawl_mode": str(ctx.runtime.crawl_mode),
-                        "message": str(exc),
-                    },
+                output_text = str(text_res.text or "")
+                if not output_text.strip():
+                    raise ValueError("overview output is empty")
+                ctx.artifacts.overview_output = output_text
+            else:
+                attempt_messages = list(messages)
+                output_obj: object | None = None
+                attempts = max(1, retries + 1)
+                for attempt_index in range(attempts):
+                    try:
+                        json_res = await self._llm.chat(
+                            model=str(model_cfg.name),
+                            messages=attempt_messages,
+                            response_format=schema,
+                            timeout_s=float(model_cfg.timeout_s),
+                            retries=0,
+                        )
+                        output_obj = _coerce_json_output(
+                            result_data=json_res.data, raw_text=json_res.text
+                        )
+                        _validate_json_output(schema=schema, value=output_obj)
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        if attempt_index >= attempts - 1:
+                            raise
+                        if not isinstance(
+                            exc,
+                            retry_on + (_SchemaMismatchError,),
+                        ):
+                            raise
+                        attempt_messages = attempt_messages + [
+                            {
+                                "role": "user",
+                                "content": retry_prompt,
+                            }
+                        ]
+                if output_obj is None:
+                    raise RuntimeError("json output retry loop exhausted")
+                ctx.artifacts.overview_output = output_obj
+            if (
+                cache_ttl_s > 0
+                and cache_key
+                and ctx.artifacts.overview_output is not None
+            ):
+                await self._cache.aset(
+                    namespace="overview:fetch:v4",
+                    key=cache_key,
+                    value=json.dumps(
+                        ctx.artifacts.overview_output,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("utf-8"),
+                    ttl_s=cache_ttl_s,
                 )
-                return ctx
-            except Exception as exc:  # noqa: BLE001
-                if attempt < retries and schema is not None:
-                    messages = messages + [_self_heal_message()]
-                    continue
-                await self.emit_tracking_event(
-                    event_name="fetch.overview.error",
-                    request_id=ctx.request_id,
-                    stage="overview",
-                    status="error",
-                    error_code="fetch_overview_failed",
-                    error_type=type(exc).__name__,
-                    attrs={
-                        "url": ctx.url,
-                        "url_index": int(ctx.url_index),
-                        "fatal": False,
-                        "crawl_mode": str(ctx.runtime.crawl_mode),
-                        "message": str(exc),
-                    },
-                )
-                return ctx
+            return ctx
+        except _SchemaMismatchError as exc:
+            await self.emit_tracking_event(
+                event_name="fetch.overview.error",
+                request_id=ctx.request_id,
+                stage="overview",
+                status="error",
+                error_code="overview_schema_mismatch",
+                error_type=type(exc).__name__,
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": False,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": str(exc),
+                },
+            )
+            return ctx
+        except Exception as exc:  # noqa: BLE001
+            await self.emit_tracking_event(
+                event_name="fetch.overview.error",
+                request_id=ctx.request_id,
+                stage="overview",
+                status="error",
+                error_code="fetch_overview_failed",
+                error_type=type(exc).__name__,
+                attrs={
+                    "url": ctx.url,
+                    "url_index": int(ctx.url_index),
+                    "fatal": False,
+                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "message": str(exc),
+                },
+            )
+            return ctx
         return ctx
 
     def _resolve_overview_request(
@@ -271,7 +298,7 @@ def _coerce_json_output(*, result_data: object | None, raw_text: str) -> object:
 
 def _validate_json_output(*, schema: dict[str, Any], value: object) -> None:
     try:
-        from jsonschema import Draft202012Validator
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError("jsonschema dependency is required") from exc
     try:
@@ -284,14 +311,11 @@ class _SchemaMismatchError(Exception):
     pass
 
 
-def _self_heal_message() -> dict[str, str]:
-    return {
-        "role": "user",
-        "content": (
-            "Output did not validate. Return JSON only that strictly matches "
-            "the provided schema."
-        ),
-    }
+def _self_heal_message() -> str:
+    return (
+        "Output did not validate. Return JSON only that strictly matches "
+        "the provided schema."
+    )
 
 
 __all__ = ["FetchOverviewStep"]

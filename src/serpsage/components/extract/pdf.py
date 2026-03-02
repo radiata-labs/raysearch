@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import importlib
 import re
 from collections import Counter
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 import anyio
@@ -23,9 +24,9 @@ from serpsage.utils import clean_whitespace
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
+fitz: Any | None = None
 try:
-    import fitz  # type: ignore[import-not-found]
-
+    fitz = importlib.import_module("fitz")
     PYMUPDF_AVAILABLE = True
 except Exception:  # noqa: BLE001
     fitz = None
@@ -178,12 +179,12 @@ class PdfExtractor(ExtractorBase):
             return [r[1] for r in results]
 
         out: list[list[str]] = [[] for _ in range(len(pages))]
+        results_dict: dict[int, list[str]] = {}
 
         # For larger PDFs, use parallel extraction with total timeout
         try:
             with anyio.fail_after(total_timeout):
                 async with anyio.create_task_group() as tg:
-                    results_dict: dict[int, list[str]] = {}
 
                     async def extract_page(i: int) -> None:
                         idx, lines = await to_thread.run_sync(_read_page, i)

@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 ChatMessage: TypeAlias = dict[str, str]
 TModel = TypeVar("TModel", bound=BaseModel)
+_LLM_RETRY_SELF_HEAL_MESSAGE = (
+    "The previous output was invalid. Return JSON only and strictly match "
+    "the schema. Do not include comments, markdown fences, or extra keys."
+)
 
 
 def resolve_research_model(
@@ -39,38 +43,42 @@ async def chat_pydantic(
     retries: int,
     schema_json: dict[str, Any] | None = None,
 ) -> TModel:
-    attempts = max(1, int(retries) + 1)
+    retry_count = max(0, int(retries))
     payload = list(messages)
-    last_exc: Exception | None = None
-    for _ in range(attempts):
-        try:
-            if isinstance(schema_json, dict):
+    attempts = max(1, retry_count + 1)
+    retry_on = (ValueError, TypeError, RuntimeError)
+
+    if isinstance(schema_json, dict):
+        for attempt_index in range(attempts):
+            try:
                 result = await llm.chat(
                     model=model,
                     messages=payload,
                     response_format=dict(schema_json),
+                    retries=0,
                 )
-                raw = _decode_json_payload(result.data, result.text)
+                raw = _decode_json_payload(
+                    result.data if isinstance(result.data, dict) else None,
+                    result.text,
+                )
                 return schema_model.model_validate(raw)
-            model_result = await llm.chat(
-                model=model,
-                messages=payload,
-                response_format=schema_model,
-            )
-            return schema_model.model_validate(model_result.data)
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc if isinstance(exc, Exception) else Exception(str(exc))
-            payload = payload + [
-                {
-                    "role": "user",
-                    "content": (
-                        "The previous output was invalid. Return JSON only and strictly match "
-                        "the schema. Do not include comments, markdown fences, or extra keys."
-                    ),
-                }
-            ]
-    assert last_exc is not None
-    raise last_exc
+            except Exception as exc:  # noqa: BLE001
+                if attempt_index >= attempts - 1:
+                    raise
+                if not isinstance(exc, retry_on):
+                    raise
+                payload = payload + [
+                    {"role": "user", "content": _LLM_RETRY_SELF_HEAL_MESSAGE}
+                ]
+
+    model_result = await llm.chat(
+        model=model,
+        messages=payload,
+        response_format=schema_model,
+        retries=retry_count,
+        retry_on=retry_on,
+    )
+    return schema_model.model_validate(model_result.data)
 
 
 def normalize_strings(raw: object, *, limit: int) -> list[str]:
