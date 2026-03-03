@@ -617,7 +617,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         architect_output: RenderArchitectOutput,
         writer_outputs: list[str],
     ) -> str:
-        parts: list[str] = [f"# {ctx.request.themes}"]
+        report_title = self._resolve_report_title(ctx)
+        parts: list[str] = [f"# {report_title}"]
         objective = str(architect_output.report_objective or "").strip()
         if objective:
             parts.append(objective)
@@ -631,6 +632,17 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             parts.append(str(section_content or "").strip())
         return "\n\n".join(parts).strip()
 
+    def _resolve_report_title(self, ctx: ResearchStepContext) -> str:
+        raw_theme = clean_whitespace(ctx.request.themes or "")
+        core_question = clean_whitespace(ctx.plan.theme_plan.core_question or "")
+        base = core_question or raw_theme or "Research Report"
+        if raw_theme and base.casefold() == raw_theme.casefold():
+            language_code = self._resolve_target_language(ctx)
+            if str(language_code).startswith("zh"):
+                return f"深度调研：{base}"
+            return f"Research Report: {base}"
+        return base
+
     def _build_final_context_packet(
         self,
         *,
@@ -640,7 +652,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     ) -> _RenderFinalContextPacket:
         mode_depth = ctx.runtime.mode_depth
         return _RenderFinalContextPacket(
-            theme=str(ctx.request.themes),
+            theme=str(
+                clean_whitespace(ctx.plan.theme_plan.core_question or "")
+                or ctx.request.themes
+            ),
             target_output_language=str(target_language),
             mode_depth_profile=str(mode_depth.mode_key),
             utc_timestamp=now_utc.isoformat(),
