@@ -179,11 +179,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         packet: str,
         now_utc: datetime,
     ) -> list[dict[str, str]]:
-        out_lang = ctx.plan.theme_plan.output_language or "en"
+        out_lang = self._resolve_output_language(ctx)
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
-        core_question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
+        core_question = self._resolve_core_question(ctx)
         round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
         report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
@@ -206,6 +204,16 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             source_content_packet=packet,
         )
 
+    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
+        question = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
+        return question or clean_whitespace(ctx.request.themes)
+
+    def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
+        token = clean_whitespace(ctx.plan.theme_plan.output_language)
+        return token or "en"
+
     def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
         cfg = self.settings.research.report_style
         fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
@@ -213,7 +221,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             fallback_style_key = "explainer"
         return resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
-            theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
+            theme=self._resolve_core_question(ctx),
             enabled=bool(cfg.enabled),
             fallback_style=cast("ReportStyle", fallback_style_key),
             strict_style_lock=bool(cfg.strict_style_lock),

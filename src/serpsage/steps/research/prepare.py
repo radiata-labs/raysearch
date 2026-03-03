@@ -28,10 +28,16 @@ if TYPE_CHECKING:
 
 
 class ResearchPrepareStep(StepBase[ResearchStepContext]):
+    _DEFAULT_SEARCH_MODE = "research"
     _GLOBAL_BUDGET_MULTIPLIER_BY_MODE: dict[str, float] = {
         "research-fast": 1.5,
         "research": 2.0,
         "research-pro": 2.5,
+    }
+    _KNOWN_MODES: set[str] = {
+        "research-fast",
+        "research",
+        "research-pro",
     }
 
     def __init__(self, *, rt: Runtime) -> None:
@@ -39,7 +45,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        mode = str(ctx.request.search_mode or "research")
+        mode = self._normalize_search_mode(ctx.request.search_mode)
         themes = clean_whitespace(ctx.request.themes or "")
         profile = self._resolve_profile(mode)
         mode_depth = self._resolve_mode_depth_profile(mode)
@@ -178,22 +184,29 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         )
         return ctx
 
+    def _normalize_search_mode(self, raw_mode: object | None) -> str:
+        token = clean_whitespace(str(raw_mode or self._DEFAULT_SEARCH_MODE)).casefold()
+        if token in self._KNOWN_MODES:
+            return token
+        return self._DEFAULT_SEARCH_MODE
+
     def _resolve_profile(self, mode: str) -> ResearchModeSettings:
-        if mode == "research-fast":
-            return self.settings.research.research_fast
-        if mode == "research-pro":
-            return self.settings.research.research_pro
-        return self.settings.research.research
+        profiles: dict[str, ResearchModeSettings] = {
+            "research-fast": self.settings.research.research_fast,
+            "research": self.settings.research.research,
+            "research-pro": self.settings.research.research_pro,
+        }
+        return profiles.get(mode, self.settings.research.research)
 
     def _resolve_mode_depth_profile(
         self, mode: str
     ) -> ResearchModeDepthProfileSettings:
-        settings = self.settings.research.mode_depth
-        if mode == "research-fast":
-            return settings.research_fast
-        if mode == "research-pro":
-            return settings.research_pro
-        return settings.research
+        profiles: dict[str, ResearchModeDepthProfileSettings] = {
+            "research-fast": self.settings.research.mode_depth.research_fast,
+            "research": self.settings.research.mode_depth.research,
+            "research-pro": self.settings.research.mode_depth.research_pro,
+        }
+        return profiles.get(mode, self.settings.research.mode_depth.research)
 
     def _resolve_global_budget_multiplier(self, mode: str) -> float:
         token = clean_whitespace(mode).casefold()

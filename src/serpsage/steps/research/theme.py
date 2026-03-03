@@ -187,7 +187,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.plan.theme_plan.output_language = input_language
         ctx.plan.theme_plan.core_question = core_question
         ctx.parallel.question_cards = [item.model_copy(deep=True) for item in cards]
-        ctx.plan.theme_plan = ResearchThemePlan(
+        theme_plan = ResearchThemePlan(
             core_question=core_question,
             report_style=report_style,
             task_intent=task_intent,
@@ -209,6 +209,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 for card in cards
             ],
         )
+        ctx.plan.theme_plan = theme_plan
         seed_groups = [list(item.seed_queries) for item in cards]
         next_query_limit = max(8, int(ctx.runtime.budget.max_queries_per_round) * 3)
         ctx.plan.next_queries = merge_strings(
@@ -220,9 +221,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.notes.append(
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
         )
-        ctx.notes.append(
-            f"Search language fixed to {ctx.plan.theme_plan.search_language}."
-        )
+        ctx.notes.append(f"Search language fixed to {theme_plan.search_language}.")
         ctx.notes.append(f"Report style fixed to `{report_style}`.")
         ctx.notes.append(
             f"Task intent fixed to `{task_intent}` with complexity tier `{complexity_tier}`."
@@ -233,17 +232,15 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             )
         if required_entities:
             ctx.notes.append(f"Required entities: {', '.join(required_entities[:8])}.")
-        ctx.notes.append(
-            f"Output language fixed to {ctx.plan.theme_plan.output_language}."
-        )
+        ctx.notes.append(f"Output language fixed to {theme_plan.output_language}.")
         await self.emit_tracking_event(
             event_name="research.language.selected",
             request_id=ctx.request_id,
             stage="theme_plan",
             attrs={
-                "input_language": str(ctx.plan.theme_plan.input_language),
-                "output_language": str(ctx.plan.theme_plan.output_language),
-                "search_language": str(ctx.plan.theme_plan.search_language),
+                "input_language": str(theme_plan.input_language),
+                "output_language": str(theme_plan.output_language),
+                "search_language": str(theme_plan.search_language),
             },
         )
         await self.emit_tracking_event(
@@ -288,13 +285,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             request_id=ctx.request_id,
             stage="theme_plan",
             attrs={
-                "core_question": ctx.plan.theme_plan.core_question,
+                "core_question": theme_plan.core_question,
                 "question_cards": len(cards),
                 "subthemes": len(subthemes),
                 "next_queries": len(ctx.plan.next_queries),
-                "input_language": str(ctx.plan.theme_plan.input_language),
-                "search_language": str(ctx.plan.theme_plan.search_language),
-                "output_language": str(ctx.plan.theme_plan.output_language),
+                "input_language": str(theme_plan.input_language),
+                "search_language": str(theme_plan.search_language),
+                "output_language": str(theme_plan.output_language),
                 "mode_depth_profile": str(mode_depth.mode_key),
                 "mode_depth_question_card_cap": int(card_cap),
                 "report_style_selected": str(report_style),

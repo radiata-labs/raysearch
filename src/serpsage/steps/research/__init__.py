@@ -12,12 +12,12 @@ from serpsage.steps.research.subreport import ResearchSubreportStep
 from serpsage.steps.research.theme import ResearchThemeStep
 
 __all__ = [
-    "ResearchOverviewStep",
     "ResearchContentStep",
     "ResearchDecideStep",
     "ResearchFetchStep",
     "ResearchFinalizeStep",
     "ResearchLoopStep",
+    "ResearchOverviewStep",
     "ResearchPlanStep",
     "ResearchPrepareStep",
     "ResearchRenderStep",

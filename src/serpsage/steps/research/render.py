@@ -634,7 +634,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
     def _resolve_report_title(self, ctx: ResearchStepContext) -> str:
         raw_theme = clean_whitespace(ctx.request.themes or "")
-        core_question = clean_whitespace(ctx.plan.theme_plan.core_question or "")
+        core_question = self._resolve_core_question(ctx)
         base = core_question or raw_theme or "Research Report"
         if raw_theme and base.casefold() == raw_theme.casefold():
             language_code = self._resolve_target_language(ctx)
@@ -652,10 +652,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     ) -> _RenderFinalContextPacket:
         mode_depth = ctx.runtime.mode_depth
         return _RenderFinalContextPacket(
-            theme=str(
-                clean_whitespace(ctx.plan.theme_plan.core_question or "")
-                or ctx.request.themes
-            ),
+            theme=str(self._resolve_core_question(ctx) or ctx.request.themes),
             target_output_language=str(target_language),
             mode_depth_profile=str(mode_depth.mode_key),
             utc_timestamp=now_utc.isoformat(),
@@ -1008,12 +1005,18 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             fallback_style_key = "explainer"
         style = resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
-            theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
+            theme=self._resolve_core_question(ctx),
             enabled=bool(cfg.enabled),
             fallback_style=cast("ReportStyle", fallback_style_key),
             strict_style_lock=bool(cfg.strict_style_lock),
         )
         return style, bool(cfg.enabled and cfg.apply_render)
+
+    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
+        question = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
+        return question or clean_whitespace(ctx.request.themes)
 
     def _resolve_task_intent(self, raw: object | None) -> TaskIntent:
         token = clean_whitespace(str(raw or "")).casefold().replace("-", "_")

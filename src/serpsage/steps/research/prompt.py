@@ -269,8 +269,12 @@ def compose_system_prompt(
     return "\n\n".join(parts).strip()
 
 
+def _normalize_mode_name(mode_key: str) -> str:
+    return clean_whitespace(mode_key).casefold()
+
+
 def theme_depth_contract(*, mode_key: str) -> str:
-    mode_name = clean_whitespace(mode_key).casefold()
+    mode_name = _normalize_mode_name(mode_key)
     if mode_name == "research-fast":
         return (
             "- fast mode: converge quickly with a compact question-card set.\n"
@@ -289,7 +293,7 @@ def theme_depth_contract(*, mode_key: str) -> str:
 
 
 def mode_depth_planning_contract(*, mode_key: str) -> str:
-    mode_name = clean_whitespace(mode_key).casefold()
+    mode_name = _normalize_mode_name(mode_key)
     if mode_name == "research-fast":
         return (
             "- fast: prioritize rapid convergence with 1-2 high-yield query intents.\n"
@@ -313,7 +317,7 @@ def research_mode_scope_lock_contract(
     mode_key: str,
     task_intent: TaskIntent,
 ) -> str:
-    mode_name = clean_whitespace(mode_key).casefold()
+    mode_name = _normalize_mode_name(mode_key)
     if mode_name != "research":
         return ""
     if task_intent == "how_to":

@@ -170,9 +170,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
-        core_question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
+        core_question = self._resolve_core_question(ctx)
         report_style, style_applied = self._resolve_report_style(ctx)
         context_packet_markdown = self._build_subreport_context_packet_markdown(
             ctx=ctx,
@@ -194,9 +192,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         )
 
     def _build_subreport_fallback(self, ctx: ResearchStepContext) -> str:
-        core_question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
+        core_question = self._resolve_core_question(ctx)
         sources = self._select_sources_for_render(ctx, max_sources=10)
         round_state = ctx.rounds[-1] if ctx.rounds else None
         report_style, style_applied = self._resolve_report_style(ctx)
@@ -804,12 +800,18 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             fallback_style_key = "explainer"
         style = resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
-            theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
+            theme=self._resolve_core_question(ctx),
             enabled=bool(cfg.enabled),
             fallback_style=cast("ReportStyle", fallback_style_key),
             strict_style_lock=bool(cfg.strict_style_lock),
         )
         return style, bool(cfg.enabled and cfg.apply_subreport)
+
+    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
+        question = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
+        return question or clean_whitespace(ctx.request.themes)
 
 
 __all__ = ["ResearchSubreportStep"]

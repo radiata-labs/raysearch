@@ -401,10 +401,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             chat_result = await self._llm.create(
                 model=model,
                 messages=build_link_picker_messages(
-                    core_question=clean_whitespace(
-                        ctx.plan.theme_plan.core_question or ctx.request.themes
-                    )
-                    or ctx.request.themes,
+                    core_question=self._resolve_core_question(ctx),
                     report_style=report_style,  # type: ignore[arg-type]
                     mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
                     current_utc_date=datetime.fromtimestamp(
@@ -516,10 +513,13 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         )
 
     def _resolve_link_rank_query(self, *, ctx: ResearchStepContext) -> str:
-        query = clean_whitespace(
+        return self._resolve_core_question(ctx)
+
+    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
+        question = clean_whitespace(
             ctx.plan.theme_plan.core_question or ctx.request.themes
         )
-        return query or ctx.request.themes
+        return question or clean_whitespace(ctx.request.themes)
 
     def _render_rank_text(self, item: ExtractedLink) -> str:
         return (

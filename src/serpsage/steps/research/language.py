@@ -338,27 +338,31 @@ def _detect_latin_language(text: str) -> str | None:
     token = f" {clean_whitespace(text).casefold()} "
     if not _RE_LATIN.search(token):
         return None
-    if any(marker in token for marker in _FR_HINTS):
+    if _contains_any(text=token, markers=_FR_HINTS):
         return "fr"
-    if any(marker in token for marker in _DE_HINTS):
+    if _contains_any(text=token, markers=_DE_HINTS):
         return "de"
-    if any(marker in token for marker in _ES_HINTS):
+    if _contains_any(text=token, markers=_ES_HINTS):
         return "es"
-    if any(marker in token for marker in _PT_HINTS):
+    if _contains_any(text=token, markers=_PT_HINTS):
         return "pt"
-    if any(marker in token for marker in _IT_HINTS):
+    if _contains_any(text=token, markers=_IT_HINTS):
         return "it"
-    if any(marker in token for marker in _TR_HINTS):
+    if _contains_any(text=token, markers=_TR_HINTS):
         return "tr"
     return "en"
 
 
 def _looks_global_tech(content: str) -> bool:
-    return any(item in content for item in _GLOBAL_TECH_HINTS)
+    return _contains_any(text=content, markers=_GLOBAL_TECH_HINTS)
 
 
 def _looks_local_life(content: str) -> bool:
-    return any(item in content for item in _LOCAL_LIFE_HINTS)
+    return _contains_any(text=content, markers=_LOCAL_LIFE_HINTS)
+
+
+def _contains_any(*, text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
 
 
 __all__ = [

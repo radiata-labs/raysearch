@@ -34,6 +34,7 @@ from serpsage.utils import clean_whitespace
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.steps.base import RunnerBase
+
 _TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
 _TRACKING_QUERY_PREFIXES = ("utm_",)
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
@@ -705,9 +706,7 @@ def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
     values = list(ctx.plan.next_queries)
     if ctx.current_round is not None:
         values.extend(ctx.current_round.queries)
-    values.append(
-        clean_whitespace(ctx.plan.theme_plan.core_question or ctx.request.themes)
-    )
+    values.append(_resolve_core_question(ctx=ctx))
     for value in values:
         for token in _TOKEN_PATTERN.findall(str(value).casefold()):
             if len(token) < 2:
@@ -718,6 +717,11 @@ def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
 
 def _build_source_idx_by_id(sources: list[ResearchSource]) -> dict[int, int]:
     return {int(item.source_id): idx for idx, item in enumerate(sources)}
+
+
+def _resolve_core_question(*, ctx: ResearchStepContext) -> str:
+    question = clean_whitespace(ctx.plan.theme_plan.core_question or ctx.request.themes)
+    return question or clean_whitespace(ctx.request.themes)
 
 
 def _normalize_text(raw: object) -> str:

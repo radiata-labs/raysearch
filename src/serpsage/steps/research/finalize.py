@@ -19,7 +19,8 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         style_cfg = ctx.settings.research.report_style
         mode_depth = ctx.runtime.mode_depth
-        search_language = str(ctx.plan.theme_plan.search_language or "")
+        theme_plan = ctx.plan.theme_plan
+        search_language = str(theme_plan.search_language or "")
         provider_params = map_provider_language_param(
             provider_backend=str(ctx.settings.provider.backend),
             search_language=search_language,
@@ -42,7 +43,7 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                 "stop_reason": str(ctx.runtime.stop_reason or "n/a"),
                 "content_chars": int(content_chars),
                 "has_structured": bool(ctx.output.structured is not None),
-                "report_style_selected": str(ctx.plan.theme_plan.report_style or ""),
+                "report_style_selected": str(theme_plan.report_style or ""),
                 "report_style_enabled": bool(style_cfg.enabled),
                 "report_style_apply_subreport": bool(style_cfg.apply_subreport),
                 "report_style_apply_render": bool(style_cfg.apply_render),
@@ -57,8 +58,8 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                     mode_depth.enable_llm_track_orchestrator
                 ),
                 "output_length_ratio_vs_target": float(ratio_vs_target),
-                "input_language": str(ctx.plan.theme_plan.input_language),
-                "output_language": str(ctx.plan.theme_plan.output_language),
+                "input_language": str(theme_plan.input_language),
+                "output_language": str(theme_plan.output_language),
                 "search_language": str(search_language),
                 "provider_language_param_applied": bool(
                     provider_language_param_applied

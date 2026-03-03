@@ -543,7 +543,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         snapshot_markdown = self._build_track_snapshot_markdown(track_map)
         return build_track_orchestrator_prompt_messages(
             mode_depth_profile=str(root.runtime.mode_depth.mode_key),
-            core_question=root.plan.theme_plan.core_question or root.request.themes,
+            core_question=self._resolve_core_question(root),
             search_remaining=max(
                 0,
                 int(budget.max_search_calls) - int(root.runtime.search_calls),
@@ -651,7 +651,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> list[str]:
         latest = self._latest_round(track_ctx)
         core_question = clean_whitespace(
-            track_ctx.plan.theme_plan.core_question or card.question
+            self._resolve_core_question(track_ctx, fallback=card.question)
         )
         fallback_queries = self._fallback_gap_queries(
             core_question=core_question,
@@ -709,7 +709,9 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> list[dict[str, str]]:
         latest = self._latest_round(track_ctx)
         return build_gap_closure_prompt_messages(
-            core_question=track_ctx.plan.theme_plan.core_question or card.question,
+            core_question=self._resolve_core_question(
+                track_ctx, fallback=card.question
+            ),
             question_id=str(card.question_id),
             pass_index=int(pass_index),
             confidence=float(latest.confidence) if latest is not None else 0.0,
@@ -764,11 +766,9 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             raw_cards = [
                 ResearchQuestionCard(
                     question_id="q1",
-                    question=ctx.plan.theme_plan.core_question or ctx.request.themes,
+                    question=self._resolve_core_question(ctx),
                     priority=5,
-                    seed_queries=[
-                        ctx.plan.theme_plan.core_question or ctx.request.themes
-                    ],
+                    seed_queries=[self._resolve_core_question(ctx)],
                     evidence_focus=[],
                     expected_gain="Fallback single-track research.",
                 )
@@ -1071,7 +1071,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             lines.extend(
                 [
                     f"### {question_id}",
-                    f"- question: {track_ctx.plan.theme_plan.core_question or track_ctx.request.themes}",
+                    f"- question: {self._resolve_core_question(track_ctx)}",
                     f"- rounds: {len(track_ctx.rounds)}",
                     f"- search_calls: {int(track_ctx.runtime.search_calls)}",
                     f"- fetch_calls: {int(track_ctx.runtime.fetch_calls)}",
@@ -1098,6 +1098,16 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 ]
             )
         return "\n".join(lines).strip() or "- (none)"
+
+    def _resolve_core_question(
+        self, track_ctx: ResearchStepContext, *, fallback: str = ""
+    ) -> str:
+        question = clean_whitespace(
+            track_ctx.plan.theme_plan.core_question
+            or fallback
+            or track_ctx.request.themes
+        )
+        return question or clean_whitespace(track_ctx.request.themes)
 
     def _coerce_insight_card(
         self, raw: object | None

@@ -19,6 +19,9 @@ from serpsage.utils import clean_whitespace
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+_NONE_BULLET = ["  - (none)"]
+_NONE_BULLET_L3 = ["      - (none)"]
+
 
 def normalize_block_text(text: str) -> str:
     return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -68,12 +71,10 @@ def render_theme_plan_markdown(
         ]
     )
     lines.append("- Subthemes:")
-    lines.extend(
-        _render_markdown_bullets(plan.subthemes, indent="  ") or ["  - (none)"]
-    )
+    lines.extend(_render_markdown_bullets(plan.subthemes, indent="  ") or _NONE_BULLET)
     lines.append("- Required entities:")
     lines.extend(
-        _render_markdown_bullets(plan.required_entities, indent="  ") or ["  - (none)"]
+        _render_markdown_bullets(plan.required_entities, indent="  ") or _NONE_BULLET
     )
     if include_question_cards:
         lines.append("- Question cards:")
@@ -83,7 +84,7 @@ def render_theme_plan_markdown(
                     _render_theme_plan_card_lines(card=card, index=index, indent="  ")
                 )
         else:
-            lines.append("  - (none)")
+            lines.extend(_NONE_BULLET)
     return "\n".join(lines).strip()
 
 
@@ -145,7 +146,7 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
             ]
         )
         lines.extend(
-            _render_markdown_bullets(round_state.queries, indent="  ") or ["  - (none)"]
+            _render_markdown_bullets(round_state.queries, indent="  ") or _NONE_BULLET
         )
         overview_summary = normalize_block_text(str(round_state.overview_summary or ""))
         content_summary = normalize_block_text(str(round_state.content_summary or ""))
@@ -157,7 +158,7 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
                 + ["  ```"]
             )
         else:
-            lines.append("  - (none)")
+            lines.extend(_NONE_BULLET)
         lines.append("- Content summary:")
         if content_summary:
             lines.extend(
@@ -166,11 +167,11 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
                 + ["  ```"]
             )
         else:
-            lines.append("  - (none)")
+            lines.extend(_NONE_BULLET)
         lines.append("- Missing entities:")
         lines.extend(
             _render_markdown_bullets(round_state.missing_entities, indent="  ")
-            or ["  - (none)"]
+            or _NONE_BULLET
         )
     return "\n".join(lines).strip()
 
@@ -184,17 +185,14 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
         f"- Stop: {bool(review.stop)}",
         "- Findings:",
     ]
-    lines.extend(
-        _render_markdown_bullets(review.findings, indent="  ") or ["  - (none)"]
-    )
+    lines.extend(_render_markdown_bullets(review.findings, indent="  ") or _NONE_BULLET)
     lines.append("- Covered subthemes:")
     lines.extend(
-        _render_markdown_bullets(review.covered_subthemes, indent="  ")
-        or ["  - (none)"]
+        _render_markdown_bullets(review.covered_subthemes, indent="  ") or _NONE_BULLET
     )
     lines.append("- Critical gaps:")
     lines.extend(
-        _render_markdown_bullets(review.critical_gaps, indent="  ") or ["  - (none)"]
+        _render_markdown_bullets(review.critical_gaps, indent="  ") or _NONE_BULLET
     )
     lines.append("- Need content source IDs:")
     if review.need_content_source_ids:
@@ -202,7 +200,7 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
             f"  - {int(source_id)}" for source_id in review.need_content_source_ids
         )
     else:
-        lines.append("  - (none)")
+        lines.extend(_NONE_BULLET)
     lines.append("- Conflict arbitration:")
     if review.conflict_arbitration:
         for item in review.conflict_arbitration:
@@ -210,18 +208,18 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
             status = _normalize_scalar_text(item.status) or "n/a"
             lines.append(f"  - topic={topic}; status={status}")
     else:
-        lines.append("  - (none)")
+        lines.extend(_NONE_BULLET)
     lines.append("- Next queries:")
     lines.extend(
-        _render_markdown_bullets(review.next_queries, indent="  ") or ["  - (none)"]
+        _render_markdown_bullets(review.next_queries, indent="  ") or _NONE_BULLET
     )
     lines.append("- Covered entities:")
     lines.extend(
-        _render_markdown_bullets(review.covered_entities, indent="  ") or ["  - (none)"]
+        _render_markdown_bullets(review.covered_entities, indent="  ") or _NONE_BULLET
     )
     lines.append("- Missing entities:")
     lines.extend(
-        _render_markdown_bullets(review.missing_entities, indent="  ") or ["  - (none)"]
+        _render_markdown_bullets(review.missing_entities, indent="  ") or _NONE_BULLET
     )
     return "\n".join(lines).strip()
 
@@ -240,7 +238,7 @@ def render_link_candidates_markdown(
     max_links_per_page: int = 6,
 ) -> str:
     if not candidates:
-        return "- (none)"
+        return _NONE_BULLET[0]
     page_limit = max(1, int(max_pages))
     link_limit = max(1, int(max_links_per_page))
     lines: list[str] = []
@@ -279,14 +277,14 @@ def render_link_candidates_markdown(
             for link in flat_subpage_links[:link_limit]
         )
         lines.extend(
-            _render_markdown_bullets(sample_lines, indent="  ") or ["  - (none)"]
+            _render_markdown_bullets(sample_lines, indent="  ") or _NONE_BULLET
         )
     return "\n".join(lines).strip()
 
 
 def render_question_cards_markdown(cards: list[ResearchQuestionCard]) -> str:
     if not cards:
-        return "- (none)"
+        return _NONE_BULLET[0]
     lines: list[str] = []
     for index, card in enumerate(cards, start=1):
         lines.extend(_render_theme_plan_card_lines(card=card, index=index, indent=""))
@@ -300,7 +298,7 @@ def render_architect_plan_markdown(plan: RenderArchitectOutput) -> str:
         "- Sections:",
     ]
     if not plan.sections:
-        lines.append("  - (none)")
+        lines.extend(_NONE_BULLET)
         return "\n".join(lines).strip()
     for index, section in enumerate(plan.sections, start=1):
         lines.append(
@@ -321,7 +319,7 @@ def render_architect_plan_markdown(plan: RenderArchitectOutput) -> str:
         )
         lines.extend(
             _render_markdown_bullets(section.question_ids, indent="      ")
-            or ["      - (none)"]
+            or _NONE_BULLET_L3
         )
         lines.extend(
             [
@@ -330,17 +328,17 @@ def render_architect_plan_markdown(plan: RenderArchitectOutput) -> str:
         )
         lines.extend(
             _render_markdown_bullets(section.scope_requirements, indent="      ")
-            or ["      - (none)"]
+            or _NONE_BULLET_L3
         )
         lines.append("    - writing_boundaries:")
         lines.extend(
             _render_markdown_bullets(section.writing_boundaries, indent="      ")
-            or ["      - (none)"]
+            or _NONE_BULLET_L3
         )
         lines.append("    - must_cover_points:")
         lines.extend(
             _render_markdown_bullets(section.must_cover_points, indent="      ")
-            or ["      - (none)"]
+            or _NONE_BULLET_L3
         )
     return "\n".join(lines).strip()
 
@@ -356,7 +354,7 @@ def render_section_plan_markdown(section: RenderArchitectSectionPlan) -> str:
         "- question_ids:",
     ]
     lines.extend(
-        _render_markdown_bullets(section.question_ids, indent="  ") or ["  - (none)"]
+        _render_markdown_bullets(section.question_ids, indent="  ") or _NONE_BULLET
     )
     lines.extend(
         [
@@ -365,17 +363,16 @@ def render_section_plan_markdown(section: RenderArchitectSectionPlan) -> str:
     )
     lines.extend(
         _render_markdown_bullets(section.scope_requirements, indent="  ")
-        or ["  - (none)"]
+        or _NONE_BULLET
     )
     lines.append("- writing_boundaries:")
     lines.extend(
         _render_markdown_bullets(section.writing_boundaries, indent="  ")
-        or ["  - (none)"]
+        or _NONE_BULLET
     )
     lines.append("- must_cover_points:")
     lines.extend(
-        _render_markdown_bullets(section.must_cover_points, indent="  ")
-        or ["  - (none)"]
+        _render_markdown_bullets(section.must_cover_points, indent="  ") or _NONE_BULLET
     )
     return "\n".join(lines).strip()
 

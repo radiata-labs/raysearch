@@ -24,21 +24,31 @@ def resolve_research_model(
     return token or fallback
 
 
+def _append_unique_token(
+    *,
+    out: list[str],
+    seen: set[str],
+    raw: object,
+    limit: int,
+) -> bool:
+    value = clean_whitespace(str(raw or ""))
+    if not value:
+        return False
+    key = value.casefold()
+    if key in seen:
+        return False
+    seen.add(key)
+    out.append(value)
+    return bool(len(out) >= max(1, int(limit)))
+
+
 def normalize_strings(raw: object, *, limit: int) -> list[str]:
     if not isinstance(raw, list):
         return []
     out: list[str] = []
     seen: set[str] = set()
     for item in raw:
-        value = clean_whitespace(str(item or ""))
-        if not value:
-            continue
-        key = value.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(value)
-        if len(out) >= max(1, int(limit)):
+        if _append_unique_token(out=out, seen=seen, raw=item, limit=limit):
             break
     return out
 
@@ -48,15 +58,7 @@ def merge_strings(*groups: list[str], limit: int) -> list[str]:
     seen: set[str] = set()
     for group in groups:
         for item in group:
-            value = clean_whitespace(str(item or ""))
-            if not value:
-                continue
-            key = value.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(value)
-            if len(out) >= max(1, int(limit)):
+            if _append_unique_token(out=out, seen=seen, raw=item, limit=limit):
                 return out
     return out
 
