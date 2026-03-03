@@ -105,7 +105,9 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             limit=int(budget.max_queries_per_round),
         )
         next_queries = list(raw_next_queries)
-        core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        core_question = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
         if required_entities and not entity_coverage_ok:
             next_queries = merge_strings(
                 self._build_entity_backfill_queries(
@@ -118,7 +120,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             )
         no_progress_threshold = max(
             1,
-            int(ctx.runtime.no_progress_rounds_to_stop_effective),
+            int(ctx.runtime.mode_depth.no_progress_rounds_to_stop_effective),
         )
         min_rounds_per_track = max(1, int(ctx.runtime.mode_depth.min_rounds_per_track))
         round_count_after_commit = int(len(ctx.rounds)) + 1
@@ -252,7 +254,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         if round_state is None:
             return []
         return build_decide_signal_messages(
-            core_question=ctx.plan.core_question or ctx.request.themes,
+            core_question=ctx.plan.theme_plan.core_question or ctx.request.themes,
             mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
             confidence=float(round_state.confidence),
             coverage_ratio=float(round_state.coverage_ratio),

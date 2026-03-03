@@ -99,9 +99,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             search_calls=0,
             fetch_calls=0,
             no_progress_rounds=0,
-            no_progress_rounds_to_stop_effective=int(
-                mode_depth.no_progress_rounds_to_stop_effective
-            ),
             gap_closure_passes_applied=0,
             density_gate_passes_applied=0,
             target_output_chars=0,
@@ -129,9 +126,8 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             ),
         )
         ctx.plan = ResearchPlanState(
-            theme_plan=ResearchThemePlan(),
+            theme_plan=ResearchThemePlan(core_question=themes),
             next_queries=[themes],
-            core_question=themes,
         )
         ctx.parallel = ResearchParallelState(
             question_cards=[],

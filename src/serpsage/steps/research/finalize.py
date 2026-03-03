@@ -19,9 +19,7 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         style_cfg = ctx.settings.research.report_style
         mode_depth = ctx.runtime.mode_depth
-        search_language = str(
-            ctx.plan.search_language or ctx.plan.theme_plan.search_language
-        )
+        search_language = str(ctx.plan.theme_plan.search_language or "")
         provider_params = map_provider_language_param(
             provider_backend=str(ctx.settings.provider.backend),
             search_language=search_language,
@@ -59,8 +57,8 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                     mode_depth.enable_llm_track_orchestrator
                 ),
                 "output_length_ratio_vs_target": float(ratio_vs_target),
-                "input_language": str(ctx.plan.input_language),
-                "output_language": str(ctx.plan.output_language),
+                "input_language": str(ctx.plan.theme_plan.input_language),
+                "output_language": str(ctx.plan.theme_plan.output_language),
                 "search_language": str(search_language),
                 "provider_language_param_applied": bool(
                     provider_language_param_applied

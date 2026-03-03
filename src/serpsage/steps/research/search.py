@@ -124,12 +124,13 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         mode_depth = ctx.runtime.mode_depth
         main_links_limit = max(1, int(mode_depth.search_links_main_limit))
         search_language = normalize_language_code(
-            ctx.plan.search_language or ctx.plan.theme_plan.search_language,
+            ctx.plan.theme_plan.search_language,
             default="other",
         )
         if search_language == "other":
             search_language = normalize_language_code(
-                ctx.plan.output_language or ctx.plan.input_language,
+                ctx.plan.theme_plan.output_language
+                or ctx.plan.theme_plan.input_language,
                 default="en",
             )
         provider_params = map_provider_language_param(
@@ -704,7 +705,9 @@ def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
     values = list(ctx.plan.next_queries)
     if ctx.current_round is not None:
         values.extend(ctx.current_round.queries)
-    values.append(clean_whitespace(ctx.plan.core_question or ctx.request.themes))
+    values.append(
+        clean_whitespace(ctx.plan.theme_plan.core_question or ctx.request.themes)
+    )
     for value in values:
         for token in _TOKEN_PATTERN.findall(str(value).casefold()):
             if len(token) < 2:

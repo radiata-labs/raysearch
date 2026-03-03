@@ -108,7 +108,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx.work.content_review = ContentOutputPayload()
         ctx.work.need_content_source_ids = []
         ctx.work.next_queries = []
-        core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        core_question = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
         if not core_question:
             core_question = ctx.request.themes
         candidate_queries = merge_strings(
@@ -243,7 +245,8 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     "search_language": str(search_language),
                     "output_language": str(
                         normalize_language_code(
-                            ctx.plan.output_language or ctx.plan.input_language,
+                            ctx.plan.theme_plan.output_language
+                            or ctx.plan.theme_plan.input_language,
                             default="other",
                         )
                     ),
@@ -373,13 +376,13 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
 
     def _resolve_search_language(self, ctx: ResearchStepContext) -> str:
         from_plan = normalize_language_code(
-            ctx.plan.search_language or ctx.plan.theme_plan.search_language,
+            ctx.plan.theme_plan.search_language,
             default="other",
         )
         if from_plan != "other":
             return from_plan
         from_output = normalize_language_code(
-            ctx.plan.output_language or ctx.plan.input_language,
+            ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
             default="other",
         )
         if from_output != "other":
@@ -477,7 +480,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> list[dict[str, str]]:
         output_language = normalize_language_code(
-            ctx.plan.output_language or ctx.plan.input_language,
+            ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
             default="other",
         )
         current_jobs = [
@@ -508,7 +511,8 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 "role": "user",
                 "content": (
                     f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    f"CORE_QUESTION:\n{ctx.plan.core_question or ctx.request.themes}\n\n"
+                    "CORE_QUESTION:\n"
+                    f"{ctx.plan.theme_plan.core_question or ctx.request.themes}\n\n"
                     "LANGUAGE_POLICY:\n"
                     f"- required_search_language={search_language}\n"
                     f"- required_output_language={output_language}\n\n"
@@ -628,7 +632,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         search_language: str,
     ) -> bool:
         output_language = normalize_language_code(
-            ctx.plan.output_language or ctx.plan.input_language,
+            ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
             default="other",
         )
         search_lang = normalize_language_code(search_language, default="other")
@@ -647,7 +651,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         return float(round_state.corpus_score_gain) < float(self._LOW_GAIN_THRESHOLD)
 
     def _build_output_language_rescue_query(self, *, ctx: ResearchStepContext) -> str:
-        query = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        query = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
         if query:
             return query
         return clean_whitespace(ctx.request.themes)
@@ -662,7 +668,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> list[dict[str, str]]:
         budget = ctx.runtime.budget
         mode_depth = ctx.runtime.mode_depth
-        out_lang = ctx.plan.output_language or "en"
+        out_lang = ctx.plan.theme_plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
         search_language = self._resolve_search_language(ctx)
         report_style = self._resolve_report_style(ctx)
@@ -868,7 +874,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             fallback_style_key = "explainer"
         return resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
-            theme=ctx.plan.core_question or ctx.request.themes,
+            theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
             enabled=bool(cfg.enabled),
             fallback_style=cast("ReportStyle", fallback_style_key),
             strict_style_lock=bool(cfg.strict_style_lock),

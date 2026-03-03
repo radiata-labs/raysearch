@@ -976,7 +976,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
     def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
         language_code = normalize_language_code(
-            ctx.plan.output_language or ctx.plan.input_language,
+            ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
             default="other",
         )
         if language_code != "other":
@@ -993,7 +993,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             fallback_style_key = "explainer"
         style = resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
-            theme=ctx.plan.core_question or ctx.request.themes,
+            theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
             enabled=bool(cfg.enabled),
             fallback_style=cast("ReportStyle", fallback_style_key),
             strict_style_lock=bool(cfg.strict_style_lock),

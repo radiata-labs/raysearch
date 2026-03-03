@@ -402,7 +402,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 model=model,
                 messages=build_link_picker_messages(
                     core_question=clean_whitespace(
-                        ctx.plan.core_question or ctx.request.themes
+                        ctx.plan.theme_plan.core_question or ctx.request.themes
                     )
                     or ctx.request.themes,
                     report_style=report_style,  # type: ignore[arg-type]
@@ -516,7 +516,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         )
 
     def _resolve_link_rank_query(self, *, ctx: ResearchStepContext) -> str:
-        query = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        query = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
         return query or ctx.request.themes
 
     def _render_rank_text(self, item: ExtractedLink) -> str:

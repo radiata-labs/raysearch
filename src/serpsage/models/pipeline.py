@@ -335,7 +335,6 @@ class ResearchRuntimeState(MutableModel):
     search_calls: int = 0
     fetch_calls: int = 0
     no_progress_rounds: int = 0
-    no_progress_rounds_to_stop_effective: int = 2
     gap_closure_passes_applied: int = 0
     density_gate_passes_applied: int = 0
     target_output_chars: int = 0
@@ -351,10 +350,6 @@ class ResearchRuntimeState(MutableModel):
 class ResearchPlanState(MutableModel):
     theme_plan: ResearchThemePlan = Field(default_factory=ResearchThemePlan)
     next_queries: list[str] = Field(default_factory=list)
-    input_language: str = ""
-    search_language: str = ""
-    output_language: str = ""
-    core_question: str = ""
     last_round_link_candidates: list[ResearchLinkCandidate] = Field(
         default_factory=list
     )

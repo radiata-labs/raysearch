@@ -201,9 +201,11 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         packet: str,
         now_utc: datetime,
     ) -> list[dict[str, str]]:
-        out_lang = ctx.plan.output_language or "en"
+        out_lang = ctx.plan.theme_plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
-        core_question = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        core_question = clean_whitespace(
+            ctx.plan.theme_plan.core_question or ctx.request.themes
+        )
         round_index = ctx.current_round.round_index if ctx.current_round else 0
         report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
@@ -356,7 +358,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             fallback_style_key = "explainer"
         return resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
-            theme=ctx.plan.core_question or ctx.request.themes,
+            theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
             enabled=bool(cfg.enabled),
             fallback_style=cast("ReportStyle", fallback_style_key),
             strict_style_lock=bool(cfg.strict_style_lock),
