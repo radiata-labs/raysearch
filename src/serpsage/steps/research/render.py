@@ -268,7 +268,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         )
         report_style, style_applied = self._resolve_report_style(ctx)
         try:
-            chat_result = await self._llm.chat(
+            chat_result = await self._llm.create(
                 model=model,
                 messages=self._build_architect_messages(
                     ctx=ctx,
@@ -445,7 +445,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             section=section,
         )
         try:
-            result = await self._llm.chat(
+            result = await self._llm.create(
                 model=model,
                 messages=messages,
                 response_format=None,
@@ -478,7 +478,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             now_utc=now_utc,
         )
         try:
-            result = await self._llm.chat(
+            result = await self._llm.create(
                 model=model,
                 messages=messages,
                 response_format=schema,
@@ -824,7 +824,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             ctx.runtime.target_output_chars = int(target_chars)
         for pass_index in range(pass_cap):
             try:
-                result = await self._llm.chat(
+                result = await self._llm.create(
                     model=model,
                     messages=self._build_density_gate_messages(
                         ctx=ctx,

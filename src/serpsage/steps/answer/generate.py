@@ -100,7 +100,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         )
         ctx.output.citations = []
         try:
-            result = await self._llm.chat(
+            result = await self._llm.create(
                 model=str(self.settings.answer.generate.use_model),
                 messages=messages,
                 response_format=schema,

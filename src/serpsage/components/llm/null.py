@@ -25,7 +25,7 @@ class NullLLMClient(LLMClientBase):
         super().__init__(rt=rt)
 
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -36,7 +36,7 @@ class NullLLMClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatTextResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -47,7 +47,7 @@ class NullLLMClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatDictResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -58,7 +58,7 @@ class NullLLMClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
     @override
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,

@@ -129,9 +129,9 @@ research:
     max_rounds: 8
     max_search_calls: 24
     max_fetch_calls: 48
-    max_results_per_search: 8
-    max_queries_per_round: 4
-    max_fetch_per_round: 8
+    max_results_per_search: 12
+    max_queries_per_round: 6
+    max_fetch_per_round: 12
     stop_confidence: 0.86
     min_coverage_ratio: 0.90
     max_unresolved_conflicts: 0

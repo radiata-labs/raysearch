@@ -36,7 +36,7 @@ class DashScopeClient(LLMClientBase):
         self._api_key = model_cfg.api_key
 
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -47,7 +47,7 @@ class DashScopeClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatTextResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -58,7 +58,7 @@ class DashScopeClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatDictResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -69,7 +69,7 @@ class DashScopeClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
     @override
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,

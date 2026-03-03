@@ -92,7 +92,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         retry_on = (ValueError, TypeError, RuntimeError)
         try:
             if schema is None:
-                text_res = await self._llm.chat(
+                text_res = await self._llm.create(
                     model=str(model_cfg.name),
                     messages=messages,
                     response_format=schema,
@@ -110,7 +110,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 attempts = max(1, retries + 1)
                 for attempt_index in range(attempts):
                     try:
-                        json_res = await self._llm.chat(
+                        json_res = await self._llm.create(
                             model=str(model_cfg.name),
                             messages=attempt_messages,
                             response_format=schema,

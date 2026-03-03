@@ -81,7 +81,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             question_cards=[],
         )
         try:
-            chat_result = await self._llm.chat(
+            chat_result = await self._llm.create(
                 model=model,
                 messages=self._build_theme_messages(
                     ctx,

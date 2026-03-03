@@ -29,7 +29,7 @@ RetryOn: TypeAlias = (
 
 class LLMClientBase(WorkUnit, ABC):
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -40,7 +40,7 @@ class LLMClientBase(WorkUnit, ABC):
         **kwargs: Any,
     ) -> ChatTextResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -52,7 +52,7 @@ class LLMClientBase(WorkUnit, ABC):
     ) -> ChatDictResult: ...
     # `format_override` is only meaningful for BaseModel response_format.
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -63,7 +63,7 @@ class LLMClientBase(WorkUnit, ABC):
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
     @abstractmethod
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -81,7 +81,7 @@ class LLMClientBase(WorkUnit, ABC):
         raise NotImplementedError
 
     @overload
-    async def chat(
+    async def create(
         self,
         *,
         model: str,
@@ -95,7 +95,7 @@ class LLMClientBase(WorkUnit, ABC):
         **kwargs: Any,
     ) -> ChatTextResult: ...
     @overload
-    async def chat(
+    async def create(
         self,
         *,
         model: str,
@@ -110,7 +110,7 @@ class LLMClientBase(WorkUnit, ABC):
     ) -> ChatDictResult: ...
     # `format_override` can be used only when response_format is BaseModel type.
     @overload
-    async def chat(
+    async def create(
         self,
         *,
         model: str,
@@ -123,7 +123,7 @@ class LLMClientBase(WorkUnit, ABC):
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
-    async def chat(
+    async def create(
         self,
         *,
         model: str,
@@ -152,7 +152,7 @@ class LLMClientBase(WorkUnit, ABC):
         for attempt_index in range(attempts):
             try:
                 if response_format is None:
-                    return await self._chat(
+                    return await self._create(
                         model=model,
                         messages=messages,
                         response_format=None,
@@ -161,7 +161,7 @@ class LLMClientBase(WorkUnit, ABC):
                         **kwargs,
                     )
                 if isinstance(response_format, dict):
-                    return await self._chat(
+                    return await self._create(
                         model=model,
                         messages=messages,
                         response_format=response_format,
@@ -172,7 +172,7 @@ class LLMClientBase(WorkUnit, ABC):
                 if isinstance(response_format, type) and issubclass(
                     response_format, BaseModel
                 ):
-                    return await self._chat(
+                    return await self._create(
                         model=model,
                         messages=messages,
                         response_format=response_format,

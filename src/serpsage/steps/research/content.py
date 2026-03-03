@@ -81,7 +81,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         )
         payload = self._empty_review()
         try:
-            chat_result = await self._llm.chat(
+            chat_result = await self._llm.create(
                 model=model,
                 messages=self._build_content_messages(
                     ctx=ctx,

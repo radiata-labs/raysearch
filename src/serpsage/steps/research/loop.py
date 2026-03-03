@@ -508,7 +508,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.plan.use_model,
         )
         try:
-            result = await self._llm.chat(
+            result = await self._llm.create(
                 model=model,
                 messages=self._build_track_orchestrator_messages(
                     root=root,
@@ -663,7 +663,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.plan.use_model,
         )
         try:
-            result = await self._llm.chat(
+            result = await self._llm.create(
                 model=model,
                 messages=self._build_gap_closure_messages(
                     root=root,

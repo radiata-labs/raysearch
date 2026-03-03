@@ -32,7 +32,7 @@ class RoutedLLMClient(LLMClientBase):
         self.bind_deps(*[unit for unit, _ in self._routes.values()])
 
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -43,7 +43,7 @@ class RoutedLLMClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatTextResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -54,7 +54,7 @@ class RoutedLLMClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatDictResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -65,7 +65,7 @@ class RoutedLLMClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
     @override
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -97,7 +97,7 @@ class RoutedLLMClient(LLMClientBase):
         try:
             result: ChatResultBase
             if response_format is None:
-                result = await client.chat(
+                result = await client.create(
                     model=provider_model,
                     messages=messages,
                     response_format=None,
@@ -106,7 +106,7 @@ class RoutedLLMClient(LLMClientBase):
                     **kwargs,
                 )
             elif isinstance(response_format, dict):
-                result = await client.chat(
+                result = await client.create(
                     model=provider_model,
                     messages=messages,
                     response_format=response_format,
@@ -117,7 +117,7 @@ class RoutedLLMClient(LLMClientBase):
             elif isinstance(response_format, type) and issubclass(
                 response_format, BaseModel
             ):
-                result = await client.chat(
+                result = await client.create(
                     model=provider_model,
                     messages=messages,
                     response_format=response_format,

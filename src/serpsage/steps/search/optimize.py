@@ -96,7 +96,7 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
             },
         }
         messages = self._build_messages(query=query, now_utc=now_utc, mode=mode)
-        result = await self._llm.chat(
+        result = await self._llm.create(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
             response_format=schema,

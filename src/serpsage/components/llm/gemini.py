@@ -53,7 +53,7 @@ class GeminiClient(LLMClientBase):
         )
 
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -64,7 +64,7 @@ class GeminiClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatTextResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -75,7 +75,7 @@ class GeminiClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatDictResult: ...
     @overload
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,
@@ -86,7 +86,7 @@ class GeminiClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
     @override
-    async def _chat(
+    async def _create(
         self,
         *,
         model: str,

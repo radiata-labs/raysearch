@@ -223,7 +223,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.plan.use_model,
         )
         try:
-            result = await self._llm.chat(
+            result = await self._llm.create(
                 model=model,
                 messages=self._build_decide_messages(ctx=ctx),
                 response_format=_DecideSignalPayload,

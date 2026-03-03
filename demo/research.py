@@ -34,5 +34,10 @@ async def main(
 
 
 if __name__ == "__main__":
-    out = anyio.run(main, "How to use dify?", "research-pro", None)
+    out = anyio.run(
+        main,
+        "追踪饮食文化，分析餐饮趋势、杂货数据与菜系热度，观察各地区饮食习惯变化。",
+        "research-pro",
+        None,
+    )
     print(out["research_result"])

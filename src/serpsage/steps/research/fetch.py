@@ -398,7 +398,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         candidate_links_markdown = self._render_link_candidates_for_picker(links)
         selected_ids: list[int] = []
         try:
-            chat_result = await self._llm.chat(
+            chat_result = await self._llm.create(
                 model=model,
                 messages=build_link_picker_messages(
                     core_question=clean_whitespace(

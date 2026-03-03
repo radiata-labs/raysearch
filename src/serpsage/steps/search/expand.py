@@ -213,7 +213,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
                 ),
             },
         ]
-        result = await self._llm.chat(
+        result = await self._llm.create(
             model=model_name,
             messages=messages,
             response_format=schema,

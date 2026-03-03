@@ -118,7 +118,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         markdown_text = ""
         insight_card: TrackInsightCardPayload | None = None
         try:
-            result = await self._llm.chat(
+            result = await self._llm.create(
                 model=model,
                 messages=messages,
                 response_format=SubreportOutputPayload,

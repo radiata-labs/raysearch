@@ -119,7 +119,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             now_utc=now_utc,
             max_results_cap=max_results_cap,
         )
-        result = await self._llm.chat(
+        result = await self._llm.create(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
             response_format=schema,
