@@ -114,6 +114,7 @@ class SearchStepContext(BaseStepContext):
     settings: AppSettings
     request: SearchRequest
     disable_internal_llm: bool = False
+    provider_params: dict[str, str] = Field(default_factory=dict)
     deep: SearchDeepState = Field(default_factory=SearchDeepState)
     prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
     fetch: SearchFetchState = Field(default_factory=SearchFetchState)
@@ -339,6 +340,9 @@ class ResearchRuntimeState(MutableModel):
     density_gate_passes_applied: int = 0
     target_output_chars: int = 0
     output_length_ratio_vs_target: float = 0.0
+    provider_language_param_applied: bool = False
+    query_language_repair_applied: bool = False
+    search_language_fallback_applied: bool = False
     stop: bool = False
     stop_reason: str = ""
     round_index: int = 0
@@ -348,6 +352,7 @@ class ResearchPlanState(MutableModel):
     theme_plan: ResearchThemePlan = Field(default_factory=ResearchThemePlan)
     next_queries: list[str] = Field(default_factory=list)
     input_language: str = ""
+    search_language: str = ""
     output_language: str = ""
     core_question: str = ""
     last_round_link_candidates: list[ResearchLinkCandidate] = Field(

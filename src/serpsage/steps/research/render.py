@@ -30,6 +30,10 @@ from serpsage.steps.research.context import (
     render_section_plan_markdown,
     render_theme_plan_markdown,
 )
+from serpsage.steps.research.language import (
+    document_language_alignment,
+    normalize_language_code,
+)
 from serpsage.steps.research.prompt import (
     build_density_gate_messages as build_density_gate_prompt_messages,
 )
@@ -122,6 +126,8 @@ class _RenderFinalContextPacket:
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
+    _FINAL_LANGUAGE_ALIGNMENT_MIN = 0.72
+
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -249,6 +255,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_language=target_language,
             now_utc=now_utc,
             context_packet_markdown=context_packet_markdown,
+        )
+        assembled = await self._repair_final_language_if_needed(
+            ctx=ctx,
+            markdown=assembled,
+            target_language=target_language,
+            now_utc=now_utc,
         )
         ctx.output.structured = None
         ctx.output.content = self._normalize_markdown(assembled)
@@ -868,6 +880,79 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             )
         return current
 
+    async def _repair_final_language_if_needed(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        markdown: str,
+        target_language: str,
+        now_utc: datetime,
+    ) -> str:
+        target = normalize_language_code(target_language, default="other")
+        if target == "other":
+            return markdown
+        alignment = document_language_alignment(
+            text=markdown,
+            target_language=target,
+        )
+        if alignment >= float(self._FINAL_LANGUAGE_ALIGNMENT_MIN):
+            return markdown
+        model = resolve_research_model(
+            ctx=ctx,
+            stage="markdown",
+            fallback=self.settings.answer.generate.use_model,
+        )
+        try:
+            repaired = await self._llm.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Role: Final report language normalizer.\n"
+                            "Mission: Rewrite markdown into target language while preserving all meaning and structure.\n"
+                            "Rules:\n"
+                            "1) Preserve every key fact, number, date, condition, and action.\n"
+                            "2) Keep heading structure and markdown formatting.\n"
+                            "3) Keep unavoidable proper nouns in original form when needed.\n"
+                            "4) Do not add or remove substantive content.\n"
+                            "5) Return markdown only."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"TARGET_LANGUAGE:\n{target}\n\n"
+                            f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                            f"MARKDOWN:\n{markdown}"
+                        ),
+                    },
+                ],
+                retries=int(self.settings.research.llm_self_heal_retries),
+            )
+            candidate = normalize_block_text(str(repaired.text or ""))
+            if not candidate:
+                return markdown
+            candidate_alignment = document_language_alignment(
+                text=candidate,
+                target_language=target,
+            )
+            if candidate_alignment < alignment:
+                return markdown
+            await self.emit_tracking_event(
+                event_name="research.render.language_repair_applied",
+                request_id=ctx.request_id,
+                stage="render",
+                attrs={
+                    "target_language": str(target),
+                    "alignment_before": float(alignment),
+                    "alignment_after": float(candidate_alignment),
+                },
+            )
+            return candidate
+        except Exception:
+            return markdown
+
     def _build_density_gate_messages(
         self,
         *,
@@ -890,12 +975,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         )
 
     def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
-        token = clean_whitespace(
-            str(ctx.plan.output_language or ctx.plan.input_language or "")
+        language_code = normalize_language_code(
+            ctx.plan.output_language or ctx.plan.input_language,
+            default="other",
         )
-        if token:
-            return token
-        return "same as user input language"
+        if language_code != "other":
+            return language_code
+        return "en"
 
     def _resolve_report_style(
         self,

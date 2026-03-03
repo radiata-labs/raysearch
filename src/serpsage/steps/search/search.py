@@ -219,7 +219,8 @@ class SearchStep(StepBase[SearchStepContext]):
         ctx: SearchStepContext,
     ) -> None:
         try:
-            out[idx] = await self._provider.asearch(query=query, params=None)
+            params = dict(ctx.provider_params) if ctx.provider_params else None
+            out[idx] = await self._provider.asearch(query=query, params=params)
             await self._emit_search_meter(
                 ctx=ctx,
                 query=query,

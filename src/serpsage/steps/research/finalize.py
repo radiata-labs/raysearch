@@ -5,6 +5,7 @@ from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchStepContext
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.language import map_provider_language_param
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -18,6 +19,17 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         style_cfg = ctx.settings.research.report_style
         mode_depth = ctx.runtime.mode_depth
+        search_language = str(
+            ctx.plan.search_language or ctx.plan.theme_plan.search_language
+        )
+        provider_params = map_provider_language_param(
+            provider_backend=str(ctx.settings.provider.backend),
+            search_language=search_language,
+        )
+        provider_language_param_applied = bool(
+            ctx.runtime.provider_language_param_applied
+            or (bool(provider_params) and int(ctx.runtime.search_calls) > 0)
+        )
         content_chars = int(len(str(ctx.output.content or "")))
         target_chars = int(ctx.runtime.target_output_chars)
         ratio_vs_target = float(ctx.runtime.output_length_ratio_vs_target)
@@ -47,6 +59,12 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                     mode_depth.enable_llm_track_orchestrator
                 ),
                 "output_length_ratio_vs_target": float(ratio_vs_target),
+                "input_language": str(ctx.plan.input_language),
+                "output_language": str(ctx.plan.output_language),
+                "search_language": str(search_language),
+                "provider_language_param_applied": bool(
+                    provider_language_param_applied
+                ),
             },
         )
         return ctx

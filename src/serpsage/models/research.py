@@ -23,7 +23,8 @@ class ThemeQuestionCardPayload(MutableModel):
 
 class ThemeOutputPayload(MutableModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
-    detected_input_language: str = "same as user input language"
+    detected_input_language: str = "other"
+    search_language: str = "other"
     core_question: str = ""
     report_style: ReportStyle = "explainer"
     task_intent: TaskIntent = "other"
@@ -53,6 +54,7 @@ class ResearchThemePlan(MutableModel):
     subthemes: list[str] = Field(default_factory=list, max_length=12)
     required_entities: list[str] = Field(default_factory=list, max_length=16)
     input_language: str = ""
+    search_language: str = ""
     output_language: str = ""
     question_cards: list[ResearchThemePlanCard] = Field(
         default_factory=list,

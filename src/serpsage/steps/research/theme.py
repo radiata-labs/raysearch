@@ -19,6 +19,11 @@ from serpsage.models.research import (
     ThemeQuestionCardPayload,
 )
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.language import (
+    detect_input_language,
+    normalize_language_code,
+    route_search_language,
+)
 from serpsage.steps.research.prompt import (
     build_theme_messages as build_theme_prompt_messages,
 )
@@ -55,6 +60,11 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             ctx.request.themes,
             default=self._normalize_style_fallback(style_cfg.fallback_style),
         )
+        fallback_input_language = detect_input_language(ctx.request.themes)
+        fallback_search_language = route_search_language(
+            theme=ctx.request.themes,
+            input_language=fallback_input_language,
+        )
         fallback_task_intent = self._normalize_task_intent(
             raw=None,
             theme=ctx.request.themes,
@@ -71,7 +81,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.plan.use_model,
         )
         payload = ThemeOutputPayload(
-            detected_input_language="same as user input language",
+            detected_input_language=fallback_input_language,
+            search_language=fallback_search_language,
             core_question=ctx.request.themes,
             report_style=hinted_style,
             task_intent=fallback_task_intent,
@@ -106,14 +117,24 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-        input_language = clean_whitespace(str(payload.detected_input_language or ""))
-        if not input_language:
-            input_language = "same as user input language"
+        input_language = normalize_language_code(
+            payload.detected_input_language,
+            default=fallback_input_language,
+        )
         core_question = clean_whitespace(
             str(payload.core_question or ctx.request.themes)
         )
         if not core_question:
             core_question = ctx.request.themes
+        search_language = normalize_language_code(
+            payload.search_language,
+            default="other",
+        )
+        if search_language == "other":
+            search_language = route_search_language(
+                theme=core_question or ctx.request.themes,
+                input_language=input_language,
+            )
         report_style = resolve_report_style(
             raw_style=payload.report_style,
             theme=core_question or ctx.request.themes,
@@ -162,6 +183,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             ),
         )
         ctx.plan.input_language = input_language
+        ctx.plan.search_language = search_language
         ctx.plan.output_language = input_language
         ctx.plan.core_question = core_question
         ctx.parallel.question_cards = [item.model_copy(deep=True) for item in cards]
@@ -173,6 +195,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             subthemes=subthemes,
             required_entities=required_entities,
             input_language=input_language,
+            search_language=search_language,
             output_language=input_language,
             question_cards=[
                 ResearchThemePlanCard(
@@ -197,6 +220,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.notes.append(
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
         )
+        ctx.notes.append(f"Search language fixed to {ctx.plan.search_language}.")
         ctx.notes.append(f"Report style fixed to `{report_style}`.")
         ctx.notes.append(
             f"Task intent fixed to `{task_intent}` with complexity tier `{complexity_tier}`."
@@ -208,6 +232,16 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         if required_entities:
             ctx.notes.append(f"Required entities: {', '.join(required_entities[:8])}.")
         ctx.notes.append(f"Output language fixed to {ctx.plan.output_language}.")
+        await self.emit_tracking_event(
+            event_name="research.language.selected",
+            request_id=ctx.request_id,
+            stage="theme_plan",
+            attrs={
+                "input_language": str(ctx.plan.input_language),
+                "output_language": str(ctx.plan.output_language),
+                "search_language": str(ctx.plan.search_language),
+            },
+        )
         await self.emit_tracking_event(
             event_name="research.style.selected",
             request_id=ctx.request_id,
@@ -254,6 +288,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "question_cards": len(cards),
                 "subthemes": len(subthemes),
                 "next_queries": len(ctx.plan.next_queries),
+                "input_language": str(ctx.plan.input_language),
+                "search_language": str(ctx.plan.search_language),
+                "output_language": str(ctx.plan.output_language),
                 "mode_depth_profile": str(mode_depth.mode_key),
                 "mode_depth_question_card_cap": int(card_cap),
                 "report_style_selected": str(report_style),
@@ -313,6 +350,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             "additionalProperties": False,
             "required": [
                 "detected_input_language",
+                "search_language",
                 "core_question",
                 "report_style",
                 "task_intent",
@@ -323,6 +361,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             ],
             "properties": {
                 "detected_input_language": {"type": "string"},
+                "search_language": {"type": "string"},
                 "core_question": {"type": "string"},
                 "report_style": {
                     "type": "string",

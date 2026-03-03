@@ -15,6 +15,7 @@ from serpsage.models.research import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.context import render_theme_plan_markdown
+from serpsage.steps.research.language import normalize_language_code
 from serpsage.steps.research.prompt import (
     build_subreport_messages as build_subreport_prompt_messages,
 )
@@ -716,12 +717,13 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         return out
 
     def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
-        token = clean_whitespace(
-            str(ctx.plan.output_language or ctx.plan.input_language or "")
+        language_code = normalize_language_code(
+            ctx.plan.output_language or ctx.plan.input_language,
+            default="other",
         )
-        if token:
-            return token
-        return "same as user input language"
+        if language_code != "other":
+            return language_code
+        return "en"
 
     def _select_sources_for_render(
         self,

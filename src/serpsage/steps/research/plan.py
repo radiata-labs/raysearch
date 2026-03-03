@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
+from pydantic import Field
+
+from serpsage.core.model_base import MutableModel
 from serpsage.models.pipeline import (
     ResearchLinkCandidate,
     ResearchRoundState,
@@ -25,6 +29,10 @@ from serpsage.steps.research.context import (
     render_rounds_markdown,
     render_theme_plan_markdown,
 )
+from serpsage.steps.research.language import (
+    language_alignment_score,
+    normalize_language_code,
+)
 from serpsage.steps.research.prompt import (
     build_plan_messages as build_plan_prompt_messages,
 )
@@ -42,7 +50,22 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
 
 
+class _QueryLanguageRepairJobPayload(MutableModel):
+    query: str = ""
+    additional_queries: list[str] = Field(default_factory=list, max_length=8)
+
+
+class _QueryLanguageRepairOutputPayload(MutableModel):
+    search_jobs: list[_QueryLanguageRepairJobPayload] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+
+
 class ResearchPlanStep(StepBase[ResearchStepContext]):
+    _QUERY_LANGUAGE_ALIGNMENT_THRESHOLD = 0.65
+    _LOW_GAIN_THRESHOLD = 0.05
+
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -179,6 +202,53 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             candidate_queries=candidate_queries,
             job_limit=job_limit,
         )
+        search_language = self._resolve_search_language(ctx)
+        (
+            jobs,
+            query_language_repair_applied,
+        ) = await self._repair_jobs_language_if_needed(
+            ctx=ctx,
+            jobs=jobs,
+            search_language=search_language,
+            model=str(model),
+            now_utc=now_utc,
+        )
+        if query_language_repair_applied:
+            ctx.runtime.query_language_repair_applied = True
+            await self.emit_tracking_event(
+                event_name="research.search_language.query_repair_applied",
+                request_id=ctx.request_id,
+                stage="plan",
+                attrs={
+                    "round_index": int(round_index),
+                    "search_language": str(search_language),
+                    "jobs": int(len(jobs)),
+                },
+            )
+        jobs, fallback_applied = self._apply_progressive_language_fallback(
+            ctx=ctx,
+            jobs=jobs,
+            job_limit=job_limit,
+            round_action=round_action,
+            search_language=search_language,
+        )
+        if fallback_applied:
+            ctx.runtime.search_language_fallback_applied = True
+            await self.emit_tracking_event(
+                event_name="research.search_language.fallback_applied",
+                request_id=ctx.request_id,
+                stage="plan",
+                attrs={
+                    "round_index": int(round_index),
+                    "search_language": str(search_language),
+                    "output_language": str(
+                        normalize_language_code(
+                            ctx.plan.output_language or ctx.plan.input_language,
+                            default="other",
+                        )
+                    ),
+                },
+            )
         if round_action == "search" and not jobs:
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "no_queries"
@@ -301,6 +371,287 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         )
         return jobs
 
+    def _resolve_search_language(self, ctx: ResearchStepContext) -> str:
+        from_plan = normalize_language_code(
+            ctx.plan.search_language or ctx.plan.theme_plan.search_language,
+            default="other",
+        )
+        if from_plan != "other":
+            return from_plan
+        from_output = normalize_language_code(
+            ctx.plan.output_language or ctx.plan.input_language,
+            default="other",
+        )
+        if from_output != "other":
+            return from_output
+        return "en"
+
+    def _jobs_need_language_repair(
+        self,
+        *,
+        jobs: list[ResearchSearchJob],
+        search_language: str,
+    ) -> bool:
+        if not jobs:
+            return False
+        target = normalize_language_code(search_language, default="other")
+        if target == "other":
+            return False
+        scores: list[float] = []
+        for job in jobs:
+            scores.append(
+                language_alignment_score(
+                    text=job.query,
+                    target_language=target,
+                )
+            )
+            scores.extend(
+                language_alignment_score(
+                    text=extra,
+                    target_language=target,
+                )
+                for extra in list(job.additional_queries or [])
+            )
+        if not scores:
+            return False
+        low_count = sum(
+            1
+            for score in scores
+            if score < float(self._QUERY_LANGUAGE_ALIGNMENT_THRESHOLD)
+        )
+        return bool(low_count > (len(scores) // 2))
+
+    async def _repair_jobs_language_if_needed(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        jobs: list[ResearchSearchJob],
+        search_language: str,
+        model: str,
+        now_utc: datetime,
+    ) -> tuple[list[ResearchSearchJob], bool]:
+        if not jobs:
+            return jobs, False
+        if not self._jobs_need_language_repair(
+            jobs=jobs,
+            search_language=search_language,
+        ):
+            return jobs, False
+        payload = _QueryLanguageRepairOutputPayload(
+            search_jobs=[
+                _QueryLanguageRepairJobPayload(
+                    query=item.query,
+                    additional_queries=list(item.additional_queries),
+                )
+                for item in jobs
+            ]
+        )
+        try:
+            chat_result = await self._llm.create(
+                model=model,
+                messages=self._build_query_language_repair_messages(
+                    ctx=ctx,
+                    jobs=jobs,
+                    search_language=search_language,
+                    now_utc=now_utc,
+                ),
+                response_format=_QueryLanguageRepairOutputPayload,
+                format_override=self._build_query_language_repair_schema(),
+                retries=int(self.settings.research.llm_self_heal_retries),
+            )
+            payload = chat_result.data
+        except Exception:
+            return jobs, False
+        repaired = self._normalize_repaired_search_jobs(
+            raw=payload,
+            baseline=jobs,
+        )
+        return repaired, bool(repaired != jobs)
+
+    def _build_query_language_repair_messages(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        jobs: list[ResearchSearchJob],
+        search_language: str,
+        now_utc: datetime,
+    ) -> list[dict[str, str]]:
+        output_language = normalize_language_code(
+            ctx.plan.output_language or ctx.plan.input_language,
+            default="other",
+        )
+        current_jobs = [
+            {
+                "query": item.query,
+                "mode": item.mode,
+                "additional_queries": list(item.additional_queries),
+                "intent": item.intent,
+            }
+            for item in jobs
+        ]
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Role: Search job language normalizer.\n"
+                    "Mission: Rewrite search query fields into the required search language while preserving intent and entities.\n"
+                    "Rules:\n"
+                    "1) Return JSON only.\n"
+                    "2) Keep search_jobs array length and order unchanged.\n"
+                    "3) Rewrite only query and additional_queries text.\n"
+                    "4) Preserve named entities, versions, and explicit dates.\n"
+                    "5) Do not broaden topic scope.\n"
+                    "6) If a query is already aligned, keep it unchanged."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
+                    f"CORE_QUESTION:\n{ctx.plan.core_question or ctx.request.themes}\n\n"
+                    "LANGUAGE_POLICY:\n"
+                    f"- required_search_language={search_language}\n"
+                    f"- required_output_language={output_language}\n\n"
+                    "CURRENT_SEARCH_JOBS_JSON:\n"
+                    f"{json.dumps(current_jobs, ensure_ascii=False)}\n\n"
+                    "Output JSON shape:\n"
+                    "{\n"
+                    '  "search_jobs": [\n'
+                    '    { "query": "...", "additional_queries": ["..."] }\n'
+                    "  ]\n"
+                    "}"
+                ),
+            },
+        ]
+
+    def _build_query_language_repair_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["search_jobs"],
+            "properties": {
+                "search_jobs": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["query", "additional_queries"],
+                        "properties": {
+                            "query": {"type": "string"},
+                            "additional_queries": {
+                                "type": "array",
+                                "maxItems": 8,
+                                "items": {"type": "string"},
+                            },
+                        },
+                    },
+                }
+            },
+        }
+
+    def _normalize_repaired_search_jobs(
+        self,
+        *,
+        raw: _QueryLanguageRepairOutputPayload,
+        baseline: list[ResearchSearchJob],
+    ) -> list[ResearchSearchJob]:
+        payload_jobs = list(raw.search_jobs or [])
+        if not payload_jobs:
+            return baseline
+        out: list[ResearchSearchJob] = []
+        for index, base in enumerate(baseline):
+            if index >= len(payload_jobs):
+                out.append(base.model_copy(deep=True))
+                continue
+            item = payload_jobs[index]
+            query = clean_whitespace(str(item.query or "")) or base.query
+            additional_queries = self._normalize_strings(
+                list(item.additional_queries),
+                limit=8,
+            )
+            if str(base.mode) != "deep":
+                additional_queries = []
+            out.append(
+                base.model_copy(
+                    update={
+                        "query": query,
+                        "additional_queries": additional_queries,
+                    },
+                    deep=True,
+                )
+            )
+        return out
+
+    def _apply_progressive_language_fallback(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        jobs: list[ResearchSearchJob],
+        job_limit: int,
+        round_action: RoundAction,
+        search_language: str,
+    ) -> tuple[list[ResearchSearchJob], bool]:
+        if round_action != "search":
+            return jobs, False
+        if int(job_limit) <= 0:
+            return jobs, False
+        if not self._should_apply_progressive_language_fallback(
+            ctx=ctx,
+            search_language=search_language,
+        ):
+            return jobs, False
+        rescue_query = self._build_output_language_rescue_query(ctx=ctx)
+        if not rescue_query:
+            return jobs, False
+        out = [item.model_copy(deep=True) for item in jobs]
+        rescue_key = rescue_query.casefold()
+        if any(clean_whitespace(item.query).casefold() == rescue_key for item in out):
+            return out, False
+        rescue_job = ResearchSearchJob(
+            query=rescue_query,
+            intent="refresh",
+            mode="auto",
+        )
+        if len(out) < int(job_limit):
+            out.append(rescue_job)
+            return out, True
+        if not out:
+            return [rescue_job], True
+        out[-1] = rescue_job
+        return out, True
+
+    def _should_apply_progressive_language_fallback(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        search_language: str,
+    ) -> bool:
+        output_language = normalize_language_code(
+            ctx.plan.output_language or ctx.plan.input_language,
+            default="other",
+        )
+        search_lang = normalize_language_code(search_language, default="other")
+        if output_language == "other" or search_lang == "other":
+            return False
+        if output_language == search_lang:
+            return False
+        rounds = list(ctx.rounds)[-2:]
+        if len(rounds) < 2:
+            return False
+        return all(self._is_low_gain_round(item) for item in rounds)
+
+    def _is_low_gain_round(self, round_state: ResearchRoundState) -> bool:
+        if int(round_state.result_count) <= 0:
+            return True
+        return float(round_state.corpus_score_gain) < float(self._LOW_GAIN_THRESHOLD)
+
+    def _build_output_language_rescue_query(self, *, ctx: ResearchStepContext) -> str:
+        query = clean_whitespace(ctx.plan.core_question or ctx.request.themes)
+        if query:
+            return query
+        return clean_whitespace(ctx.request.themes)
+
     def _build_plan_messages(
         self,
         *,
@@ -313,6 +664,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         mode_depth = ctx.runtime.mode_depth
         out_lang = ctx.plan.output_language or "en"
         out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        search_language = self._resolve_search_language(ctx)
         report_style = self._resolve_report_style(ctx)
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
@@ -335,6 +687,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             round_index=round_index,
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
+            required_search_language=search_language,
             required_output_language=out_lang,
             required_output_language_label=out_lang_name,
             theme_plan_markdown=theme_plan_markdown,

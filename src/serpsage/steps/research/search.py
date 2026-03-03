@@ -25,6 +25,10 @@ from serpsage.models.pipeline import (
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
+from serpsage.steps.research.language import (
+    map_provider_language_param,
+    normalize_language_code,
+)
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
@@ -119,6 +123,21 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             return ctx
         mode_depth = ctx.runtime.mode_depth
         main_links_limit = max(1, int(mode_depth.search_links_main_limit))
+        search_language = normalize_language_code(
+            ctx.plan.search_language or ctx.plan.theme_plan.search_language,
+            default="other",
+        )
+        if search_language == "other":
+            search_language = normalize_language_code(
+                ctx.plan.output_language or ctx.plan.input_language,
+                default="en",
+            )
+        provider_params = map_provider_language_param(
+            provider_backend=str(self.settings.provider.backend),
+            search_language=search_language,
+        )
+        if provider_params:
+            ctx.runtime.provider_language_param_applied = True
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
             jobs_left_after_current = max(0, len(jobs) - idx - 1)
@@ -143,6 +162,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     settings=ctx.settings,
                     request=req,
                     disable_internal_llm=True,
+                    provider_params=dict(provider_params),
                     request_id=f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}",
                 )
             )
