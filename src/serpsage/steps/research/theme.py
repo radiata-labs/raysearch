@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.models.pipeline import ResearchQuestionCard, ResearchStepContext
+from serpsage.models.pipeline import (
+    ResearchModeDepthState,
+    ResearchQuestionCard,
+    ResearchStepContext,
+)
 from serpsage.models.research import (
     ReportStyle,
     ResearchThemePlan,
@@ -137,11 +141,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             str(payload.complexity_tier or "")
         ).casefold()
         complexity_fallback_used = bool(raw_complexity_token != str(complexity_tier))
-        adaptive_applied = self._apply_pro_adaptive_mode_depth(
+        adaptive_applied = self._apply_mode_adaptive_depth(
             ctx=ctx,
             complexity_tier=complexity_tier,
         )
         mode_depth = ctx.runtime.mode_depth
+        mode_key = clean_whitespace(str(mode_depth.mode_key)).casefold()
         card_cap = max(1, int(mode_depth.max_question_cards_effective))
         subthemes = normalize_strings(payload.subthemes, limit=12)
         required_entities = normalize_strings(payload.required_entities, limit=16)
@@ -198,7 +203,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         if adaptive_applied:
             ctx.notes.append(
-                "Adaptive research-pro depth applied based on theme complexity."
+                f"Adaptive `{mode_key}` depth applied based on theme complexity."
             )
         if required_entities:
             ctx.notes.append(f"Required entities: {', '.join(required_entities[:8])}.")
@@ -216,13 +221,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "complexity_tier_fallback_used": bool(complexity_fallback_used),
             },
         )
-        if clean_whitespace(str(mode_depth.mode_key)).casefold() == "research-pro":
+        if mode_key in {"research", "research-pro"}:
             await self.emit_tracking_event(
                 event_name="research.mode_depth.adaptive_applied",
                 request_id=ctx.request_id,
                 stage="theme_plan",
                 attrs={
-                    "mode_depth_profile": str(mode_depth.mode_key),
+                    "mode_depth_profile": str(mode_key),
                     "task_intent": str(task_intent),
                     "complexity_tier": str(complexity_tier),
                     "effective_complexity_tier": str(complexity_tier),
@@ -635,34 +640,111 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             return "medium"
         return "medium"
 
-    def _apply_pro_adaptive_mode_depth(
+    def _apply_mode_adaptive_depth(
         self,
         *,
         ctx: ResearchStepContext,
         complexity_tier: TaskComplexity,
     ) -> bool:
         mode_depth = ctx.runtime.mode_depth
-        if clean_whitespace(str(mode_depth.mode_key)).casefold() != "research-pro":
+        mode_key = clean_whitespace(str(mode_depth.mode_key)).casefold()
+        if mode_key not in {"research", "research-pro"}:
             return False
+        if mode_key == "research":
+            if complexity_tier == "high":
+                return False
+            if complexity_tier == "low":
+                self._apply_mode_depth_overrides(
+                    mode_depth=mode_depth,
+                    max_question_cards_effective=2,
+                    min_rounds_per_track=1,
+                    gap_closure_passes=0,
+                    density_gate_passes=0,
+                    render_section_min=6,
+                    render_section_max=7,
+                    overview_context_topk_override=14,
+                    content_context_topk_override=9,
+                    subreport_context_topk_override=10,
+                    content_packet_max_chars=8_500,
+                    target_length_ratio_vs_current=0.95,
+                    explore_target_pages_per_round=3,
+                    explore_links_per_page=7,
+                )
+                return True
+            self._apply_mode_depth_overrides(
+                mode_depth=mode_depth,
+                max_question_cards_effective=3,
+                min_rounds_per_track=2,
+                gap_closure_passes=0,
+                density_gate_passes=1,
+                render_section_min=7,
+                render_section_max=8,
+                overview_context_topk_override=16,
+                content_context_topk_override=10,
+                subreport_context_topk_override=12,
+                content_packet_max_chars=9_000,
+                target_length_ratio_vs_current=0.98,
+                explore_target_pages_per_round=4,
+                explore_links_per_page=9,
+            )
+            return True
         if complexity_tier == "high":
             return False
         if complexity_tier == "low":
-            mode_depth.max_question_cards_effective = 3
-            mode_depth.min_rounds_per_track = 2
-            mode_depth.gap_closure_passes = 1
-            mode_depth.density_gate_passes = 1
-            mode_depth.render_section_min = 6
-            mode_depth.render_section_max = 7
-            mode_depth.target_length_ratio_vs_current = 1.0
+            self._apply_mode_depth_overrides(
+                mode_depth=mode_depth,
+                max_question_cards_effective=5,
+                min_rounds_per_track=3,
+                gap_closure_passes=1,
+                density_gate_passes=1,
+                render_section_min=8,
+                render_section_max=9,
+                overview_context_topk_override=24,
+                content_context_topk_override=17,
+                subreport_context_topk_override=19,
+                content_packet_max_chars=13_500,
+                target_length_ratio_vs_current=1.08,
+                explore_target_pages_per_round=5,
+                explore_links_per_page=14,
+            )
             return True
-        mode_depth.max_question_cards_effective = 4
-        mode_depth.min_rounds_per_track = 2
-        mode_depth.gap_closure_passes = 1
-        mode_depth.density_gate_passes = 1
-        mode_depth.render_section_min = 7
-        mode_depth.render_section_max = 8
-        mode_depth.target_length_ratio_vs_current = 1.05
-        return True
+        return False
+
+    def _apply_mode_depth_overrides(
+        self,
+        *,
+        mode_depth: ResearchModeDepthState,
+        max_question_cards_effective: int,
+        min_rounds_per_track: int,
+        gap_closure_passes: int,
+        density_gate_passes: int,
+        render_section_min: int,
+        render_section_max: int,
+        overview_context_topk_override: int,
+        content_context_topk_override: int,
+        subreport_context_topk_override: int,
+        content_packet_max_chars: int,
+        target_length_ratio_vs_current: float,
+        explore_target_pages_per_round: int,
+        explore_links_per_page: int,
+    ) -> None:
+        mode_depth.max_question_cards_effective = int(max_question_cards_effective)
+        mode_depth.min_rounds_per_track = int(min_rounds_per_track)
+        mode_depth.gap_closure_passes = int(gap_closure_passes)
+        mode_depth.density_gate_passes = int(density_gate_passes)
+        mode_depth.render_section_min = int(render_section_min)
+        mode_depth.render_section_max = int(render_section_max)
+        mode_depth.overview_context_topk_override = int(overview_context_topk_override)
+        mode_depth.content_context_topk_override = int(content_context_topk_override)
+        mode_depth.subreport_context_topk_override = int(
+            subreport_context_topk_override
+        )
+        mode_depth.content_packet_max_chars = int(content_packet_max_chars)
+        mode_depth.target_length_ratio_vs_current = float(
+            target_length_ratio_vs_current
+        )
+        mode_depth.explore_target_pages_per_round = int(explore_target_pages_per_round)
+        mode_depth.explore_links_per_page = int(explore_links_per_page)
 
 
 __all__ = ["ResearchThemeStep"]

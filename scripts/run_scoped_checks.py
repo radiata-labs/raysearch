@@ -20,6 +20,7 @@ CONTROL_FILES = {
     ".codex/ARCHIVED.md",
     "AGENTS.md",
 }
+PYTHON_EXTENSIONS = {".py", ".pyi"}
 
 
 class ScopedCheckError(RuntimeError):
@@ -129,6 +130,10 @@ def _assert_files_exist(repo_root: Path, files: list[str]) -> None:
         raise ScopedCheckError(f"Scoped files not found on disk: {joined}")
 
 
+def _python_files_only(files: list[str]) -> list[str]:
+    return [path for path in files if Path(path).suffix.lower() in PYTHON_EXTENSIONS]
+
+
 def _run(repo_root: Path, args: list[str]) -> None:
     subprocess.run(args, cwd=repo_root, check=True)  # noqa: S603
 
@@ -182,11 +187,16 @@ def main() -> None:
         task = _select_task(tasks, args.task_timestamp, args.title_contains)
         files = _collect_modified_files(task)
         _assert_files_exist(repo_root, files)
+        python_files = _python_files_only(files)
         print(
             "Scoped files:",
             ", ".join(files),
         )
-        _run_checks(repo_root, files, passes=args.passes)
+        if not python_files:
+            print("No Python files in scoped set; static checks skipped.")
+            return
+        print("Scoped Python files:", ", ".join(python_files))
+        _run_checks(repo_root, python_files, passes=args.passes)
     except ScopedCheckError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
