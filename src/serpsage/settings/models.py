@@ -180,6 +180,7 @@ class AnswerSettings(Model):
 class ResearchModelsSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     plan: str = ""
+    link_select: str = ""
     abstract_analyze: str = ""
     content_analyze: str = ""
     synthesize: str = ""
@@ -247,6 +248,10 @@ class ResearchModeDepthProfileSettings(Model):
     subreport_context_topk_override: int = 14
     content_packet_max_chars: int = 10_000
     target_length_ratio_vs_current: float = 1.0
+    search_links_main_limit: int = 80
+    explore_target_pages_per_round: int = 3
+    explore_links_per_page: int = 8
+    explore_fetch_round_ratio: float = 0.8
 
     @model_validator(mode="after")
     def _validate_mode_depth_profile(self) -> ResearchModeDepthProfileSettings:
@@ -304,6 +309,26 @@ class ResearchModeDepthProfileSettings(Model):
             raise ValueError(
                 "research.mode_depth profile target_length_ratio_vs_current must be > 0"
             )
+        if int(self.search_links_main_limit) <= 0:
+            raise ValueError(
+                "research.mode_depth profile search_links_main_limit must be > 0"
+            )
+        if int(self.explore_target_pages_per_round) <= 0:
+            raise ValueError(
+                "research.mode_depth profile explore_target_pages_per_round must be > 0"
+            )
+        if int(self.explore_links_per_page) <= 0:
+            raise ValueError(
+                "research.mode_depth profile explore_links_per_page must be > 0"
+            )
+        if float(self.explore_fetch_round_ratio) <= 0.0:
+            raise ValueError(
+                "research.mode_depth profile explore_fetch_round_ratio must be > 0"
+            )
+        if float(self.explore_fetch_round_ratio) > 1.0:
+            raise ValueError(
+                "research.mode_depth profile explore_fetch_round_ratio must be <= 1.0"
+            )
         return self
 
 
@@ -324,6 +349,10 @@ def _default_mode_depth_fast() -> ResearchModeDepthProfileSettings:
         subreport_context_topk_override=8,
         content_packet_max_chars=7000,
         target_length_ratio_vs_current=0.85,
+        search_links_main_limit=24,
+        explore_target_pages_per_round=2,
+        explore_links_per_page=4,
+        explore_fetch_round_ratio=0.8,
     )
 
 
@@ -344,6 +373,10 @@ def _default_mode_depth_research() -> ResearchModeDepthProfileSettings:
         subreport_context_topk_override=14,
         content_packet_max_chars=10_000,
         target_length_ratio_vs_current=1.0,
+        search_links_main_limit=80,
+        explore_target_pages_per_round=3,
+        explore_links_per_page=8,
+        explore_fetch_round_ratio=0.8,
     )
 
 
@@ -364,6 +397,10 @@ def _default_mode_depth_pro() -> ResearchModeDepthProfileSettings:
         subreport_context_topk_override=20,
         content_packet_max_chars=14_000,
         target_length_ratio_vs_current=1.1,
+        search_links_main_limit=160,
+        explore_target_pages_per_round=4,
+        explore_links_per_page=12,
+        explore_fetch_round_ratio=0.8,
     )
 
 

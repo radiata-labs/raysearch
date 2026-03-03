@@ -125,6 +125,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         must_continue_for_min_rounds = round_count_after_commit < int(
             min_rounds_per_track
         )
+        can_explore_without_search = self._can_continue_with_explore_only(ctx=ctx)
         if llm_prefers_continue and not next_queries and core_question:
             next_queries = [core_question]
         allow_auto_seed = (
@@ -144,14 +145,20 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             next_queries = [ctx.request.themes]
         stop = False
         stop_reason = ""
-        if int(ctx.runtime.search_calls) >= int(budget.max_search_calls):
-            stop = True
-            stop_reason = "max_search_calls"
-        elif int(ctx.runtime.fetch_calls) >= int(budget.max_fetch_calls):
+        search_exhausted = int(ctx.runtime.search_calls) >= int(budget.max_search_calls)
+        fetch_exhausted = int(ctx.runtime.fetch_calls) >= int(budget.max_fetch_calls)
+        if (
+            must_continue_for_min_rounds
+            and not fetch_exhausted
+            and (not search_exhausted or can_explore_without_search)
+        ):
+            stop = False
+        elif fetch_exhausted:
             stop = True
             stop_reason = "max_fetch_calls"
-        elif must_continue_for_min_rounds:
-            stop = False
+        elif search_exhausted and not can_explore_without_search:
+            stop = True
+            stop_reason = "max_search_calls"
         elif multi_signal_stop and not llm_prefers_continue:
             stop = True
             stop_reason = "multi_signal_stop"
@@ -160,7 +167,11 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         ):
             stop = True
             stop_reason = "no_progress"
-        elif not next_queries and not llm_prefers_continue:
+        elif (
+            not next_queries
+            and not llm_prefers_continue
+            and not can_explore_without_search
+        ):
             stop = True
             stop_reason = "no_next_queries"
         round_state.stop = bool(stop)
@@ -190,6 +201,16 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = stop_reason
         return ctx
+
+    def _can_continue_with_explore_only(self, *, ctx: ResearchStepContext) -> bool:
+        if ctx.current_round is None:
+            return False
+        if int(ctx.runtime.budget.max_fetch_calls) <= int(ctx.runtime.fetch_calls):
+            return False
+        expected_round = int(ctx.current_round.round_index)
+        if int(ctx.plan.last_round_link_candidates_round) != expected_round:
+            return False
+        return bool(ctx.plan.last_round_link_candidates)
 
     async def _query_decide_signal(
         self, *, ctx: ResearchStepContext

@@ -154,6 +154,8 @@ class PreparedAbstract(MutableModel):
 
 class SearchFetchedCandidate(MutableModel):
     result: FetchResultItem
+    links: list[ExtractedLink] = Field(default_factory=list)
+    subpage_links: list[list[ExtractedLink]] = Field(default_factory=list)
     main_md_for_abstract: str = ""
     subpages_md_for_abstract: list[str] = Field(default_factory=list)
     main_overview_scores: list[float] = Field(default_factory=list)
@@ -194,6 +196,7 @@ class FetchSubpagesState(MutableModel):
     query: str = ""
     keywords: list[str] = Field(default_factory=list)
     results: list[FetchSubpagesResult] = Field(default_factory=list)
+    result_links: list[list[ExtractedLink]] = Field(default_factory=list)
     md_for_abstract: list[str] = Field(default_factory=list)
     overview_scores: list[list[float]] = Field(default_factory=list)
 
@@ -310,6 +313,19 @@ class ResearchModeDepthState(MutableModel):
     subreport_context_topk_override: int = 14
     content_packet_max_chars: int = 10_000
     target_length_ratio_vs_current: float = 1.0
+    search_links_main_limit: int = 80
+    explore_target_pages_per_round: int = 3
+    explore_links_per_page: int = 8
+    explore_fetch_round_ratio: float = 0.8
+
+
+class ResearchLinkCandidate(MutableModel):
+    source_id: int
+    url: str = ""
+    title: str = ""
+    links: list[ExtractedLink] = Field(default_factory=list)
+    subpage_links: list[list[ExtractedLink]] = Field(default_factory=list)
+    round_index: int = 0
 
 
 class ResearchRuntimeState(MutableModel):
@@ -334,6 +350,10 @@ class ResearchPlanState(MutableModel):
     input_language: str = ""
     output_language: str = ""
     core_question: str = ""
+    last_round_link_candidates: list[ResearchLinkCandidate] = Field(
+        default_factory=list
+    )
+    last_round_link_candidates_round: int = 0
 
 
 class ResearchCorpusState(MutableModel):
@@ -346,6 +366,11 @@ class ResearchCorpusState(MutableModel):
 
 class ResearchRoundWorkState(MutableModel):
     search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
+    round_action: Literal["search", "explore"] = "search"
+    explore_target_source_ids: list[int] = Field(default_factory=list)
+    search_fetched_candidates: list[SearchFetchedCandidate] = Field(
+        default_factory=list
+    )
     overview_review: OverviewOutputPayload = Field(
         default_factory=OverviewOutputPayload
     )
@@ -409,6 +434,7 @@ __all__ = [
     "ResearchCorpusState",
     "ResearchBudgetState",
     "ResearchCoverageState",
+    "ResearchLinkCandidate",
     "ResearchModeDepthState",
     "ResearchOutputState",
     "ResearchParallelState",

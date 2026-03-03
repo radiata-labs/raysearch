@@ -347,7 +347,7 @@ def build_theme_messages(
     hinted_complexity_tier: TaskComplexity,
 ) -> list[dict[str, str]]:
     depth_contract = theme_depth_contract(mode_key=mode_depth_profile)
-    system_contract = (
+    system_contract = (  # noqa: S608
         "Role: Senior Research Architect.\n"
         "Mission: Decompose THEME into executable, non-overlapping research question cards and classify report_style, task_intent, and complexity_tier.\n"
         "Instruction Priority:\n"
@@ -489,35 +489,49 @@ def build_plan_messages(
     search_calls_remaining: int,
     fetch_calls_remaining: int,
     max_queries_this_round: int,
+    allow_explore: bool,
+    explore_target_pages_per_round: int,
+    explore_links_per_page: int,
+    last_round_link_candidates_markdown: str,
 ) -> list[dict[str, str]]:
     depth_contract = mode_depth_planning_contract(mode_key=mode_depth_profile)
-    system_contract = (
-        "Role: Principal Research Planner.\n"
-        "Mission: Generate high-information, low-overlap search jobs for the next research round.\n"
+    system_contract = (  # noqa: S608
+        "Role: Principal Research Planner.\n"  # noqa: S608
+        "Mission: Select the next-round action and produce focused fallback search jobs.\n"
         "Instruction Priority:\n"
         "P1) Schema correctness and budget adherence.\n"
-        "P2) Information gain per query.\n"
+        "P2) Action fit (search vs explore) for CORE_QUESTION.\n"
+        "P3) Information gain per query.\n"
         "P3) Output language consistency.\n"
         "Hard Constraints:\n"
-        "1) All search_jobs must serve CORE_QUESTION. Do not introduce a new independent research question.\n"
-        "2) Minimize overlap between jobs while maximizing information gain.\n"
-        "3) Respect remaining budget and prioritize unresolved high-value gaps.\n"
-        "4) Use deep mode when higher recall or conflict verification is needed.\n"
-        "5) Free-text fields must be in the required output language.\n"
-        "6) Temporal grounding: interpret relative time words against current UTC date.\n"
-        "7) If recency intent exists, include explicit temporal constraints in query text.\n"
-        "8) For high-impact claims, prioritize authoritative routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
-        "9) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
-        "10) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
-        "11) Domain/text route constraints are executable: include_domains, exclude_domains, include_text, exclude_text.\n"
-        "12) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
-        "13) Return JSON only; no markdown or explanations.\n"
+        "1) Return JSON with exactly: query_strategy, round_action, explore_target_source_ids, search_jobs.\n"
+        "2) round_action must be exactly search or explore.\n"
+        "3) Round 1 must use round_action=search.\n"
+        "4) If explore is not allowed in this round, round_action must be search.\n"
+        "5) If round_action=explore, select only source IDs from LAST_ROUND_LINK_CANDIDATES and keep list length <= explore_target_pages_per_round.\n"
+        "6) If round_action=search, explore_target_source_ids must be an empty array.\n"
+        "7) Always return fallback search_jobs even when round_action=explore, unless search budget is already zero.\n"
+        "8) All search_jobs must serve CORE_QUESTION. Do not introduce a new independent research question.\n"
+        "9) Minimize overlap between jobs while maximizing information gain.\n"
+        "10) Respect remaining budget and prioritize unresolved high-value gaps.\n"
+        "11) Use deep mode when higher recall or conflict verification is needed.\n"
+        "12) Free-text fields must be in the required output language.\n"
+        "13) Temporal grounding: interpret relative time words against current UTC date.\n"
+        "14) If recency intent exists, include explicit temporal constraints in query text.\n"
+        "15) For high-impact claims, prioritize authoritative routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
+        "16) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
+        "17) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
+        "18) Domain/text route constraints are executable: include_domains, exclude_domains, include_text, exclude_text.\n"
+        "19) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
+        "20) Return JSON only; no markdown or explanations.\n"
         "Allowed Inputs:\n"
-        "- User theme, theme plan, previous round summaries, candidate queries.\n"
+        "- User theme, theme plan, previous round summaries, candidate queries, and last-round link candidates.\n"
         "Failure Policy:\n"
+        "- If uncertain about explore value, choose search.\n"
         "- If uncertain, produce fewer but higher-value jobs.\n"
         "- If all candidate queries are off-topic relative to CORE_QUESTION, return search_jobs as an empty array.\n"
         "Quality Checklist:\n"
+        "- Action choice is justified by expected information gain.\n"
         "- Distinct intent per job, no near duplicates, conflict-aware targeting.\n"
         "Mode-depth contract:\n"
         f"{depth_contract}"
@@ -549,9 +563,17 @@ def build_plan_messages(
                 "LANGUAGE_POLICY:\n"
                 f"- required_output_language={required_output_language} ({required_output_language_label})\n"
                 "- Keep textual fields in the required output language.\n\n"
+                "ROUND_ACTION_POLICY:\n"
+                "- round 1: must output round_action=search.\n"
+                "- round > 1: may choose round_action=explore only when allow_explore=true.\n"
+                f"- allow_explore_this_round={str(bool(allow_explore)).lower()}\n"
+                f"- explore_target_pages_per_round={int(explore_target_pages_per_round)}\n"
+                f"- explore_links_per_page={int(explore_links_per_page)}\n\n"
                 f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
                 f"PREVIOUS_ROUNDS_MARKDOWN:\n{previous_rounds_markdown}\n\n"
                 f"CANDIDATE_QUERIES_MARKDOWN:\n{candidate_queries_markdown}\n\n"
+                "LAST_ROUND_LINK_CANDIDATES:\n"
+                f"{last_round_link_candidates_markdown}\n\n"
                 "ENTITY_POLICY:\n"
                 f"- required_entities={required_entities}\n"
                 "- Every required entity must appear in query or additional_queries as exact text.\n"
@@ -566,7 +588,72 @@ def build_plan_messages(
                 "- verify: target contradiction resolution and tie-break evidence.\n"
                 "- refresh: prioritize latest authoritative updates.\n"
                 "- use include/exclude domain and text constraints when that increases authority and precision.\n"
-                "- if max_queries_this_round=1, prefer deep mode with additional_queries for one-call breadth."
+                "- if max_queries_this_round=1, prefer deep mode with additional_queries for one-call breadth.\n\n"
+                "OUTPUT_SHAPE_HINT:\n"
+                "{\n"
+                '  "query_strategy": "...",\n'
+                '  "round_action": "search|explore",\n'
+                '  "explore_target_source_ids": [1,2],\n'
+                '  "search_jobs": [{ "query": "..." }]\n'
+                "}"
+            ),
+        },
+    ]
+
+
+def build_link_picker_messages(
+    *,
+    core_question: str,
+    report_style: ReportStyle,
+    mode_depth_profile: str,
+    current_utc_date: str,
+    source_id: int,
+    source_url: str,
+    source_title: str,
+    max_links_to_select: int,
+    candidate_links_markdown: str,
+) -> list[dict[str, str]]:
+    system_contract = (
+        "Role: Link Selection Analyst.\n"
+        "Mission: Select the highest-yield deep-explore links for one source page.\n"
+        "Hard Constraints:\n"
+        "1) Use both anchor_text and URL when scoring relevance and authority.\n"
+        "2) Prioritize official docs/specs, standards, papers/preprints, repositories, and technical references.\n"
+        "3) De-prioritize navigation pages, login/signup, pricing, privacy/terms, marketing, and generic index pages.\n"
+        "4) Keep selection strictly scoped to CORE_QUESTION.\n"
+        "5) Select at most max_links_to_select IDs.\n"
+        "6) Return JSON only: selected_link_ids, reason.\n"
+        "7) selected_link_ids must reference IDs from CANDIDATE_LINKS only.\n"
+        "8) If no candidate is useful, return selected_link_ids as an empty array.\n"
+    )
+    return [
+        {
+            "role": "system",
+            "content": compose_system_prompt(
+                base_contract=system_contract,
+                style_overlay=build_style_overlay(stage="plan", style=report_style),
+                universal_guardrails=UNIVERSAL_GUARDRAILS,
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"CORE_QUESTION:\n{core_question}\n\n"
+                f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
+                f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
+                f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
+                "SOURCE_CONTEXT:\n"
+                f"- source_id={int(source_id)}\n"
+                f"- source_url={source_url}\n"
+                f"- source_title={source_title}\n\n"
+                f"MAX_LINKS_TO_SELECT:\n{int(max_links_to_select)}\n\n"
+                "CANDIDATE_LINKS:\n"
+                f"{candidate_links_markdown}\n\n"
+                "Output JSON shape:\n"
+                "{\n"
+                '  "selected_link_ids": [1,2],\n'
+                '  "reason": "..."\n'
+                "}"
             ),
         },
     ]
@@ -1333,6 +1420,7 @@ __all__ = [
     "build_decide_signal_messages",
     "build_density_gate_messages",
     "build_gap_closure_messages",
+    "build_link_picker_messages",
     "build_overview_messages",
     "build_plan_messages",
     "build_render_architect_messages",

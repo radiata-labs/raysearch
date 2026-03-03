@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 from serpsage.models.pipeline import (
+    ResearchLinkCandidate,
     ResearchRoundState,
     ResearchSearchJob,
     ResearchStepContext,
@@ -15,9 +16,11 @@ from serpsage.models.research import (
     PlanOutputPayload,
     PlanSearchJobPayload,
     ReportStyle,
+    RoundAction,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.context import (
+    render_link_candidates_markdown,
     render_queries_markdown,
     render_rounds_markdown,
     render_theme_plan_markdown,
@@ -55,14 +58,29 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "max_rounds"
             return ctx
-        if ctx.runtime.search_calls >= int(budget.max_search_calls):
+        remain_fetch_calls = int(budget.max_fetch_calls) - int(ctx.runtime.fetch_calls)
+        if remain_fetch_calls <= 0:
+            ctx.runtime.stop = True
+            ctx.runtime.stop_reason = "max_fetch_calls"
+            return ctx
+        remain_search_calls = int(budget.max_search_calls) - int(
+            ctx.runtime.search_calls
+        )
+        next_round_index = int(ctx.runtime.round_index) + 1
+        if remain_search_calls <= 0 and not self._can_attempt_explore(
+            ctx=ctx,
+            round_index=next_round_index,
+        ):
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "max_search_calls"
             return ctx
-        round_index = int(ctx.runtime.round_index) + 1
+        round_index = next_round_index
         ctx.runtime.round_index = round_index
         ctx.current_round = ResearchRoundState(round_index=round_index)
         ctx.work.search_jobs = []
+        ctx.work.round_action = "search"
+        ctx.work.explore_target_source_ids = []
+        ctx.work.search_fetched_candidates = []
         ctx.work.overview_review = OverviewOutputPayload()
         ctx.work.content_review = ContentOutputPayload()
         ctx.work.need_content_source_ids = []
@@ -80,7 +98,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
-        payload = PlanOutputPayload(query_strategy="mixed", search_jobs=[])
+        payload = PlanOutputPayload(
+            query_strategy="mixed",
+            round_action="search",
+            explore_target_source_ids=[],
+            search_jobs=[],
+        )
         try:
             chat_result = await self._llm.chat(
                 model=model,
@@ -109,7 +132,36 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 },
             )
         strategy = clean_whitespace(str(payload.query_strategy or "mixed"))
-        ctx.current_round.query_strategy = strategy or "mixed"
+        allow_explore = self._can_attempt_explore(
+            ctx=ctx,
+            round_index=round_index,
+        )
+        round_action = self._normalize_round_action(
+            raw=payload.round_action,
+            round_index=round_index,
+            allow_explore=allow_explore,
+        )
+        if remain_search_calls <= 0 and allow_explore:
+            round_action = "explore"
+        last_round_candidates = self._resolve_last_round_candidates(
+            ctx=ctx,
+            round_index=round_index,
+        )
+        explore_target_source_ids = self._normalize_explore_target_source_ids(
+            raw=payload.explore_target_source_ids,
+            candidates=last_round_candidates,
+            limit=int(ctx.runtime.mode_depth.explore_target_pages_per_round),
+        )
+        if round_action == "explore" and not explore_target_source_ids:
+            explore_target_source_ids = self._fallback_explore_target_source_ids(
+                candidates=last_round_candidates,
+                limit=int(ctx.runtime.mode_depth.explore_target_pages_per_round),
+            )
+        if round_action == "explore" and not explore_target_source_ids:
+            round_action = "search"
+        ctx.work.round_action = round_action
+        ctx.work.explore_target_source_ids = list(explore_target_source_ids)
+        ctx.current_round.query_strategy = strategy or str(round_action)
         remain_search_calls = int(budget.max_search_calls) - int(
             ctx.runtime.search_calls
         )
@@ -127,7 +179,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             candidate_queries=candidate_queries,
             job_limit=job_limit,
         )
-        if not jobs:
+        if round_action == "search" and not jobs:
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "no_queries"
             ctx.current_round.stop = True
@@ -265,12 +317,22 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
         candidate_queries_markdown = render_queries_markdown(candidate_queries)
+        round_index = int(ctx.runtime.round_index)
+        last_round_candidates = self._resolve_last_round_candidates(
+            ctx=ctx,
+            round_index=round_index,
+        )
+        last_round_candidates_markdown = render_link_candidates_markdown(
+            last_round_candidates,
+            max_pages=max(1, int(mode_depth.explore_target_pages_per_round)),
+            max_links_per_page=6,
+        )
         return build_plan_prompt_messages(
             theme=ctx.request.themes,
             core_question=core_question,
             report_style=report_style,
             mode_depth_profile=str(mode_depth.mode_key),
-            round_index=int(ctx.runtime.round_index),
+            round_index=round_index,
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
             required_output_language=out_lang,
@@ -288,15 +350,38 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 int(budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
             ),
             max_queries_this_round=int(budget.max_queries_per_round),
+            allow_explore=self._can_attempt_explore(
+                ctx=ctx,
+                round_index=round_index,
+            ),
+            explore_target_pages_per_round=int(
+                mode_depth.explore_target_pages_per_round
+            ),
+            explore_links_per_page=int(mode_depth.explore_links_per_page),
+            last_round_link_candidates_markdown=last_round_candidates_markdown,
         )
 
     def _build_plan_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "additionalProperties": False,
-            "required": ["query_strategy", "search_jobs"],
+            "required": [
+                "query_strategy",
+                "round_action",
+                "explore_target_source_ids",
+                "search_jobs",
+            ],
             "properties": {
                 "query_strategy": {"type": "string"},
+                "round_action": {
+                    "type": "string",
+                    "enum": ["search", "explore"],
+                },
+                "explore_target_source_ids": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {"type": "integer"},
+                },
                 "search_jobs": {
                     "type": "array",
                     "maxItems": 8,
@@ -338,6 +423,90 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 },
             },
         }
+
+    def _can_attempt_explore(
+        self, *, ctx: ResearchStepContext, round_index: int
+    ) -> bool:
+        if int(round_index) <= 1:
+            return False
+        if int(ctx.runtime.budget.max_fetch_calls) <= int(ctx.runtime.fetch_calls):
+            return False
+        candidates = self._resolve_last_round_candidates(
+            ctx=ctx,
+            round_index=round_index,
+        )
+        return bool(candidates)
+
+    def _resolve_last_round_candidates(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        round_index: int,
+    ) -> list[ResearchLinkCandidate]:
+        expected_round = max(0, int(round_index) - 1)
+        if int(ctx.plan.last_round_link_candidates_round) != expected_round:
+            return []
+        return [
+            item.model_copy(deep=True) for item in ctx.plan.last_round_link_candidates
+        ]
+
+    def _normalize_round_action(
+        self,
+        *,
+        raw: object,
+        round_index: int,
+        allow_explore: bool,
+    ) -> RoundAction:
+        if int(round_index) <= 1:
+            return "search"
+        action_key = clean_whitespace(str(raw or "search")).casefold()
+        if action_key != "explore":
+            return "search"
+        return "explore" if bool(allow_explore) else "search"
+
+    def _normalize_explore_target_source_ids(
+        self,
+        *,
+        raw: list[int],
+        candidates: list[ResearchLinkCandidate],
+        limit: int,
+    ) -> list[int]:
+        if not raw or not candidates:
+            return []
+        cap = max(1, int(limit))
+        allowed = {int(item.source_id) for item in candidates}
+        out: list[int] = []
+        seen: set[int] = set()
+        for item in raw:
+            source_id = int(item)
+            if source_id in seen or source_id not in allowed:
+                continue
+            seen.add(source_id)
+            out.append(source_id)
+            if len(out) >= cap:
+                break
+        return out
+
+    def _fallback_explore_target_source_ids(
+        self,
+        *,
+        candidates: list[ResearchLinkCandidate],
+        limit: int,
+    ) -> list[int]:
+        if not candidates:
+            return []
+        cap = max(1, int(limit))
+        out: list[int] = []
+        seen: set[int] = set()
+        for item in candidates:
+            source_id = int(item.source_id)
+            if source_id in seen:
+                continue
+            seen.add(source_id)
+            out.append(source_id)
+            if len(out) >= cap:
+                break
+        return out
 
     def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
         cfg = self.settings.research.report_style

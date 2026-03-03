@@ -22,6 +22,7 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |- search_config_example.yaml
 |- scripts/
 |  |- finalize_task.py
+|  |- run_scoped_checks.py
 |  |- update_agents_tree.py
 |- src/
 |  |- serpsage/
@@ -101,13 +102,12 @@ All edits must be coordinated through `.codex/SCOPES.md`.
 
 - Do not run tests for this project workflow.
 - Review all edited code.
-- Run the following commands in order, each with venv activation:
-  1. `./.venv/Scripts/Activate.ps1; ./.venv/Scripts/python.exe -m pyright`
-  2. `./.venv/Scripts/Activate.ps1; ./.venv/Scripts/python.exe -m mypy .`
-  3. `./.venv/Scripts/Activate.ps1; ./.venv/Scripts/python.exe -m ruff check --fix`
-  4. `./.venv/Scripts/Activate.ps1; ./.venv/Scripts/python.exe -m ruff format`
-- Fix all reported issues.
-- If there are reported issues that you have fixed. Run the same four commands again in the same order.
+- Run scoped checks only on files modified by the current task:
+  - `./.venv/Scripts/Activate.ps1; ./.venv/Scripts/python.exe scripts/run_scoped_checks.py "<TASK_TIMESTAMP>"`
+  - If timestamp is ambiguous, add `--title-contains "<TITLE_FRAGMENT>"`.
+  - This runs `pyright`, `mypy`, `ruff check --fix`, and `ruff format` on task-modified files only.
+  - Default behavior runs two passes; use `--passes 1` only when explicitly needed.
+- Fix reported issues inside the same task scope and rerun the same scoped-check command.
 - Post-processing phase only (does not restrict normal development commands):
   - Only one command is allowed for task finalization.
   - Run exactly: `./.venv/Scripts/Activate.ps1; ./.venv/Scripts/python.exe scripts/finalize_task.py "<TASK_TIMESTAMP>"`

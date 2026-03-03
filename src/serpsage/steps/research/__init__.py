@@ -1,5 +1,6 @@
 from serpsage.steps.research.content import ResearchContentStep
 from serpsage.steps.research.decide import ResearchDecideStep
+from serpsage.steps.research.fetch import ResearchFetchStep
 from serpsage.steps.research.finalize import ResearchFinalizeStep
 from serpsage.steps.research.loop import ResearchLoopStep
 from serpsage.steps.research.overview import ResearchOverviewStep
@@ -14,6 +15,7 @@ __all__ = [
     "ResearchOverviewStep",
     "ResearchContentStep",
     "ResearchDecideStep",
+    "ResearchFetchStep",
     "ResearchFinalizeStep",
     "ResearchLoopStep",
     "ResearchPlanStep",

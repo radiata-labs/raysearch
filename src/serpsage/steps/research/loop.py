@@ -43,6 +43,7 @@ class _TrackAllocation:
     fetch_grant: int
     max_queries_per_round: int
     bonus: bool = False
+    fetch_only: bool = False
 
 
 @dataclass(slots=True)
@@ -181,7 +182,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     budget_lock=budget_lock,
                     orchestrator_lock=orchestrator_lock,
                 )
-                if alloc.search_grant <= 0 or alloc.fetch_grant <= 0:
+                if self._allocation_blocked(alloc):
                     local_ctx.runtime.stop = True
                     local_ctx.runtime.stop_reason = "global_budget_exhausted"
                     break
@@ -327,12 +328,35 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 - int(root.parallel.global_fetch_used)
                 - int(reservation_state.fetch_reserved),
             )
-            if remaining_search <= 0 or remaining_fetch <= 0:
+            if remaining_fetch <= 0:
                 return _TrackAllocation(
                     search_grant=0,
                     fetch_grant=0,
                     max_queries_per_round=1,
                     bonus=False,
+                )
+            if remaining_search <= 0:
+                if not self._can_allocate_fetch_only_round(track_ctx):
+                    return _TrackAllocation(
+                        search_grant=0,
+                        fetch_grant=0,
+                        max_queries_per_round=1,
+                        bonus=False,
+                    )
+                fetch_grant = max(
+                    1,
+                    min(
+                        int(remaining_fetch),
+                        int(root.runtime.budget.max_fetch_per_round),
+                    ),
+                )
+                reservation_state.fetch_reserved += int(fetch_grant)
+                return _TrackAllocation(
+                    search_grant=0,
+                    fetch_grant=int(fetch_grant),
+                    max_queries_per_round=1,
+                    bonus=False,
+                    fetch_only=True,
                 )
             bonus_ratio = max(0.0, min(1.0, float(self._BONUS_RATIO)))
             bonus_threshold = max(0.0, min(1.0, 1.0 - bonus_ratio))
@@ -574,7 +598,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 budget_lock=budget_lock,
                 orchestrator_lock=orchestrator_lock,
             )
-            if alloc.search_grant <= 0 or alloc.fetch_grant <= 0:
+            if self._allocation_blocked(alloc):
                 local_ctx.runtime.stop = True
                 local_ctx.runtime.stop_reason = "global_budget_exhausted"
                 break
@@ -988,6 +1012,25 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             or int(ctx.parallel.global_fetch_used)
             >= int(ctx.parallel.global_fetch_budget)
         )
+
+    def _allocation_blocked(self, alloc: _TrackAllocation) -> bool:
+        return bool(
+            int(alloc.fetch_grant) <= 0
+            or (int(alloc.search_grant) <= 0 and not bool(alloc.fetch_only))
+        )
+
+    def _can_allocate_fetch_only_round(self, track_ctx: ResearchStepContext) -> bool:
+        if int(track_ctx.runtime.budget.max_fetch_calls) <= int(
+            track_ctx.runtime.fetch_calls
+        ):
+            return False
+        next_round_index = int(track_ctx.runtime.round_index) + 1
+        if next_round_index <= 1:
+            return False
+        expected_round = int(next_round_index) - 1
+        if int(track_ctx.plan.last_round_link_candidates_round) != int(expected_round):
+            return False
+        return bool(track_ctx.plan.last_round_link_candidates)
 
     def _orchestrator_enabled(self, ctx: ResearchStepContext) -> bool:
         mode_depth = ctx.runtime.mode_depth

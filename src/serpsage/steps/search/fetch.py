@@ -42,6 +42,11 @@ class SearchFetchStep(StepBase[SearchStepContext]):
         to_fetch: list[FetchStepContext] = []
         for index, url in enumerate(urls):
             req = self._build_fetch_request(ctx=ctx, url=url)
+            main_links_limit = (
+                int(req.others.max_links)
+                if req.others is not None and req.others.max_links is not None
+                else None
+            )
             to_fetch.append(
                 FetchStepContext(
                     settings=ctx.settings,
@@ -52,6 +57,9 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                     runtime=FetchRuntimeConfig(
                         crawl_mode=req.crawl_mode,
                         crawl_timeout_s=float(req.crawl_timeout or 0.0),
+                        max_links_for_subpages=_derive_subpage_links_limit(
+                            main_links_limit
+                        ),
                         max_links=(
                             req.others.max_links if req.others is not None else None
                         ),
@@ -91,6 +99,14 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             fetched_candidates.append(
                 SearchFetchedCandidate(
                     result=item.output.result,
+                    links=(
+                        list(item.artifacts.extracted.links)
+                        if item.artifacts.extracted is not None
+                        else []
+                    ),
+                    subpage_links=[
+                        list(links or []) for links in list(item.subpages.result_links)
+                    ],
                     main_md_for_abstract=main_md_for_abstract,
                     subpages_md_for_abstract=list(item.subpages.md_for_abstract or []),
                     main_overview_scores=main_overview_scores,
@@ -116,6 +132,12 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             overview=template.overview,
             others=template.others,
         )
+
+
+def _derive_subpage_links_limit(main_links_limit: int | None) -> int | None:
+    if main_links_limit is None:
+        return None
+    return max(8, int(round(float(main_links_limit) * 0.30)))
 
 
 __all__ = ["SearchFetchStep"]

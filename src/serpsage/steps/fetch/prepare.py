@@ -116,7 +116,17 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
             if subpages_enabled:
                 link_cap = int(self.settings.fetch.extract.link_max_count)
                 auto_links_limit = min(link_cap, max(20, int(subpages_max) * 5))
-                ctx.runtime.max_links_for_subpages = int(auto_links_limit)
+                preset_limit = (
+                    int(ctx.runtime.max_links_for_subpages)
+                    if ctx.runtime.max_links_for_subpages is not None
+                    else 0
+                )
+                if preset_limit > 0:
+                    ctx.runtime.max_links_for_subpages = int(
+                        min(link_cap, max(1, int(preset_limit)))
+                    )
+                else:
+                    ctx.runtime.max_links_for_subpages = int(auto_links_limit)
         else:
             ctx.runtime.max_links = None
             ctx.runtime.max_image_links = None
@@ -130,6 +140,7 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
         ctx.subpages.keywords = list(subpages_keywords)
         ctx.subpages.query = subpages_query if subpages_enabled else ""
         ctx.subpages.results = []
+        ctx.subpages.result_links = []
         ctx.subpages.md_for_abstract = []
         ctx.subpages.overview_scores = []
         return ctx

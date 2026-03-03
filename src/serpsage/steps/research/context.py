@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from serpsage.models.pipeline import (
+    ResearchLinkCandidate,
     ResearchQuestionCard,
     ResearchRoundState,
 )
@@ -231,6 +232,57 @@ def render_queries_markdown(queries: list[str]) -> str:
     return "\n".join(lines).strip()
 
 
+def render_link_candidates_markdown(
+    candidates: list[ResearchLinkCandidate],
+    *,
+    max_pages: int = 8,
+    max_links_per_page: int = 6,
+) -> str:
+    if not candidates:
+        return "- (none)"
+    page_limit = max(1, int(max_pages))
+    link_limit = max(1, int(max_links_per_page))
+    lines: list[str] = []
+    for item in list(candidates)[:page_limit]:
+        main_links = list(item.links or [])
+        flat_subpage_links = [
+            link
+            for group in list(item.subpage_links or [])
+            for link in list(group or [])
+        ]
+        lines.extend(
+            [
+                f"### Source {int(item.source_id)}",
+                f"- URL: {_normalize_scalar_text(item.url) or 'n/a'}",
+                f"- Title: {_normalize_scalar_text(item.title) or 'n/a'}",
+                f"- Round index: {int(item.round_index)}",
+                f"- Main links count: {int(len(main_links))}",
+                f"- Subpage links count: {int(len(flat_subpage_links))}",
+                "- Link samples:",
+            ]
+        )
+        sample_lines: list[str] = [
+            (
+                "[main] "
+                f"{_normalize_scalar_text(link.anchor_text) or '(no anchor)'} -> "
+                f"{_normalize_scalar_text(link.url) or 'n/a'}"
+            )
+            for link in main_links[:link_limit]
+        ]
+        sample_lines.extend(
+            (
+                "[subpage] "
+                f"{_normalize_scalar_text(link.anchor_text) or '(no anchor)'} -> "
+                f"{_normalize_scalar_text(link.url) or 'n/a'}"
+            )
+            for link in flat_subpage_links[:link_limit]
+        )
+        lines.extend(
+            _render_markdown_bullets(sample_lines, indent="  ") or ["  - (none)"]
+        )
+    return "\n".join(lines).strip()
+
+
 def render_question_cards_markdown(cards: list[ResearchQuestionCard]) -> str:
     if not cards:
         return "- (none)"
@@ -331,6 +383,7 @@ __all__ = [
     "normalize_block_text",
     "render_overview_review_markdown",
     "render_architect_plan_markdown",
+    "render_link_candidates_markdown",
     "render_question_cards_markdown",
     "render_queries_markdown",
     "render_rounds_markdown",

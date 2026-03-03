@@ -11,14 +11,17 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from serpsage.app.request import (
     FetchContentRequest,
+    FetchOthersRequest,
     FetchRequestBase,
     FetchSubpagesRequest,
     SearchRequest,
 )
-from serpsage.app.response import FetchResultItem, FetchSubpagesResult
+from serpsage.app.response import FetchResultItem
 from serpsage.models.pipeline import (
+    ResearchSearchJob,
     ResearchSource,
     ResearchStepContext,
+    SearchFetchedCandidate,
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
@@ -59,12 +62,34 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
+        ctx.work.search_fetched_candidates = []
+        round_action = clean_whitespace(
+            str(ctx.work.round_action or "search")
+        ).casefold()
+        if int(ctx.current_round.round_index) <= 1:
+            round_action = "search"
+        if round_action != "search":
+            return ctx
+        return await self._run_search_action(ctx)
+
+    async def _run_search_action(self, ctx: ResearchStepContext) -> ResearchStepContext:
+        assert ctx.current_round is not None
         jobs = list(ctx.work.search_jobs)
         if not jobs:
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "no_search_jobs"
             ctx.current_round.stop = True
             ctx.current_round.stop_reason = "no_search_jobs"
+            return ctx
+        remaining_search_budget = max(
+            0,
+            int(ctx.runtime.budget.max_search_calls) - int(ctx.runtime.search_calls),
+        )
+        if remaining_search_budget <= 0:
+            ctx.runtime.stop = True
+            ctx.runtime.stop_reason = "max_search_calls"
+            ctx.current_round.stop = True
+            ctx.current_round.stop_reason = "max_search_calls"
             return ctx
         remaining_fetch_budget = max(
             0,
@@ -76,14 +101,24 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ctx.current_round.stop = True
             ctx.current_round.stop_reason = "max_fetch_calls"
             return ctx
-        executable_jobs = min(len(jobs), int(remaining_fetch_budget))
+        executable_jobs = min(
+            len(jobs),
+            int(remaining_fetch_budget),
+            int(remaining_search_budget),
+        )
         jobs = jobs[:executable_jobs]
         if not jobs:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_fetch_calls"
+            ctx.runtime.stop = remaining_search_budget <= 0
+            ctx.runtime.stop_reason = (
+                "max_search_calls"
+                if remaining_search_budget <= 0
+                else "max_fetch_calls"
+            )
             ctx.current_round.stop = True
-            ctx.current_round.stop_reason = "max_fetch_calls"
+            ctx.current_round.stop_reason = str(ctx.runtime.stop_reason)
             return ctx
+        mode_depth = ctx.runtime.mode_depth
+        main_links_limit = max(1, int(mode_depth.search_links_main_limit))
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
             jobs_left_after_current = max(0, len(jobs) - idx - 1)
@@ -92,37 +127,16 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             subpages_request = (
                 FetchSubpagesRequest(
                     max_subpages=max_subpages,
-                    subpage_keywords=None,
+                    subpage_keywords=job.query,
                 )
                 if max_subpages > 0
                 else None
             )
-            req = SearchRequest(
-                query=job.query,
-                additional_queries=(
-                    list(job.additional_queries or [])
-                    if str(job.mode) == "deep"
-                    else None
-                ),
-                mode=job.mode,
-                max_results=int(ctx.runtime.budget.max_results_per_search),
-                include_domains=(list(job.include_domains) or None),
-                exclude_domains=(list(job.exclude_domains) or None),
-                include_text=(list(job.include_text) or None),
-                exclude_text=(list(job.exclude_text) or None),
-                fetchs=FetchRequestBase(
-                    crawl_mode="fallback",
-                    crawl_timeout=30.0,
-                    content=FetchContentRequest(
-                        detail="full",
-                        include_markdown_links=False,
-                        include_html_tags=False,
-                    ),
-                    abstracts=False,
-                    subpages=subpages_request,
-                    overview=True,
-                    others=None,
-                ),
+            req = self._build_search_request(
+                ctx=ctx,
+                query_job=job,
+                subpages_request=subpages_request,
+                main_links_limit=main_links_limit,
             )
             contexts.append(
                 SearchStepContext(
@@ -134,122 +148,83 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             )
             remaining_fetch_budget = max(0, int(remaining_fetch_budget) - 1)
         out = await self._search_runner.run_batch(contexts)
-        all_results: list[FetchResultItem] = []
-        new_source_ids: list[int] = []
-        new_version_source_ids: list[int] = []
-        per_round_fetch_calls = 0
-        remaining_fetch_budget = max(
-            0,
-            int(ctx.runtime.budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
-        )
-        fetch_budget_exhausted = False
-        for item in out:
-            results = list(item.output.results or [])
+        prepared_candidates: list[SearchFetchedCandidate] = []
+        for search_ctx in out:
+            results = list(search_ctx.output.results or [])
+            candidates = list(search_ctx.fetch.candidates or [])
+            consumed_indexes: set[int] = set()
             for result in results:
-                if remaining_fetch_budget <= 0:
-                    fetch_budget_exhausted = True
-                    break
-                trimmed_result, consumed_pages = self._trim_result_to_fetch_budget(
+                candidate = self._match_candidate_for_result(
                     result=result,
-                    remaining_fetch_budget=remaining_fetch_budget,
+                    candidates=candidates,
+                    consumed_indexes=consumed_indexes,
                 )
-                if consumed_pages <= 0:
-                    continue
-                remaining_fetch_budget = max(
-                    0, int(remaining_fetch_budget) - int(consumed_pages)
-                )
-                per_round_fetch_calls += int(consumed_pages)
-                all_results.append(trimmed_result)
-                canonical_ids, version_ids = self._append_sources_from_fetch_result(
-                    ctx=ctx,
-                    result=trimmed_result,
-                    round_index=ctx.current_round.round_index,
-                )
-                for source_id in canonical_ids:
-                    if source_id not in new_source_ids:
-                        new_source_ids.append(source_id)
-                for source_id in version_ids:
-                    if source_id not in new_version_source_ids:
-                        new_version_source_ids.append(source_id)
-            if fetch_budget_exhausted:
-                break
-        ctx.current_round.result_count = int(len(all_results))
-        ctx.current_round.new_source_ids = list(new_source_ids)
-        ctx.current_round.corpus_score_gain = float(
-            rebuild_corpus_ranking(
-                ctx=ctx,
-                round_index=int(ctx.current_round.round_index),
-            )
-        )
+                if candidate is None:
+                    candidate = SearchFetchedCandidate(result=result)
+                else:
+                    candidate = candidate.model_copy(update={"result": result})
+                prepared_candidates.append(candidate.model_copy(deep=True))
+        ctx.work.search_fetched_candidates = [
+            item.model_copy(deep=True) for item in prepared_candidates
+        ]
         ctx.runtime.search_calls += int(len(jobs))
-        ctx.runtime.fetch_calls += int(per_round_fetch_calls)
         return ctx
 
-    def _trim_result_to_fetch_budget(
-        self,
-        *,
-        result: FetchResultItem,
-        remaining_fetch_budget: int,
-    ) -> tuple[FetchResultItem, int]:
-        pages_left = max(0, int(remaining_fetch_budget))
-        if pages_left <= 0:
-            return result.model_copy(update={"subpages": []}), 0
-        allowed_subpages = max(0, pages_left - 1)
-        trimmed_subpages = list(result.subpages or [])[:allowed_subpages]
-        trimmed = result.model_copy(update={"subpages": trimmed_subpages})
-        consumed = 1 + len(trimmed_subpages)
-        return trimmed, consumed
-
-    def _append_sources_from_fetch_result(
+    def _build_search_request(
         self,
         *,
         ctx: ResearchStepContext,
-        result: FetchResultItem,
-        round_index: int,
-    ) -> tuple[list[int], list[int]]:
-        new_canonical_ids: list[int] = []
-        new_version_ids: list[int] = []
-        upserted = append_source_version(
-            ctx=ctx,
-            url=str(result.url),
-            title=str(result.title),
-            overview=result.overview,
-            content=str(result.content or ""),
-            round_index=int(round_index),
-            is_subpage=False,
+        query_job: ResearchSearchJob,
+        subpages_request: FetchSubpagesRequest | None,
+        main_links_limit: int,
+    ) -> SearchRequest:
+        return SearchRequest(
+            query=str(query_job.query),
+            additional_queries=(
+                list(query_job.additional_queries or [])
+                if str(query_job.mode) == "deep"
+                else None
+            ),
+            mode=query_job.mode,
+            max_results=int(ctx.runtime.budget.max_results_per_search),
+            include_domains=(list(query_job.include_domains) or None),
+            exclude_domains=(list(query_job.exclude_domains) or None),
+            include_text=(list(query_job.include_text) or None),
+            exclude_text=(list(query_job.exclude_text) or None),
+            fetchs=FetchRequestBase(
+                crawl_mode="fallback",
+                crawl_timeout=30.0,
+                content=FetchContentRequest(
+                    detail="full",
+                    include_markdown_links=False,
+                    include_html_tags=False,
+                ),
+                abstracts=False,
+                subpages=subpages_request,
+                overview=True,
+                others=FetchOthersRequest(max_links=int(main_links_limit)),
+            ),
         )
-        if upserted.is_new_canonical:
-            new_canonical_ids.append(int(upserted.source_id))
-        if upserted.is_new_version:
-            new_version_ids.append(int(upserted.source_id))
-        for sub in list(result.subpages or []):
-            sub_upserted = self._append_source_from_subpage(
-                ctx=ctx,
-                sub=sub,
-                round_index=round_index,
-            )
-            if sub_upserted.is_new_canonical:
-                new_canonical_ids.append(int(sub_upserted.source_id))
-            if sub_upserted.is_new_version:
-                new_version_ids.append(int(sub_upserted.source_id))
-        return new_canonical_ids, new_version_ids
 
-    def _append_source_from_subpage(
+    def _match_candidate_for_result(
         self,
         *,
-        ctx: ResearchStepContext,
-        sub: FetchSubpagesResult,
-        round_index: int,
-    ) -> CorpusUpsertResult:
-        return append_source_version(
-            ctx=ctx,
-            url=str(sub.url),
-            title=str(sub.title),
-            overview=sub.overview,
-            content=str(sub.content or ""),
-            round_index=int(round_index),
-            is_subpage=True,
-        )
+        result: FetchResultItem,
+        candidates: list[SearchFetchedCandidate],
+        consumed_indexes: set[int],
+    ) -> SearchFetchedCandidate | None:
+        target_url = clean_whitespace(str(result.url))
+        target_key = canonicalize_url(target_url) or target_url.casefold()
+        for index, candidate in enumerate(candidates):
+            if index in consumed_indexes:
+                continue
+            candidate_url = clean_whitespace(str(candidate.result.url))
+            candidate_key = canonicalize_url(candidate_url) or candidate_url.casefold()
+            if candidate_key != target_key:
+                continue
+            consumed_indexes.add(index)
+            return candidate
+        return None
 
 
 def canonicalize_url(raw_url: str) -> str:

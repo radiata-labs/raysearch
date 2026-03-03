@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field
 from serpsage.core.model_base import MutableModel
 
 ReportStyle = Literal["decision", "explainer", "execution"]
+RoundAction = Literal["search", "explore"]
 TaskIntent = Literal["how_to", "comparison", "explainer", "diagnosis", "other"]
 TaskComplexity = Literal["low", "medium", "high"]
 
@@ -72,6 +73,8 @@ class PlanSearchJobPayload(MutableModel):
 
 class PlanOutputPayload(MutableModel):
     query_strategy: str = "mixed"
+    round_action: RoundAction = "search"
+    explore_target_source_ids: list[int] = Field(default_factory=list, max_length=12)
     search_jobs: list[PlanSearchJobPayload] = Field(default_factory=list, max_length=8)
 
 
@@ -163,6 +166,7 @@ class RenderArchitectOutput(MutableModel):
 
 __all__ = [
     "ReportStyle",
+    "RoundAction",
     "TaskComplexity",
     "TaskIntent",
     "OverviewConflictPayload",

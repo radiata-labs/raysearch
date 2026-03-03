@@ -13,6 +13,7 @@ def resolve_research_model(
     model_settings = ctx.settings.research.models
     stage_to_model = {
         "plan": model_settings.plan,
+        "link_select": model_settings.link_select,
         "overview": model_settings.abstract_analyze,
         "abstract": model_settings.abstract_analyze,
         "content": model_settings.content_analyze,

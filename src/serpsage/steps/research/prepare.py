@@ -78,6 +78,12 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 target_length_ratio_vs_current=float(
                     mode_depth.target_length_ratio_vs_current
                 ),
+                search_links_main_limit=int(mode_depth.search_links_main_limit),
+                explore_target_pages_per_round=int(
+                    mode_depth.explore_target_pages_per_round
+                ),
+                explore_links_per_page=int(mode_depth.explore_links_per_page),
+                explore_fetch_round_ratio=float(mode_depth.explore_fetch_round_ratio),
             ),
             budget=ResearchBudgetState(
                 max_rounds=int(profile.max_rounds),

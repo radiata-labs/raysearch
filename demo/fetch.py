@@ -31,7 +31,7 @@ async def main(
         crawl_timeout=30,
         crawl_mode="fallback",
         content=FetchContentRequest(detail="full"),
-        abstracts=FetchAbstractsRequest(query=query, max_chars=900),
+        abstracts=FetchAbstractsRequest(query=query, max_chars=2000),
         overview=FetchOverviewRequest(query=query) if overview else False,
         subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
         others=FetchOthersRequest(max_links=5, max_image_links=5),
@@ -46,6 +46,6 @@ if __name__ == "__main__":
         main,
         "https://api-docs.deepseek.com/zh-cn/news/news251201",
         None,
-        True,
+        False,
     )
     print(out["fetch_result"])
