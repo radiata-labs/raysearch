@@ -248,11 +248,11 @@ llm:
       enable_structured: true
 
 cache:
-  enabled: false
+  enabled: true
   backend: sqlite # sqlite|memory|redis|mysql|sqlalchemy
   fetch_ttl_s: 86400
   sqlite:
-    db_path: serpsage_cache.sqlite3
+    db_path: ./.cache/serpsage_cache.sqlite3
     table: cache
   redis:
     url: redis://127.0.0.1:6379/0

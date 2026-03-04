@@ -100,6 +100,11 @@ class SearchOutputState(MutableModel):
     results: list[FetchResultItem] = Field(default_factory=list)
 
 
+class AnswerSubQuestionPlan(MutableModel):
+    question: str = ""
+    search_query: str = ""
+
+
 class AnswerPlanState(MutableModel):
     answer_mode: str = "summary"
     freshness_intent: bool = False
@@ -108,6 +113,7 @@ class AnswerPlanState(MutableModel):
     search_mode: str = "auto"
     max_results: int = 1
     additional_queries: list[str] | None = None
+    sub_questions: list[AnswerSubQuestionPlan] = Field(default_factory=list)
 
 
 class SearchStepContext(BaseStepContext):
@@ -122,10 +128,19 @@ class SearchStepContext(BaseStepContext):
     output: SearchOutputState = Field(default_factory=SearchOutputState)
 
 
+class AnswerSubSearchState(MutableModel):
+    question: str = ""
+    search_query: str = ""
+    request: SearchRequest | None = None
+    search_mode: str = "auto"
+    results: list[FetchResultItem] = Field(default_factory=list)
+
+
 class AnswerSearchState(MutableModel):
     request: SearchRequest | None = None
     search_mode: str = "auto"
     results: list[FetchResultItem] = Field(default_factory=list)
+    sub_searches: list[AnswerSubSearchState] = Field(default_factory=list)
 
 
 class AnswerOutputState(MutableModel):
@@ -421,6 +436,8 @@ class ResearchStepContext(BaseStepContext):
 __all__ = [
     "AnswerOutputState",
     "AnswerPlanState",
+    "AnswerSubQuestionPlan",
+    "AnswerSubSearchState",
     "AnswerSearchState",
     "AnswerStepContext",
     "BaseStepContext",

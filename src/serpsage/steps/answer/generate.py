@@ -9,25 +9,20 @@ from typing_extensions import override
 from urllib.parse import urlsplit, urlunsplit
 
 from serpsage.app.response import AnswerCitation, FetchResultItem
-from serpsage.models.pipeline import AnswerStepContext
+from serpsage.models.pipeline import AnswerStepContext, AnswerSubSearchState
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
+
 _CITATION_RE = re.compile(r"\[\s*citation\s*:\s*(\d+)\s*\]", re.IGNORECASE)
 _CITATION_GROUP_RE = re.compile(
     r"\[\s*citation\s*:\s*([^\]]+?)\s*\]",
     re.IGNORECASE,
 )
-
-
-@dataclass(slots=True)
-class _PageAbstract:
-    score: float
-    order: int
-    text: str
+_FIXED_ABSTRACT_MAX_CHARS = 1000
 
 
 @dataclass(slots=True)
@@ -37,16 +32,7 @@ class _PageSource:
     title: str
     content: str
     first_order: int
-    max_score: float = 0.0
-    abstracts: list[_PageAbstract] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class _GlobalAbstract:
-    page_key: str
-    score: float
-    order: int
-    text: str
+    abstracts: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -56,8 +42,14 @@ class _PromptSource:
     title: str
     content: str
     abstracts: list[str]
-    score: float
-    first_order: int
+    question_index: int
+    source_index: int
+
+
+@dataclass(slots=True)
+class _QuestionPromptContext:
+    question: str
+    sources: list[_PromptSource]
 
 
 class AnswerGenerateStep(StepBase[AnswerStepContext]):
@@ -74,24 +66,20 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             if isinstance(ctx.request.json_schema, dict)
             else None
         )
-        raw_sources = self._collect_page_sources(ctx.search.results)
-        prompt_sources, _ = self._build_prompt_sources(
-            sources=raw_sources,
-            max_chars=int(self.settings.answer.generate.max_abstract_chars),
-        )
+        question_contexts, prompt_sources = self._build_question_prompt_contexts(ctx)
         mode = "json" if schema is not None else "text"
-        answer_mode = (
-            "direct"
-            if clean_whitespace(str(ctx.plan.answer_mode or "")).casefold() == "direct"
-            else "summary"
-        )
+        answer_mode = clean_whitespace(
+            str(ctx.plan.answer_mode or "summary")
+        ).casefold()
+        if answer_mode not in {"direct", "summary"}:
+            answer_mode = "summary"
         freshness_intent = bool(ctx.plan.freshness_intent)
         query_language = clean_whitespace(
             str(ctx.plan.query_language or "same as query")
         )
         messages = self._build_messages(
             query=ctx.request.query,
-            sources=prompt_sources,
+            question_contexts=question_contexts,
             answer_mode=answer_mode,
             mode=mode,
             now_utc=now_utc,
@@ -166,39 +154,108 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             ctx.output.citations = []
         return ctx
 
+    def _build_question_prompt_contexts(
+        self, ctx: AnswerStepContext
+    ) -> tuple[list[_QuestionPromptContext], list[_PromptSource]]:
+        sub_searches = self._resolve_sub_searches(ctx)
+        question_contexts: list[_QuestionPromptContext] = []
+        prompt_sources: list[_PromptSource] = []
+        for question_index, sub_search in enumerate(sub_searches, start=1):
+            raw_sources = self._collect_page_sources(sub_search.results)
+            local_sources, _ = self._build_prompt_sources(
+                sources=raw_sources,
+                max_chars=_FIXED_ABSTRACT_MAX_CHARS,
+            )
+            ordered_sources: list[_PromptSource] = []
+            for source_index, source in enumerate(local_sources, start=1):
+                prompt_source = _PromptSource(
+                    key=source.key,
+                    url=source.url,
+                    title=source.title,
+                    content=source.content,
+                    abstracts=list(source.abstracts),
+                    question_index=question_index,
+                    source_index=source_index,
+                )
+                ordered_sources.append(prompt_source)
+                prompt_sources.append(prompt_source)
+            question_contexts.append(
+                _QuestionPromptContext(
+                    question=clean_whitespace(sub_search.question),
+                    sources=ordered_sources,
+                )
+            )
+        return question_contexts, prompt_sources
+
+    def _resolve_sub_searches(
+        self, ctx: AnswerStepContext
+    ) -> list[AnswerSubSearchState]:
+        out: list[AnswerSubSearchState] = []
+        for item in list(ctx.search.sub_searches or []):
+            question = clean_whitespace(str(item.question or ""))
+            search_query = clean_whitespace(str(item.search_query or question))
+            if not question or not search_query:
+                continue
+            out.append(
+                AnswerSubSearchState(
+                    question=question,
+                    search_query=search_query,
+                    request=(
+                        item.request.model_copy(deep=True)
+                        if item.request is not None
+                        else None
+                    ),
+                    search_mode=str(item.search_mode or "auto"),
+                    results=list(item.results or []),
+                )
+            )
+        if out:
+            return out
+        fallback_question = clean_whitespace(str(ctx.request.query))
+        if not fallback_question:
+            return []
+        return [
+            AnswerSubSearchState(
+                question=fallback_question,
+                search_query=fallback_question,
+                request=(
+                    ctx.search.request.model_copy(deep=True)
+                    if ctx.search.request is not None
+                    else None
+                ),
+                search_mode=str(ctx.search.search_mode or "auto"),
+                results=list(ctx.search.results or []),
+            )
+        ]
+
     def _collect_page_sources(
         self, results: list[FetchResultItem]
     ) -> list[_PageSource]:
         sources_by_key: dict[str, _PageSource] = {}
         seen_abstracts: dict[str, set[str]] = {}
         page_order = 0
-        abstract_order = 0
         for result in results:
-            page_order, abstract_order = self._append_page_source(
+            page_order = self._append_page_source(
                 sources_by_key=sources_by_key,
                 seen_abstracts=seen_abstracts,
                 page_order=page_order,
-                abstract_order=abstract_order,
                 url=str(result.url or ""),
                 title=str(result.title or ""),
                 content=str(result.content or ""),
                 abstracts=list(result.abstracts or []),
-                scores=list(result.abstract_scores or []),
             )
             for subpage in list(result.subpages or []):
-                page_order, abstract_order = self._append_page_source(
+                page_order = self._append_page_source(
                     sources_by_key=sources_by_key,
                     seen_abstracts=seen_abstracts,
                     page_order=page_order,
-                    abstract_order=abstract_order,
                     url=str(subpage.url or ""),
                     title=str(subpage.title or ""),
                     content=str(subpage.content or ""),
                     abstracts=list(subpage.abstracts or []),
-                    scores=list(subpage.abstract_scores or []),
                 )
         sources = list(sources_by_key.values())
-        sources.sort(key=lambda item: (-item.max_score, item.first_order))
+        sources.sort(key=lambda item: item.first_order)
         return sources
 
     def _append_page_source(
@@ -207,17 +264,15 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         sources_by_key: dict[str, _PageSource],
         seen_abstracts: dict[str, set[str]],
         page_order: int,
-        abstract_order: int,
         url: str,
         title: str,
         content: str,
         abstracts: list[str],
-        scores: list[float],
-    ) -> tuple[int, int]:
+    ) -> int:
         clean_url = clean_whitespace(url)
         key = _normalize_url_key(clean_url)
         if not key:
-            return page_order, abstract_order
+            return page_order
         normalized_title = clean_whitespace(title)
         source = sources_by_key.get(key)
         if source is None:
@@ -236,22 +291,16 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                 source.title = normalized_title
             if not source.content and content:
                 source.content = str(content)
-        count = max(len(abstracts), len(scores))
-        for idx in range(count):
-            text = clean_whitespace(str(abstracts[idx] if idx < len(abstracts) else ""))
+        for abstract in abstracts:
+            text = clean_whitespace(str(abstract or ""))
             if not text:
                 continue
             dedupe_key = text.casefold()
             if dedupe_key in seen_abstracts[key]:
                 continue
             seen_abstracts[key].add(dedupe_key)
-            score = float(scores[idx]) if idx < len(scores) else 0.0
-            source.abstracts.append(
-                _PageAbstract(score=score, order=abstract_order, text=text)
-            )
-            source.max_score = max(source.max_score, score)
-            abstract_order += 1
-        return page_order, abstract_order
+            source.abstracts.append(text)
+        return page_order
 
     def _build_prompt_sources(
         self,
@@ -259,71 +308,50 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         sources: list[_PageSource],
         max_chars: int,
     ) -> tuple[list[_PromptSource], int]:
-        global_abstracts: list[_GlobalAbstract] = []
-        for source in sources:
-            global_abstracts.extend(
-                _GlobalAbstract(
-                    page_key=source.key,
-                    score=float(item.score),
-                    order=int(item.order),
-                    text=item.text,
-                )
-                for item in source.abstracts
-            )
-        global_abstracts.sort(key=lambda item: (-item.score, item.order))
         budget = max(0, int(max_chars))
         used_chars = 0
         selected_texts: set[str] = set()
-        selected_by_page: dict[str, list[_GlobalAbstract]] = {}
-        for item in global_abstracts:
-            text_key = clean_whitespace(item.text).casefold()
-            if not text_key or text_key in selected_texts:
-                continue
-            kept_text = item.text
-            if budget > 0 and used_chars + len(kept_text) > budget:
-                if used_chars == 0:
-                    kept_text = clean_whitespace(kept_text[:budget])
-                    if not kept_text:
-                        break
-                else:
-                    continue
-            selected_texts.add(text_key)
-            selected_by_page.setdefault(item.page_key, []).append(
-                _GlobalAbstract(
-                    page_key=item.page_key,
-                    score=item.score,
-                    order=item.order,
-                    text=kept_text,
-                )
-            )
-            used_chars += len(kept_text)
-            if budget > 0 and used_chars >= budget:
-                break
         prompt_sources: list[_PromptSource] = []
         for source in sources:
-            selected = selected_by_page.get(source.key) or []
-            if not selected:
-                continue
-            selected.sort(key=lambda item: (-item.score, item.order))
-            prompt_sources.append(
-                _PromptSource(
-                    key=source.key,
-                    url=source.url,
-                    title=source.title,
-                    content=str(source.content or ""),
-                    abstracts=[item.text for item in selected],
-                    score=max((item.score for item in selected), default=0.0),
-                    first_order=source.first_order,
+            selected_abstracts: list[str] = []
+            for abstract in source.abstracts:
+                text_key = clean_whitespace(abstract).casefold()
+                if not text_key or text_key in selected_texts:
+                    continue
+                kept_text = abstract
+                if budget > 0 and used_chars + len(kept_text) > budget:
+                    if used_chars == 0 and not selected_abstracts:
+                        kept_text = clean_whitespace(kept_text[:budget])
+                        if not kept_text:
+                            break
+                    else:
+                        break
+                selected_texts.add(text_key)
+                selected_abstracts.append(kept_text)
+                used_chars += len(kept_text)
+                if budget > 0 and used_chars >= budget:
+                    break
+            if selected_abstracts:
+                prompt_sources.append(
+                    _PromptSource(
+                        key=source.key,
+                        url=source.url,
+                        title=source.title,
+                        content=str(source.content or ""),
+                        abstracts=selected_abstracts,
+                        question_index=0,
+                        source_index=len(prompt_sources) + 1,
+                    )
                 )
-            )
-        prompt_sources.sort(key=lambda item: (-item.score, item.first_order))
+            if budget > 0 and used_chars >= budget:
+                break
         return prompt_sources, used_chars
 
     def _build_messages(
         self,
         *,
         query: str,
-        sources: list[_PromptSource],
+        question_contexts: list[_QuestionPromptContext],
         answer_mode: str,
         mode: str,
         now_utc: datetime,
@@ -340,16 +368,18 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             "Quality rules:\n"
             f"1) Required output language/script: {query_language}. "
             "Output must strictly match QUERY language/script. This is mandatory.\n"
-            "2) Never switch output language based on SOURCE_PAGES language. "
-            "When sources use other languages, translate the evidence into required output language.\n"
-            "3) Never output mixed-language sentences unless the QUERY itself is mixed-language.\n"
-            "4) Use only SOURCE_PAGES evidence. Do not use outside memory.\n"
-            "5) Prefer higher-score sources when choosing between claims.\n"
-            "6) If multiple sources conflict, state the conflict briefly and prefer better-supported evidence.\n"
-            "7) If evidence is weak or missing, explicitly state uncertainty.\n"
-            "8) Put citation tags immediately after the supported claim.\n"
-            "9) Before finalizing, self-check language compliance; if any sentence is not in required language/script, rewrite it.\n"
-            "10) Do not copy mojibake/corrupted characters (such as 锟? 锟斤拷). If a source segment is corrupted, omit it or restate cleanly.\n"
+            "2) Never switch output language based on source language. Translate evidence when needed.\n"
+            "3) Use only QUESTION_GROUPS evidence. Do not use outside memory.\n"
+            "4) If evidence is weak or missing, explicitly state uncertainty.\n"
+            "5) Put citation tags immediately after the supported claim.\n"
+            "6) Before finalizing, self-check language compliance.\n"
+        )
+        question_rules = (
+            "Question-group rules:\n"
+            "1) QUESTION_GROUPS are retrieval partitions for evidence, not output sections.\n"
+            "2) Keep evidence attribution within the same question group; do not cross-mix unsupported claims.\n"
+            "3) Use group order internally for reasoning, but do NOT output one section per group.\n"
+            "4) Never output labels like Q1/Q2/Question 1 in final answer.\n"
         )
         temporal_rules = (
             "Temporal reasoning rules:\n"
@@ -357,13 +387,14 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             "2) If yes, choose evidence by explicit date recency (newer date wins).\n"
             "3) For direct latest/current queries, return exactly one best-supported current value with one concrete as-of date.\n"
             "4) Do not mix stale historical values with future projections in one direct answer.\n"
-            "5) Do not include forecasts/targets/IPO goals unless QUERY explicitly asks for forecast or target.\n"
+            "5) Do not include forecasts/targets unless QUERY explicitly asks for forecast/target.\n"
             "6) Include a concrete time anchor in the answer, e.g. 'as of YYYY-MM' or exact date.\n"
             "7) If only old/uncertain evidence exists, explicitly say it is the latest known as of that date.\n"
         )
         if mode == "json":
             task = (
                 f"{quality_rules}\n"
+                f"{question_rules}\n"
                 + (f"{temporal_rules}\n" if freshness_intent else "")
                 + "Output contract (JSON): return JSON only, no markdown fences, no extra keys. "
                 + "For factual claims in string fields, include citations using [citation:x]. "
@@ -372,50 +403,64 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         elif answer_mode == "direct":
             task = (
                 f"{quality_rules}\n"
+                f"{question_rules}\n"
                 + (f"{temporal_rules}\n" if freshness_intent else "")
                 + "Output contract (DIRECT): return plain text only. "
-                + "Start with the direct answer in the first sentence. "
-                + "For concrete factual queries, answer directly (e.g. Paris, $1.5 trillion). "
-                + "Use exactly 1 sentence when evidence is sufficient; at most 2 only when uncertainty must be stated. "
-                + "Do not add background, comparisons, or side facts unless QUERY asks for them. "
-                + "If QUERY asks for latest/current value (valuation/price/leader/etc.), output only the single current value with its as-of date; do not append future plans, targets, or projections. "
+                + "Return only the minimal final answer, typically 2-8 words. "
+                + "No background or multi-sentence explanation. "
+                + "For yes/no questions, start with Yes or No. "
+                + "Add a short qualifier only when uncertainty is unavoidable. "
                 + "Cite factual claims with [citation:x]. "
                 + citation_rules
             )
         else:
             task = (
                 f"{quality_rules}\n"
+                f"{question_rules}\n"
                 + (f"{temporal_rules}\n" if freshness_intent else "")
-                + "Output contract (SUMMARY): return plain text only. "
-                + "First give a one-sentence conclusion, then 3-6 concise key points. "
+                + "Output contract (SUMMARY): return markdown only. "
+                + "Return one integrated response to QUERY, not one response per sub-question. "
+                + "Synthesize evidence into a single coherent conclusion and concise support points. "
+                + "Use rich markdown structure when useful: headings, bullet lists, and tables for comparisons/data. "
+                + "Do not use code fences unless QUERY explicitly asks for code. "
+                + "Do not enumerate by subgroup labels unless QUERY explicitly asks for such structure. "
                 + "Every key factual statement should include [citation:x]. "
                 + "Do not add a references section. "
                 + citation_rules
             )
-        source_blocks: list[str] = []
-        for idx, source in enumerate(sources, 1):
-            abstract_lines = (
-                "\n".join(f"- {item}" for item in source.abstracts)
-                if source.abstracts
-                else "- (none)"
-            )
-            source_blocks.append(
-                "\n".join(
-                    [
-                        f"[citation:{idx}]",
-                        f"score={source.score:.4f}",
-                        f"url={source.url}",
-                        f"title={source.title}",
-                        "abstracts:",
-                        abstract_lines,
-                    ]
-                )
-            )
-        source_block = "\n\n".join(source_blocks) if source_blocks else "(empty)"
+        question_blocks: list[str] = []
+        citation_index = 1
+        for q_idx, question_ctx in enumerate(question_contexts, start=1):
+            lines = [
+                f"[question:{q_idx}]",
+                f"question={question_ctx.question}",
+                "sources:",
+            ]
+            if not question_ctx.sources:
+                lines.append("- (none)")
+            else:
+                for source in question_ctx.sources:
+                    abstract_lines = (
+                        "\n".join(f"- {item}" for item in source.abstracts)
+                        if source.abstracts
+                        else "- (none)"
+                    )
+                    lines.extend(
+                        [
+                            f"[citation:{citation_index}]",
+                            f"url={source.url}",
+                            f"title={source.title}",
+                            "abstracts:",
+                            abstract_lines,
+                        ]
+                    )
+                    citation_index += 1
+            question_blocks.append("\n".join(lines))
+        source_block = "\n\n".join(question_blocks) if question_blocks else "(empty)"
         user_blocks = [
             f"QUERY:\n{query}",
             f"ANSWER_MODE:\n{answer_mode}",
-            f"SOURCE_PAGES:\n{source_block}",
+            f"QUESTION_GROUPS:\n{source_block}",
         ]
         if freshness_intent:
             user_blocks = [
@@ -501,7 +546,7 @@ def _extract_citation_indexes(value: object) -> list[int]:
             for item in node.values():
                 walk(item)
             return
-        if isinstance(node, list | tuple):
+        if isinstance(node, (list, tuple)):
             for item in node:
                 walk(item)
 

@@ -1,21 +1,26 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from typing_extensions import override
 
-from serpsage.app.request import (
-    FetchAbstractsRequest,
-    FetchRequestBase,
-    FetchSubpagesRequest,
-    SearchRequest,
+from serpsage.app.request import FetchAbstractsRequest, FetchRequestBase, SearchRequest
+from serpsage.models.pipeline import (
+    AnswerStepContext,
+    AnswerSubQuestionPlan,
+    AnswerSubSearchState,
+    SearchStepContext,
 )
-from serpsage.models.pipeline import AnswerStepContext, SearchStepContext
 from serpsage.steps.base import StepBase
+from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.steps.base import RunnerBase
-_DEEP_SUBPAGE_MAX = 2
+
+_MAX_SUB_QUESTIONS = 8
+_FIXED_SEARCH_MODE: Literal["auto"] = "auto"
+_FIXED_MAX_RESULTS = 5
+_FIXED_ABSTRACT_MAX_CHARS = 1000
 
 
 class AnswerSearchStep(StepBase[AnswerStepContext]):
@@ -31,17 +36,30 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
 
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
-        search_request = self._build_search_request(ctx)
-        ctx.search.request = search_request
-        ctx.search.search_mode = search_request.mode
-        search_ctx = SearchStepContext(
-            settings=ctx.settings,
-            request=search_request,
-            disable_internal_llm=True,
-            request_id=ctx.request_id,
-        )
+        sub_questions = self._resolve_sub_questions(ctx)
+        requests = [
+            self._build_search_request(ctx=ctx, query=item.search_query)
+            for item in sub_questions
+        ]
+        if not requests:
+            ctx.search.request = None
+            ctx.search.search_mode = _FIXED_SEARCH_MODE
+            ctx.search.sub_searches = []
+            ctx.search.results = []
+            return ctx
+        ctx.search.request = requests[0].model_copy(deep=True)
+        ctx.search.search_mode = _FIXED_SEARCH_MODE
+        search_contexts = [
+            SearchStepContext(
+                settings=ctx.settings,
+                request=req,
+                disable_internal_llm=True,
+                request_id=ctx.request_id,
+            )
+            for req in requests
+        ]
         try:
-            search_ctx = await self._search_runner.run(search_ctx)
+            search_contexts = await self._search_runner.run_batch(search_contexts)
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="answer.search.error",
@@ -53,33 +71,78 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
                 attrs={
                     "request_id": ctx.request_id,
                     "message": str(exc),
+                    "sub_question_count": len(sub_questions),
                 },
             )
+            ctx.search.sub_searches = [
+                AnswerSubSearchState(
+                    question=item.question,
+                    search_query=item.search_query,
+                    request=requests[idx].model_copy(deep=True),
+                    search_mode=_FIXED_SEARCH_MODE,
+                    results=[],
+                )
+                for idx, item in enumerate(sub_questions)
+            ]
             ctx.search.results = []
             return ctx
-        ctx.search.search_mode = str(search_ctx.request.mode)
-        ctx.search.results = list(search_ctx.output.results or [])
+        sub_searches: list[AnswerSubSearchState] = []
+        merged_results = []
+        for idx, item in enumerate(sub_questions):
+            req = requests[idx]
+            sub_ctx = search_contexts[idx] if idx < len(search_contexts) else None
+            results = list(sub_ctx.output.results or []) if sub_ctx is not None else []
+            merged_results.extend(results)
+            sub_searches.append(
+                AnswerSubSearchState(
+                    question=item.question,
+                    search_query=item.search_query,
+                    request=req.model_copy(deep=True),
+                    search_mode=_FIXED_SEARCH_MODE,
+                    results=results,
+                )
+            )
+        ctx.search.search_mode = _FIXED_SEARCH_MODE
+        ctx.search.sub_searches = sub_searches
+        ctx.search.results = merged_results
         return ctx
 
-    def _build_search_request(self, ctx: AnswerStepContext) -> SearchRequest:
-        mode = str(ctx.plan.search_mode or "auto")
-        subpages = (
-            FetchSubpagesRequest(
-                max_subpages=_DEEP_SUBPAGE_MAX,
-                subpage_keywords=ctx.plan.search_query,
+    def _resolve_sub_questions(
+        self, ctx: AnswerStepContext
+    ) -> list[AnswerSubQuestionPlan]:
+        out: list[AnswerSubQuestionPlan] = []
+        for item in list(ctx.plan.sub_questions or []):
+            question = clean_whitespace(str(item.question or ""))
+            search_query = clean_whitespace(str(item.search_query or question))
+            if not question or not search_query:
+                continue
+            out.append(
+                AnswerSubQuestionPlan(question=question, search_query=search_query)
             )
-            if mode == "deep"
-            else None
-        )
+            if len(out) >= _MAX_SUB_QUESTIONS:
+                break
+        if out:
+            return out
+        fallback = clean_whitespace(str(ctx.plan.search_query or ctx.request.query))
+        if not fallback:
+            return []
+        return [AnswerSubQuestionPlan(question=fallback, search_query=fallback)]
+
+    def _build_search_request(
+        self, *, ctx: AnswerStepContext, query: str
+    ) -> SearchRequest:
         return SearchRequest(
-            query=ctx.plan.search_query,
-            mode="deep" if mode == "deep" else "auto",
-            max_results=int(ctx.plan.max_results or self.settings.search.max_results),
-            additional_queries=ctx.plan.additional_queries,
+            query=query,
+            mode=_FIXED_SEARCH_MODE,
+            max_results=_FIXED_MAX_RESULTS,
+            additional_queries=None,
             fetchs=FetchRequestBase(
                 content=bool(ctx.request.content),
-                abstracts=FetchAbstractsRequest(query=ctx.plan.search_query),
-                subpages=subpages,
+                abstracts=FetchAbstractsRequest(
+                    query=query,
+                    max_chars=_FIXED_ABSTRACT_MAX_CHARS,
+                ),
+                subpages=None,
                 overview=False,
             ),
         )

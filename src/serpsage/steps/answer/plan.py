@@ -6,14 +6,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
-from serpsage.models.pipeline import AnswerStepContext
+from serpsage.models.pipeline import AnswerStepContext, AnswerSubQuestionPlan
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-_MAX_ADDITIONAL_QUERIES = 4
+
+_MAX_SUB_QUESTIONS = 8
+_FIXED_MAX_RESULTS = 5
 _ANSWER_MODE = Literal["direct", "summary"]
 
 
@@ -22,10 +24,7 @@ class _PlannedSearch:
     answer_mode: _ANSWER_MODE
     freshness_intent: bool
     query_language: str
-    search_query: str
-    search_mode: Literal["auto", "deep"]
-    max_results: int
-    additional_queries: list[str] | None
+    sub_questions: list[str]
 
 
 class AnswerPlanStep(StepBase[AnswerStepContext]):
@@ -37,13 +36,9 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        max_results_cap = max(1, int(self.settings.search.max_results))
+        query_text = clean_whitespace(ctx.request.query)
         try:
-            plan = await self._plan_search(
-                query=ctx.request.query,
-                now_utc=now_utc,
-                max_results_cap=max_results_cap,
-            )
+            plan = await self._plan_search(query=query_text, now_utc=now_utc)
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="answer.plan.error",
@@ -61,22 +56,30 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                 answer_mode="summary",
                 freshness_intent=False,
                 query_language="same as query",
-                search_query=clean_whitespace(ctx.request.query),
-                search_mode="auto",
-                max_results=min(max_results_cap, 5),
-                additional_queries=None,
+                sub_questions=[query_text],
             )
+        sub_questions = _normalize_sub_questions(
+            plan.sub_questions,
+            fallback=query_text,
+            limit=_MAX_SUB_QUESTIONS,
+        )
+        sub_question_plans = [
+            AnswerSubQuestionPlan(question=question, search_query=question)
+            for question in sub_questions
+        ]
+        first_search_query = (
+            sub_question_plans[0].search_query if sub_question_plans else ""
+        )
         ctx.plan.answer_mode = str(plan.answer_mode)
         ctx.plan.freshness_intent = bool(plan.freshness_intent)
         ctx.plan.query_language = str(plan.query_language)
-        ctx.plan.search_query = plan.search_query
-        ctx.plan.search_mode = plan.search_mode
-        ctx.plan.max_results = int(plan.max_results)
-        ctx.plan.additional_queries = (
-            list(plan.additional_queries)
-            if plan.additional_queries is not None
-            else None
-        )
+        ctx.plan.search_query = first_search_query
+        ctx.plan.search_mode = "auto"
+        ctx.plan.max_results = _FIXED_MAX_RESULTS
+        ctx.plan.additional_queries = None
+        ctx.plan.sub_questions = [
+            item.model_copy(deep=True) for item in sub_question_plans
+        ]
         return ctx
 
     async def _plan_search(
@@ -84,7 +87,6 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         *,
         query: str,
         now_utc: datetime,
-        max_results_cap: int,
     ) -> _PlannedSearch:
         schema: dict[str, Any] = {
             "type": "object",
@@ -93,32 +95,21 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                 "answer_mode",
                 "freshness_intent",
                 "query_language",
-                "search_query",
-                "optimize_query",
-                "search_mode",
-                "max_results",
-                "additional_queries",
+                "sub_questions",
             ],
             "properties": {
                 "answer_mode": {"type": "string", "enum": ["direct", "summary"]},
                 "freshness_intent": {"type": "boolean"},
                 "query_language": {"type": "string", "minLength": 1},
-                "search_query": {"type": "string"},
-                "optimize_query": {"type": "boolean"},
-                "search_mode": {"type": "string", "enum": ["auto", "deep"]},
-                "max_results": {"type": "integer", "minimum": 1},
-                "additional_queries": {
+                "sub_questions": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": _MAX_ADDITIONAL_QUERIES,
+                    "items": {"type": "string", "minLength": 1},
+                    "minItems": 1,
+                    "maxItems": _MAX_SUB_QUESTIONS,
                 },
             },
         }
-        messages = self._build_messages(
-            query=query,
-            now_utc=now_utc,
-            max_results_cap=max_results_cap,
-        )
+        messages = self._build_messages(query=query, now_utc=now_utc)
         result = await self._llm.create(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
@@ -129,26 +120,19 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             if result.data is not None
             else _try_parse_json_value(result.text)
         )
-        return self._normalize_plan(
-            raw=raw,
-            original_query=query,
-            max_results_cap=max_results_cap,
-        )
+        return self._normalize_plan(raw=raw, original_query=query)
 
     def _build_messages(
         self,
         *,
         query: str,
         now_utc: datetime,
-        max_results_cap: int,
     ) -> list[dict[str, str]]:
         return [
             {
                 "role": "system",
                 "content": (
-                    "You are a planner for a web-answer pipeline. Return JSON only. "
-                    "You must decide question type, freshness intent, and search intensity "
-                    "from the user question itself."
+                    "You are a planner for a web-answer pipeline. Return JSON only."
                 ),
             },
             {
@@ -159,25 +143,20 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                         f"Current UTC date: {now_utc.date().isoformat()}",
                         f"Question: {query}",
                         "Decision policy:",
-                        "- answer_mode: direct for concrete factual questions; summary for open-ended questions.",
-                        "- freshness_intent: true ONLY when the question explicitly requests recency/currentness (e.g., latest/current/today/now/as of/this year/month, or explicit date anchor).",
-                        "- do NOT infer freshness_intent=true for broad status/trend questions unless recency is explicit.",
-                        "- only use Current UTC timestamp/date when freshness_intent=true.",
-                        "- if freshness_intent=false, do not add date/time constraints into search_query or additional_queries.",
-                        "- choose search intensity to minimize latency while preserving answer quality.",
-                        "- max_results must be in [1, " + str(max_results_cap) + "].",
-                        "- additional_queries must be empty when search_mode=auto.",
-                        "- when search_mode=deep, populate additional_queries with 2-4 semantically distinct query variants to improve deep retrieval coverage.",
-                        "- if freshness_intent=true, include explicit time constraints in search_query and additional_queries as needed.",
+                        "- answer_mode is defined by the expected final response style, not by superficial question length.",
+                        "- choose direct only when the final response should be a minimal factual answer (typically short entity/number/date/yes-no).",
+                        "- choose summary when the final response needs explanation, comparison, recommendation, tradeoffs, or synthesis.",
+                        "- freshness_intent: true ONLY when recency/currentness is explicitly requested.",
+                        "- query_language: language+script for final answer output.",
+                        "- sub_questions: output 1-8 only when decomposition is necessary for retrieval coverage.",
+                        "- default to minimal decomposition; do not create filler sub_questions.",
+                        "- if one query is enough, output exactly one sub_question.",
+                        "- keep sub_questions in logical reasoning order.",
                         "Output fields:",
                         "- answer_mode: direct|summary",
                         "- freshness_intent: boolean",
-                        "- query_language: language+script to match final answer (examples: English, Simplified Chinese, Japanese, Spanish). Determine this from Question only, not from search results.",
-                        "- search_query: optimized query",
-                        "- optimize_query: boolean",
-                        "- search_mode: auto|deep",
-                        "- max_results: integer",
-                        "- additional_queries: string[] (<=4)",
+                        "- query_language: language+script",
+                        "- sub_questions: string[] (1-8)",
                     ]
                 ),
             },
@@ -188,7 +167,6 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         *,
         raw: object,
         original_query: str,
-        max_results_cap: int,
     ) -> _PlannedSearch:
         data = raw if isinstance(raw, dict) else {}
         raw_mode = clean_whitespace(str(data.get("answer_mode") or "")).casefold()
@@ -197,55 +175,48 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         query_language = clean_whitespace(str(data.get("query_language") or ""))
         if not query_language:
             query_language = "same as query"
-        optimize_query = _coerce_bool(data.get("optimize_query"), default=False)
-        planned_query = clean_whitespace(str(data.get("search_query") or ""))
-        search_query = (
-            planned_query
-            if optimize_query and planned_query
-            else clean_whitespace(original_query)
+        raw_sub_questions = data.get("sub_questions")
+        sub_question_items = (
+            [clean_whitespace(str(item or "")) for item in raw_sub_questions]
+            if isinstance(raw_sub_questions, list)
+            else []
         )
-        raw_mode = clean_whitespace(str(data.get("search_mode") or "")).casefold()
-        search_mode: Literal["auto", "deep"] = "deep" if raw_mode == "deep" else "auto"
-        default_max_results = min(max_results_cap, 5)
-        raw_max_results = _coerce_int(
-            data.get("max_results"),
-            default=default_max_results,
+        sub_questions = _normalize_sub_questions(
+            sub_question_items,
+            fallback=clean_whitespace(original_query),
+            limit=_MAX_SUB_QUESTIONS,
         )
-        max_results = max(1, min(max_results_cap, int(raw_max_results)))
-        additional_queries: list[str] | None = None
-        if search_mode == "deep" and isinstance(data.get("additional_queries"), list):
-            additional_queries = _normalize_query_list(
-                data.get("additional_queries") or [],
-                limit=_MAX_ADDITIONAL_QUERIES,
-            )
         return _PlannedSearch(
             answer_mode=answer_mode,
             freshness_intent=freshness_intent,
             query_language=query_language,
-            search_query=search_query,
-            search_mode=search_mode,
-            max_results=max_results,
-            additional_queries=additional_queries,
+            sub_questions=sub_questions,
         )
 
 
-def _normalize_query_list(raw_items: list[object], *, limit: int) -> list[str] | None:
-    if limit <= 0:
-        return None
+def _normalize_sub_questions(
+    raw_items: list[str],
+    *,
+    fallback: str,
+    limit: int,
+) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for item in raw_items:
-        value = clean_whitespace(str(item or ""))
-        if not value:
+        question = clean_whitespace(item)
+        if not question:
             continue
-        key = value.casefold()
+        key = question.casefold()
         if key in seen:
             continue
         seen.add(key)
-        out.append(value)
+        out.append(question)
         if len(out) >= limit:
             break
-    return out or None
+    if out:
+        return out
+    fallback_question = clean_whitespace(fallback)
+    return [fallback_question] if fallback_question else []
 
 
 def _coerce_bool(value: object, *, default: bool) -> bool:
@@ -260,24 +231,6 @@ def _coerce_bool(value: object, *, default: bool) -> bool:
         if token in {"0", "false", "no", "n", ""}:
             return False
     return default
-
-
-def _coerce_int(value: object, *, default: int) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        token = clean_whitespace(value)
-        if not token:
-            return int(default)
-        try:
-            return int(token)
-        except Exception:  # noqa: BLE001
-            return int(default)
-    return int(default)
 
 
 def _try_parse_json_value(text: str) -> object:

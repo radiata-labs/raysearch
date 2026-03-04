@@ -36,7 +36,7 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "1. 為何 OLED/QD-OLED/mini-LED會放大色度計的誤差，這種測量誤差是由什麼導致的？\n2. 使用分光量測能否解決這個問題？分光計是通過什麼手段解決測量誤差的？\n3. 使用分光計測量是否會帶來額外的問題？",
+        "Is using qwen code plan better than buying qwen token?",
         "research-pro",
         None,
     )
