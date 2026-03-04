@@ -126,7 +126,9 @@ class _RenderFinalContextPacket:
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
-    _FINAL_LANGUAGE_ALIGNMENT_MIN = 0.72
+    _FINAL_LANGUAGE_ALIGNMENT_MIN = 0.62
+    _FINAL_LANGUAGE_REPAIR_MIN_CHARS = 1200
+    _FINAL_LANGUAGE_REPAIR_MIN_IMPROVEMENT = 0.05
 
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
@@ -742,79 +744,19 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             required_question_ids=required_question_ids,
             body_sections=body_sections,
         )
-        if unresolved_question_ids:
-            question_texts = self._resolve_question_text_map(ctx)
-            while (
-                unresolved_question_ids
-                and len([opening, *body_sections, closing]) < section_max
-            ):
-                question_id = unresolved_question_ids.pop(0)
-                question_text = clean_whitespace(question_texts.get(question_id, ""))
-                answer_target = question_text or question_id
-                body_sections.append(
-                    RenderArchitectSectionPlan(
-                        section_id=f"body_resolve_{question_id}",
-                        subhead=f"Resolve {question_id.upper()}",
-                        section_role="body",
-                        question_ids=[question_id],
-                        scope_requirements=[
-                            (
-                                "Close unresolved core slot with a direct answer: "
-                                f"{answer_target}"
-                            )
-                        ],
-                        writing_boundaries=[
-                            "Stay strictly on this unresolved core question.",
-                            "Do not add optional expansion before core closure.",
-                        ],
-                        must_cover_points=[
-                            f"Direct answer for: {answer_target}.",
-                            "State boundary conditions where the answer changes.",
-                            "State user-facing implication of this answer.",
-                        ],
-                        angle="core_slot_closure",
-                        progression_hint=(
-                            "Close unresolved core coverage before any extension."
-                        ),
+        if unresolved_question_ids and body_sections:
+            target = body_sections[-1]
+            body_sections[-1] = target.model_copy(
+                update={
+                    "question_ids": self._merge_question_ids(
+                        list(target.question_ids),
+                        unresolved_question_ids,
                     )
-                )
-            if unresolved_question_ids and body_sections:
-                target = body_sections[-1]
-                merged_question_ids = self._merge_question_ids(
-                    list(target.question_ids),
-                    unresolved_question_ids,
-                )
-                extra_points = [
-                    (
-                        "Direct answer for unresolved question "
-                        f"{qid}: {clean_whitespace(question_texts.get(qid, '')) or qid}."
-                    )
-                    for qid in unresolved_question_ids
-                ]
-                body_sections[-1] = target.model_copy(
-                    update={
-                        "question_ids": merged_question_ids,
-                        "scope_requirements": self._merge_nonempty_strings(
-                            list(target.scope_requirements),
-                            [
-                                "Close remaining unresolved core slots before any optional extension."
-                            ],
-                            limit=12,
-                        ),
-                        "writing_boundaries": self._merge_nonempty_strings(
-                            list(target.writing_boundaries),
-                            [
-                                "Prioritize unresolved core questions and avoid side expansions."
-                            ],
-                            limit=12,
-                        ),
-                        "must_cover_points": self._merge_nonempty_strings(
-                            list(target.must_cover_points),
-                            extra_points,
-                            limit=12,
-                        ),
-                    }
-                )
+                }
+            )
+            ctx.notes.append(
+                "Section range enforcement merged unresolved question_ids into the final body section."
+            )
         sections = [opening, *body_sections, closing]
         return architect_output.model_copy(update={"sections": sections})
 
@@ -903,6 +845,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         target = normalize_language_code(target_language, default="other")
         if target == "other":
             return markdown
+        if len(normalize_block_text(markdown)) < int(
+            self._FINAL_LANGUAGE_REPAIR_MIN_CHARS
+        ):
+            return markdown
         alignment = document_language_alignment(
             text=markdown,
             target_language=target,
@@ -949,7 +895,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 text=candidate,
                 target_language=target,
             )
-            if candidate_alignment < alignment:
+            if (candidate_alignment - alignment) < float(
+                self._FINAL_LANGUAGE_REPAIR_MIN_IMPROVEMENT
+            ):
                 return markdown
             await self.emit_tracking_event(
                 event_name="research.render.language_repair_applied",
@@ -1044,6 +992,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         mode_name = clean_whitespace(mode_key).casefold()
         if mode_name == "research-pro":
             return 0.5
+        if mode_name == "research":
+            return 0.65
         return 0.75
 
     def _build_track_result_packet(

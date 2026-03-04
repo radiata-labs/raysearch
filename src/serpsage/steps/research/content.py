@@ -325,7 +325,10 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 .strip()
             )
             if len(content) > max_chars:
-                content = content[:max_chars]
+                content = self._truncate_content_head_tail(
+                    content=content,
+                    max_chars=max_chars,
+                )
             content_lines = (content or "(empty)").split("\n")
             blocks.append(
                 "\n".join(
@@ -341,6 +344,19 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 )
             )
         return "\n\n".join(blocks)
+
+    def _truncate_content_head_tail(self, *, content: str, max_chars: int) -> str:
+        limit = max(1, int(max_chars))
+        if len(content) <= limit:
+            return content
+        marker = "\n...\n[content omitted]\n...\n"
+        if limit <= len(marker) + 80:
+            return content[:limit]
+        available = limit - len(marker)
+        head_len = max(40, int(available * 0.70))
+        tail_len = max(40, int(available - head_len))
+        clipped = f"{content[:head_len]}{marker}{content[-tail_len:]}"
+        return clipped[:limit]
 
 
 __all__ = ["ResearchContentStep"]

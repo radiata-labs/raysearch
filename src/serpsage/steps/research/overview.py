@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
-from serpsage.models.pipeline import ResearchStepContext
+from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.models.research import (
     OverviewConflictPayload,
     OverviewOutputPayload,
@@ -61,12 +61,16 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             return ctx
         mode_depth = ctx.runtime.mode_depth
         overview_topk = max(1, int(mode_depth.overview_context_topk_override))
+        (
+            new_result_target_ratio,
+            min_history_sources,
+        ) = self._resolve_context_mix_targets(ctx=ctx, sources=all_sources)
         context_source_ids = select_context_source_ids(
             ctx=ctx,
             round_index=int(ctx.current_round.round_index),
             topk=overview_topk,
-            new_result_target_ratio=float(self._CONTEXT_NEW_RESULT_TARGET_RATIO),
-            min_history_sources=int(self._CONTEXT_MIN_HISTORY_SOURCES),
+            new_result_target_ratio=float(new_result_target_ratio),
+            min_history_sources=int(min_history_sources),
         )
         ctx.current_round.context_source_ids = list(context_source_ids)
         sources = pick_sources_by_ids(
@@ -190,6 +194,8 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 "style_applied_stage": "overview",
                 "mode_depth_profile": str(mode_depth.mode_key),
                 "overview_context_topk_effective": int(overview_topk),
+                "overview_new_result_target_ratio": float(new_result_target_ratio),
+                "overview_min_history_sources": int(min_history_sources),
             },
         )
         return ctx
@@ -358,6 +364,46 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             if len(out) >= max(1, int(limit)):
                 break
         return out
+
+    def _resolve_context_mix_targets(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        sources: list[ResearchSource],
+    ) -> tuple[float, int]:
+        mode_key = clean_whitespace(str(ctx.runtime.mode_depth.mode_key)).casefold()
+        if mode_key == "research-fast":
+            base_ratio = 0.70
+            base_min_history = 1
+        elif mode_key == "research-pro":
+            base_ratio = 0.55
+            base_min_history = 3
+        else:
+            base_ratio = float(self._CONTEXT_NEW_RESULT_TARGET_RATIO)
+            base_min_history = 2
+        round_index = int(ctx.current_round.round_index) if ctx.current_round else 0
+        new_count = sum(
+            1
+            for item in sources
+            if int(getattr(item, "round_index", 0)) == int(round_index)
+        )
+        total_count = int(len(sources))
+        history_count = max(0, total_count - int(new_count))
+        if new_count <= 0:
+            return 0.0, min(base_min_history, max(1, history_count))
+        if history_count <= 0:
+            return 1.0, 0
+        ratio = float(base_ratio)
+        if int(round_index) <= 1:
+            ratio = max(ratio, 0.70)
+        if new_count <= 2:
+            ratio = min(0.85, ratio + 0.15)
+        if history_count <= 2:
+            ratio = max(0.35, ratio - 0.20)
+        min_history = min(max(1, history_count), base_min_history)
+        if int(round_index) <= 1:
+            min_history = min(min_history, 1)
+        return float(max(0.0, min(1.0, ratio))), int(max(0, min_history))
 
     def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
         cfg = self.settings.research.report_style

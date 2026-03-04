@@ -116,6 +116,10 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 next_queries,
                 limit=int(budget.max_queries_per_round),
             )
+        search_exhausted = int(ctx.runtime.search_calls) >= int(budget.max_search_calls)
+        fetch_exhausted = int(ctx.runtime.fetch_calls) >= int(budget.max_fetch_calls)
+        can_search_now = bool((not search_exhausted) and (not fetch_exhausted))
+        can_explore_without_search = self._can_continue_with_explore_only(ctx=ctx)
         no_progress_threshold = max(
             1,
             int(ctx.runtime.mode_depth.no_progress_rounds_to_stop_effective),
@@ -125,28 +129,28 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         must_continue_for_min_rounds = round_count_after_commit < int(
             min_rounds_per_track
         )
-        can_explore_without_search = self._can_continue_with_explore_only(ctx=ctx)
         if llm_prefers_continue and not next_queries and core_question:
             next_queries = [core_question]
-        allow_auto_seed = (
+        allow_auto_seed = bool(
             not multi_signal_stop
             and int(ctx.runtime.no_progress_rounds) < int(no_progress_threshold)
-            and int(ctx.runtime.search_calls) < int(budget.max_search_calls)
-            and int(ctx.runtime.fetch_calls) < int(budget.max_fetch_calls)
+            and can_search_now
         )
         if allow_auto_seed and not next_queries and core_question:
             next_queries = [core_question]
-        if (
-            not multi_signal_stop
-            and not next_queries
-            and progress
-            and int(ctx.runtime.search_calls) < int(budget.max_search_calls)
-        ):
+        if not multi_signal_stop and not next_queries and progress and can_search_now:
             next_queries = [ctx.request.themes]
+        if not next_queries and can_search_now and core_question:
+            next_queries = [core_question]
+        can_execute_next_round = bool(
+            (can_search_now and bool(next_queries)) or can_explore_without_search
+        )
+        no_progress_stop_ready = bool(
+            int(ctx.runtime.no_progress_rounds) >= int(no_progress_threshold)
+        )
+        stop_readiness_high = bool(multi_signal_stop or no_progress_stop_ready)
         stop = False
         stop_reason = ""
-        search_exhausted = int(ctx.runtime.search_calls) >= int(budget.max_search_calls)
-        fetch_exhausted = int(ctx.runtime.fetch_calls) >= int(budget.max_fetch_calls)
         if (
             must_continue_for_min_rounds
             and not fetch_exhausted
@@ -159,21 +163,13 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         elif search_exhausted and not can_explore_without_search:
             stop = True
             stop_reason = "max_search_calls"
-        elif multi_signal_stop and not llm_prefers_continue:
-            stop = True
-            stop_reason = "multi_signal_stop"
-        elif int(ctx.runtime.no_progress_rounds) >= int(no_progress_threshold) and (
-            not llm_prefers_continue
-        ):
-            stop = True
-            stop_reason = "no_progress"
         elif (
-            not next_queries
-            and not llm_prefers_continue
-            and not can_explore_without_search
+            stop_readiness_high
+            and (not llm_prefers_continue)
+            and (not can_execute_next_round)
         ):
             stop = True
-            stop_reason = "no_next_queries"
+            stop_reason = "stop_ready_no_executable_path"
         round_state.stop = bool(stop)
         round_state.stop_reason = stop_reason
         ctx.plan.next_queries = list(next_queries)
@@ -192,6 +188,11 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 "min_rounds_per_track": int(min_rounds_per_track),
                 "must_continue_for_min_rounds": bool(must_continue_for_min_rounds),
                 "no_progress_threshold": int(no_progress_threshold),
+                "no_progress_stop_ready": bool(no_progress_stop_ready),
+                "stop_readiness_high": bool(stop_readiness_high),
+                "can_search_now": bool(can_search_now),
+                "can_explore_without_search": bool(can_explore_without_search),
+                "can_execute_next_round": bool(can_execute_next_round),
                 "next_queries": int(len(next_queries)),
                 "stop": bool(stop),
                 "stop_reason": str(stop_reason or "n/a"),

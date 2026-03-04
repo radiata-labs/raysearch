@@ -309,8 +309,14 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         )
         score = self._score_track(track_ctx, card)
         width_hint = 1
-        if self._orchestrator_enabled(root):
-            score = float(orchestrator_state.priorities.get(card.question_id, score))
+        orchestrator_enabled = self._orchestrator_enabled(root)
+        has_orchestrator_priority = False
+        if orchestrator_enabled:
+            if card.question_id in orchestrator_state.priorities:
+                score = float(
+                    orchestrator_state.priorities.get(card.question_id, score)
+                )
+                has_orchestrator_priority = True
             width_hint = max(
                 baseline_width,
                 int(orchestrator_state.query_width_hints.get(card.question_id, 1)),
@@ -358,9 +364,18 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     bonus=False,
                     fetch_only=True,
                 )
-            bonus_ratio = max(0.0, min(1.0, float(self._BONUS_RATIO)))
+            bonus_ratio = max(
+                0.0,
+                min(
+                    1.0,
+                    float(0.40 if orchestrator_enabled else self._BONUS_RATIO),
+                ),
+            )
             bonus_threshold = max(0.0, min(1.0, 1.0 - bonus_ratio))
-            bonus_by_score = bool(score >= bonus_threshold)
+            bonus_by_score = bool(score >= bonus_threshold) or bool(
+                has_orchestrator_priority
+                and score >= max(0.50, float(bonus_threshold - 0.10))
+            )
             bonus_by_width = bool(width_hint >= bonus_width)
             bonus = bool(
                 (bonus_by_score or bonus_by_width)

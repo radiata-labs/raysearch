@@ -36,8 +36,8 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "Is using qwen code plan better than buying qwen token?",
-        "research-pro",
+        "What is skill in agent and how to make a skill?",
+        "research-fast",
         None,
     )
     print(out["research_result"])
