@@ -21,10 +21,7 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import (
-        ResearchModeDepthProfileSettings,
-        ResearchModeSettings,
-    )
+    from serpsage.settings.models import ResearchModeSettings
 
 
 class ResearchPrepareStep(StepBase[ResearchStepContext]):
@@ -48,23 +45,22 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         mode = self._normalize_search_mode(ctx.request.search_mode)
         themes = clean_whitespace(ctx.request.themes or "")
         profile = self._resolve_profile(mode)
-        mode_depth = self._resolve_mode_depth_profile(mode)
         ctx.request = ctx.request.model_copy(
             update={"search_mode": mode, "themes": themes}
         )
         ctx.runtime = ResearchRuntimeState(
             mode_depth=ResearchModeDepthState(
                 mode_key=mode,  # type: ignore[arg-type]
-                max_question_cards_effective=mode_depth.max_question_cards_effective,
-                min_rounds_per_track=mode_depth.min_rounds_per_track,
-                no_progress_rounds_to_stop_effective=mode_depth.no_progress_rounds_to_stop_effective,
-                gap_closure_passes=mode_depth.gap_closure_passes,
-                density_gate_passes=mode_depth.density_gate_passes,
-                overview_source_topk=mode_depth.overview_source_topk,
-                content_source_topk=mode_depth.content_source_topk,
-                content_source_chars=mode_depth.content_source_chars,
-                explore_target_pages_per_round=mode_depth.explore_target_pages_per_round,
-                explore_links_per_page=mode_depth.explore_links_per_page,
+                max_question_cards_effective=profile.max_question_cards_effective,
+                min_rounds_per_track=profile.min_rounds_per_track,
+                no_progress_rounds_to_stop_effective=profile.no_progress_rounds_to_stop_effective,
+                gap_closure_passes=profile.gap_closure_passes,
+                density_gate_passes=profile.density_gate_passes,
+                overview_source_topk=profile.overview_source_topk,
+                content_source_topk=profile.content_source_topk,
+                content_source_chars=profile.content_source_chars,
+                explore_target_pages_per_round=profile.explore_target_pages_per_round,
+                explore_links_per_page=profile.explore_links_per_page,
             ),
             budget=ResearchBudgetState(
                 max_rounds=profile.max_rounds,
@@ -126,8 +122,8 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 "max_rounds": profile.max_rounds,
                 "max_search_calls": profile.max_search_calls,
                 "mode_depth_profile": str(mode),
-                "mode_depth_question_cards": mode_depth.max_question_cards_effective,
-                "mode_depth_min_rounds_per_track": mode_depth.min_rounds_per_track,
+                "mode_depth_question_cards": profile.max_question_cards_effective,
+                "mode_depth_min_rounds_per_track": profile.min_rounds_per_track,
                 "mode_depth_orchestrator_enabled": self._mode_uses_orchestrator(mode),
                 "theme": themes,
             },
@@ -139,8 +135,8 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             attrs={
                 "mode_depth_profile": str(mode),
                 "llm_orchestrator_enabled": self._mode_uses_orchestrator(mode),
-                "gap_closure_passes": mode_depth.gap_closure_passes,
-                "density_gate_passes": mode_depth.density_gate_passes,
+                "gap_closure_passes": profile.gap_closure_passes,
+                "density_gate_passes": profile.density_gate_passes,
             },
         )
         return ctx
@@ -158,16 +154,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             "research-pro": self.settings.research.research_pro,
         }
         return profiles.get(mode, self.settings.research.research)
-
-    def _resolve_mode_depth_profile(
-        self, mode: str
-    ) -> ResearchModeDepthProfileSettings:
-        profiles: dict[str, ResearchModeDepthProfileSettings] = {
-            "research-fast": self.settings.research.mode_depth.research_fast,
-            "research": self.settings.research.mode_depth.research,
-            "research-pro": self.settings.research.mode_depth.research_pro,
-        }
-        return profiles.get(mode, self.settings.research.mode_depth.research)
 
     def _resolve_global_budget_multiplier(self, mode: str) -> float:
         token = clean_whitespace(mode).casefold()

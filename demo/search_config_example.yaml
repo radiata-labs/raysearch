@@ -50,40 +50,6 @@ research:
     strict_style_lock: true
     apply_subreport: true
     apply_render: true
-  mode_depth:
-    research_fast:
-      max_question_cards_effective: 2
-      min_rounds_per_track: 1
-      no_progress_rounds_to_stop_effective: 1
-      gap_closure_passes: 0
-      density_gate_passes: 0
-      overview_source_topk: 10
-      content_source_topk: 6
-      content_source_chars: 6000
-      explore_target_pages_per_round: 2
-      explore_links_per_page: 4
-    research:
-      max_question_cards_effective: 4
-      min_rounds_per_track: 2
-      no_progress_rounds_to_stop_effective: 2
-      gap_closure_passes: 1
-      density_gate_passes: 1
-      overview_source_topk: 20
-      content_source_topk: 10
-      content_source_chars: 10000
-      explore_target_pages_per_round: 4
-      explore_links_per_page: 10
-    research_pro:
-      max_question_cards_effective: 6
-      min_rounds_per_track: 3
-      no_progress_rounds_to_stop_effective: 3
-      gap_closure_passes: 2
-      density_gate_passes: 2
-      overview_source_topk: 32
-      content_source_topk: 16
-      content_source_chars: 15000
-      explore_target_pages_per_round: 6
-      explore_links_per_page: 16
   models:
     plan: kimi-k2.5
     abstract_analyze: kimi-k2.5
@@ -100,6 +66,16 @@ research:
     stop_confidence: 0.72
     min_coverage_ratio: 0.70
     max_unresolved_conflicts: 1
+    max_question_cards_effective: 2
+    min_rounds_per_track: 1
+    no_progress_rounds_to_stop_effective: 1
+    gap_closure_passes: 0
+    density_gate_passes: 0
+    overview_source_topk: 10
+    content_source_topk: 6
+    content_source_chars: 6000
+    explore_target_pages_per_round: 2
+    explore_links_per_page: 4
   research:
     max_rounds: 5
     max_search_calls: 12
@@ -110,6 +86,16 @@ research:
     stop_confidence: 0.80
     min_coverage_ratio: 0.80
     max_unresolved_conflicts: 1
+    max_question_cards_effective: 4
+    min_rounds_per_track: 2
+    no_progress_rounds_to_stop_effective: 2
+    gap_closure_passes: 1
+    density_gate_passes: 1
+    overview_source_topk: 20
+    content_source_topk: 10
+    content_source_chars: 10000
+    explore_target_pages_per_round: 4
+    explore_links_per_page: 10
   research_pro:
     max_rounds: 8
     max_search_calls: 24
@@ -120,6 +106,16 @@ research:
     stop_confidence: 0.86
     min_coverage_ratio: 0.90
     max_unresolved_conflicts: 0
+    max_question_cards_effective: 6
+    min_rounds_per_track: 3
+    no_progress_rounds_to_stop_effective: 3
+    gap_closure_passes: 2
+    density_gate_passes: 2
+    overview_source_topk: 32
+    content_source_topk: 16
+    content_source_chars: 15000
+    explore_target_pages_per_round: 6
+    explore_links_per_page: 16
 
 runner:
   search_limit: 8
