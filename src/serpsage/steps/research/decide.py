@@ -208,7 +208,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
     async def _query_decide_signal(
         self, *, ctx: ResearchStepContext
     ) -> _DecideSignalPayload | None:
-        if not ctx.runtime.mode_depth.enable_llm_track_orchestrator:
+        if ctx.runtime.mode_depth.mode_key == "research-fast":
             return None
         model = resolve_research_model(
             ctx=ctx,

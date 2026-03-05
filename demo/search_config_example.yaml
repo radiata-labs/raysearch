@@ -55,71 +55,35 @@ research:
       max_question_cards_effective: 2
       min_rounds_per_track: 1
       no_progress_rounds_to_stop_effective: 1
-      enable_llm_track_orchestrator: false
-      enable_gap_closure_pass: false
       gap_closure_passes: 0
-      enable_density_gate: false
       density_gate_passes: 0
       overview_source_topk: 10
       content_source_topk: 6
-      subreport_source_topk: 6
       content_source_chars: 6000
-      subreport_overview_chars: 2000
-      subreport_excerpt_chars: 1400
-      subreport_total_chars: 12000
-      render_section_min: 5
-      render_section_max: 6
-      target_length_ratio_vs_current: 0.85
-      search_links_main_limit: 24
       explore_target_pages_per_round: 2
       explore_links_per_page: 4
-      explore_fetch_round_ratio: 0.8
     research:
       max_question_cards_effective: 4
       min_rounds_per_track: 2
       no_progress_rounds_to_stop_effective: 2
-      enable_llm_track_orchestrator: true
-      enable_gap_closure_pass: true
       gap_closure_passes: 1
-      enable_density_gate: true
       density_gate_passes: 1
       overview_source_topk: 20
       content_source_topk: 10
-      subreport_source_topk: 10
       content_source_chars: 10000
-      subreport_overview_chars: 3200
-      subreport_excerpt_chars: 2200
-      subreport_total_chars: 24000
-      render_section_min: 7
-      render_section_max: 9
-      target_length_ratio_vs_current: 1.0
-      search_links_main_limit: 80
       explore_target_pages_per_round: 4
       explore_links_per_page: 10
-      explore_fetch_round_ratio: 0.8
     research_pro:
       max_question_cards_effective: 6
       min_rounds_per_track: 3
       no_progress_rounds_to_stop_effective: 3
-      enable_llm_track_orchestrator: true
-      enable_gap_closure_pass: true
       gap_closure_passes: 2
-      enable_density_gate: true
       density_gate_passes: 2
       overview_source_topk: 32
       content_source_topk: 16
-      subreport_source_topk: 16
       content_source_chars: 15000
-      subreport_overview_chars: 4200
-      subreport_excerpt_chars: 3200
-      subreport_total_chars: 42000
-      render_section_min: 9
-      render_section_max: 10
-      target_length_ratio_vs_current: 1.1
-      search_links_main_limit: 160
       explore_target_pages_per_round: 6
       explore_links_per_page: 16
-      explore_fetch_round_ratio: 0.8
   models:
     plan: kimi-k2.5
     abstract_analyze: kimi-k2.5

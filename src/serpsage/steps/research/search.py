@@ -122,8 +122,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ctx.current_round.stop = True
             ctx.current_round.stop_reason = str(ctx.runtime.stop_reason)
             return ctx
-        mode_depth = ctx.runtime.mode_depth
-        main_links_limit = max(1, mode_depth.search_links_main_limit)
+        main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
         search_language = normalize_language_code(
             ctx.plan.theme_plan.search_language,
             default="other",

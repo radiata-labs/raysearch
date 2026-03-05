@@ -317,25 +317,13 @@ class ResearchModeDepthState(MutableModel):
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
     no_progress_rounds_to_stop_effective: int = 2
-    enable_llm_track_orchestrator: bool = True
-    enable_gap_closure_pass: bool = True
     gap_closure_passes: int = 1
-    enable_density_gate: bool = True
     density_gate_passes: int = 1
-    render_section_min: int = 7
-    render_section_max: int = 9
     overview_source_topk: int = 20
     content_source_topk: int = 10
-    subreport_source_topk: int = 10
     content_source_chars: int = 10_000
-    subreport_overview_chars: int = 3200
-    subreport_excerpt_chars: int = 2200
-    subreport_total_chars: int = 24_000
-    target_length_ratio_vs_current: float = 1.0
-    search_links_main_limit: int = 80
     explore_target_pages_per_round: int = 3
     explore_links_per_page: int = 8
-    explore_fetch_round_ratio: float = 0.8
 
 
 class ResearchLinkCandidate(MutableModel):
@@ -355,8 +343,6 @@ class ResearchRuntimeState(MutableModel):
     no_progress_rounds: int = 0
     gap_closure_passes_applied: int = 0
     density_gate_passes_applied: int = 0
-    target_output_chars: int = 0
-    output_length_ratio_vs_target: float = 0.0
     provider_language_param_applied: bool = False
     query_language_repair_applied: bool = False
     search_language_fallback_applied: bool = False

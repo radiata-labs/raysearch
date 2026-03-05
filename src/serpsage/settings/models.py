@@ -236,25 +236,13 @@ class ResearchModeDepthProfileSettings(Model):
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
     no_progress_rounds_to_stop_effective: int = 2
-    enable_llm_track_orchestrator: bool = True
-    enable_gap_closure_pass: bool = True
     gap_closure_passes: int = 1
-    enable_density_gate: bool = True
     density_gate_passes: int = 1
     overview_source_topk: int = 20
     content_source_topk: int = 10
-    subreport_source_topk: int = 10
     content_source_chars: int = 10_000
-    subreport_overview_chars: int = 3200
-    subreport_excerpt_chars: int = 2200
-    subreport_total_chars: int = 24_000
-    render_section_min: int = 7
-    render_section_max: int = 9
-    target_length_ratio_vs_current: float = 1.0
-    search_links_main_limit: int = 80
     explore_target_pages_per_round: int = 3
     explore_links_per_page: int = 8
-    explore_fetch_round_ratio: float = 0.8
 
     @model_validator(mode="after")
     def _validate_mode_depth_profile(self) -> ResearchModeDepthProfileSettings:
@@ -286,46 +274,9 @@ class ResearchModeDepthProfileSettings(Model):
             raise ValueError(
                 "research.mode_depth profile content_source_topk must be > 0"
             )
-        if int(self.subreport_source_topk) <= 0:
-            raise ValueError(
-                "research.mode_depth profile subreport_source_topk must be > 0"
-            )
         if int(self.content_source_chars) <= 0:
             raise ValueError(
                 "research.mode_depth profile content_source_chars must be > 0"
-            )
-        if int(self.subreport_overview_chars) <= 0:
-            raise ValueError(
-                "research.mode_depth profile subreport_overview_chars must be > 0"
-            )
-        if int(self.subreport_excerpt_chars) <= 0:
-            raise ValueError(
-                "research.mode_depth profile subreport_excerpt_chars must be > 0"
-            )
-        if int(self.subreport_total_chars) <= 0:
-            raise ValueError(
-                "research.mode_depth profile subreport_total_chars must be > 0"
-            )
-        if int(self.render_section_min) <= 0:
-            raise ValueError(
-                "research.mode_depth profile render_section_min must be > 0"
-            )
-        if int(self.render_section_max) <= 0:
-            raise ValueError(
-                "research.mode_depth profile render_section_max must be > 0"
-            )
-        if int(self.render_section_max) < int(self.render_section_min):
-            raise ValueError(
-                "research.mode_depth profile render_section_max must be >= "
-                "render_section_min"
-            )
-        if float(self.target_length_ratio_vs_current) <= 0:
-            raise ValueError(
-                "research.mode_depth profile target_length_ratio_vs_current must be > 0"
-            )
-        if int(self.search_links_main_limit) <= 0:
-            raise ValueError(
-                "research.mode_depth profile search_links_main_limit must be > 0"
             )
         if int(self.explore_target_pages_per_round) <= 0:
             raise ValueError(
@@ -335,14 +286,6 @@ class ResearchModeDepthProfileSettings(Model):
             raise ValueError(
                 "research.mode_depth profile explore_links_per_page must be > 0"
             )
-        if float(self.explore_fetch_round_ratio) <= 0.0:
-            raise ValueError(
-                "research.mode_depth profile explore_fetch_round_ratio must be > 0"
-            )
-        if float(self.explore_fetch_round_ratio) > 1.0:
-            raise ValueError(
-                "research.mode_depth profile explore_fetch_round_ratio must be <= 1.0"
-            )
         return self
 
 
@@ -351,25 +294,13 @@ def _default_mode_depth_fast() -> ResearchModeDepthProfileSettings:
         max_question_cards_effective=2,
         min_rounds_per_track=1,
         no_progress_rounds_to_stop_effective=1,
-        enable_llm_track_orchestrator=False,
-        enable_gap_closure_pass=False,
         gap_closure_passes=0,
-        enable_density_gate=False,
         density_gate_passes=0,
         overview_source_topk=10,
         content_source_topk=6,
-        subreport_source_topk=6,
         content_source_chars=6000,
-        subreport_overview_chars=2000,
-        subreport_excerpt_chars=1400,
-        subreport_total_chars=12_000,
-        render_section_min=5,
-        render_section_max=6,
-        target_length_ratio_vs_current=0.85,
-        search_links_main_limit=24,
         explore_target_pages_per_round=2,
         explore_links_per_page=4,
-        explore_fetch_round_ratio=0.8,
     )
 
 
@@ -378,25 +309,13 @@ def _default_mode_depth_research() -> ResearchModeDepthProfileSettings:
         max_question_cards_effective=4,
         min_rounds_per_track=2,
         no_progress_rounds_to_stop_effective=2,
-        enable_llm_track_orchestrator=True,
-        enable_gap_closure_pass=True,
         gap_closure_passes=1,
-        enable_density_gate=True,
         density_gate_passes=1,
         overview_source_topk=20,
         content_source_topk=10,
-        subreport_source_topk=10,
         content_source_chars=10_000,
-        subreport_overview_chars=3200,
-        subreport_excerpt_chars=2200,
-        subreport_total_chars=24_000,
-        render_section_min=7,
-        render_section_max=9,
-        target_length_ratio_vs_current=1.0,
-        search_links_main_limit=80,
         explore_target_pages_per_round=4,
         explore_links_per_page=10,
-        explore_fetch_round_ratio=0.8,
     )
 
 
@@ -405,25 +324,13 @@ def _default_mode_depth_pro() -> ResearchModeDepthProfileSettings:
         max_question_cards_effective=6,
         min_rounds_per_track=3,
         no_progress_rounds_to_stop_effective=3,
-        enable_llm_track_orchestrator=True,
-        enable_gap_closure_pass=True,
         gap_closure_passes=2,
-        enable_density_gate=True,
         density_gate_passes=2,
         overview_source_topk=32,
         content_source_topk=16,
-        subreport_source_topk=16,
         content_source_chars=15_000,
-        subreport_overview_chars=4200,
-        subreport_excerpt_chars=3200,
-        subreport_total_chars=42_000,
-        render_section_min=9,
-        render_section_max=10,
-        target_length_ratio_vs_current=1.1,
-        search_links_main_limit=160,
         explore_target_pages_per_round=6,
         explore_links_per_page=16,
-        explore_fetch_round_ratio=0.8,
     )
 
 

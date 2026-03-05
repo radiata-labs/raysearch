@@ -167,7 +167,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             complexity_tier=complexity_tier,
         )
         mode_depth = ctx.runtime.mode_depth
-        mode_key = clean_whitespace(str(mode_depth.mode_key)).casefold()
+        mode_key = mode_depth.mode_key
         card_cap = max(1, mode_depth.max_question_cards_effective)
         subthemes = normalize_strings(payload.subthemes, limit=12)
         required_entities = normalize_strings(payload.required_entities, limit=16)
@@ -262,7 +262,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 request_id=ctx.request_id,
                 stage="theme_plan",
                 attrs={
-                    "mode_depth_profile": str(mode_key),
+                    "mode_depth_profile": mode_key,
                     "task_intent": str(task_intent),
                     "complexity_tier": str(complexity_tier),
                     "effective_complexity_tier": str(complexity_tier),
@@ -271,9 +271,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "min_rounds_per_track": mode_depth.min_rounds_per_track,
                     "gap_closure_passes": mode_depth.gap_closure_passes,
                     "density_gate_passes": mode_depth.density_gate_passes,
-                    "render_section_min": mode_depth.render_section_min,
-                    "render_section_max": mode_depth.render_section_max,
-                    "target_length_ratio_vs_current": mode_depth.target_length_ratio_vs_current,
                 },
             )
         await self.emit_tracking_event(
@@ -683,7 +680,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         complexity_tier: TaskComplexity,
     ) -> bool:
         mode_depth = ctx.runtime.mode_depth
-        mode_key = clean_whitespace(str(mode_depth.mode_key)).casefold()
+        mode_key = mode_depth.mode_key
         if mode_key not in {"research", "research-pro"}:
             return False
         if mode_key == "research":
@@ -696,16 +693,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     min_rounds_per_track=1,
                     gap_closure_passes=0,
                     density_gate_passes=0,
-                    render_section_min=6,
-                    render_section_max=7,
                     overview_source_topk=14,
                     content_source_topk=9,
-                    subreport_source_topk=10,
                     content_source_chars=8_500,
-                    subreport_overview_chars=2400,
-                    subreport_excerpt_chars=1700,
-                    subreport_total_chars=18_000,
-                    target_length_ratio_vs_current=0.95,
                     explore_target_pages_per_round=3,
                     explore_links_per_page=7,
                 )
@@ -716,16 +706,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 min_rounds_per_track=2,
                 gap_closure_passes=0,
                 density_gate_passes=1,
-                render_section_min=7,
-                render_section_max=8,
                 overview_source_topk=16,
                 content_source_topk=10,
-                subreport_source_topk=12,
                 content_source_chars=9_000,
-                subreport_overview_chars=2800,
-                subreport_excerpt_chars=1900,
-                subreport_total_chars=21_000,
-                target_length_ratio_vs_current=0.98,
                 explore_target_pages_per_round=4,
                 explore_links_per_page=9,
             )
@@ -739,16 +722,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 min_rounds_per_track=3,
                 gap_closure_passes=1,
                 density_gate_passes=1,
-                render_section_min=8,
-                render_section_max=9,
                 overview_source_topk=24,
                 content_source_topk=17,
-                subreport_source_topk=19,
                 content_source_chars=13_500,
-                subreport_overview_chars=4000,
-                subreport_excerpt_chars=3000,
-                subreport_total_chars=36_000,
-                target_length_ratio_vs_current=1.08,
                 explore_target_pages_per_round=5,
                 explore_links_per_page=14,
             )
@@ -763,16 +739,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         min_rounds_per_track: int,
         gap_closure_passes: int,
         density_gate_passes: int,
-        render_section_min: int,
-        render_section_max: int,
         overview_source_topk: int,
         content_source_topk: int,
-        subreport_source_topk: int,
         content_source_chars: int,
-        subreport_overview_chars: int,
-        subreport_excerpt_chars: int,
-        subreport_total_chars: int,
-        target_length_ratio_vs_current: float,
         explore_target_pages_per_round: int,
         explore_links_per_page: int,
     ) -> None:
@@ -780,16 +749,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         mode_depth.min_rounds_per_track = min_rounds_per_track
         mode_depth.gap_closure_passes = gap_closure_passes
         mode_depth.density_gate_passes = density_gate_passes
-        mode_depth.render_section_min = render_section_min
-        mode_depth.render_section_max = render_section_max
         mode_depth.overview_source_topk = overview_source_topk
         mode_depth.content_source_topk = content_source_topk
-        mode_depth.subreport_source_topk = subreport_source_topk
         mode_depth.content_source_chars = content_source_chars
-        mode_depth.subreport_overview_chars = subreport_overview_chars
-        mode_depth.subreport_excerpt_chars = subreport_excerpt_chars
-        mode_depth.subreport_total_chars = subreport_total_chars
-        mode_depth.target_length_ratio_vs_current = target_length_ratio_vs_current
         mode_depth.explore_target_pages_per_round = explore_target_pages_per_round
         mode_depth.explore_links_per_page = explore_links_per_page
 

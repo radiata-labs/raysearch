@@ -189,7 +189,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
 
     def _build_subreport_fallback(self, ctx: ResearchStepContext) -> str:
         core_question = self._resolve_core_question(ctx)
-        sources = self._select_sources_for_render(ctx, max_sources=10)
+        sources = self._select_sources_for_render(ctx)
         round_state = ctx.rounds[-1] if ctx.rounds else None
         report_style, style_applied = self._resolve_report_style(ctx)
         answer_status = self._fallback_answer_status(
@@ -285,7 +285,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         )
 
     def _require_insight_card(self, ctx: ResearchStepContext) -> bool:
-        return str(ctx.runtime.mode_depth.mode_key) != "research-fast"
+        return ctx.runtime.mode_depth.mode_key != "research-fast"
 
     def _fallback_answer_status(
         self,
@@ -588,11 +588,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         core_question: str,
     ) -> _SubreportContextPacket:
         mode_depth = ctx.runtime.mode_depth
-        max_sources = max(1, mode_depth.subreport_source_topk)
-        selected_sources = self._select_sources_for_render(
-            ctx,
-            max_sources=max_sources,
-        )
+        selected_sources = self._select_sources_for_render(ctx)
         report_style, style_applied = self._resolve_report_style(ctx)
         style_label = report_style if style_applied else "baseline"
         return _SubreportContextPacket(
@@ -606,9 +602,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             round_trajectory=self._build_round_trajectory_packet(ctx),
             source_evidence=self._build_source_evidence_packet(
                 selected_sources,
-                overview_chars=max(1, mode_depth.subreport_overview_chars),
-                excerpt_chars=max(1, mode_depth.subreport_excerpt_chars),
-                total_chars=max(1, mode_depth.subreport_total_chars),
+                max_chars=max(1, mode_depth.content_source_chars),
             ),
             notes=self._collect_recent_notes(ctx, limit=12),
             subreport_objective=self._subreport_objective_for_style(
@@ -672,18 +666,23 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         self,
         sources: list[ResearchSource],
         *,
-        overview_chars: int,
-        excerpt_chars: int,
-        total_chars: int,
+        max_chars: int,
     ) -> list[_SubreportSourceEvidenceItem]:
         out: list[_SubreportSourceEvidenceItem] = []
-        total_limit = max(1, int(total_chars))
+        total_limit = max(1, int(max_chars))
         consumed_chars = 0
         for source in sources:
             content_excerpt = self._normalize_block_text(str(source.content or ""))
             if content_excerpt:
-                content_excerpt = content_excerpt[:excerpt_chars]
-            projected = consumed_chars + len(content_excerpt)
+                remaining_chars = max(0, total_limit - consumed_chars)
+                content_excerpt = content_excerpt[:remaining_chars]
+            overview = self._normalize_block_text(str(source.overview or ""))
+            if overview:
+                remaining_chars = max(
+                    0, total_limit - consumed_chars - len(content_excerpt)
+                )
+                overview = overview[:remaining_chars]
+            projected = consumed_chars + len(content_excerpt) + len(overview)
             if projected > total_limit:
                 break
             consumed_chars = projected
@@ -694,9 +693,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                     title=clean_whitespace(source.title or ""),
                     round_index=int(source.round_index),
                     is_subpage=bool(source.is_subpage),
-                    overview=self._normalize_block_text(str(source.overview or ""))[
-                        :overview_chars
-                    ],
+                    overview=overview,
                     content_excerpt=content_excerpt,
                 )
             )
@@ -736,18 +733,9 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     def _select_sources_for_render(
         self,
         ctx: ResearchStepContext,
-        *,
-        max_sources: int,
     ) -> list[ResearchSource]:
         mode_depth = ctx.runtime.mode_depth
-        subreport_topk = max(1, mode_depth.subreport_source_topk)
-        limit = max(
-            1,
-            min(
-                int(max_sources),
-                int(subreport_topk),
-            ),
-        )
+        limit = max(1, mode_depth.content_source_topk)
         latest_round_index = 0
         if ctx.rounds:
             latest_round_index = int(ctx.rounds[-1].round_index)

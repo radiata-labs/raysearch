@@ -118,7 +118,6 @@ class _RenderFinalContextPacket:
     mode_depth_profile: str
     utc_timestamp: str
     utc_date: str
-    target_length_ratio: float
     theme_plan: ResearchThemePlan
     question_cards: list[ResearchQuestionCard] = field(default_factory=list)
     track_results: list[_RenderTrackResultPacket] = field(default_factory=list)
@@ -159,18 +158,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "mode": "final_markdown",
                     "track_results": int(len(ctx.parallel.track_results)),
                     "content_chars": int(len(str(ctx.output.content or ""))),
-                    "mode_depth_profile": str(ctx.runtime.mode_depth.mode_key),
+                    "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
                     "density_gate_passes_applied": int(
                         ctx.runtime.density_gate_passes_applied
-                    ),
-                    "target_output_chars": int(ctx.runtime.target_output_chars),
-                    "output_length_ratio_vs_target": float(
-                        ctx.runtime.output_length_ratio_vs_target
-                    ),
-                    "density_min_accept_ratio": float(
-                        self._density_min_accept_ratio(
-                            mode_key=str(ctx.runtime.mode_depth.mode_key)
-                        )
                     ),
                     "report_style_selected": str(report_style),
                     "style_applied_stage": "render" if style_applied else "none",
@@ -191,7 +181,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 "mode": "final_structured",
                 "track_results": int(len(ctx.parallel.track_results)),
                 "has_structured": bool(ctx.output.structured is not None),
-                "mode_depth_profile": str(ctx.runtime.mode_depth.mode_key),
+                "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
                 "report_style_selected": str(report_style),
                 "style_applied_stage": "render" if style_applied else "none",
             },
@@ -219,10 +209,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             now_utc=now_utc,
             context_packet_markdown=context_packet_markdown,
         )
-        architect_output = self._enforce_section_range(
-            ctx=ctx,
-            architect_output=architect_output,
-        )
         architect_output = await self._validate_architect_question_coverage(
             ctx=ctx,
             architect_output=architect_output,
@@ -239,18 +225,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             architect_output=architect_output,
             writer_outputs=writer_outputs,
         )
-        target_chars = max(
-            0,
-            int(
-                len(str(assembled))
-                * ctx.runtime.mode_depth.target_length_ratio_vs_current
-            ),
-        )
-        if target_chars > 0 and int(ctx.runtime.target_output_chars) <= 0:
-            ctx.runtime.target_output_chars = int(target_chars)
-            ctx.runtime.output_length_ratio_vs_target = float(
-                len(str(assembled)) / float(target_chars)
-            )
         assembled = await self._apply_density_gate(
             ctx=ctx,
             markdown=assembled,
@@ -533,21 +507,17 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown: str,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
-        section_min = max(1, ctx.runtime.mode_depth.render_section_min)
-        section_max = max(section_min, ctx.runtime.mode_depth.render_section_max)
         return build_render_architect_prompt_messages(
             target_output_language=target_language,
             target_output_language_label=target_language_name,
             current_utc_date=now_utc.date().isoformat(),
-            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
             task_intent=self._resolve_task_intent(ctx.plan.theme_plan.task_intent),
             complexity_tier=self._resolve_task_complexity(
                 ctx.plan.theme_plan.complexity_tier
             ),
             report_style=report_style,
             style_applied=bool(style_applied),
-            section_min=int(section_min),
-            section_max=int(section_max),
             context_packet_markdown=context_packet_markdown,
         )
 
@@ -572,7 +542,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_output_language=target_language,
             target_output_language_label=target_language_name,
             current_utc_date=now_utc.date().isoformat(),
-            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
             task_intent=self._resolve_task_intent(ctx.plan.theme_plan.task_intent),
             complexity_tier=self._resolve_task_complexity(
                 ctx.plan.theme_plan.complexity_tier
@@ -656,17 +626,16 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         return _RenderFinalContextPacket(
             theme=str(self._resolve_core_question(ctx) or ctx.request.themes),
             target_output_language=str(target_language),
-            mode_depth_profile=str(mode_depth.mode_key),
+            mode_depth_profile=mode_depth.mode_key,
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
-            target_length_ratio=mode_depth.target_length_ratio_vs_current,
             theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
             question_cards=[
                 item.model_copy(deep=True) for item in ctx.parallel.question_cards
             ],
             track_results=self._build_track_result_packet(ctx.parallel.track_results),
             render_objective=self._render_objective_for_mode(
-                mode_key=str(mode_depth.mode_key)
+                mode_key=mode_depth.mode_key
             ),
         )
 
@@ -684,8 +653,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             "## Time Context",
             f"- UTC timestamp: {packet.utc_timestamp}",
             f"- UTC date: {packet.utc_date}",
-            "## Length Policy",
-            f"- target_length_ratio_vs_current={float(packet.target_length_ratio):.2f}",
             "## Render Objective",
             packet.render_objective,
             "## Theme Plan",
@@ -722,44 +689,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             "boundaries, and actionable implications."
         )
 
-    def _enforce_section_range(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        architect_output: RenderArchitectOutput,
-    ) -> RenderArchitectOutput:
-        section_min = max(1, ctx.runtime.mode_depth.render_section_min)
-        section_max = max(section_min, ctx.runtime.mode_depth.render_section_max)
-        sections = list(architect_output.sections or [])
-        if len(sections) < 2:
-            return architect_output
-        opening = sections[0]
-        closing = sections[-1]
-        body_sections = list(sections[1:-1]) if len(sections) >= 2 else []
-        if len(sections) > section_max:
-            keep_body = max(0, section_max - 2)
-            body_sections = body_sections[:keep_body]
-        required_question_ids = self._resolve_question_ids(ctx)
-        unresolved_question_ids = self._resolve_uncovered_question_ids(
-            required_question_ids=required_question_ids,
-            body_sections=body_sections,
-        )
-        if unresolved_question_ids and body_sections:
-            target = body_sections[-1]
-            body_sections[-1] = target.model_copy(
-                update={
-                    "question_ids": self._merge_question_ids(
-                        list(target.question_ids),
-                        unresolved_question_ids,
-                    )
-                }
-            )
-            ctx.notes.append(
-                "Section range enforcement merged unresolved question_ids into the final body section."
-            )
-        sections = [opening, *body_sections, closing]
-        return architect_output.model_copy(update={"sections": sections})
-
     async def _apply_density_gate(
         self,
         *,
@@ -770,8 +699,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown: str,
     ) -> str:
         mode_depth = ctx.runtime.mode_depth
-        if not mode_depth.enable_density_gate:
-            return markdown
         pass_cap = max(0, mode_depth.density_gate_passes)
         if pass_cap <= 0:
             return markdown
@@ -781,13 +708,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.generate.use_model,
         )
         current = str(markdown or "")
-        target_ratio = mode_depth.target_length_ratio_vs_current
-        target_chars = max(0, int(len(current) * target_ratio))
-        min_accept_ratio = self._density_min_accept_ratio(
-            mode_key=str(mode_depth.mode_key)
-        )
-        if target_chars > 0:
-            ctx.runtime.target_output_chars = int(target_chars)
         for pass_index in range(pass_cap):
             try:
                 result = await self._llm.create(
@@ -799,7 +719,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         now_utc=now_utc,
                         context_packet_markdown=context_packet_markdown,
                         pass_index=pass_index,
-                        target_chars=target_chars,
                     ),
                     response_format=None,
                 )
@@ -815,23 +734,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     attrs={
                         "pass_index": int(pass_index + 1),
                         "model": str(model),
-                        "density_min_accept_ratio": float(min_accept_ratio),
                         "message": str(exc),
                     },
                 )
                 break
             if not candidate:
                 continue
-            if target_chars > 0 and len(candidate) < int(
-                target_chars * min_accept_ratio
-            ):
-                continue
             current = candidate
             ctx.runtime.density_gate_passes_applied += 1
-        if target_chars > 0:
-            ctx.runtime.output_length_ratio_vs_target = float(
-                len(current) / float(target_chars)
-            )
         return current
 
     async def _repair_final_language_if_needed(
@@ -922,14 +832,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
         context_packet_markdown: str,
         pass_index: int,
-        target_chars: int,
     ) -> list[dict[str, str]]:
         return build_density_gate_prompt_messages(
             target_output_language=target_language,
             current_utc_date=now_utc.date().isoformat(),
-            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
             pass_index=int(pass_index),
-            target_chars=int(target_chars),
             context_packet_markdown=context_packet_markdown,
             current_markdown=markdown,
         )
@@ -987,14 +895,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             "high": "high",
         }
         return mapping.get(token, "medium")
-
-    def _density_min_accept_ratio(self, *, mode_key: str) -> float:
-        mode_name = clean_whitespace(mode_key).casefold()
-        if mode_name == "research-pro":
-            return 0.5
-        if mode_name == "research":
-            return 0.65
-        return 0.75
 
     def _build_track_result_packet(
         self, track_results: list[ResearchTrackResult]

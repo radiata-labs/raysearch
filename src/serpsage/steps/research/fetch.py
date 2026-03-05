@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from typing_extensions import override
@@ -188,7 +187,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             return False
         fetch_cap = min(
             remaining_fetch_budget,
-            int(self._explore_round_fetch_cap(ctx=ctx)),
+            int(ctx.runtime.budget.max_fetch_per_round),
         )
         if fetch_cap <= 0:
             return False
@@ -313,8 +312,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         target_pages: list[ResearchLinkCandidate],
     ) -> list[str]:
         per_page_limit = max(1, ctx.runtime.mode_depth.explore_links_per_page)
-        mode_key = clean_whitespace(str(ctx.runtime.mode_depth.mode_key)).casefold()
-        if mode_key == "research-fast":
+        if ctx.runtime.mode_depth.mode_key == "research-fast":
             selected: list[str] = []
             for page in target_pages:
                 selected.extend(
@@ -641,18 +639,13 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 return True
         return False
 
-    def _explore_round_fetch_cap(self, *, ctx: ResearchStepContext) -> int:
-        max_fetch_per_round = max(1, ctx.runtime.budget.max_fetch_per_round)
-        ratio = ctx.runtime.mode_depth.explore_fetch_round_ratio
-        return max(1, math.floor(max_fetch_per_round * max(0.0, ratio)))
-
     def _build_explore_fetch_contexts(
         self,
         *,
         ctx: ResearchStepContext,
         urls: list[str],
     ) -> list[FetchStepContext]:
-        main_links_limit = max(1, ctx.runtime.mode_depth.search_links_main_limit)
+        main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
         request = FetchRequest(
             urls=list(urls),
             crawl_mode="fallback",

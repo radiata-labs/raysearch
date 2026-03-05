@@ -30,10 +30,7 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
             or (bool(provider_params) and ctx.runtime.search_calls > 0)
         )
         content_chars = len(str(ctx.output.content or ""))
-        target_chars = ctx.runtime.target_output_chars
-        ratio_vs_target = ctx.runtime.output_length_ratio_vs_target
-        if target_chars > 0 and ratio_vs_target <= 0:
-            ratio_vs_target = content_chars / target_chars
+        mode_key = mode_depth.mode_key
         await self.emit_tracking_event(
             event_name="research.finalize.summary",
             request_id=ctx.request_id,
@@ -50,8 +47,7 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                 "mode_depth_profile": str(mode_depth.mode_key),
                 "density_gate_passes_applied": ctx.runtime.density_gate_passes_applied,
                 "gap_closure_passes_applied": ctx.runtime.gap_closure_passes_applied,
-                "llm_orchestrator_enabled": mode_depth.enable_llm_track_orchestrator,
-                "output_length_ratio_vs_target": ratio_vs_target,
+                "llm_orchestrator_enabled": mode_key != "research-fast",
                 "input_language": str(theme_plan.input_language),
                 "output_language": str(theme_plan.output_language),
                 "search_language": str(search_language),

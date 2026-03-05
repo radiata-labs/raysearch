@@ -58,25 +58,13 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 max_question_cards_effective=mode_depth.max_question_cards_effective,
                 min_rounds_per_track=mode_depth.min_rounds_per_track,
                 no_progress_rounds_to_stop_effective=mode_depth.no_progress_rounds_to_stop_effective,
-                enable_llm_track_orchestrator=mode_depth.enable_llm_track_orchestrator,
-                enable_gap_closure_pass=mode_depth.enable_gap_closure_pass,
                 gap_closure_passes=mode_depth.gap_closure_passes,
-                enable_density_gate=mode_depth.enable_density_gate,
                 density_gate_passes=mode_depth.density_gate_passes,
-                render_section_min=mode_depth.render_section_min,
-                render_section_max=mode_depth.render_section_max,
                 overview_source_topk=mode_depth.overview_source_topk,
                 content_source_topk=mode_depth.content_source_topk,
-                subreport_source_topk=mode_depth.subreport_source_topk,
                 content_source_chars=mode_depth.content_source_chars,
-                subreport_overview_chars=mode_depth.subreport_overview_chars,
-                subreport_excerpt_chars=mode_depth.subreport_excerpt_chars,
-                subreport_total_chars=mode_depth.subreport_total_chars,
-                target_length_ratio_vs_current=mode_depth.target_length_ratio_vs_current,
-                search_links_main_limit=mode_depth.search_links_main_limit,
                 explore_target_pages_per_round=mode_depth.explore_target_pages_per_round,
                 explore_links_per_page=mode_depth.explore_links_per_page,
-                explore_fetch_round_ratio=mode_depth.explore_fetch_round_ratio,
             ),
             budget=ResearchBudgetState(
                 max_rounds=profile.max_rounds,
@@ -94,8 +82,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             no_progress_rounds=0,
             gap_closure_passes_applied=0,
             density_gate_passes_applied=0,
-            target_output_chars=0,
-            output_length_ratio_vs_target=0.0,
             stop=False,
             stop_reason="",
             round_index=0,
@@ -142,7 +128,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 "mode_depth_profile": str(mode),
                 "mode_depth_question_cards": mode_depth.max_question_cards_effective,
                 "mode_depth_min_rounds_per_track": mode_depth.min_rounds_per_track,
-                "mode_depth_orchestrator_enabled": mode_depth.enable_llm_track_orchestrator,
+                "mode_depth_orchestrator_enabled": self._mode_uses_orchestrator(mode),
                 "theme": themes,
             },
         )
@@ -152,7 +138,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             stage="prepare",
             attrs={
                 "mode_depth_profile": str(mode),
-                "llm_orchestrator_enabled": mode_depth.enable_llm_track_orchestrator,
+                "llm_orchestrator_enabled": self._mode_uses_orchestrator(mode),
                 "gap_closure_passes": mode_depth.gap_closure_passes,
                 "density_gate_passes": mode_depth.density_gate_passes,
             },
@@ -186,6 +172,10 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
     def _resolve_global_budget_multiplier(self, mode: str) -> float:
         token = clean_whitespace(mode).casefold()
         return self._GLOBAL_BUDGET_MULTIPLIER_BY_MODE.get(token, 2.0)
+
+    def _mode_uses_orchestrator(self, mode: str) -> bool:
+        mode_name = clean_whitespace(mode).casefold()
+        return mode_name != "research-fast"
 
 
 __all__ = ["ResearchPrepareStep"]

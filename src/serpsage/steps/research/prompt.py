@@ -1158,8 +1158,6 @@ def build_render_architect_messages(
     complexity_tier: TaskComplexity,
     report_style: ReportStyle,
     style_applied: bool,
-    section_min: int,
-    section_max: int,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
     style_overlay = (
@@ -1184,7 +1182,7 @@ def build_render_architect_messages(
         "Mission: produce a JSON-only section blueprint for a polished end-user report.\n"
         "Output requirements:\n"
         "1) Return valid JSON only.\n"
-        f"2) Return {section_min}-{section_max} sections.\n"
+        "2) Return between 5 and 10 sections.\n"
         "3) Ordering is strict: one opening first, body sections in the middle, one closing last.\n"
         "4) section_role must be one of opening/body/closing.\n"
         "5) Every section must include section_id, subhead, section_role, question_ids, scope_requirements, writing_boundaries, must_cover_points, angle, progression_hint.\n"
@@ -1394,7 +1392,6 @@ def build_density_gate_messages(
     current_utc_date: str,
     mode_depth_profile: str,
     pass_index: int,
-    target_chars: int,
     context_packet_markdown: str,
     current_markdown: str,
 ) -> list[dict[str, str]]:
@@ -1421,7 +1418,6 @@ def build_density_gate_messages(
                 f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
                 f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
                 f"DENSITY_PASS_INDEX:\n{int(pass_index + 1)}\n\n"
-                f"TARGET_CHARS:\n{int(target_chars)}\n\n"
                 "PRIVATE_CONTEXT_NOTICE:\n"
                 "- Keep alignment with FINAL_CONTEXT_PACKET_MARKDOWN.\n"
                 "- Do not disclose internal metadata.\n\n"

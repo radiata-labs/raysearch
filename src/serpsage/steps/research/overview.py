@@ -61,7 +61,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             return ctx
         mode_depth = ctx.runtime.mode_depth
         overview_topk = max(1, mode_depth.overview_source_topk)
-        overview_chars = max(1000, mode_depth.subreport_overview_chars)
+        overview_chars = max(1000, mode_depth.content_source_chars)
         (
             new_result_target_ratio,
             min_history_sources,
@@ -376,7 +376,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         sources: list[ResearchSource],
     ) -> tuple[float, int]:
-        mode_key = clean_whitespace(str(ctx.runtime.mode_depth.mode_key)).casefold()
+        mode_key = ctx.runtime.mode_depth.mode_key
         if mode_key == "research-fast":
             base_ratio = 0.70
             base_min_history = 1

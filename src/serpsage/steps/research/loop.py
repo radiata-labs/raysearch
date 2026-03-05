@@ -583,8 +583,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         orchestrator_lock: anyio.Lock,
     ) -> ResearchStepContext:
         mode_depth = root.runtime.mode_depth
-        if not mode_depth.enable_gap_closure_pass:
-            return track_ctx
         pass_cap = max(0, mode_depth.gap_closure_passes)
         if pass_cap <= 0:
             return track_ctx
@@ -854,8 +852,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             no_progress_rounds=0,
             gap_closure_passes_applied=0,
             density_gate_passes_applied=0,
-            target_output_chars=0,
-            output_length_ratio_vs_target=0.0,
             stop=False,
             stop_reason="",
             round_index=0,
@@ -1047,8 +1043,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         return bool(track_ctx.plan.last_round_link_candidates)
 
     def _orchestrator_enabled(self, ctx: ResearchStepContext) -> bool:
-        mode_depth = ctx.runtime.mode_depth
-        return mode_depth.enable_llm_track_orchestrator
+        return ctx.runtime.mode_depth.mode_key != "research-fast"
 
     def _normalize_queries(self, raw: list[str], *, limit: int) -> list[str]:
         return normalize_strings(raw, limit=max(1, int(limit)))
