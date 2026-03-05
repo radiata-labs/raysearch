@@ -84,7 +84,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         round_action = clean_whitespace(
             str(ctx.work.round_action or "search")
         ).casefold()
-        if int(ctx.current_round.round_index) <= 1:
+        if ctx.current_round.round_index <= 1:
             round_action = "search"
         if self._phase == "pre":
             if round_action == "explore":
@@ -110,7 +110,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ]
         remaining_fetch_budget = max(
             0,
-            int(ctx.runtime.budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
+            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
         )
         if remaining_fetch_budget <= 0:
             ctx.runtime.stop = True
@@ -131,15 +131,13 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             )
             if consumed_pages <= 0:
                 continue
-            remaining_fetch_budget = max(
-                0, int(remaining_fetch_budget) - int(consumed_pages)
-            )
-            per_round_fetch_calls += int(consumed_pages)
+            remaining_fetch_budget = max(0, remaining_fetch_budget - consumed_pages)
+            per_round_fetch_calls += consumed_pages
             all_results.append(trimmed_candidate.result)
             main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
                 ctx=ctx,
                 result=trimmed_candidate.result,
-                round_index=int(ctx.current_round.round_index),
+                round_index=ctx.current_round.round_index,
             )
             for source_id in canonical_ids:
                 if source_id not in new_source_ids:
@@ -148,7 +146,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 self._build_link_candidate_from_search_candidate(
                     source_id=int(main_source_id),
                     candidate=trimmed_candidate,
-                    round_index=int(ctx.current_round.round_index),
+                    round_index=ctx.current_round.round_index,
                 )
             )
         self._finalize_round_state(
@@ -164,13 +162,13 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         assert ctx.current_round is not None
         remaining_fetch_budget = max(
             0,
-            int(ctx.runtime.budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
+            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
         )
         if remaining_fetch_budget <= 0:
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "max_fetch_calls"
             return False
-        expected_candidate_round = int(ctx.current_round.round_index) - 1
+        expected_candidate_round = ctx.current_round.round_index - 1
         if int(ctx.plan.last_round_link_candidates_round) != expected_candidate_round:
             return False
         target_pages = self._select_explore_target_pages(ctx=ctx)
@@ -189,7 +187,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         if not selected_urls:
             return False
         fetch_cap = min(
-            int(remaining_fetch_budget),
+            remaining_fetch_budget,
             int(self._explore_round_fetch_cap(ctx=ctx)),
         )
         if fetch_cap <= 0:
@@ -215,7 +213,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
                 ctx=ctx,
                 result=result,
-                round_index=int(ctx.current_round.round_index),
+                round_index=ctx.current_round.round_index,
             )
             for source_id in canonical_ids:
                 if source_id not in new_source_ids:
@@ -224,7 +222,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 self._build_link_candidate_from_explore_result(
                     source_id=int(main_source_id),
                     result=result,
-                    round_index=int(ctx.current_round.round_index),
+                    round_index=ctx.current_round.round_index,
                 )
             )
         if per_round_fetch_calls <= 0:
@@ -233,7 +231,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             next_round_link_candidates = [
                 item.model_copy(
                     update={
-                        "round_index": int(ctx.current_round.round_index),
+                        "round_index": ctx.current_round.round_index,
                     },
                     deep=True,
                 )
@@ -264,14 +262,14 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx.plan.last_round_link_candidates = [
             item.model_copy(deep=True) for item in dedup_link_candidates
         ]
-        ctx.plan.last_round_link_candidates_round = int(ctx.current_round.round_index)
+        ctx.plan.last_round_link_candidates_round = ctx.current_round.round_index
         ctx.current_round.result_count = int(max(0, result_count))
         ctx.current_round.new_source_ids = list(new_source_ids)
         ctx.current_round.corpus_score_gain = (
             float(
                 rebuild_corpus_ranking(
                     ctx=ctx,
-                    round_index=int(ctx.current_round.round_index),
+                    round_index=ctx.current_round.round_index,
                 )
             )
             if ctx.current_round.result_count > 0
@@ -293,7 +291,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ]
         if not target_ids:
             return []
-        cap = max(1, int(ctx.runtime.mode_depth.explore_target_pages_per_round))
+        cap = max(1, ctx.runtime.mode_depth.explore_target_pages_per_round)
         out: list[ResearchLinkCandidate] = []
         seen: set[int] = set()
         for source_id in target_ids:
@@ -314,7 +312,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         target_pages: list[ResearchLinkCandidate],
     ) -> list[str]:
-        per_page_limit = max(1, int(ctx.runtime.mode_depth.explore_links_per_page))
+        per_page_limit = max(1, ctx.runtime.mode_depth.explore_links_per_page)
         mode_key = clean_whitespace(str(ctx.runtime.mode_depth.mode_key)).casefold()
         if mode_key == "research-fast":
             selected: list[str] = []
@@ -418,7 +416,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=_LinkPickerPayload,
                 format_override=self._build_link_picker_schema(),
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             selected_ids = [
                 int(item) for item in list(chat_result.data.selected_link_ids)
@@ -644,9 +642,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         return False
 
     def _explore_round_fetch_cap(self, *, ctx: ResearchStepContext) -> int:
-        max_fetch_per_round = max(1, int(ctx.runtime.budget.max_fetch_per_round))
-        ratio = float(ctx.runtime.mode_depth.explore_fetch_round_ratio)
-        return max(1, int(math.floor(float(max_fetch_per_round) * max(0.0, ratio))))
+        max_fetch_per_round = max(1, ctx.runtime.budget.max_fetch_per_round)
+        ratio = ctx.runtime.mode_depth.explore_fetch_round_ratio
+        return max(1, math.floor(max_fetch_per_round * max(0.0, ratio)))
 
     def _build_explore_fetch_contexts(
         self,
@@ -654,7 +652,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         urls: list[str],
     ) -> list[FetchStepContext]:
-        main_links_limit = max(1, int(ctx.runtime.mode_depth.search_links_main_limit))
+        main_links_limit = max(1, ctx.runtime.mode_depth.search_links_main_limit)
         request = FetchRequest(
             urls=list(urls),
             crawl_mode="fallback",
@@ -671,7 +669,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         )
         contexts: list[FetchStepContext] = []
         round_index = (
-            int(ctx.current_round.round_index)
+            ctx.current_round.round_index
             if ctx.current_round is not None
             else int(ctx.runtime.round_index)
         )
@@ -704,7 +702,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         candidate: SearchFetchedCandidate,
         remaining_fetch_budget: int,
     ) -> tuple[SearchFetchedCandidate, int]:
-        pages_left = max(0, int(remaining_fetch_budget))
+        pages_left = max(0, remaining_fetch_budget)
         if pages_left <= 0:
             return (
                 candidate.model_copy(

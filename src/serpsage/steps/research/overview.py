@@ -60,17 +60,18 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             ctx.current_round.context_source_ids = []
             return ctx
         mode_depth = ctx.runtime.mode_depth
-        overview_topk = max(1, int(mode_depth.overview_context_topk_override))
+        overview_topk = max(1, mode_depth.overview_source_topk)
+        overview_chars = max(1000, mode_depth.subreport_overview_chars)
         (
             new_result_target_ratio,
             min_history_sources,
         ) = self._resolve_context_mix_targets(ctx=ctx, sources=all_sources)
         context_source_ids = select_context_source_ids(
             ctx=ctx,
-            round_index=int(ctx.current_round.round_index),
+            round_index=ctx.current_round.round_index,
             topk=overview_topk,
-            new_result_target_ratio=float(new_result_target_ratio),
-            min_history_sources=int(min_history_sources),
+            new_result_target_ratio=new_result_target_ratio,
+            min_history_sources=min_history_sources,
         )
         ctx.current_round.context_source_ids = list(context_source_ids)
         sources = pick_sources_by_ids(
@@ -81,7 +82,10 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             ctx.work.overview_review = self._empty_review()
             ctx.work.need_content_source_ids = []
             return ctx
-        packet = build_overview_packet(sources=sources, max_overview_chars=5000)
+        packet = build_overview_packet(
+            sources=sources,
+            max_overview_chars=overview_chars,
+        )
         model = resolve_research_model(
             ctx=ctx,
             stage="overview",
@@ -98,9 +102,9 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=OverviewOutputPayload,
                 format_override=self._build_overview_schema(
-                    max_queries=int(ctx.runtime.budget.max_queries_per_round)
+                    max_queries=ctx.runtime.budget.max_queries_per_round
                 ),
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
         except Exception as exc:  # noqa: BLE001
@@ -112,7 +116,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 error_code="research_overview_review_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "round_index": int(ctx.current_round.round_index),
+                    "round_index": ctx.current_round.round_index,
                     "message": str(exc),
                 },
             )
@@ -129,7 +133,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         )
         payload = payload.model_copy(
             update={
-                "entity_coverage_complete": bool(entity_coverage_complete),
+                "entity_coverage_complete": entity_coverage_complete,
                 "covered_entities": list(covered_entities),
                 "missing_entities": list(missing_entities),
             }
@@ -159,30 +163,30 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 covered_subthemes,
                 limit=64,
             )
-        total = max(1, int(ctx.corpus.coverage_state.total_subthemes or 0))
+        total = max(1, ctx.corpus.coverage_state.total_subthemes or 0)
         if total <= 0:
             total = max(1, len(ctx.corpus.coverage_state.covered_subthemes))
         coverage_ratio = min(
             1.0,
-            float(len(ctx.corpus.coverage_state.covered_subthemes)) / float(total),
+            len(ctx.corpus.coverage_state.covered_subthemes) / total,
         )
-        ctx.current_round.coverage_ratio = float(coverage_ratio)
-        ctx.current_round.entity_coverage_complete = bool(entity_coverage_complete)
+        ctx.current_round.coverage_ratio = coverage_ratio
+        ctx.current_round.entity_coverage_complete = entity_coverage_complete
         ctx.current_round.missing_entities = list(missing_entities)
         unresolved_topics = self._extract_unresolved_topics(
             payload.conflict_arbitration
         )
-        ctx.current_round.unresolved_conflicts = int(len(unresolved_topics))
-        ctx.current_round.critical_gaps = int(
-            len(normalize_strings(payload.critical_gaps, limit=20))
+        ctx.current_round.unresolved_conflicts = len(unresolved_topics)
+        ctx.current_round.critical_gaps = len(
+            normalize_strings(payload.critical_gaps, limit=20)
         )
         ctx.work.next_queries = merge_strings(
             normalize_strings(
                 payload.next_queries,
-                limit=int(ctx.runtime.budget.max_queries_per_round),
+                limit=ctx.runtime.budget.max_queries_per_round,
             ),
             [],
-            limit=int(ctx.runtime.budget.max_queries_per_round),
+            limit=ctx.runtime.budget.max_queries_per_round,
         )
         report_style = self._resolve_report_style(ctx)
         await self.emit_tracking_event(
@@ -193,9 +197,10 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 "report_style_selected": str(report_style),
                 "style_applied_stage": "overview",
                 "mode_depth_profile": str(mode_depth.mode_key),
-                "overview_context_topk_effective": int(overview_topk),
-                "overview_new_result_target_ratio": float(new_result_target_ratio),
-                "overview_min_history_sources": int(min_history_sources),
+                "overview_context_topk_effective": overview_topk,
+                "overview_source_chars_effective": overview_chars,
+                "overview_new_result_target_ratio": new_result_target_ratio,
+                "overview_min_history_sources": min_history_sources,
             },
         )
         return ctx
@@ -219,7 +224,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             core_question=core_question,
             report_style=report_style,
             mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
-            round_index=int(round_index),
+            round_index=round_index,
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
             required_output_language=out_lang,
@@ -307,7 +312,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 "next_query_strategy": {"type": "string"},
                 "next_queries": {
                     "type": "array",
-                    "maxItems": max(1, int(max_queries)),
+                    "maxItems": max(1, max_queries),
                     "items": {"type": "string"},
                 },
                 "stop": {"type": "boolean"},
@@ -361,7 +366,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 continue
             seen.add(value)
             out.append(value)
-            if len(out) >= max(1, int(limit)):
+            if len(out) >= max(1, limit):
                 break
         return out
 
@@ -379,31 +384,29 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             base_ratio = 0.55
             base_min_history = 3
         else:
-            base_ratio = float(self._CONTEXT_NEW_RESULT_TARGET_RATIO)
+            base_ratio = self._CONTEXT_NEW_RESULT_TARGET_RATIO
             base_min_history = 2
-        round_index = int(ctx.current_round.round_index) if ctx.current_round else 0
+        round_index = ctx.current_round.round_index if ctx.current_round else 0
         new_count = sum(
-            1
-            for item in sources
-            if int(getattr(item, "round_index", 0)) == int(round_index)
+            1 for item in sources if int(getattr(item, "round_index", 0)) == round_index
         )
-        total_count = int(len(sources))
-        history_count = max(0, total_count - int(new_count))
+        total_count = len(sources)
+        history_count = max(0, total_count - new_count)
         if new_count <= 0:
             return 0.0, min(base_min_history, max(1, history_count))
         if history_count <= 0:
             return 1.0, 0
-        ratio = float(base_ratio)
-        if int(round_index) <= 1:
+        ratio = base_ratio
+        if round_index <= 1:
             ratio = max(ratio, 0.70)
         if new_count <= 2:
             ratio = min(0.85, ratio + 0.15)
         if history_count <= 2:
             ratio = max(0.35, ratio - 0.20)
         min_history = min(max(1, history_count), base_min_history)
-        if int(round_index) <= 1:
+        if round_index <= 1:
             min_history = min(min_history, 1)
-        return float(max(0.0, min(1.0, ratio))), int(max(0, min_history))
+        return max(0.0, min(1.0, ratio)), max(0, min_history)
 
     def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
         cfg = self.settings.research.report_style
@@ -413,9 +416,9 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         return resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
             theme=self._resolve_core_question(ctx),
-            enabled=bool(cfg.enabled),
+            enabled=cfg.enabled,
             fallback_style=cast("ReportStyle", fallback_style_key),
-            strict_style_lock=bool(cfg.strict_style_lock),
+            strict_style_lock=cfg.strict_style_lock,
         )
 
 

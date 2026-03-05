@@ -292,8 +292,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> _TrackAllocation:
         fetch_per_search_floor = max(
             1,
-            int(root.runtime.budget.max_fetch_calls)
-            // max(1, int(root.runtime.budget.max_search_calls)),
+            root.runtime.budget.max_fetch_calls
+            // max(1, root.runtime.budget.max_search_calls),
         )
         bonus_fetch = 1
         baseline_width = max(1, int(self._BASELINE_QUERY_WIDTH))
@@ -324,13 +324,13 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         async with budget_lock:
             remaining_search = max(
                 0,
-                int(root.parallel.global_search_budget)
+                root.parallel.global_search_budget
                 - int(root.parallel.global_search_used)
                 - int(reservation_state.search_reserved),
             )
             remaining_fetch = max(
                 0,
-                int(root.parallel.global_fetch_budget)
+                root.parallel.global_fetch_budget
                 - int(root.parallel.global_fetch_used)
                 - int(reservation_state.fetch_reserved),
             )
@@ -353,7 +353,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     1,
                     min(
                         int(remaining_fetch),
-                        int(root.runtime.budget.max_fetch_per_round),
+                        root.runtime.budget.max_fetch_per_round,
                     ),
                 )
                 reservation_state.fetch_reserved += int(fetch_grant)
@@ -530,7 +530,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     track_map=track_map,
                 ),
                 response_format=_TrackOrchestratorOutputPayload,
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             return result.data
         except Exception as exc:  # noqa: BLE001
@@ -561,11 +561,11 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             core_question=self._resolve_core_question(root),
             search_remaining=max(
                 0,
-                int(budget.max_search_calls) - int(root.runtime.search_calls),
+                budget.max_search_calls - int(root.runtime.search_calls),
             ),
             fetch_remaining=max(
                 0,
-                int(budget.max_fetch_calls) - int(root.runtime.fetch_calls),
+                budget.max_fetch_calls - int(root.runtime.fetch_calls),
             ),
             track_snapshots_markdown=snapshot_markdown,
         )
@@ -583,9 +583,9 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         orchestrator_lock: anyio.Lock,
     ) -> ResearchStepContext:
         mode_depth = root.runtime.mode_depth
-        if not bool(mode_depth.enable_gap_closure_pass):
+        if not mode_depth.enable_gap_closure_pass:
             return track_ctx
-        pass_cap = max(0, int(mode_depth.gap_closure_passes))
+        pass_cap = max(0, mode_depth.gap_closure_passes)
         if pass_cap <= 0:
             return track_ctx
         local_ctx = track_ctx
@@ -672,7 +672,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             core_question=core_question,
             missing_entities=(latest.missing_entities if latest is not None else []),
             critical_gaps=(latest.critical_gaps if latest is not None else 0),
-            limit=int(track_ctx.runtime.budget.max_queries_per_round),
+            limit=track_ctx.runtime.budget.max_queries_per_round,
         )
         model = resolve_research_model(
             ctx=root,
@@ -689,11 +689,11 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     pass_index=pass_index,
                 ),
                 response_format=_GapClosureOutputPayload,
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             queries = self._normalize_queries(
                 result.data.queries,
-                limit=int(track_ctx.runtime.budget.max_queries_per_round),
+                limit=track_ctx.runtime.budget.max_queries_per_round,
             )
             if queries:
                 return queries
@@ -775,7 +775,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _resolve_question_cards(
         self, ctx: ResearchStepContext
     ) -> list[ResearchQuestionCard]:
-        cap = max(1, int(ctx.runtime.mode_depth.max_question_cards_effective))
+        cap = max(1, ctx.runtime.mode_depth.max_question_cards_effective)
         raw_cards = list(ctx.parallel.question_cards)
         if not raw_cards:
             raw_cards = [
@@ -903,17 +903,17 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         search_grant = max(0, int(alloc.search_grant))
         fetch_grant = max(1, int(alloc.fetch_grant))
         budget = track_ctx.runtime.budget
-        budget.max_rounds = int(base_budget.max_rounds)
+        budget.max_rounds = base_budget.max_rounds
         budget.max_search_calls = int(track_ctx.runtime.search_calls + search_grant)
         budget.max_fetch_calls = int(track_ctx.runtime.fetch_calls + fetch_grant)
-        budget.max_results_per_search = int(base_budget.max_results_per_search)
+        budget.max_results_per_search = base_budget.max_results_per_search
         budget.max_queries_per_round = max(
-            1, int(min(search_grant, alloc.max_queries_per_round))
+            1, min(search_grant, alloc.max_queries_per_round)
         )
         budget.max_fetch_per_round = int(fetch_grant)
-        budget.stop_confidence = float(base_budget.stop_confidence)
-        budget.min_coverage_ratio = float(base_budget.min_coverage_ratio)
-        budget.max_unresolved_conflicts = int(base_budget.max_unresolved_conflicts)
+        budget.stop_confidence = base_budget.stop_confidence
+        budget.min_coverage_ratio = base_budget.min_coverage_ratio
+        budget.max_unresolved_conflicts = base_budget.max_unresolved_conflicts
 
     async def _finalize_track(
         self,
@@ -1023,10 +1023,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
 
     def _global_budget_exhausted(self, ctx: ResearchStepContext) -> bool:
         return bool(
-            int(ctx.parallel.global_search_used)
-            >= int(ctx.parallel.global_search_budget)
-            or int(ctx.parallel.global_fetch_used)
-            >= int(ctx.parallel.global_fetch_budget)
+            int(ctx.parallel.global_search_used) >= ctx.parallel.global_search_budget
+            or int(ctx.parallel.global_fetch_used) >= ctx.parallel.global_fetch_budget
         )
 
     def _allocation_blocked(self, alloc: _TrackAllocation) -> bool:
@@ -1036,7 +1034,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         )
 
     def _can_allocate_fetch_only_round(self, track_ctx: ResearchStepContext) -> bool:
-        if int(track_ctx.runtime.budget.max_fetch_calls) <= int(
+        if track_ctx.runtime.budget.max_fetch_calls <= int(
             track_ctx.runtime.fetch_calls
         ):
             return False
@@ -1050,7 +1048,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
 
     def _orchestrator_enabled(self, ctx: ResearchStepContext) -> bool:
         mode_depth = ctx.runtime.mode_depth
-        return bool(mode_depth.enable_llm_track_orchestrator)
+        return mode_depth.enable_llm_track_orchestrator
 
     def _normalize_queries(self, raw: list[str], *, limit: int) -> list[str]:
         return normalize_strings(raw, limit=max(1, int(limit)))

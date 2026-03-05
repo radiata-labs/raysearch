@@ -243,7 +243,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             0,
             int(
                 len(str(assembled))
-                * float(ctx.runtime.mode_depth.target_length_ratio_vs_current)
+                * ctx.runtime.mode_depth.target_length_ratio_vs_current
             ),
         )
         if target_chars > 0 and int(ctx.runtime.target_output_chars) <= 0:
@@ -293,7 +293,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     context_packet_markdown=context_packet_markdown,
                 ),
                 response_format=RenderArchitectOutput,
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             return chat_result.data
         except Exception as exc:  # noqa: BLE001
@@ -533,8 +533,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown: str,
     ) -> list[dict[str, str]]:
         target_language_name = clean_whitespace(target_language) or "unspecified"
-        section_min = max(1, int(ctx.runtime.mode_depth.render_section_min))
-        section_max = max(section_min, int(ctx.runtime.mode_depth.render_section_max))
+        section_min = max(1, ctx.runtime.mode_depth.render_section_min)
+        section_max = max(section_min, ctx.runtime.mode_depth.render_section_max)
         return build_render_architect_prompt_messages(
             target_output_language=target_language,
             target_output_language_label=target_language_name,
@@ -659,7 +659,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             mode_depth_profile=str(mode_depth.mode_key),
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
-            target_length_ratio=float(mode_depth.target_length_ratio_vs_current),
+            target_length_ratio=mode_depth.target_length_ratio_vs_current,
             theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
             question_cards=[
                 item.model_copy(deep=True) for item in ctx.parallel.question_cards
@@ -728,8 +728,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         architect_output: RenderArchitectOutput,
     ) -> RenderArchitectOutput:
-        section_min = max(1, int(ctx.runtime.mode_depth.render_section_min))
-        section_max = max(section_min, int(ctx.runtime.mode_depth.render_section_max))
+        section_min = max(1, ctx.runtime.mode_depth.render_section_min)
+        section_max = max(section_min, ctx.runtime.mode_depth.render_section_max)
         sections = list(architect_output.sections or [])
         if len(sections) < 2:
             return architect_output
@@ -770,9 +770,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         context_packet_markdown: str,
     ) -> str:
         mode_depth = ctx.runtime.mode_depth
-        if not bool(mode_depth.enable_density_gate):
+        if not mode_depth.enable_density_gate:
             return markdown
-        pass_cap = max(0, int(mode_depth.density_gate_passes))
+        pass_cap = max(0, mode_depth.density_gate_passes)
         if pass_cap <= 0:
             return markdown
         model = resolve_research_model(
@@ -781,7 +781,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.generate.use_model,
         )
         current = str(markdown or "")
-        target_ratio = float(mode_depth.target_length_ratio_vs_current)
+        target_ratio = mode_depth.target_length_ratio_vs_current
         target_chars = max(0, int(len(current) * target_ratio))
         min_accept_ratio = self._density_min_accept_ratio(
             mode_key=str(mode_depth.mode_key)
@@ -886,7 +886,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         ),
                     },
                 ],
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             candidate = normalize_block_text(str(repaired.text or ""))
             if not candidate:

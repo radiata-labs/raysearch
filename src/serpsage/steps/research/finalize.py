@@ -25,45 +25,37 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
             provider_backend=str(ctx.settings.provider.backend),
             search_language=search_language,
         )
-        provider_language_param_applied = bool(
+        provider_language_param_applied = (
             ctx.runtime.provider_language_param_applied
-            or (bool(provider_params) and int(ctx.runtime.search_calls) > 0)
+            or (bool(provider_params) and ctx.runtime.search_calls > 0)
         )
-        content_chars = int(len(str(ctx.output.content or "")))
-        target_chars = int(ctx.runtime.target_output_chars)
-        ratio_vs_target = float(ctx.runtime.output_length_ratio_vs_target)
+        content_chars = len(str(ctx.output.content or ""))
+        target_chars = ctx.runtime.target_output_chars
+        ratio_vs_target = ctx.runtime.output_length_ratio_vs_target
         if target_chars > 0 and ratio_vs_target <= 0:
-            ratio_vs_target = float(content_chars / float(target_chars))
+            ratio_vs_target = content_chars / target_chars
         await self.emit_tracking_event(
             event_name="research.finalize.summary",
             request_id=ctx.request_id,
             stage="finalize",
             attrs={
-                "stop": bool(ctx.runtime.stop),
+                "stop": ctx.runtime.stop,
                 "stop_reason": str(ctx.runtime.stop_reason or "n/a"),
-                "content_chars": int(content_chars),
-                "has_structured": bool(ctx.output.structured is not None),
+                "content_chars": content_chars,
+                "has_structured": ctx.output.structured is not None,
                 "report_style_selected": str(theme_plan.report_style or ""),
-                "report_style_enabled": bool(style_cfg.enabled),
-                "report_style_apply_subreport": bool(style_cfg.apply_subreport),
-                "report_style_apply_render": bool(style_cfg.apply_render),
+                "report_style_enabled": style_cfg.enabled,
+                "report_style_apply_subreport": style_cfg.apply_subreport,
+                "report_style_apply_render": style_cfg.apply_render,
                 "mode_depth_profile": str(mode_depth.mode_key),
-                "density_gate_passes_applied": int(
-                    ctx.runtime.density_gate_passes_applied
-                ),
-                "gap_closure_passes_applied": int(
-                    ctx.runtime.gap_closure_passes_applied
-                ),
-                "llm_orchestrator_enabled": bool(
-                    mode_depth.enable_llm_track_orchestrator
-                ),
-                "output_length_ratio_vs_target": float(ratio_vs_target),
+                "density_gate_passes_applied": ctx.runtime.density_gate_passes_applied,
+                "gap_closure_passes_applied": ctx.runtime.gap_closure_passes_applied,
+                "llm_orchestrator_enabled": mode_depth.enable_llm_track_orchestrator,
+                "output_length_ratio_vs_target": ratio_vs_target,
                 "input_language": str(theme_plan.input_language),
                 "output_language": str(theme_plan.output_language),
                 "search_language": str(search_language),
-                "provider_language_param_applied": bool(
-                    provider_language_param_applied
-                ),
+                "provider_language_param_applied": provider_language_param_applied,
             },
         )
         return ctx

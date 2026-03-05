@@ -324,10 +324,13 @@ class ResearchModeDepthState(MutableModel):
     density_gate_passes: int = 1
     render_section_min: int = 7
     render_section_max: int = 9
-    overview_context_topk_override: int = 18
-    content_context_topk_override: int = 12
-    subreport_context_topk_override: int = 14
-    content_packet_max_chars: int = 10_000
+    overview_source_topk: int = 20
+    content_source_topk: int = 10
+    subreport_source_topk: int = 10
+    content_source_chars: int = 10_000
+    subreport_overview_chars: int = 3200
+    subreport_excerpt_chars: int = 2200
+    subreport_total_chars: int = 24_000
     target_length_ratio_vs_current: float = 1.0
     search_links_main_limit: int = 80
     explore_target_pages_per_round: int = 3

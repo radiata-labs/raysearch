@@ -241,12 +241,15 @@ class ResearchModeDepthProfileSettings(Model):
     gap_closure_passes: int = 1
     enable_density_gate: bool = True
     density_gate_passes: int = 1
+    overview_source_topk: int = 20
+    content_source_topk: int = 10
+    subreport_source_topk: int = 10
+    content_source_chars: int = 10_000
+    subreport_overview_chars: int = 3200
+    subreport_excerpt_chars: int = 2200
+    subreport_total_chars: int = 24_000
     render_section_min: int = 7
     render_section_max: int = 9
-    overview_context_topk_override: int = 18
-    content_context_topk_override: int = 12
-    subreport_context_topk_override: int = 14
-    content_packet_max_chars: int = 10_000
     target_length_ratio_vs_current: float = 1.0
     search_links_main_limit: int = 80
     explore_target_pages_per_round: int = 3
@@ -265,8 +268,7 @@ class ResearchModeDepthProfileSettings(Model):
             )
         if int(self.no_progress_rounds_to_stop_effective) <= 0:
             raise ValueError(
-                "research.mode_depth profile no_progress_rounds_to_stop_effective "
-                "must be > 0"
+                "research.mode_depth profile no_progress_rounds_to_stop_effective must be > 0"
             )
         if int(self.gap_closure_passes) < 0:
             raise ValueError(
@@ -275,6 +277,34 @@ class ResearchModeDepthProfileSettings(Model):
         if int(self.density_gate_passes) < 0:
             raise ValueError(
                 "research.mode_depth profile density_gate_passes must be >= 0"
+            )
+        if int(self.overview_source_topk) <= 0:
+            raise ValueError(
+                "research.mode_depth profile overview_source_topk must be > 0"
+            )
+        if int(self.content_source_topk) <= 0:
+            raise ValueError(
+                "research.mode_depth profile content_source_topk must be > 0"
+            )
+        if int(self.subreport_source_topk) <= 0:
+            raise ValueError(
+                "research.mode_depth profile subreport_source_topk must be > 0"
+            )
+        if int(self.content_source_chars) <= 0:
+            raise ValueError(
+                "research.mode_depth profile content_source_chars must be > 0"
+            )
+        if int(self.subreport_overview_chars) <= 0:
+            raise ValueError(
+                "research.mode_depth profile subreport_overview_chars must be > 0"
+            )
+        if int(self.subreport_excerpt_chars) <= 0:
+            raise ValueError(
+                "research.mode_depth profile subreport_excerpt_chars must be > 0"
+            )
+        if int(self.subreport_total_chars) <= 0:
+            raise ValueError(
+                "research.mode_depth profile subreport_total_chars must be > 0"
             )
         if int(self.render_section_min) <= 0:
             raise ValueError(
@@ -288,22 +318,6 @@ class ResearchModeDepthProfileSettings(Model):
             raise ValueError(
                 "research.mode_depth profile render_section_max must be >= "
                 "render_section_min"
-            )
-        if int(self.overview_context_topk_override) <= 0:
-            raise ValueError(
-                "research.mode_depth profile overview_context_topk_override must be > 0"
-            )
-        if int(self.content_context_topk_override) <= 0:
-            raise ValueError(
-                "research.mode_depth profile content_context_topk_override must be > 0"
-            )
-        if int(self.subreport_context_topk_override) <= 0:
-            raise ValueError(
-                "research.mode_depth profile subreport_context_topk_override must be > 0"
-            )
-        if int(self.content_packet_max_chars) <= 0:
-            raise ValueError(
-                "research.mode_depth profile content_packet_max_chars must be > 0"
             )
         if float(self.target_length_ratio_vs_current) <= 0:
             raise ValueError(
@@ -342,12 +356,15 @@ def _default_mode_depth_fast() -> ResearchModeDepthProfileSettings:
         gap_closure_passes=0,
         enable_density_gate=False,
         density_gate_passes=0,
+        overview_source_topk=10,
+        content_source_topk=6,
+        subreport_source_topk=6,
+        content_source_chars=6000,
+        subreport_overview_chars=2000,
+        subreport_excerpt_chars=1400,
+        subreport_total_chars=12_000,
         render_section_min=5,
         render_section_max=6,
-        overview_context_topk_override=12,
-        content_context_topk_override=8,
-        subreport_context_topk_override=8,
-        content_packet_max_chars=7000,
         target_length_ratio_vs_current=0.85,
         search_links_main_limit=24,
         explore_target_pages_per_round=2,
@@ -366,12 +383,15 @@ def _default_mode_depth_research() -> ResearchModeDepthProfileSettings:
         gap_closure_passes=1,
         enable_density_gate=True,
         density_gate_passes=1,
+        overview_source_topk=20,
+        content_source_topk=10,
+        subreport_source_topk=10,
+        content_source_chars=10_000,
+        subreport_overview_chars=3200,
+        subreport_excerpt_chars=2200,
+        subreport_total_chars=24_000,
         render_section_min=7,
         render_section_max=9,
-        overview_context_topk_override=18,
-        content_context_topk_override=12,
-        subreport_context_topk_override=14,
-        content_packet_max_chars=10_000,
         target_length_ratio_vs_current=1.0,
         search_links_main_limit=80,
         explore_target_pages_per_round=4,
@@ -390,12 +410,15 @@ def _default_mode_depth_pro() -> ResearchModeDepthProfileSettings:
         gap_closure_passes=2,
         enable_density_gate=True,
         density_gate_passes=2,
+        overview_source_topk=32,
+        content_source_topk=16,
+        subreport_source_topk=16,
+        content_source_chars=15_000,
+        subreport_overview_chars=4200,
+        subreport_excerpt_chars=3200,
+        subreport_total_chars=42_000,
         render_section_min=9,
         render_section_max=10,
-        overview_context_topk_override=26,
-        content_context_topk_override=18,
-        subreport_context_topk_override=20,
-        content_packet_max_chars=14_000,
         target_length_ratio_vs_current=1.1,
         search_links_main_limit=160,
         explore_target_pages_per_round=6,

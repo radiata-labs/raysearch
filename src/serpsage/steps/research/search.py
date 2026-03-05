@@ -71,7 +71,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         round_action = clean_whitespace(
             str(ctx.work.round_action or "search")
         ).casefold()
-        if int(ctx.current_round.round_index) <= 1:
+        if ctx.current_round.round_index <= 1:
             round_action = "search"
         if round_action != "search":
             return ctx
@@ -88,7 +88,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             return ctx
         remaining_search_budget = max(
             0,
-            int(ctx.runtime.budget.max_search_calls) - int(ctx.runtime.search_calls),
+            ctx.runtime.budget.max_search_calls - ctx.runtime.search_calls,
         )
         if remaining_search_budget <= 0:
             ctx.runtime.stop = True
@@ -98,7 +98,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             return ctx
         remaining_fetch_budget = max(
             0,
-            int(ctx.runtime.budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
+            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
         )
         if remaining_fetch_budget <= 0:
             ctx.runtime.stop = True
@@ -108,8 +108,8 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             return ctx
         executable_jobs = min(
             len(jobs),
-            int(remaining_fetch_budget),
-            int(remaining_search_budget),
+            remaining_fetch_budget,
+            remaining_search_budget,
         )
         jobs = jobs[:executable_jobs]
         if not jobs:
@@ -123,7 +123,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ctx.current_round.stop_reason = str(ctx.runtime.stop_reason)
             return ctx
         mode_depth = ctx.runtime.mode_depth
-        main_links_limit = max(1, int(mode_depth.search_links_main_limit))
+        main_links_limit = max(1, mode_depth.search_links_main_limit)
         search_language = normalize_language_code(
             ctx.plan.theme_plan.search_language,
             default="other",
@@ -168,7 +168,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     request_id=f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}",
                 )
             )
-            remaining_fetch_budget = max(0, int(remaining_fetch_budget) - 1)
+            remaining_fetch_budget = max(0, remaining_fetch_budget - 1)
         out = await self._search_runner.run_batch(contexts)
         prepared_candidates: list[SearchFetchedCandidate] = []
         for search_ctx in out:
@@ -208,7 +208,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 else None
             ),
             mode=query_job.mode,
-            max_results=int(ctx.runtime.budget.max_results_per_search),
+            max_results=ctx.runtime.budget.max_results_per_search,
             include_domains=(list(query_job.include_domains) or None),
             exclude_domains=(list(query_job.exclude_domains) or None),
             include_text=(list(query_job.include_text) or None),

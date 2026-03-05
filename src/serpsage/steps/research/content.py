@@ -50,8 +50,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
         mode_depth = ctx.runtime.mode_depth
-        content_topk = max(1, int(mode_depth.content_context_topk_override))
-        packet_max_chars = max(1000, int(mode_depth.content_packet_max_chars))
+        content_topk = max(1, mode_depth.content_source_topk)
+        packet_max_chars = max(1000, mode_depth.content_source_chars)
         source_ids = list(ctx.work.need_content_source_ids or [])
         if not source_ids:
             source_ids = list(ctx.current_round.context_source_ids or [])
@@ -90,9 +90,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=ContentOutputPayload,
                 format_override=self._build_content_schema(
-                    max_queries=int(ctx.runtime.budget.max_queries_per_round)
+                    max_queries=ctx.runtime.budget.max_queries_per_round
                 ),
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
         except Exception as exc:  # noqa: BLE001
@@ -104,7 +104,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 error_code="research_content_review_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "round_index": int(ctx.current_round.round_index),
+                    "round_index": ctx.current_round.round_index,
                     "message": str(exc),
                 },
             )
@@ -121,7 +121,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         )
         payload = payload.model_copy(
             update={
-                "entity_coverage_complete": bool(entity_coverage_complete),
+                "entity_coverage_complete": entity_coverage_complete,
                 "covered_entities": list(covered_entities),
                 "missing_entities": list(missing_entities),
             }
@@ -134,25 +134,25 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         adjustment = self._normalize_adjustment(payload.confidence_adjustment)
         ctx.current_round.confidence = min(
             1.0,
-            max(0.0, float(ctx.current_round.confidence) + adjustment),
+            max(0.0, ctx.current_round.confidence + adjustment),
         )
         unresolved_count = self._count_unresolved(payload.conflict_resolutions)
         ctx.current_round.unresolved_conflicts = min(
-            int(ctx.current_round.unresolved_conflicts),
-            int(unresolved_count),
+            ctx.current_round.unresolved_conflicts,
+            unresolved_count,
         )
-        ctx.current_round.critical_gaps = int(
-            len(normalize_strings(payload.remaining_gaps, limit=20))
+        ctx.current_round.critical_gaps = len(
+            normalize_strings(payload.remaining_gaps, limit=20)
         )
-        ctx.current_round.entity_coverage_complete = bool(entity_coverage_complete)
+        ctx.current_round.entity_coverage_complete = entity_coverage_complete
         ctx.current_round.missing_entities = list(missing_entities)
         ctx.work.next_queries = merge_strings(
             list(ctx.work.next_queries),
             normalize_strings(
                 payload.next_queries,
-                limit=int(ctx.runtime.budget.max_queries_per_round),
+                limit=ctx.runtime.budget.max_queries_per_round,
             ),
-            limit=int(ctx.runtime.budget.max_queries_per_round),
+            limit=ctx.runtime.budget.max_queries_per_round,
         )
         strategy = clean_whitespace(str(payload.next_query_strategy or ""))
         if strategy:
@@ -166,8 +166,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 "report_style_selected": str(report_style),
                 "style_applied_stage": "content",
                 "mode_depth_profile": str(mode_depth.mode_key),
-                "content_context_topk_effective": int(content_topk),
-                "content_packet_max_chars_effective": int(packet_max_chars),
+                "content_source_topk_effective": content_topk,
+                "content_source_chars_effective": packet_max_chars,
             },
         )
         return ctx
@@ -222,9 +222,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         return resolve_report_style(
             raw_style=ctx.plan.theme_plan.report_style,
             theme=self._resolve_core_question(ctx),
-            enabled=bool(cfg.enabled),
+            enabled=cfg.enabled,
             fallback_style=cast("ReportStyle", fallback_style_key),
-            strict_style_lock=bool(cfg.strict_style_lock),
+            strict_style_lock=cfg.strict_style_lock,
         )
 
     def _build_content_schema(self, *, max_queries: int) -> dict[str, Any]:
@@ -281,7 +281,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 "next_query_strategy": {"type": "string"},
                 "next_queries": {
                     "type": "array",
-                    "maxItems": max(1, int(max_queries)),
+                    "maxItems": max(1, max_queries),
                     "items": {"type": "string"},
                 },
                 "stop": {"type": "boolean"},
@@ -333,7 +333,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             blocks.append(
                 "\n".join(
                     [
-                        f"### Source {int(source.source_id)}",
+                        f"### Source {source.source_id}",
                         f"- URL: {source.url}",
                         f"- Title: {clean_whitespace(source.title)}",
                         "- Content:",
@@ -346,7 +346,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         return "\n\n".join(blocks)
 
     def _truncate_content_head_tail(self, *, content: str, max_chars: int) -> str:
-        limit = max(1, int(max_chars))
+        limit = max(1, max_chars)
         if len(content) <= limit:
             return content
         marker = "\n...\n[content omitted]\n...\n"

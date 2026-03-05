@@ -53,8 +53,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         mode_depth = ctx.runtime.mode_depth
-        prompt_card_cap = max(1, int(mode_depth.max_question_cards_effective))
-        seed_limit = max(6, int(ctx.runtime.budget.max_queries_per_round) * 3)
+        prompt_card_cap = max(1, mode_depth.max_question_cards_effective)
+        seed_limit = max(6, ctx.runtime.budget.max_queries_per_round * 3)
         style_cfg = self.settings.research.report_style
         hinted_style = infer_report_style_from_theme(
             ctx.request.themes,
@@ -101,7 +101,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=ThemeOutputPayload,
                 format_override=self._build_theme_schema(card_cap=prompt_card_cap),
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
         except Exception as exc:  # noqa: BLE001
@@ -168,7 +168,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         mode_depth = ctx.runtime.mode_depth
         mode_key = clean_whitespace(str(mode_depth.mode_key)).casefold()
-        card_cap = max(1, int(mode_depth.max_question_cards_effective))
+        card_cap = max(1, mode_depth.max_question_cards_effective)
         subthemes = normalize_strings(payload.subthemes, limit=12)
         required_entities = normalize_strings(payload.required_entities, limit=16)
         cards = self._normalize_question_cards(
@@ -211,7 +211,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         ctx.plan.theme_plan = theme_plan
         seed_groups = [list(item.seed_queries) for item in cards]
-        next_query_limit = max(8, int(ctx.runtime.budget.max_queries_per_round) * 3)
+        next_query_limit = max(8, ctx.runtime.budget.max_queries_per_round * 3)
         ctx.plan.next_queries = merge_strings(
             *seed_groups,
             [core_question],
@@ -267,17 +267,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "complexity_tier": str(complexity_tier),
                     "effective_complexity_tier": str(complexity_tier),
                     "adaptive_applied": bool(adaptive_applied),
-                    "max_question_cards_effective": int(
-                        mode_depth.max_question_cards_effective
-                    ),
-                    "min_rounds_per_track": int(mode_depth.min_rounds_per_track),
-                    "gap_closure_passes": int(mode_depth.gap_closure_passes),
-                    "density_gate_passes": int(mode_depth.density_gate_passes),
-                    "render_section_min": int(mode_depth.render_section_min),
-                    "render_section_max": int(mode_depth.render_section_max),
-                    "target_length_ratio_vs_current": float(
-                        mode_depth.target_length_ratio_vs_current
-                    ),
+                    "max_question_cards_effective": int(card_cap),
+                    "min_rounds_per_track": mode_depth.min_rounds_per_track,
+                    "gap_closure_passes": mode_depth.gap_closure_passes,
+                    "density_gate_passes": mode_depth.density_gate_passes,
+                    "render_section_min": mode_depth.render_section_min,
+                    "render_section_max": mode_depth.render_section_max,
+                    "target_length_ratio_vs_current": mode_depth.target_length_ratio_vs_current,
                 },
             )
         await self.emit_tracking_event(
@@ -336,9 +332,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             mode_depth_profile=str(mode_depth.mode_key),
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
-            max_rounds=int(budget.max_rounds),
-            max_search_calls=int(budget.max_search_calls),
-            max_queries_per_round=int(budget.max_queries_per_round),
+            max_rounds=budget.max_rounds,
+            max_search_calls=budget.max_search_calls,
+            max_queries_per_round=budget.max_queries_per_round,
             card_cap=int(card_cap),
             hinted_style=hinted_style,
             hinted_task_intent=hinted_intent,
@@ -702,10 +698,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     density_gate_passes=0,
                     render_section_min=6,
                     render_section_max=7,
-                    overview_context_topk_override=14,
-                    content_context_topk_override=9,
-                    subreport_context_topk_override=10,
-                    content_packet_max_chars=8_500,
+                    overview_source_topk=14,
+                    content_source_topk=9,
+                    subreport_source_topk=10,
+                    content_source_chars=8_500,
+                    subreport_overview_chars=2400,
+                    subreport_excerpt_chars=1700,
+                    subreport_total_chars=18_000,
                     target_length_ratio_vs_current=0.95,
                     explore_target_pages_per_round=3,
                     explore_links_per_page=7,
@@ -719,10 +718,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 density_gate_passes=1,
                 render_section_min=7,
                 render_section_max=8,
-                overview_context_topk_override=16,
-                content_context_topk_override=10,
-                subreport_context_topk_override=12,
-                content_packet_max_chars=9_000,
+                overview_source_topk=16,
+                content_source_topk=10,
+                subreport_source_topk=12,
+                content_source_chars=9_000,
+                subreport_overview_chars=2800,
+                subreport_excerpt_chars=1900,
+                subreport_total_chars=21_000,
                 target_length_ratio_vs_current=0.98,
                 explore_target_pages_per_round=4,
                 explore_links_per_page=9,
@@ -739,10 +741,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 density_gate_passes=1,
                 render_section_min=8,
                 render_section_max=9,
-                overview_context_topk_override=24,
-                content_context_topk_override=17,
-                subreport_context_topk_override=19,
-                content_packet_max_chars=13_500,
+                overview_source_topk=24,
+                content_source_topk=17,
+                subreport_source_topk=19,
+                content_source_chars=13_500,
+                subreport_overview_chars=4000,
+                subreport_excerpt_chars=3000,
+                subreport_total_chars=36_000,
                 target_length_ratio_vs_current=1.08,
                 explore_target_pages_per_round=5,
                 explore_links_per_page=14,
@@ -760,31 +765,33 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         density_gate_passes: int,
         render_section_min: int,
         render_section_max: int,
-        overview_context_topk_override: int,
-        content_context_topk_override: int,
-        subreport_context_topk_override: int,
-        content_packet_max_chars: int,
+        overview_source_topk: int,
+        content_source_topk: int,
+        subreport_source_topk: int,
+        content_source_chars: int,
+        subreport_overview_chars: int,
+        subreport_excerpt_chars: int,
+        subreport_total_chars: int,
         target_length_ratio_vs_current: float,
         explore_target_pages_per_round: int,
         explore_links_per_page: int,
     ) -> None:
-        mode_depth.max_question_cards_effective = int(max_question_cards_effective)
-        mode_depth.min_rounds_per_track = int(min_rounds_per_track)
-        mode_depth.gap_closure_passes = int(gap_closure_passes)
-        mode_depth.density_gate_passes = int(density_gate_passes)
-        mode_depth.render_section_min = int(render_section_min)
-        mode_depth.render_section_max = int(render_section_max)
-        mode_depth.overview_context_topk_override = int(overview_context_topk_override)
-        mode_depth.content_context_topk_override = int(content_context_topk_override)
-        mode_depth.subreport_context_topk_override = int(
-            subreport_context_topk_override
-        )
-        mode_depth.content_packet_max_chars = int(content_packet_max_chars)
-        mode_depth.target_length_ratio_vs_current = float(
-            target_length_ratio_vs_current
-        )
-        mode_depth.explore_target_pages_per_round = int(explore_target_pages_per_round)
-        mode_depth.explore_links_per_page = int(explore_links_per_page)
+        mode_depth.max_question_cards_effective = max_question_cards_effective
+        mode_depth.min_rounds_per_track = min_rounds_per_track
+        mode_depth.gap_closure_passes = gap_closure_passes
+        mode_depth.density_gate_passes = density_gate_passes
+        mode_depth.render_section_min = render_section_min
+        mode_depth.render_section_max = render_section_max
+        mode_depth.overview_source_topk = overview_source_topk
+        mode_depth.content_source_topk = content_source_topk
+        mode_depth.subreport_source_topk = subreport_source_topk
+        mode_depth.content_source_chars = content_source_chars
+        mode_depth.subreport_overview_chars = subreport_overview_chars
+        mode_depth.subreport_excerpt_chars = subreport_excerpt_chars
+        mode_depth.subreport_total_chars = subreport_total_chars
+        mode_depth.target_length_ratio_vs_current = target_length_ratio_vs_current
+        mode_depth.explore_target_pages_per_round = explore_target_pages_per_round
+        mode_depth.explore_links_per_page = explore_links_per_page
 
 
 __all__ = ["ResearchThemeStep"]

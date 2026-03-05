@@ -77,18 +77,16 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         if ctx.runtime.stop:
             return ctx
         budget = ctx.runtime.budget
-        if ctx.runtime.round_index >= int(budget.max_rounds):
+        if ctx.runtime.round_index >= budget.max_rounds:
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "max_rounds"
             return ctx
-        remain_fetch_calls = int(budget.max_fetch_calls) - int(ctx.runtime.fetch_calls)
+        remain_fetch_calls = budget.max_fetch_calls - ctx.runtime.fetch_calls
         if remain_fetch_calls <= 0:
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "max_fetch_calls"
             return ctx
-        remain_search_calls = int(budget.max_search_calls) - int(
-            ctx.runtime.search_calls
-        )
+        remain_search_calls = budget.max_search_calls - int(ctx.runtime.search_calls)
         next_round_index = int(ctx.runtime.round_index) + 1
         if remain_search_calls <= 0 and not self._can_attempt_explore(
             ctx=ctx,
@@ -114,7 +112,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         candidate_queries = merge_strings(
             list(ctx.plan.next_queries),
             [core_question],
-            limit=max(8, int(budget.max_queries_per_round) * 3),
+            limit=max(8, budget.max_queries_per_round * 3),
         )
         model = resolve_research_model(
             ctx=ctx,
@@ -138,7 +136,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=PlanOutputPayload,
                 format_override=self._build_plan_schema(),
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
         except Exception as exc:  # noqa: BLE001
@@ -173,24 +171,20 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         explore_target_source_ids = self._normalize_explore_target_source_ids(
             raw=payload.explore_target_source_ids,
             candidates=last_round_candidates,
-            limit=int(ctx.runtime.mode_depth.explore_target_pages_per_round),
+            limit=ctx.runtime.mode_depth.explore_target_pages_per_round,
         )
         if round_action == "explore" and not explore_target_source_ids:
             explore_target_source_ids = self._fallback_explore_target_source_ids(
                 candidates=last_round_candidates,
-                limit=int(ctx.runtime.mode_depth.explore_target_pages_per_round),
+                limit=ctx.runtime.mode_depth.explore_target_pages_per_round,
             )
         if round_action == "explore" and not explore_target_source_ids:
             round_action = "search"
         ctx.work.round_action = round_action
         ctx.work.explore_target_source_ids = list(explore_target_source_ids)
         ctx.current_round.query_strategy = strategy or str(round_action)
-        remain_search_calls = int(budget.max_search_calls) - int(
-            ctx.runtime.search_calls
-        )
-        job_limit = max(
-            0, min(int(budget.max_queries_per_round), int(remain_search_calls))
-        )
+        remain_search_calls = budget.max_search_calls - int(ctx.runtime.search_calls)
+        job_limit = max(0, min(budget.max_queries_per_round, int(remain_search_calls)))
         jobs = self._normalize_jobs(
             payload.search_jobs,
             job_limit=job_limit,
@@ -458,7 +452,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=_QueryLanguageRepairOutputPayload,
                 format_override=self._build_query_language_repair_schema(),
-                retries=int(self.settings.research.llm_self_heal_retries),
+                retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
         except Exception:
@@ -678,7 +672,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         )
         last_round_candidates_markdown = render_link_candidates_markdown(
             last_round_candidates,
-            max_pages=max(1, int(mode_depth.explore_target_pages_per_round)),
+            max_pages=max(1, mode_depth.explore_target_pages_per_round),
             max_links_per_page=6,
         )
         return build_plan_prompt_messages(
@@ -698,21 +692,19 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             required_entities=list(ctx.plan.theme_plan.required_entities),
             search_calls_remaining=max(
                 0,
-                int(budget.max_search_calls) - int(ctx.runtime.search_calls),
+                budget.max_search_calls - ctx.runtime.search_calls,
             ),
             fetch_calls_remaining=max(
                 0,
-                int(budget.max_fetch_calls) - int(ctx.runtime.fetch_calls),
+                budget.max_fetch_calls - ctx.runtime.fetch_calls,
             ),
-            max_queries_this_round=int(budget.max_queries_per_round),
+            max_queries_this_round=budget.max_queries_per_round,
             allow_explore=self._can_attempt_explore(
                 ctx=ctx,
                 round_index=round_index,
             ),
-            explore_target_pages_per_round=int(
-                mode_depth.explore_target_pages_per_round
-            ),
-            explore_links_per_page=int(mode_depth.explore_links_per_page),
+            explore_target_pages_per_round=mode_depth.explore_target_pages_per_round,
+            explore_links_per_page=mode_depth.explore_links_per_page,
             last_round_link_candidates_markdown=last_round_candidates_markdown,
         )
 
@@ -784,7 +776,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> bool:
         if int(round_index) <= 1:
             return False
-        if int(ctx.runtime.budget.max_fetch_calls) <= int(ctx.runtime.fetch_calls):
+        if ctx.runtime.budget.max_fetch_calls <= ctx.runtime.fetch_calls:
             return False
         candidates = self._resolve_last_round_candidates(
             ctx=ctx,

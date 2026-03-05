@@ -55,52 +55,39 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         ctx.runtime = ResearchRuntimeState(
             mode_depth=ResearchModeDepthState(
                 mode_key=mode,  # type: ignore[arg-type]
-                max_question_cards_effective=int(
-                    mode_depth.max_question_cards_effective
-                ),
-                min_rounds_per_track=int(mode_depth.min_rounds_per_track),
-                no_progress_rounds_to_stop_effective=int(
-                    mode_depth.no_progress_rounds_to_stop_effective
-                ),
-                enable_llm_track_orchestrator=bool(
-                    mode_depth.enable_llm_track_orchestrator
-                ),
-                enable_gap_closure_pass=bool(mode_depth.enable_gap_closure_pass),
-                gap_closure_passes=int(mode_depth.gap_closure_passes),
-                enable_density_gate=bool(mode_depth.enable_density_gate),
-                density_gate_passes=int(mode_depth.density_gate_passes),
-                render_section_min=int(mode_depth.render_section_min),
-                render_section_max=int(mode_depth.render_section_max),
-                overview_context_topk_override=int(
-                    mode_depth.overview_context_topk_override
-                ),
-                content_context_topk_override=int(
-                    mode_depth.content_context_topk_override
-                ),
-                subreport_context_topk_override=int(
-                    mode_depth.subreport_context_topk_override
-                ),
-                content_packet_max_chars=int(mode_depth.content_packet_max_chars),
-                target_length_ratio_vs_current=float(
-                    mode_depth.target_length_ratio_vs_current
-                ),
-                search_links_main_limit=int(mode_depth.search_links_main_limit),
-                explore_target_pages_per_round=int(
-                    mode_depth.explore_target_pages_per_round
-                ),
-                explore_links_per_page=int(mode_depth.explore_links_per_page),
-                explore_fetch_round_ratio=float(mode_depth.explore_fetch_round_ratio),
+                max_question_cards_effective=mode_depth.max_question_cards_effective,
+                min_rounds_per_track=mode_depth.min_rounds_per_track,
+                no_progress_rounds_to_stop_effective=mode_depth.no_progress_rounds_to_stop_effective,
+                enable_llm_track_orchestrator=mode_depth.enable_llm_track_orchestrator,
+                enable_gap_closure_pass=mode_depth.enable_gap_closure_pass,
+                gap_closure_passes=mode_depth.gap_closure_passes,
+                enable_density_gate=mode_depth.enable_density_gate,
+                density_gate_passes=mode_depth.density_gate_passes,
+                render_section_min=mode_depth.render_section_min,
+                render_section_max=mode_depth.render_section_max,
+                overview_source_topk=mode_depth.overview_source_topk,
+                content_source_topk=mode_depth.content_source_topk,
+                subreport_source_topk=mode_depth.subreport_source_topk,
+                content_source_chars=mode_depth.content_source_chars,
+                subreport_overview_chars=mode_depth.subreport_overview_chars,
+                subreport_excerpt_chars=mode_depth.subreport_excerpt_chars,
+                subreport_total_chars=mode_depth.subreport_total_chars,
+                target_length_ratio_vs_current=mode_depth.target_length_ratio_vs_current,
+                search_links_main_limit=mode_depth.search_links_main_limit,
+                explore_target_pages_per_round=mode_depth.explore_target_pages_per_round,
+                explore_links_per_page=mode_depth.explore_links_per_page,
+                explore_fetch_round_ratio=mode_depth.explore_fetch_round_ratio,
             ),
             budget=ResearchBudgetState(
-                max_rounds=int(profile.max_rounds),
-                max_search_calls=int(profile.max_search_calls),
-                max_fetch_calls=int(profile.max_fetch_calls),
-                max_results_per_search=int(profile.max_results_per_search),
-                max_queries_per_round=int(profile.max_queries_per_round),
-                max_fetch_per_round=int(profile.max_fetch_per_round),
-                stop_confidence=float(profile.stop_confidence),
-                min_coverage_ratio=float(profile.min_coverage_ratio),
-                max_unresolved_conflicts=int(profile.max_unresolved_conflicts),
+                max_rounds=profile.max_rounds,
+                max_search_calls=profile.max_search_calls,
+                max_fetch_calls=profile.max_fetch_calls,
+                max_results_per_search=profile.max_results_per_search,
+                max_queries_per_round=profile.max_queries_per_round,
+                max_fetch_per_round=profile.max_fetch_per_round,
+                stop_confidence=profile.stop_confidence,
+                min_coverage_ratio=profile.min_coverage_ratio,
+                max_unresolved_conflicts=profile.max_unresolved_conflicts,
             ),
             search_calls=0,
             fetch_calls=0,
@@ -115,20 +102,14 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         )
         global_search_budget = max(
             1,
-            int(
-                math.ceil(
-                    float(profile.max_search_calls)
-                    * self._resolve_global_budget_multiplier(mode)
-                )
+            math.ceil(
+                profile.max_search_calls * self._resolve_global_budget_multiplier(mode)
             ),
         )
         global_fetch_budget = max(
             1,
-            int(
-                math.ceil(
-                    float(profile.max_fetch_calls)
-                    * self._resolve_global_budget_multiplier(mode)
-                )
+            math.ceil(
+                profile.max_fetch_calls * self._resolve_global_budget_multiplier(mode)
             ),
         )
         ctx.plan = ResearchPlanState(
@@ -156,16 +137,12 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             attrs={
                 "message": "research.prepare.initialized",
                 "mode": mode,
-                "max_rounds": int(profile.max_rounds),
-                "max_search_calls": int(profile.max_search_calls),
+                "max_rounds": profile.max_rounds,
+                "max_search_calls": profile.max_search_calls,
                 "mode_depth_profile": str(mode),
-                "mode_depth_question_cards": int(
-                    mode_depth.max_question_cards_effective
-                ),
-                "mode_depth_min_rounds_per_track": int(mode_depth.min_rounds_per_track),
-                "mode_depth_orchestrator_enabled": bool(
-                    mode_depth.enable_llm_track_orchestrator
-                ),
+                "mode_depth_question_cards": mode_depth.max_question_cards_effective,
+                "mode_depth_min_rounds_per_track": mode_depth.min_rounds_per_track,
+                "mode_depth_orchestrator_enabled": mode_depth.enable_llm_track_orchestrator,
                 "theme": themes,
             },
         )
@@ -175,11 +152,9 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             stage="prepare",
             attrs={
                 "mode_depth_profile": str(mode),
-                "llm_orchestrator_enabled": bool(
-                    mode_depth.enable_llm_track_orchestrator
-                ),
-                "gap_closure_passes": int(mode_depth.gap_closure_passes),
-                "density_gate_passes": int(mode_depth.density_gate_passes),
+                "llm_orchestrator_enabled": mode_depth.enable_llm_track_orchestrator,
+                "gap_closure_passes": mode_depth.gap_closure_passes,
+                "density_gate_passes": mode_depth.density_gate_passes,
             },
         )
         return ctx
@@ -210,7 +185,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
 
     def _resolve_global_budget_multiplier(self, mode: str) -> float:
         token = clean_whitespace(mode).casefold()
-        return float(self._GLOBAL_BUDGET_MULTIPLIER_BY_MODE.get(token, 2.0))
+        return self._GLOBAL_BUDGET_MULTIPLIER_BY_MODE.get(token, 2.0)
 
 
 __all__ = ["ResearchPrepareStep"]
