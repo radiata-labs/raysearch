@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.pipeline import ResearchSource, ResearchStepContext
+from serpsage.models.pipeline import ResearchStepContext
 from serpsage.models.research import (
     ContentConflictPayload,
     ContentOutputPayload,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.context import (
-    render_overview_review_markdown,
-    render_theme_plan_markdown,
-)
 from serpsage.steps.research.prompt import (
     build_content_messages as build_content_prompt_messages,
 )
+from serpsage.steps.research.prompt import (
+    build_content_packet,
+    render_overview_review_markdown,
+    render_theme_plan_markdown,
+)
+from serpsage.steps.research.schema import build_content_schema
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     sort_source_ids_by_score,
@@ -65,7 +67,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         if not selected_sources:
             ctx.work.content_review = self._empty_review()
             return ctx
-        packet = self._build_content_packet(
+        packet = build_content_packet(
             sources=selected_sources,
             source_ids=source_ids,
             max_chars=packet_max_chars,
@@ -85,7 +87,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     now_utc=now_utc,
                 ),
                 response_format=ContentOutputPayload,
-                format_override=self._build_content_schema(
+                format_override=build_content_schema(
                     max_queries=ctx.runtime.budget.max_queries_per_round
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
@@ -205,67 +207,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
     def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
         return ctx.plan.theme_plan.output_language or "en"
 
-    def _build_content_schema(self, *, max_queries: int) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "resolved_findings",
-                "conflict_resolutions",
-                "entity_coverage_complete",
-                "covered_entities",
-                "missing_entities",
-                "remaining_gaps",
-                "confidence_adjustment",
-                "next_query_strategy",
-                "next_queries",
-                "stop",
-            ],
-            "properties": {
-                "resolved_findings": {
-                    "type": "array",
-                    "maxItems": 20,
-                    "items": {"type": "string"},
-                },
-                "conflict_resolutions": {
-                    "type": "array",
-                    "maxItems": 16,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["status"],
-                        "properties": {
-                            "status": {"type": "string"},
-                        },
-                    },
-                },
-                "entity_coverage_complete": {"type": "boolean"},
-                "covered_entities": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {"type": "string"},
-                },
-                "missing_entities": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {"type": "string"},
-                },
-                "remaining_gaps": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {"type": "string"},
-                },
-                "confidence_adjustment": {"type": "number"},
-                "next_query_strategy": {"type": "string"},
-                "next_queries": {
-                    "type": "array",
-                    "maxItems": max(1, max_queries),
-                    "items": {"type": "string"},
-                },
-                "stop": {"type": "boolean"},
-            },
-        }
-
     def _empty_review(self) -> ContentOutputPayload:
         return ContentOutputPayload()
 
@@ -276,53 +217,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             if status == "unresolved":
                 total += 1
         return total
-
-    def _build_content_packet(
-        self,
-        *,
-        sources: list[ResearchSource],
-        source_ids: list[int],
-        max_chars: int,
-    ) -> str:
-        wanted = set(source_ids)
-        blocks: list[str] = []
-        for source in sorted(sources, key=lambda item: item.source_id):
-            if source.source_id not in wanted:
-                continue
-            content = source.content.replace("\r\n", "\n").replace("\r", "\n").strip()
-            if len(content) > max_chars:
-                content = self._truncate_content_head_tail(
-                    content=content,
-                    max_chars=max_chars,
-                )
-            content_lines = (content or "(empty)").split("\n")
-            blocks.append(
-                "\n".join(
-                    [
-                        f"### Source {source.source_id}",
-                        f"- URL: {source.url}",
-                        f"- Title: {source.title}",
-                        "- Content:",
-                        "  ```markdown",
-                        *[f"  {line}" for line in content_lines],
-                        "  ```",
-                    ]
-                )
-            )
-        return "\n\n".join(blocks)
-
-    def _truncate_content_head_tail(self, *, content: str, max_chars: int) -> str:
-        limit = max(1, max_chars)
-        if len(content) <= limit:
-            return content
-        marker = "\n...\n[content omitted]\n...\n"
-        if limit <= len(marker) + 80:
-            return content[:limit]
-        available = limit - len(marker)
-        head_len = max(40, int(available * 0.70))
-        tail_len = max(40, int(available - head_len))
-        clipped = f"{content[:head_len]}{marker}{content[-tail_len:]}"
-        return clipped[:limit]
 
 
 __all__ = ["ResearchContentStep"]

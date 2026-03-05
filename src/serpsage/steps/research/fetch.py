@@ -21,6 +21,7 @@ from serpsage.models.pipeline import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_link_picker_messages
+from serpsage.steps.research.schema import build_link_picker_schema
 from serpsage.steps.research.search import (
     CorpusUpsertResult,
     append_source_version,
@@ -407,7 +408,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                     candidate_links_markdown=candidate_links_markdown,
                 ),
                 response_format=_LinkPickerPayload,
-                format_override=self._build_link_picker_schema(),
+                format_override=build_link_picker_schema(),
                 retries=self.settings.research.llm_self_heal_retries,
             )
             selected_ids = list(chat_result.data.selected_link_ids)
@@ -439,21 +440,6 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             candidate=candidate,
             max_links=max_links,
         )
-
-    def _build_link_picker_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["selected_link_ids", "reason"],
-            "properties": {
-                "selected_link_ids": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {"type": "integer"},
-                },
-                "reason": {"type": "string"},
-            },
-        }
 
     async def _prerank_links_for_llm(
         self,

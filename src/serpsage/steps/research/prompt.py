@@ -1,8 +1,29 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlparse
 
-from serpsage.models.research import ReportStyle, TaskComplexity, TaskIntent
+from serpsage.models.pipeline import (
+    ResearchLinkCandidate,
+    ResearchQuestionCard,
+    ResearchRoundState,
+    ResearchSource,
+    ResearchStepContext,
+    ResearchTrackResult,
+)
+from serpsage.models.research import (
+    OverviewOutputPayload,
+    RenderArchitectOutput,
+    RenderArchitectSectionPlan,
+    ReportStyle,
+    ResearchThemePlan,
+    ResearchThemePlanCard,
+    TaskComplexity,
+    TaskIntent,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 PromptStage = Literal[
     "theme",
@@ -907,6 +928,51 @@ def build_decide_signal_messages(
     ]
 
 
+def build_query_language_repair_messages(
+    *,
+    current_utc_date: str,
+    core_question: str,
+    required_search_language: str,
+    required_output_language: str,
+    current_search_jobs_json: str,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Role: Search job language normalizer.\n"
+                "Mission: Rewrite search query fields into the required search language while preserving intent and entities.\n"
+                "Rules:\n"
+                "1) Return JSON only.\n"
+                "2) Keep search_jobs array length and order unchanged.\n"
+                "3) Rewrite only query and additional_queries text.\n"
+                "4) Preserve named entities, versions, and explicit dates.\n"
+                "5) Do not broaden topic scope.\n"
+                "6) If a query is already aligned, keep it unchanged."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
+                "CORE_QUESTION:\n"
+                f"{core_question}\n\n"
+                "LANGUAGE_POLICY:\n"
+                f"- required_search_language={required_search_language}\n"
+                f"- required_output_language={required_output_language}\n\n"
+                "CURRENT_SEARCH_JOBS_JSON:\n"
+                f"{current_search_jobs_json}\n\n"
+                "Output JSON shape:\n"
+                "{\n"
+                '  "search_jobs": [\n'
+                '    { "query": "...", "additional_queries": ["..."] }\n'
+                "  ]\n"
+                "}"
+            ),
+        },
+    ]
+
+
 def build_track_orchestrator_messages(
     *,
     mode_depth_profile: str,
@@ -1377,6 +1443,37 @@ def build_density_gate_messages(
     ]
 
 
+def build_final_language_repair_messages(
+    *,
+    target_language: str,
+    current_utc_date: str,
+    markdown: str,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Role: Final report language normalizer.\n"
+                "Mission: Rewrite markdown into target language while preserving all meaning and structure.\n"
+                "Rules:\n"
+                "1) Preserve every key fact, number, date, condition, and action.\n"
+                "2) Keep heading structure and markdown formatting.\n"
+                "3) Keep unavoidable proper nouns in original form when needed.\n"
+                "4) Do not add or remove substantive content.\n"
+                "5) Return markdown only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"TARGET_LANGUAGE:\n{target_language}\n\n"
+                f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
+                f"MARKDOWN:\n{markdown}"
+            ),
+        },
+    ]
+
+
 def _normalize_style(raw_style: object | None) -> ReportStyle | None:
     token = str(raw_style).strip().casefold()
     if token not in _STYLE_VALUES:
@@ -1384,21 +1481,865 @@ def _normalize_style(raw_style: object | None) -> ReportStyle | None:
     return token  # type: ignore[return-value]
 
 
+_NONE_BULLET = ["  - (none)"]
+_NONE_BULLET_L3 = ["      - (none)"]
+
+
+def normalize_block_text(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _normalize_scalar_text(value: str) -> str:
+    return value
+
+
+def _render_markdown_bullets(values: Iterable[str], *, indent: str = "") -> list[str]:
+    out: list[str] = []
+    for item in values:
+        token = normalize_block_text(item)
+        if not token:
+            continue
+        if "\n" not in token:
+            out.append(f"{indent}- {token}")
+            continue
+        out.append(f"{indent}-")
+        out.append(f"{indent}  ```text")
+        out.extend(f"{indent}  {line}" for line in token.split("\n"))
+        out.append(f"{indent}  ```")
+    return out
+
+
+def render_theme_plan_markdown(
+    plan: ResearchThemePlan,
+    *,
+    include_title: bool = True,
+    title_level: int = 3,
+    include_question_cards: bool = True,
+) -> str:
+    lines: list[str] = []
+    if include_title:
+        level = max(1, title_level)
+        lines.append(f"{'#' * level} Theme Plan")
+    lines.extend(
+        [
+            f"- Core question: {_normalize_scalar_text(plan.core_question) or 'n/a'}",
+            f"- Report style: {_normalize_scalar_text(plan.report_style) or 'n/a'}",
+            f"- Task intent: {_normalize_scalar_text(plan.task_intent) or 'n/a'}",
+            f"- Complexity tier: {_normalize_scalar_text(plan.complexity_tier) or 'n/a'}",
+            f"- Question card count: {len(plan.question_cards)}",
+            f"- Input language: {_normalize_scalar_text(plan.input_language) or 'n/a'}",
+            f"- Search language: {_normalize_scalar_text(plan.search_language) or 'n/a'}",
+            f"- Output language: {_normalize_scalar_text(plan.output_language) or 'n/a'}",
+        ]
+    )
+    lines.append("- Subthemes:")
+    lines.extend(_render_markdown_bullets(plan.subthemes, indent="  ") or _NONE_BULLET)
+    lines.append("- Required entities:")
+    lines.extend(
+        _render_markdown_bullets(plan.required_entities, indent="  ") or _NONE_BULLET
+    )
+    if include_question_cards:
+        lines.append("- Question cards:")
+        if plan.question_cards:
+            for index, card in enumerate(plan.question_cards, start=1):
+                lines.extend(
+                    _render_theme_plan_card_lines(card=card, index=index, indent="  ")
+                )
+        else:
+            lines.extend(_NONE_BULLET)
+    return "\n".join(lines).strip()
+
+
+def _render_theme_plan_card_lines(
+    *,
+    card: ResearchThemePlanCard | ResearchQuestionCard,
+    index: int,
+    indent: str,
+) -> list[str]:
+    subindent = f"{indent}  "
+    leaf_indent = f"{subindent}  "
+    lines: list[str] = [
+        (
+            f"{indent}- Card {index} "
+            f"(id={_normalize_scalar_text(getattr(card, 'question_id', '')) or f'q{index}'}, "
+            f"priority={getattr(card, 'priority', 0) or 0})"
+        ),
+        f"{subindent}- Question: {_normalize_scalar_text(getattr(card, 'question', '')) or 'n/a'}",
+    ]
+    seed_queries = list(getattr(card, "seed_queries", []))
+    evidence_focus = list(getattr(card, "evidence_focus", []))
+    expected_gain = _normalize_scalar_text(getattr(card, "expected_gain", "")) or "n/a"
+    lines.append(f"{subindent}- Seed queries:")
+    lines.extend(
+        _render_markdown_bullets(seed_queries, indent=leaf_indent)
+        or [f"{leaf_indent}- (none)"]
+    )
+    lines.append(f"{subindent}- Evidence focus:")
+    lines.extend(
+        _render_markdown_bullets(evidence_focus, indent=leaf_indent)
+        or [f"{leaf_indent}- (none)"]
+    )
+    lines.append(f"{subindent}- Expected gain: {expected_gain}")
+    return lines
+
+
+def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> str:
+    selected = rounds[-max(1, limit) :]
+    if not selected:
+        return "- (none)"
+    lines: list[str] = []
+    for round_state in selected:
+        lines.extend(
+            [
+                f"### Round {round_state.round_index}",
+                (
+                    f"- Query strategy: "
+                    f"{_normalize_scalar_text(round_state.query_strategy) or 'n/a'}"
+                ),
+                f"- Result count: {round_state.result_count}",
+                f"- Confidence: {float(round_state.confidence):.3f}",
+                f"- Coverage ratio: {float(round_state.coverage_ratio):.3f}",
+                f"- Entity coverage complete: {round_state.entity_coverage_complete}",
+                f"- Unresolved conflicts: {round_state.unresolved_conflicts}",
+                f"- Critical gaps: {round_state.critical_gaps}",
+                f"- Stop: {round_state.stop}",
+                f"- Stop reason: {_normalize_scalar_text(round_state.stop_reason) or 'n/a'}",
+                "- Queries:",
+            ]
+        )
+        lines.extend(
+            _render_markdown_bullets(round_state.queries, indent="  ") or _NONE_BULLET
+        )
+        overview_summary = normalize_block_text(round_state.overview_summary)
+        content_summary = normalize_block_text(round_state.content_summary)
+        lines.append("- Overview summary:")
+        if overview_summary:
+            lines.extend(
+                ["  ```text"]
+                + [f"  {line}" for line in overview_summary.split("\n")]
+                + ["  ```"]
+            )
+        else:
+            lines.extend(_NONE_BULLET)
+        lines.append("- Content summary:")
+        if content_summary:
+            lines.extend(
+                ["  ```text"]
+                + [f"  {line}" for line in content_summary.split("\n")]
+                + ["  ```"]
+            )
+        else:
+            lines.extend(_NONE_BULLET)
+        lines.append("- Missing entities:")
+        lines.extend(
+            _render_markdown_bullets(round_state.missing_entities, indent="  ")
+            or _NONE_BULLET
+        )
+    return "\n".join(lines).strip()
+
+
+def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
+    lines: list[str] = [
+        "### Overview Review",
+        f"- Confidence: {float(review.confidence):.3f}",
+        f"- Entity coverage complete: {review.entity_coverage_complete}",
+        f"- Next query strategy: {_normalize_scalar_text(review.next_query_strategy) or 'n/a'}",
+        f"- Stop: {review.stop}",
+        "- Findings:",
+    ]
+    lines.extend(_render_markdown_bullets(review.findings, indent="  ") or _NONE_BULLET)
+    lines.append("- Covered subthemes:")
+    lines.extend(
+        _render_markdown_bullets(review.covered_subthemes, indent="  ") or _NONE_BULLET
+    )
+    lines.append("- Critical gaps:")
+    lines.extend(
+        _render_markdown_bullets(review.critical_gaps, indent="  ") or _NONE_BULLET
+    )
+    lines.append("- Need content source IDs:")
+    if review.need_content_source_ids:
+        lines.extend(f"  - {source_id}" for source_id in review.need_content_source_ids)
+    else:
+        lines.extend(_NONE_BULLET)
+    lines.append("- Conflict arbitration:")
+    if review.conflict_arbitration:
+        for item in review.conflict_arbitration:
+            topic = _normalize_scalar_text(item.topic) or "n/a"
+            status = _normalize_scalar_text(item.status) or "n/a"
+            lines.append(f"  - topic={topic}; status={status}")
+    else:
+        lines.extend(_NONE_BULLET)
+    lines.append("- Next queries:")
+    lines.extend(
+        _render_markdown_bullets(review.next_queries, indent="  ") or _NONE_BULLET
+    )
+    lines.append("- Covered entities:")
+    lines.extend(
+        _render_markdown_bullets(review.covered_entities, indent="  ") or _NONE_BULLET
+    )
+    lines.append("- Missing entities:")
+    lines.extend(
+        _render_markdown_bullets(review.missing_entities, indent="  ") or _NONE_BULLET
+    )
+    return "\n".join(lines).strip()
+
+
+def render_queries_markdown(queries: list[str]) -> str:
+    lines = _render_markdown_bullets(queries)
+    if not lines:
+        return "- (none)"
+    return "\n".join(lines).strip()
+
+
+def render_link_candidates_markdown(
+    candidates: list[ResearchLinkCandidate],
+    *,
+    max_pages: int = 8,
+    max_links_per_page: int = 6,
+) -> str:
+    if not candidates:
+        return _NONE_BULLET[0]
+    page_limit = max(1, max_pages)
+    link_limit = max(1, max_links_per_page)
+    lines: list[str] = []
+    for item in list(candidates)[:page_limit]:
+        main_links = list(item.links or [])
+        flat_subpage_links = [
+            link
+            for group in list(item.subpage_links or [])
+            for link in list(group or [])
+        ]
+        lines.extend(
+            [
+                f"### Source {item.source_id}",
+                f"- URL: {_normalize_scalar_text(item.url) or 'n/a'}",
+                f"- Title: {_normalize_scalar_text(item.title) or 'n/a'}",
+                f"- Round index: {item.round_index}",
+                f"- Main links count: {len(main_links)}",
+                f"- Subpage links count: {len(flat_subpage_links)}",
+                "- Link samples:",
+            ]
+        )
+        sample_lines: list[str] = [
+            (
+                "[main] "
+                f"{_normalize_scalar_text(link.anchor_text) or '(no anchor)'} -> "
+                f"{_normalize_scalar_text(link.url) or 'n/a'}"
+            )
+            for link in main_links[:link_limit]
+        ]
+        sample_lines.extend(
+            (
+                "[subpage] "
+                f"{_normalize_scalar_text(link.anchor_text) or '(no anchor)'} -> "
+                f"{_normalize_scalar_text(link.url) or 'n/a'}"
+            )
+            for link in flat_subpage_links[:link_limit]
+        )
+        lines.extend(
+            _render_markdown_bullets(sample_lines, indent="  ") or _NONE_BULLET
+        )
+    return "\n".join(lines).strip()
+
+
+def build_overview_packet(
+    *, sources: list[ResearchSource], max_overview_chars: int = 5000
+) -> str:
+    blocks: list[str] = []
+    for source in sorted(sources, key=lambda item: item.source_id):
+        source_title = source.title
+        source_url = source.url
+        source_host = _normalize_url_host(source_url)
+        source_url_hint = _infer_url_evidence_hint(
+            url=source_url,
+            title=source_title,
+        )
+        overview_text = source.overview
+        if len(overview_text) > max(1, max_overview_chars):
+            overview_text = overview_text[: max(1, max_overview_chars)]
+        overview_lines = (overview_text or "(none)").split("\n")
+        blocks.append(
+            "\n".join(
+                [
+                    f"### Source {source.source_id}",
+                    f"- URL: {source_url or 'n/a'}",
+                    f"- URL host: {source_host or 'n/a'}",
+                    f"- URL evidence hint: {source_url_hint}",
+                    f"- Title: {source_title}",
+                    f"- Is subpage: {'true' if source.is_subpage else 'false'}",
+                    "- Overview:",
+                    "  ```text",
+                    *[f"  {line}" for line in overview_lines],
+                    "  ```",
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def build_content_packet(
+    *,
+    sources: list[ResearchSource],
+    source_ids: list[int],
+    max_chars: int,
+) -> str:
+    wanted = set(source_ids)
+    blocks: list[str] = []
+    for source in sorted(sources, key=lambda item: item.source_id):
+        if source.source_id not in wanted:
+            continue
+        content = normalize_block_text(source.content)
+        if len(content) > max_chars:
+            content = _truncate_content_head_tail(
+                content=content,
+                max_chars=max_chars,
+            )
+        content_lines = (content or "(empty)").split("\n")
+        blocks.append(
+            "\n".join(
+                [
+                    f"### Source {source.source_id}",
+                    f"- URL: {source.url}",
+                    f"- Title: {source.title}",
+                    "- Content:",
+                    "  ```markdown",
+                    *[f"  {line}" for line in content_lines],
+                    "  ```",
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def render_track_snapshot_markdown(track_map: dict[str, ResearchStepContext]) -> str:
+    lines: list[str] = []
+    for question_id, track_ctx in track_map.items():
+        latest = track_ctx.rounds[-1] if track_ctx.rounds else track_ctx.current_round
+        lines.extend(
+            [
+                f"### {question_id}",
+                (
+                    "- question: "
+                    f"{track_ctx.plan.theme_plan.core_question or track_ctx.request.themes}"
+                ),
+                f"- rounds: {len(track_ctx.rounds)}",
+                f"- search_calls: {track_ctx.runtime.search_calls}",
+                f"- fetch_calls: {track_ctx.runtime.fetch_calls}",
+                (
+                    f"- confidence: {float(latest.confidence):.3f}"
+                    if latest is not None
+                    else "- confidence: 0.000"
+                ),
+                (
+                    f"- coverage_ratio: {float(latest.coverage_ratio):.3f}"
+                    if latest is not None
+                    else "- coverage_ratio: 0.000"
+                ),
+                (
+                    f"- unresolved_conflicts: {latest.unresolved_conflicts}"
+                    if latest is not None
+                    else "- unresolved_conflicts: 0"
+                ),
+                (
+                    f"- critical_gaps: {latest.critical_gaps}"
+                    if latest is not None
+                    else "- critical_gaps: 0"
+                ),
+            ]
+        )
+    return "\n".join(lines).strip() or "- (none)"
+
+
+def build_subreport_context_packet_markdown(
+    *,
+    theme: str,
+    core_question: str,
+    report_style: str,
+    target_output_language: str,
+    utc_timestamp: str,
+    utc_date: str,
+    theme_plan: ResearchThemePlan,
+    rounds: list[ResearchRoundState],
+    source_evidence: list[ResearchSource],
+    source_evidence_max_chars: int,
+    notes: list[str],
+    subreport_objective: str,
+) -> str:
+    lines: list[str] = [
+        "# Subreport Context Packet",
+        "## Theme",
+        theme,
+        "## Core Question",
+        core_question,
+        "## Report Style",
+        report_style,
+        "## Target Output Language",
+        target_output_language,
+        "## Time Context",
+        f"- UTC timestamp: {utc_timestamp}",
+        f"- UTC date: {utc_date}",
+        "## Subreport Objective",
+        subreport_objective,
+        "## Private Rendering Rules",
+        "- SUBREPORT_CONTEXT_PACKET is private working context and must not be exposed verbatim in user-facing output.",
+        "- Never expose internal metadata: source IDs, round indexes, query logs, stop reasons, confidence/coverage metrics, or packet labels.",
+        "## Theme Plan",
+    ]
+    lines.append(render_theme_plan_markdown(theme_plan, include_title=False))
+    lines.extend(["## Round Trajectory"])
+    trajectory = rounds[-8:]
+    if trajectory:
+        for round_state in trajectory:
+            lines.extend(
+                [
+                    f"### Round {round_state.round_index}",
+                    f"- Query strategy: {round_state.query_strategy or 'n/a'}",
+                    f"- Result count: {round_state.result_count}",
+                    f"- Confidence: {float(round_state.confidence):.3f}",
+                    f"- Coverage ratio: {float(round_state.coverage_ratio):.3f}",
+                    f"- Unresolved conflicts: {round_state.unresolved_conflicts}",
+                    f"- Critical gaps: {round_state.critical_gaps}",
+                    f"- Stop: {round_state.stop}",
+                    f"- Stop reason: {round_state.stop_reason or 'n/a'}",
+                ]
+            )
+            if round_state.queries:
+                lines.append("- Queries:")
+                for query in round_state.queries[:8]:
+                    token = query
+                    if not token:
+                        continue
+                    if "\n" not in token:
+                        lines.append(f"  - {token}")
+                        continue
+                    lines.extend(
+                        ["  -", "    ```text"]
+                        + [f"    {line}" for line in token.split("\n")]
+                        + ["    ```"]
+                    )
+            else:
+                lines.append("- Queries: (none)")
+    else:
+        lines.append("- No round trajectory available.")
+    lines.extend(["## Source Evidence"])
+    source_items = _build_subreport_source_evidence(
+        sources=source_evidence,
+        max_chars=source_evidence_max_chars,
+    )
+    if source_items:
+        for source in source_items:
+            lines.extend(
+                [
+                    f"### Source {source.source_id}: {source.title or 'Untitled'}",
+                    f"- URL: {source.url or 'n/a'}",
+                    f"- Round index: {source.round_index}",
+                    f"- Is subpage: {source.is_subpage}",
+                ]
+            )
+            lines.append("- Overview:")
+            if source.overview:
+                lines.extend(
+                    ["  ```text"]
+                    + [f"  {line}" for line in source.overview.split("\n")]
+                    + ["  ```"]
+                )
+            else:
+                lines.append("  - (none)")
+            lines.append("- Content excerpt:")
+            if source.content:
+                lines.extend(
+                    [
+                        "  ```text",
+                        *[f"  {line}" for line in source.content.split("\n")],
+                        "  ```",
+                    ]
+                )
+            else:
+                lines.append("  - (none)")
+    else:
+        lines.append("- No source evidence available.")
+    lines.extend(["## Notes"])
+    if notes:
+        lines.extend(f"- {item}" for item in notes)
+    else:
+        lines.append("- (none)")
+    return "\n".join(lines).strip()
+
+
+def build_render_final_context_packet_markdown(
+    *,
+    theme: str,
+    target_output_language: str,
+    mode_depth_profile: str,
+    utc_timestamp: str,
+    utc_date: str,
+    theme_plan: ResearchThemePlan,
+    question_cards: list[ResearchQuestionCard],
+    track_results: list[ResearchTrackResult],
+    render_objective: str,
+) -> str:
+    lines: list[str] = [
+        "# Final Context Packet",
+        "## Theme",
+        normalize_block_text(theme) or "n/a",
+        "## Target Output Language",
+        normalize_block_text(target_output_language) or "n/a",
+        "## Mode Depth Profile",
+        normalize_block_text(mode_depth_profile) or "n/a",
+        "## Time Context",
+        f"- UTC timestamp: {utc_timestamp}",
+        f"- UTC date: {utc_date}",
+        "## Render Objective",
+        render_objective,
+        "## Theme Plan",
+        render_theme_plan_markdown(
+            theme_plan,
+            include_title=False,
+            include_question_cards=False,
+        ),
+        "## Private Rendering Rules",
+        "- Internal metadata is private and must never appear in final user-facing report text.",
+        "- Private fields include question IDs, track IDs, rounds, search/fetch call counts, stop reasons, section IDs, and coverage audit status.",
+        "## Question Cards",
+        render_question_cards_markdown(question_cards),
+        "## Track Results",
+        _render_track_results_markdown(track_results),
+    ]
+    return "\n".join(lines).strip()
+
+
+def render_question_cards_markdown(cards: list[ResearchQuestionCard]) -> str:
+    if not cards:
+        return _NONE_BULLET[0]
+    lines: list[str] = []
+    for index, card in enumerate(cards, start=1):
+        lines.extend(_render_theme_plan_card_lines(card=card, index=index, indent=""))
+    return "\n".join(lines).strip()
+
+
+def render_architect_plan_markdown(plan: RenderArchitectOutput) -> str:
+    lines: list[str] = [
+        "### Architect Plan",
+        f"- Report objective: {_normalize_scalar_text(plan.report_objective) or 'n/a'}",
+        "- Sections:",
+    ]
+    if not plan.sections:
+        lines.extend(_NONE_BULLET)
+        return "\n".join(lines).strip()
+    for index, section in enumerate(plan.sections, start=1):
+        lines.append(
+            f"  - Section {index}: "
+            f"{_normalize_scalar_text(section.subhead) or _normalize_scalar_text(section.section_id) or 'Section'}"
+        )
+        lines.extend(
+            [
+                f"    - section_id: {_normalize_scalar_text(section.section_id) or 'n/a'}",
+                f"    - section_role: {_normalize_scalar_text(section.section_role) or 'n/a'}",
+                f"    - angle: {_normalize_scalar_text(section.angle) or 'n/a'}",
+                (
+                    "    - progression_hint: "
+                    f"{_normalize_scalar_text(section.progression_hint) or 'n/a'}"
+                ),
+                "    - question_ids:",
+            ]
+        )
+        lines.extend(
+            _render_markdown_bullets(section.question_ids, indent="      ")
+            or _NONE_BULLET_L3
+        )
+        lines.extend(
+            [
+                "    - scope_requirements:",
+            ]
+        )
+        lines.extend(
+            _render_markdown_bullets(section.scope_requirements, indent="      ")
+            or _NONE_BULLET_L3
+        )
+        lines.append("    - writing_boundaries:")
+        lines.extend(
+            _render_markdown_bullets(section.writing_boundaries, indent="      ")
+            or _NONE_BULLET_L3
+        )
+        lines.append("    - must_cover_points:")
+        lines.extend(
+            _render_markdown_bullets(section.must_cover_points, indent="      ")
+            or _NONE_BULLET_L3
+        )
+    return "\n".join(lines).strip()
+
+
+def render_section_plan_markdown(section: RenderArchitectSectionPlan) -> str:
+    lines: list[str] = [
+        "### Current Section Plan",
+        f"- section_id: {_normalize_scalar_text(section.section_id) or 'n/a'}",
+        f"- subhead: {_normalize_scalar_text(section.subhead) or 'n/a'}",
+        f"- section_role: {_normalize_scalar_text(section.section_role) or 'n/a'}",
+        f"- angle: {_normalize_scalar_text(section.angle) or 'n/a'}",
+        f"- progression_hint: {_normalize_scalar_text(section.progression_hint) or 'n/a'}",
+        "- question_ids:",
+    ]
+    lines.extend(
+        _render_markdown_bullets(section.question_ids, indent="  ") or _NONE_BULLET
+    )
+    lines.extend(
+        [
+            "- scope_requirements:",
+        ]
+    )
+    lines.extend(
+        _render_markdown_bullets(section.scope_requirements, indent="  ")
+        or _NONE_BULLET
+    )
+    lines.append("- writing_boundaries:")
+    lines.extend(
+        _render_markdown_bullets(section.writing_boundaries, indent="  ")
+        or _NONE_BULLET
+    )
+    lines.append("- must_cover_points:")
+    lines.extend(
+        _render_markdown_bullets(section.must_cover_points, indent="  ") or _NONE_BULLET
+    )
+    return "\n".join(lines).strip()
+
+
+def _normalize_url_host(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = parsed.netloc or ""
+    if not host and parsed.path and "://" not in url:
+        host = parsed.path.split("/")[0]
+    host = host.split("@")[-1].split(":")[0].strip(".").lower()
+    return host.removeprefix("www.")
+
+
+def _infer_url_evidence_hint(*, url: str, title: str) -> str:
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = _normalize_url_host(url)
+    path = (parsed.path or "").strip().casefold()
+    clue_text = f"{host} {path} {title.casefold()}"
+    tags: list[str] = []
+    if any(
+        token in clue_text
+        for token in (
+            "arxiv.org",
+            "doi.org",
+            "openreview.net",
+            "aclweb.org",
+            "ieeexplore",
+            "acm.org",
+            "springer",
+            "nature.com",
+            "science.org",
+            "jmlr.org",
+            "paperswithcode",
+        )
+    ):
+        tags.append("paper_or_research")
+    if host.endswith((".edu", ".gov", ".mil")):
+        tags.append("institutional_domain")
+    if any(
+        token in clue_text
+        for token in (
+            "/docs",
+            "/documentation",
+            "readthedocs",
+            "developer.",
+            "/api/",
+            "/manual",
+            "/reference",
+            "/guide",
+            "/spec",
+            "/standard",
+        )
+    ):
+        tags.append("official_or_technical_docs")
+    if any(
+        token in clue_text
+        for token in ("github.com", "gitlab.com", "bitbucket.org", "huggingface.co")
+    ):
+        tags.append("repository_or_model_hub")
+    if any(
+        token in clue_text
+        for token in (
+            "wikipedia.org",
+            "medium.com",
+            "substack.com",
+            "blog.",
+            "/blog/",
+            "/news/",
+            "/press/",
+        )
+    ):
+        tags.append("general_or_media_content")
+    if not tags:
+        return "general_web"
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in tags:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return ", ".join(out)
+
+
+def _truncate_content_head_tail(*, content: str, max_chars: int) -> str:
+    limit = max(1, max_chars)
+    if len(content) <= limit:
+        return content
+    marker = "\n...\n[content omitted]\n...\n"
+    if limit <= len(marker) + 80:
+        return content[:limit]
+    available = limit - len(marker)
+    head_len = max(40, int(available * 0.70))
+    tail_len = max(40, int(available - head_len))
+    clipped = f"{content[:head_len]}{marker}{content[-tail_len:]}"
+    return clipped[:limit]
+
+
+def _build_subreport_source_evidence(
+    *,
+    sources: list[ResearchSource],
+    max_chars: int,
+) -> list[ResearchSource]:
+    out: list[ResearchSource] = []
+    total_limit = max(1, max_chars)
+    consumed_chars = 0
+    for source in sources:
+        content_excerpt = source.content
+        if content_excerpt:
+            remaining_chars = max(0, total_limit - consumed_chars)
+            content_excerpt = content_excerpt[:remaining_chars]
+        overview = source.overview
+        if overview:
+            remaining_chars = max(
+                0, total_limit - consumed_chars - len(content_excerpt)
+            )
+            overview = overview[:remaining_chars]
+        projected = consumed_chars + len(content_excerpt) + len(overview)
+        if projected > total_limit:
+            break
+        consumed_chars = projected
+        out.append(
+            source.model_copy(
+                update={
+                    "overview": overview,
+                    "content": content_excerpt,
+                },
+                deep=True,
+            )
+        )
+    return out
+
+
+def _render_track_results_markdown(track_results: list[ResearchTrackResult]) -> str:
+    if not track_results:
+        return "- (none)"
+    lines: list[str] = []
+    for index, item in enumerate(track_results, start=1):
+        question = normalize_block_text(item.question) or "n/a"
+        lines.extend(
+            [
+                f"### Evidence Cluster {index}",
+                f"- Research question: {question}",
+                "- Insight card:",
+            ]
+        )
+        insight_card = item.track_insight_card
+        if insight_card is None:
+            lines.append("  - (none)")
+        else:
+            lines.append(
+                f"  - Direct answer: {normalize_block_text(insight_card.direct_answer) or 'n/a'}"
+            )
+            lines.append("  - High-value points:")
+            if insight_card.high_value_points:
+                for point in insight_card.high_value_points:
+                    conclusion = normalize_block_text(point.conclusion) or "n/a"
+                    condition = normalize_block_text(point.condition) or "n/a"
+                    impact = normalize_block_text(point.impact) or "n/a"
+                    lines.append(
+                        "    - "
+                        f"conclusion={conclusion}; condition={condition}; impact={impact}"
+                    )
+            else:
+                lines.append("    - (none)")
+            lines.append("  - Tradeoffs/mechanisms:")
+            if insight_card.key_tradeoffs_or_mechanisms:
+                for token in insight_card.key_tradeoffs_or_mechanisms:
+                    text = normalize_block_text(token)
+                    if text:
+                        lines.append(f"    - {text}")
+            else:
+                lines.append("    - (none)")
+            lines.append("  - Unknowns/risks:")
+            if insight_card.unknowns_and_risks:
+                for token in insight_card.unknowns_and_risks:
+                    text = normalize_block_text(token)
+                    if text:
+                        lines.append(f"    - {text}")
+            else:
+                lines.append("    - (none)")
+            lines.append("  - Next actions:")
+            if insight_card.next_actions:
+                for token in insight_card.next_actions:
+                    text = normalize_block_text(token)
+                    if text:
+                        lines.append(f"    - {text}")
+            else:
+                lines.append("    - (none)")
+        lines.append("- Key findings:")
+        if item.key_findings:
+            for token in item.key_findings:
+                finding = normalize_block_text(token)
+                if not finding:
+                    continue
+                if "\n" not in finding:
+                    lines.append(f"  - {finding}")
+                    continue
+                lines.extend(
+                    ["  -", "    ```text"]
+                    + [f"    {line}" for line in finding.split("\n")]
+                    + ["    ```"]
+                )
+        else:
+            lines.append("  - (none)")
+        lines.append("- Subreport excerpt:")
+        excerpt = normalize_block_text(item.subreport_markdown)
+        if excerpt:
+            lines.extend(
+                ["  ```markdown"]
+                + [f"  {line}" for line in excerpt.split("\n")]
+                + ["  ```"]
+            )
+        else:
+            lines.append("  - (none)")
+    return "\n".join(lines).strip()
+
+
 __all__ = [
     "PromptStage",
     "UNIVERSAL_GUARDRAILS",
     "UNIVERSAL_PRIVACY_GUARDRAILS",
     "UNIVERSAL_QUALITY_GUARDRAILS",
+    "build_content_packet",
     "build_content_messages",
     "build_decide_signal_messages",
+    "build_final_language_repair_messages",
     "build_density_gate_messages",
     "build_gap_closure_messages",
     "build_link_picker_messages",
+    "build_overview_packet",
     "build_overview_messages",
     "build_plan_messages",
+    "build_query_language_repair_messages",
+    "build_render_final_context_packet_markdown",
     "build_render_architect_messages",
     "build_render_structured_messages",
     "build_render_writer_messages",
+    "build_subreport_context_packet_markdown",
     "build_subreport_flow_contract",
     "build_subreport_messages",
     "build_style_overlay",
@@ -1407,6 +2348,16 @@ __all__ = [
     "compose_system_prompt",
     "infer_report_style_from_theme",
     "mode_depth_planning_contract",
+    "normalize_block_text",
+    "render_architect_plan_markdown",
+    "render_link_candidates_markdown",
+    "render_overview_review_markdown",
+    "render_queries_markdown",
+    "render_question_cards_markdown",
+    "render_rounds_markdown",
+    "render_section_plan_markdown",
+    "render_theme_plan_markdown",
+    "render_track_snapshot_markdown",
     "resolve_report_style",
     "theme_depth_contract",
 ]

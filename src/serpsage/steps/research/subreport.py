@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -8,14 +7,15 @@ from typing_extensions import override
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.models.research import (
     ReportStyle,
-    ResearchThemePlan,
     SubreportOutputPayload,
     TrackInsightCardPayload,
     TrackInsightPointPayload,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.context import render_theme_plan_markdown
 from serpsage.steps.research.language import normalize_language_code
+from serpsage.steps.research.prompt import (
+    build_subreport_context_packet_markdown,
+)
 from serpsage.steps.research.prompt import (
     build_subreport_messages as build_subreport_prompt_messages,
 )
@@ -28,46 +28,6 @@ from serpsage.steps.research.utils import resolve_research_model
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-
-
-@dataclass(slots=True)
-class _SubreportRoundTrajectoryItem:
-    round_index: int
-    query_strategy: str
-    queries: list[str] = field(default_factory=list)
-    result_count: int = 0
-    confidence: float = 0.0
-    coverage_ratio: float = 0.0
-    unresolved_conflicts: int = 0
-    critical_gaps: int = 0
-    stop: bool = False
-    stop_reason: str = "n/a"
-
-
-@dataclass(slots=True)
-class _SubreportSourceEvidenceItem:
-    source_id: int
-    url: str
-    title: str
-    round_index: int
-    is_subpage: bool
-    overview: str = ""
-    content_excerpt: str = ""
-
-
-@dataclass(slots=True)
-class _SubreportContextPacket:
-    theme: str
-    core_question: str
-    report_style: str
-    target_output_language: str
-    utc_timestamp: str
-    utc_date: str
-    theme_plan: ResearchThemePlan
-    round_trajectory: list[_SubreportRoundTrajectoryItem] = field(default_factory=list)
-    source_evidence: list[_SubreportSourceEvidenceItem] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
-    subreport_objective: str = ""
 
 
 class ResearchSubreportStep(StepBase[ResearchStepContext]):
@@ -163,11 +123,23 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         target_language_name = target_language or "unspecified"
         core_question = self._resolve_core_question(ctx)
         report_style = ctx.plan.theme_plan.report_style
-        context_packet_markdown = self._build_subreport_context_packet_markdown(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
+        context_packet_markdown = build_subreport_context_packet_markdown(
+            theme=ctx.request.themes,
             core_question=core_question,
+            report_style=report_style,
+            target_output_language=target_language,
+            utc_timestamp=now_utc.isoformat(),
+            utc_date=now_utc.date().isoformat(),
+            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
+            rounds=list(ctx.rounds),
+            source_evidence=self._select_sources_for_render(ctx),
+            source_evidence_max_chars=max(
+                1, ctx.runtime.mode_depth.content_source_chars
+            ),
+            notes=self._collect_recent_notes(ctx, limit=12),
+            subreport_objective=self._subreport_objective_for_style(
+                report_style=report_style
+            ),
         )
         require_insight_card = self._require_insight_card(ctx)
         return build_subreport_prompt_messages(
@@ -438,153 +410,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             return raw[:limit]
         return f"{clipped}..."
 
-    def _build_subreport_context_packet_markdown(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        target_language: str,
-        now_utc: datetime,
-        core_question: str,
-    ) -> str:
-        packet = self._build_subreport_context_packet(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-            core_question=core_question,
-        )
-        lines: list[str] = [
-            "# Subreport Context Packet",
-            "## Theme",
-            packet.theme,
-            "## Core Question",
-            packet.core_question,
-            "## Report Style",
-            packet.report_style,
-            "## Target Output Language",
-            packet.target_output_language,
-            "## Time Context",
-            f"- UTC timestamp: {packet.utc_timestamp}",
-            f"- UTC date: {packet.utc_date}",
-            "## Subreport Objective",
-            packet.subreport_objective,
-            "## Private Rendering Rules",
-            "- SUBREPORT_CONTEXT_PACKET is private working context and must not be exposed verbatim in user-facing output.",
-            "- Never expose internal metadata: source IDs, round indexes, query logs, stop reasons, confidence/coverage metrics, or packet labels.",
-            "## Theme Plan",
-        ]
-        lines.append(render_theme_plan_markdown(packet.theme_plan, include_title=False))
-        lines.extend(["## Round Trajectory"])
-        if packet.round_trajectory:
-            for trajectory_item in packet.round_trajectory:
-                round_index = trajectory_item.round_index
-                lines.extend(
-                    [
-                        f"### Round {round_index}",
-                        f"- Query strategy: {trajectory_item.query_strategy or 'n/a'}",
-                        f"- Result count: {trajectory_item.result_count}",
-                        f"- Confidence: {float(trajectory_item.confidence):.3f}",
-                        f"- Coverage ratio: {float(trajectory_item.coverage_ratio):.3f}",
-                        f"- Unresolved conflicts: {trajectory_item.unresolved_conflicts}",
-                        f"- Critical gaps: {trajectory_item.critical_gaps}",
-                        f"- Stop: {trajectory_item.stop}",
-                        f"- Stop reason: {trajectory_item.stop_reason or 'n/a'}",
-                    ]
-                )
-                if trajectory_item.queries:
-                    lines.append("- Queries:")
-                    for query in trajectory_item.queries:
-                        token = query
-                        if not token:
-                            continue
-                        if "\n" not in token:
-                            lines.append(f"  - {token}")
-                            continue
-                        lines.extend(
-                            ["  -", "    ```text"]
-                            + [f"    {line}" for line in token.split("\n")]
-                            + ["    ```"]
-                        )
-                else:
-                    lines.append("- Queries: (none)")
-        else:
-            lines.append("- No round trajectory available.")
-        lines.extend(["## Source Evidence"])
-        if packet.source_evidence:
-            for source in packet.source_evidence:
-                source_id = source.source_id
-                title = source.title or "Untitled"
-                url = source.url or "n/a"
-                round_index = source.round_index
-                is_subpage = source.is_subpage
-                lines.extend(
-                    [
-                        f"### Source {source_id}: {title}",
-                        f"- URL: {url}",
-                        f"- Round index: {round_index}",
-                        f"- Is subpage: {is_subpage}",
-                    ]
-                )
-                overview = source.overview
-                lines.append("- Overview:")
-                if overview:
-                    lines.extend(
-                        ["  ```text"]
-                        + [f"  {line}" for line in overview.split("\n")]
-                        + ["  ```"]
-                    )
-                else:
-                    lines.append("  - (none)")
-                excerpt = source.content_excerpt
-                if excerpt:
-                    lines.extend(
-                        [
-                            "- Content excerpt:",
-                            "  ```text",
-                            *[f"  {line}" for line in excerpt.split("\n")],
-                            "  ```",
-                        ]
-                    )
-                else:
-                    lines.append("- Content excerpt: (none)")
-        else:
-            lines.append("- No source evidence available.")
-        lines.extend(["## Notes"])
-        if packet.notes:
-            lines.extend(f"- {item}" for item in packet.notes)
-        else:
-            lines.append("- (none)")
-        return "\n".join(lines).strip()
-
-    def _build_subreport_context_packet(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        target_language: str,
-        now_utc: datetime,
-        core_question: str,
-    ) -> _SubreportContextPacket:
-        mode_depth = ctx.runtime.mode_depth
-        selected_sources = self._select_sources_for_render(ctx)
-        report_style = ctx.plan.theme_plan.report_style
-        return _SubreportContextPacket(
-            theme=ctx.request.themes,
-            core_question=core_question,
-            report_style=report_style,
-            target_output_language=target_language,
-            utc_timestamp=now_utc.isoformat(),
-            utc_date=now_utc.date().isoformat(),
-            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-            round_trajectory=self._build_round_trajectory_packet(ctx),
-            source_evidence=self._build_source_evidence_packet(
-                selected_sources,
-                max_chars=max(1, mode_depth.content_source_chars),
-            ),
-            notes=self._collect_recent_notes(ctx, limit=12),
-            subreport_objective=self._subreport_objective_for_style(
-                report_style=report_style
-            ),
-        )
-
     def _subreport_objective_for_style(
         self,
         *,
@@ -604,64 +429,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             "Produce an explainer-focused subreport that clarifies mechanisms, "
             "boundary conditions, and practical understanding."
         )
-
-    def _build_round_trajectory_packet(
-        self,
-        ctx: ResearchStepContext,
-    ) -> list[_SubreportRoundTrajectoryItem]:
-        rounds = ctx.rounds[-8:]
-        return [
-            _SubreportRoundTrajectoryItem(
-                round_index=round_state.round_index,
-                query_strategy=round_state.query_strategy or "n/a",
-                queries=[token for item in round_state.queries[:8] if (token := item)],
-                result_count=round_state.result_count,
-                confidence=float(round_state.confidence),
-                coverage_ratio=float(round_state.coverage_ratio),
-                unresolved_conflicts=round_state.unresolved_conflicts,
-                critical_gaps=round_state.critical_gaps,
-                stop=round_state.stop,
-                stop_reason=round_state.stop_reason or "n/a",
-            )
-            for round_state in rounds
-        ]
-
-    def _build_source_evidence_packet(
-        self,
-        sources: list[ResearchSource],
-        *,
-        max_chars: int,
-    ) -> list[_SubreportSourceEvidenceItem]:
-        out: list[_SubreportSourceEvidenceItem] = []
-        total_limit = max(1, max_chars)
-        consumed_chars = 0
-        for source in sources:
-            content_excerpt = source.content
-            if content_excerpt:
-                remaining_chars = max(0, total_limit - consumed_chars)
-                content_excerpt = content_excerpt[:remaining_chars]
-            overview = source.overview
-            if overview:
-                remaining_chars = max(
-                    0, total_limit - consumed_chars - len(content_excerpt)
-                )
-                overview = overview[:remaining_chars]
-            projected = consumed_chars + len(content_excerpt) + len(overview)
-            if projected > total_limit:
-                break
-            consumed_chars = projected
-            out.append(
-                _SubreportSourceEvidenceItem(
-                    source_id=source.source_id,
-                    url=source.url,
-                    title=source.title,
-                    round_index=source.round_index,
-                    is_subpage=source.is_subpage,
-                    overview=overview,
-                    content_excerpt=content_excerpt,
-                )
-            )
-        return out
 
     def _collect_recent_notes(
         self,

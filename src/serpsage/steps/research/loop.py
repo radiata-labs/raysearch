@@ -24,6 +24,9 @@ from serpsage.steps.research.prompt import (
 from serpsage.steps.research.prompt import (
     build_track_orchestrator_messages as build_track_orchestrator_prompt_messages,
 )
+from serpsage.steps.research.prompt import (
+    render_track_snapshot_markdown,
+)
 from serpsage.steps.research.utils import (
     merge_strings,
     normalize_strings,
@@ -545,7 +548,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         track_map: dict[str, ResearchStepContext],
     ) -> list[dict[str, str]]:
         budget = root.runtime.budget
-        snapshot_markdown = self._build_track_snapshot_markdown(track_map)
+        snapshot_markdown = render_track_snapshot_markdown(track_map)
         return build_track_orchestrator_prompt_messages(
             mode_depth_profile=root.runtime.mode_depth.mode_key,
             core_question=self._resolve_core_question(root),
@@ -720,7 +723,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             missing_entities=list(latest.missing_entities)
             if latest is not None
             else [],
-            round_notes_markdown=self._build_track_snapshot_markdown(
+            round_notes_markdown=render_track_snapshot_markdown(
                 {card.question_id: track_ctx}
             ),
         )
@@ -1052,43 +1055,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         if base:
             candidates.append(base)
         return merge_strings(candidates, [], limit=max(1, limit))
-
-    def _build_track_snapshot_markdown(
-        self, track_map: dict[str, ResearchStepContext]
-    ) -> str:
-        lines: list[str] = []
-        for question_id, track_ctx in track_map.items():
-            latest = self._latest_round(track_ctx)
-            lines.extend(
-                [
-                    f"### {question_id}",
-                    f"- question: {self._resolve_core_question(track_ctx)}",
-                    f"- rounds: {len(track_ctx.rounds)}",
-                    f"- search_calls: {track_ctx.runtime.search_calls}",
-                    f"- fetch_calls: {track_ctx.runtime.fetch_calls}",
-                    (
-                        f"- confidence: {float(latest.confidence):.3f}"
-                        if latest is not None
-                        else "- confidence: 0.000"
-                    ),
-                    (
-                        f"- coverage_ratio: {float(latest.coverage_ratio):.3f}"
-                        if latest is not None
-                        else "- coverage_ratio: 0.000"
-                    ),
-                    (
-                        f"- unresolved_conflicts: {latest.unresolved_conflicts}"
-                        if latest is not None
-                        else "- unresolved_conflicts: 0"
-                    ),
-                    (
-                        f"- critical_gaps: {latest.critical_gaps}"
-                        if latest is not None
-                        else "- critical_gaps: 0"
-                    ),
-                ]
-            )
-        return "\n".join(lines).strip() or "- (none)"
 
     def _resolve_core_question(
         self, track_ctx: ResearchStepContext, *, fallback: str = ""

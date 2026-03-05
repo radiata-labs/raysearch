@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from pydantic import Field
@@ -22,12 +22,6 @@ from serpsage.models.research import (
     RoundAction,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.context import (
-    render_link_candidates_markdown,
-    render_queries_markdown,
-    render_rounds_markdown,
-    render_theme_plan_markdown,
-)
 from serpsage.steps.research.language import (
     language_alignment_score,
     normalize_language_code,
@@ -35,8 +29,20 @@ from serpsage.steps.research.language import (
 from serpsage.steps.research.prompt import (
     build_plan_messages as build_plan_prompt_messages,
 )
+from serpsage.steps.research.prompt import (
+    build_query_language_repair_messages,
+    render_link_candidates_markdown,
+    render_queries_markdown,
+    render_rounds_markdown,
+    render_theme_plan_markdown,
+)
+from serpsage.steps.research.schema import (
+    build_plan_schema,
+    build_query_language_repair_schema,
+)
 from serpsage.steps.research.utils import (
     merge_strings,
+    normalize_strings,
     resolve_research_model,
 )
 from serpsage.utils import clean_whitespace
@@ -131,7 +137,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     now_utc=now_utc,
                 ),
                 response_format=PlanOutputPayload,
-                format_override=self._build_plan_schema(),
+                format_override=build_plan_schema(),
                 retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
@@ -275,11 +281,11 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             mode = clean_whitespace(item.mode).casefold()
             if mode not in {"auto", "deep"}:
                 mode = "auto"
-            include_domains = self._normalize_strings(item.include_domains, limit=12)
-            exclude_domains = self._normalize_strings(item.exclude_domains, limit=12)
-            include_text = self._normalize_strings(item.include_text, limit=8)
-            exclude_text = self._normalize_strings(item.exclude_text, limit=8)
-            additional_queries = self._normalize_strings(
+            include_domains = normalize_strings(item.include_domains, limit=12)
+            exclude_domains = normalize_strings(item.exclude_domains, limit=12)
+            include_text = normalize_strings(item.include_text, limit=8)
+            exclude_text = normalize_strings(item.exclude_text, limit=8)
+            additional_queries = normalize_strings(
                 item.additional_queries,
                 limit=8,
             )
@@ -311,22 +317,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             for item in fallback
         ]
 
-    def _normalize_strings(self, values: list[str], *, limit: int) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in values:
-            token = clean_whitespace(item)
-            if not token:
-                continue
-            key = token.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(token)
-            if len(out) >= max(1, limit):
-                break
-        return out
-
     def _enforce_low_budget_deep_policy(
         self,
         *,
@@ -337,7 +327,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         if job_limit != 1 or not jobs:
             return jobs
         head = jobs[0]
-        extras = self._normalize_strings(
+        extras = normalize_strings(
             merge_strings(
                 list(head.additional_queries),
                 list(candidate_queries),
@@ -441,7 +431,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     now_utc=now_utc,
                 ),
                 response_format=_QueryLanguageRepairOutputPayload,
-                format_override=self._build_query_language_repair_schema(),
+                format_override=build_query_language_repair_schema(),
                 retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
@@ -474,67 +464,13 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             }
             for item in jobs
         ]
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Role: Search job language normalizer.\n"
-                    "Mission: Rewrite search query fields into the required search language while preserving intent and entities.\n"
-                    "Rules:\n"
-                    "1) Return JSON only.\n"
-                    "2) Keep search_jobs array length and order unchanged.\n"
-                    "3) Rewrite only query and additional_queries text.\n"
-                    "4) Preserve named entities, versions, and explicit dates.\n"
-                    "5) Do not broaden topic scope.\n"
-                    "6) If a query is already aligned, keep it unchanged."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                    "CORE_QUESTION:\n"
-                    f"{self._resolve_core_question(ctx)}\n\n"
-                    "LANGUAGE_POLICY:\n"
-                    f"- required_search_language={search_language}\n"
-                    f"- required_output_language={output_language}\n\n"
-                    "CURRENT_SEARCH_JOBS_JSON:\n"
-                    f"{json.dumps(current_jobs, ensure_ascii=False)}\n\n"
-                    "Output JSON shape:\n"
-                    "{\n"
-                    '  "search_jobs": [\n'
-                    '    { "query": "...", "additional_queries": ["..."] }\n'
-                    "  ]\n"
-                    "}"
-                ),
-            },
-        ]
-
-    def _build_query_language_repair_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["search_jobs"],
-            "properties": {
-                "search_jobs": {
-                    "type": "array",
-                    "maxItems": 8,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["query", "additional_queries"],
-                        "properties": {
-                            "query": {"type": "string"},
-                            "additional_queries": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                        },
-                    },
-                }
-            },
-        }
+        return build_query_language_repair_messages(
+            current_utc_date=now_utc.date().isoformat(),
+            core_question=self._resolve_core_question(ctx),
+            required_search_language=search_language,
+            required_output_language=output_language,
+            current_search_jobs_json=json.dumps(current_jobs, ensure_ascii=False),
+        )
 
     def _normalize_repaired_search_jobs(
         self,
@@ -552,7 +488,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 continue
             item = payload_jobs[index]
             query = clean_whitespace(item.query) or base.query
-            additional_queries = self._normalize_strings(
+            additional_queries = normalize_strings(
                 list(item.additional_queries),
                 limit=8,
             )
@@ -697,69 +633,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             explore_links_per_page=mode_depth.explore_links_per_page,
             last_round_link_candidates_markdown=last_round_candidates_markdown,
         )
-
-    def _build_plan_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "query_strategy",
-                "round_action",
-                "explore_target_source_ids",
-                "search_jobs",
-            ],
-            "properties": {
-                "query_strategy": {"type": "string"},
-                "round_action": {
-                    "type": "string",
-                    "enum": ["search", "explore"],
-                },
-                "explore_target_source_ids": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {"type": "integer"},
-                },
-                "search_jobs": {
-                    "type": "array",
-                    "maxItems": 8,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["query"],
-                        "properties": {
-                            "query": {"type": "string"},
-                            "intent": {"type": "string"},
-                            "mode": {"type": "string"},
-                            "include_domains": {
-                                "type": "array",
-                                "maxItems": 12,
-                                "items": {"type": "string"},
-                            },
-                            "exclude_domains": {
-                                "type": "array",
-                                "maxItems": 12,
-                                "items": {"type": "string"},
-                            },
-                            "include_text": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "exclude_text": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "additional_queries": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                        },
-                    },
-                },
-            },
-        }
 
     def _can_attempt_explore(
         self, *, ctx: ResearchStepContext, round_index: int

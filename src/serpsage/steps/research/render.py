@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -11,31 +11,28 @@ import anyio
 from serpsage.models.pipeline import (
     ResearchQuestionCard,
     ResearchStepContext,
-    ResearchTrackResult,
 )
 from serpsage.models.research import (
     RenderArchitectOutput,
     RenderArchitectSectionPlan,
     ReportStyle,
-    ResearchThemePlan,
     TaskComplexity,
     TaskIntent,
-    TrackInsightCardPayload,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.context import (
-    normalize_block_text,
-    render_architect_plan_markdown,
-    render_question_cards_markdown,
-    render_section_plan_markdown,
-    render_theme_plan_markdown,
-)
 from serpsage.steps.research.language import (
     document_language_alignment,
     normalize_language_code,
 )
 from serpsage.steps.research.prompt import (
     build_density_gate_messages as build_density_gate_prompt_messages,
+)
+from serpsage.steps.research.prompt import (
+    build_final_language_repair_messages,
+    build_render_final_context_packet_markdown,
+    normalize_block_text,
+    render_architect_plan_markdown,
+    render_section_plan_markdown,
 )
 from serpsage.steps.research.prompt import (
     build_render_architect_messages as build_render_architect_prompt_messages,
@@ -90,35 +87,6 @@ class _WriterSectionFailure:
             "cause_type": self.cause_type,
             "cause_message": self.cause_message,
         }
-
-
-@dataclass(slots=True)
-class _RenderTrackResultPacket:
-    question_id: str
-    question: str
-    stop_reason: str
-    rounds: int
-    search_calls: int
-    fetch_calls: int
-    confidence: float
-    coverage_ratio: float
-    unresolved_conflicts: int
-    track_insight_card: TrackInsightCardPayload | None = None
-    key_findings: list[str] = field(default_factory=list)
-    subreport_excerpt: str = ""
-
-
-@dataclass(slots=True)
-class _RenderFinalContextPacket:
-    theme: str
-    target_output_language: str
-    mode_depth_profile: str
-    utc_timestamp: str
-    utc_date: str
-    theme_plan: ResearchThemePlan
-    question_cards: list[ResearchQuestionCard] = field(default_factory=list)
-    track_results: list[_RenderTrackResultPacket] = field(default_factory=list)
-    render_objective: str = ""
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
@@ -188,13 +156,23 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         target_language: str,
         now_utc: datetime,
     ) -> None:
-        context_packet = self._build_final_context_packet(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
-        context_packet_markdown = self._render_final_context_packet_markdown(
-            context_packet
+        mode_depth = ctx.runtime.mode_depth
+        context_packet_markdown = build_render_final_context_packet_markdown(
+            theme=self._resolve_core_question(ctx) or ctx.request.themes,
+            target_output_language=target_language,
+            mode_depth_profile=mode_depth.mode_key,
+            utc_timestamp=now_utc.isoformat(),
+            utc_date=now_utc.date().isoformat(),
+            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
+            question_cards=[
+                item.model_copy(deep=True) for item in ctx.parallel.question_cards
+            ],
+            track_results=[
+                item.model_copy(deep=True) for item in ctx.parallel.track_results
+            ],
+            render_objective=self._render_objective_for_mode(
+                mode_key=mode_depth.mode_key
+            ),
         )
         architect_output = await self._run_architect(
             ctx=ctx,
@@ -551,13 +529,23 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     ) -> list[dict[str, str]]:
         target_language_name = target_language or "unspecified"
         report_style = ctx.plan.theme_plan.report_style
-        context_packet = self._build_final_context_packet(
-            ctx=ctx,
-            target_language=target_language,
-            now_utc=now_utc,
-        )
-        context_packet_markdown = self._render_final_context_packet_markdown(
-            context_packet
+        mode_depth = ctx.runtime.mode_depth
+        context_packet_markdown = build_render_final_context_packet_markdown(
+            theme=self._resolve_core_question(ctx) or ctx.request.themes,
+            target_output_language=target_language,
+            mode_depth_profile=mode_depth.mode_key,
+            utc_timestamp=now_utc.isoformat(),
+            utc_date=now_utc.date().isoformat(),
+            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
+            question_cards=[
+                item.model_copy(deep=True) for item in ctx.parallel.question_cards
+            ],
+            track_results=[
+                item.model_copy(deep=True) for item in ctx.parallel.track_results
+            ],
+            render_objective=self._render_objective_for_mode(
+                mode_key=mode_depth.mode_key
+            ),
         )
         return build_render_structured_prompt_messages(
             target_output_language=target_language,
@@ -599,62 +587,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 return f"深度调研：{base}"
             return f"Research Report: {base}"
         return base
-
-    def _build_final_context_packet(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        target_language: str,
-        now_utc: datetime,
-    ) -> _RenderFinalContextPacket:
-        mode_depth = ctx.runtime.mode_depth
-        return _RenderFinalContextPacket(
-            theme=self._resolve_core_question(ctx) or ctx.request.themes,
-            target_output_language=target_language,
-            mode_depth_profile=mode_depth.mode_key,
-            utc_timestamp=now_utc.isoformat(),
-            utc_date=now_utc.date().isoformat(),
-            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-            question_cards=[
-                item.model_copy(deep=True) for item in ctx.parallel.question_cards
-            ],
-            track_results=self._build_track_result_packet(ctx.parallel.track_results),
-            render_objective=self._render_objective_for_mode(
-                mode_key=mode_depth.mode_key
-            ),
-        )
-
-    def _render_final_context_packet_markdown(
-        self, packet: _RenderFinalContextPacket
-    ) -> str:
-        lines: list[str] = [
-            "# Final Context Packet",
-            "## Theme",
-            normalize_block_text(packet.theme) or "n/a",
-            "## Target Output Language",
-            normalize_block_text(packet.target_output_language) or "n/a",
-            "## Mode Depth Profile",
-            normalize_block_text(packet.mode_depth_profile) or "n/a",
-            "## Time Context",
-            f"- UTC timestamp: {packet.utc_timestamp}",
-            f"- UTC date: {packet.utc_date}",
-            "## Render Objective",
-            packet.render_objective,
-            "## Theme Plan",
-            render_theme_plan_markdown(
-                packet.theme_plan,
-                include_title=False,
-                include_question_cards=False,
-            ),
-            "## Private Rendering Rules",
-            "- Internal metadata is private and must never appear in final user-facing report text.",
-            "- Private fields include question IDs, track IDs, rounds, search/fetch call counts, stop reasons, section IDs, and coverage audit status.",
-            "## Question Cards",
-            render_question_cards_markdown(packet.question_cards),
-            "## Track Results",
-            self._render_track_results_markdown(packet.track_results),
-        ]
-        return "\n".join(lines).strip()
 
     def _render_objective_for_mode(self, *, mode_key: str) -> str:
         mode_name = mode_key.casefold()
@@ -756,29 +688,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         try:
             repaired = await self._llm.create(
                 model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Role: Final report language normalizer.\n"
-                            "Mission: Rewrite markdown into target language while preserving all meaning and structure.\n"
-                            "Rules:\n"
-                            "1) Preserve every key fact, number, date, condition, and action.\n"
-                            "2) Keep heading structure and markdown formatting.\n"
-                            "3) Keep unavoidable proper nouns in original form when needed.\n"
-                            "4) Do not add or remove substantive content.\n"
-                            "5) Return markdown only."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"TARGET_LANGUAGE:\n{target}\n\n"
-                            f"CURRENT_UTC_DATE:\n{now_utc.date().isoformat()}\n\n"
-                            f"MARKDOWN:\n{markdown}"
-                        ),
-                    },
-                ],
+                messages=build_final_language_repair_messages(
+                    target_language=target,
+                    current_utc_date=now_utc.date().isoformat(),
+                    markdown=markdown,
+                ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
             candidate = normalize_block_text(repaired.text)
@@ -860,29 +774,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             "high": "high",
         }
         return mapping.get(token, "medium")
-
-    def _build_track_result_packet(
-        self, track_results: list[ResearchTrackResult]
-    ) -> list[_RenderTrackResultPacket]:
-        return [
-            _RenderTrackResultPacket(
-                question_id=item.question_id,
-                question=item.question,
-                stop_reason=item.stop_reason,
-                rounds=item.rounds,
-                search_calls=item.search_calls,
-                fetch_calls=item.fetch_calls,
-                confidence=float(item.confidence),
-                coverage_ratio=float(item.coverage_ratio),
-                unresolved_conflicts=item.unresolved_conflicts,
-                track_insight_card=self._coerce_track_insight_card(
-                    item.track_insight_card
-                ),
-                key_findings=list(item.key_findings),
-                subreport_excerpt=normalize_block_text(item.subreport_markdown),
-            )
-            for item in track_results
-        ]
 
     def _resolve_question_ids(self, ctx: ResearchStepContext) -> list[str]:
         out: list[str] = []
@@ -992,96 +883,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 break
         return out
 
-    def _render_track_results_markdown(
-        self, track_results: list[_RenderTrackResultPacket]
-    ) -> str:
-        if not track_results:
-            return "- (none)"
-        lines: list[str] = []
-        for index, item in enumerate(track_results, start=1):
-            question = normalize_block_text(item.question) or "n/a"
-            lines.extend(
-                [
-                    f"### Evidence Cluster {index}",
-                    f"- Research question: {question}",
-                    "- Insight card:",
-                ]
-            )
-            insight_card = item.track_insight_card
-            if insight_card is None:
-                lines.append("  - (none)")
-            else:
-                lines.append(
-                    f"  - Direct answer: {normalize_block_text(insight_card.direct_answer) or 'n/a'}"
-                )
-                lines.append("  - High-value points:")
-                if insight_card.high_value_points:
-                    for point in insight_card.high_value_points:
-                        conclusion = normalize_block_text(point.conclusion) or "n/a"
-                        condition = normalize_block_text(point.condition) or "n/a"
-                        impact = normalize_block_text(point.impact) or "n/a"
-                        lines.append(
-                            "    - "
-                            f"conclusion={conclusion}; condition={condition}; impact={impact}"
-                        )
-                else:
-                    lines.append("    - (none)")
-                lines.append("  - Tradeoffs/mechanisms:")
-                if insight_card.key_tradeoffs_or_mechanisms:
-                    for token in insight_card.key_tradeoffs_or_mechanisms:
-                        text = normalize_block_text(token)
-                        if text:
-                            lines.append(f"    - {text}")
-                else:
-                    lines.append("    - (none)")
-                lines.append("  - Unknowns/risks:")
-                if insight_card.unknowns_and_risks:
-                    for token in insight_card.unknowns_and_risks:
-                        text = normalize_block_text(token)
-                        if text:
-                            lines.append(f"    - {text}")
-                else:
-                    lines.append("    - (none)")
-                lines.append("  - Next actions:")
-                if insight_card.next_actions:
-                    for token in insight_card.next_actions:
-                        text = normalize_block_text(token)
-                        if text:
-                            lines.append(f"    - {text}")
-                else:
-                    lines.append("    - (none)")
-            lines.extend(
-                [
-                    "- Key findings:",
-                ]
-            )
-            if item.key_findings:
-                for token in item.key_findings:
-                    finding = normalize_block_text(token)
-                    if not finding:
-                        continue
-                    if "\n" not in finding:
-                        lines.append(f"  - {finding}")
-                        continue
-                    lines.extend(
-                        ["  -", "    ```text"]
-                        + [f"    {line}" for line in finding.split("\n")]
-                        + ["    ```"]
-                    )
-            else:
-                lines.append("  - (none)")
-            lines.append("- Subreport excerpt:")
-            excerpt = normalize_block_text(item.subreport_excerpt)
-            if excerpt:
-                lines.extend(
-                    ["  ```markdown"]
-                    + [f"  {line}" for line in excerpt.split("\n")]
-                    + ["  ```"]
-                )
-            else:
-                lines.append("  - (none)")
-        return "\n".join(lines).strip()
-
     def _collect_writer_section_failures(
         self, exc: BaseException
     ) -> list[_WriterSectionFailure]:
@@ -1109,13 +910,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 )
             )
         return out
-
-    def _coerce_track_insight_card(
-        self, raw: TrackInsightCardPayload | None
-    ) -> TrackInsightCardPayload | None:
-        if raw is None:
-            return None
-        return raw.model_copy(deep=True)
 
     def _try_parse_json_value(self, text: str) -> object:
         if not text:

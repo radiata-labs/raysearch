@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
@@ -10,19 +10,20 @@ from serpsage.models.research import (
     OverviewOutputPayload,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.context import (
-    render_rounds_markdown,
-    render_theme_plan_markdown,
-)
 from serpsage.steps.research.prompt import (
     build_overview_messages as build_overview_prompt_messages,
 )
+from serpsage.steps.research.prompt import (
+    build_overview_packet,
+    render_rounds_markdown,
+    render_theme_plan_markdown,
+)
+from serpsage.steps.research.schema import build_overview_schema
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     select_context_source_ids,
 )
 from serpsage.steps.research.utils import (
-    build_overview_packet,
     merge_strings,
     normalize_entity_coverage,
     normalize_strings,
@@ -97,7 +98,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                     now_utc=now_utc,
                 ),
                 response_format=OverviewOutputPayload,
-                format_override=self._build_overview_schema(
+                format_override=build_overview_schema(
                     max_queries=ctx.runtime.budget.max_queries_per_round
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
@@ -232,80 +233,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
 
     def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
         return ctx.plan.theme_plan.output_language or "en"
-
-    def _build_overview_schema(self, *, max_queries: int) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "findings",
-                "conflict_arbitration",
-                "covered_subthemes",
-                "entity_coverage_complete",
-                "covered_entities",
-                "missing_entities",
-                "critical_gaps",
-                "confidence",
-                "need_content_source_ids",
-                "next_query_strategy",
-                "next_queries",
-                "stop",
-            ],
-            "properties": {
-                "findings": {
-                    "type": "array",
-                    "maxItems": 20,
-                    "items": {"type": "string"},
-                },
-                "conflict_arbitration": {
-                    "type": "array",
-                    "maxItems": 16,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["topic", "status"],
-                        "properties": {
-                            "topic": {"type": "string"},
-                            "status": {"type": "string"},
-                        },
-                    },
-                },
-                "covered_subthemes": {
-                    "type": "array",
-                    "maxItems": 16,
-                    "items": {"type": "string"},
-                },
-                "entity_coverage_complete": {"type": "boolean"},
-                "covered_entities": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {"type": "string"},
-                },
-                "missing_entities": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {"type": "string"},
-                },
-                "critical_gaps": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {"type": "string"},
-                },
-                "confidence": {"type": "number"},
-                "need_content_source_ids": {
-                    "type": "array",
-                    "maxItems": 20,
-                    "items": {"type": "integer", "minimum": 1},
-                },
-                "next_query_strategy": {"type": "string"},
-                "next_queries": {
-                    "type": "array",
-                    "maxItems": max(1, max_queries),
-                    "items": {"type": "string"},
-                },
-                "stop": {"type": "boolean"},
-            },
-        }
 
     def _empty_review(self) -> OverviewOutputPayload:
         return OverviewOutputPayload()

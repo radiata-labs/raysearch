@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import (
@@ -31,6 +31,7 @@ from serpsage.steps.research.prompt import (
     infer_report_style_from_theme,
     resolve_report_style,
 )
+from serpsage.steps.research.schema import build_theme_schema
 from serpsage.steps.research.utils import (
     merge_strings,
     normalize_strings,
@@ -96,7 +97,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     report_style=fallback_report_style,
                 ),
                 response_format=ThemeOutputPayload,
-                format_override=self._build_theme_schema(card_cap=prompt_card_cap),
+                format_override=build_theme_schema(card_cap=prompt_card_cap),
                 retries=self.settings.research.llm_self_heal_retries,
             )
             payload = chat_result.data
@@ -308,84 +309,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             card_cap=card_cap,
             hinted_style=report_style,
         )
-
-    def _build_theme_schema(self, *, card_cap: int) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "detected_input_language",
-                "search_language",
-                "core_question",
-                "report_style",
-                "task_intent",
-                "complexity_tier",
-                "subthemes",
-                "required_entities",
-                "question_cards",
-            ],
-            "properties": {
-                "detected_input_language": {"type": "string"},
-                "search_language": {"type": "string"},
-                "core_question": {"type": "string"},
-                "report_style": {
-                    "type": "string",
-                    "enum": ["decision", "explainer", "execution"],
-                },
-                "task_intent": {
-                    "type": "string",
-                    "enum": ["how_to", "comparison", "explainer", "diagnosis", "other"],
-                },
-                "complexity_tier": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high"],
-                },
-                "subthemes": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {"type": "string"},
-                },
-                "required_entities": {
-                    "type": "array",
-                    "maxItems": 16,
-                    "items": {"type": "string"},
-                },
-                "question_cards": {
-                    "type": "array",
-                    "maxItems": max(1, card_cap),
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": [
-                            "question",
-                            "priority",
-                            "seed_queries",
-                            "evidence_focus",
-                            "expected_gain",
-                        ],
-                        "properties": {
-                            "question": {"type": "string"},
-                            "priority": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 5,
-                            },
-                            "seed_queries": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "evidence_focus": {
-                                "type": "array",
-                                "maxItems": 8,
-                                "items": {"type": "string"},
-                            },
-                            "expected_gain": {"type": "string"},
-                        },
-                    },
-                },
-            },
-        }
 
     def _normalize_question_cards(
         self,
