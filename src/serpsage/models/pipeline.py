@@ -255,7 +255,7 @@ class ResearchSource(MutableModel):
     url: str
     canonical_url: str = ""
     title: str = ""
-    overview: str | object | None = None
+    overview: str = ""
     content: str = ""
     round_index: int = 0
     is_subpage: bool = False

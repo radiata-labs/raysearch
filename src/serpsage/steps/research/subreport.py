@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
@@ -19,15 +19,11 @@ from serpsage.steps.research.language import normalize_language_code
 from serpsage.steps.research.prompt import (
     build_subreport_messages as build_subreport_prompt_messages,
 )
-from serpsage.steps.research.prompt import (
-    resolve_report_style,
-)
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     select_context_source_ids,
 )
 from serpsage.steps.research.utils import resolve_research_model
-from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
@@ -122,7 +118,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 retries=self.settings.research.llm_self_heal_retries,
             )
             payload = result.data
-            markdown_text = str(payload.subreport_markdown or "")
+            markdown_text = payload.subreport_markdown
             insight_card = payload.track_insight_card
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
@@ -133,7 +129,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 error_code="research_render_subreport_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "model": str(model),
+                    "model": model,
                     "message": str(exc),
                 },
             )
@@ -145,16 +141,15 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             insight_card.model_dump(mode="json") if insight_card is not None else None
         )
         ctx.output.content = self._normalize_markdown(markdown_text)
-        report_style, style_applied = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="subreport",
             attrs={
-                "report_style_selected": str(report_style),
-                "style_applied_stage": "subreport" if style_applied else "none",
-                "require_insight_card": bool(require_insight_card),
-                "has_insight_card": bool(insight_card is not None),
+                "report_style_selected": report_style,
+                "require_insight_card": require_insight_card,
+                "has_insight_card": insight_card is not None,
             },
         )
 
@@ -165,9 +160,9 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         target_language: str,
         now_utc: datetime,
     ) -> list[dict[str, str]]:
-        target_language_name = clean_whitespace(target_language) or "unspecified"
+        target_language_name = target_language or "unspecified"
         core_question = self._resolve_core_question(ctx)
-        report_style, style_applied = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         context_packet_markdown = self._build_subreport_context_packet_markdown(
             ctx=ctx,
             target_language=target_language,
@@ -180,10 +175,9 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             target_output_language_label=target_language_name,
             current_utc_date=now_utc.date().isoformat(),
             core_question=core_question,
-            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
             report_style=report_style,
-            style_applied=bool(style_applied),
-            require_insight_card=bool(require_insight_card),
+            require_insight_card=require_insight_card,
             context_packet_markdown=context_packet_markdown,
         )
 
@@ -191,32 +185,18 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         core_question = self._resolve_core_question(ctx)
         sources = self._select_sources_for_render(ctx)
         round_state = ctx.rounds[-1] if ctx.rounds else None
-        report_style, style_applied = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         answer_status = self._fallback_answer_status(
             round_state=round_state,
-            has_sources=bool(sources),
+            has_sources=len(sources) > 0,
         )
         evidence_lines = self._fallback_evidence_lines(sources, limit=6)
         uncertainty_lines = self._fallback_uncertainty_lines(
             round_state=round_state,
-            has_sources=bool(sources),
+            has_sources=len(sources) > 0,
         )
         next_checks = self._fallback_next_checks(round_state=round_state)
         sections = [f"## {core_question or 'Core Question'}"]
-        if not style_applied:
-            sections.extend(
-                [
-                    "### Direct answer",
-                    f"- {answer_status}",
-                    "### Evidence highlights",
-                    "\n".join(evidence_lines),
-                    "### Conflicts and uncertainty",
-                    "\n".join(uncertainty_lines),
-                    "### Targeted next checks",
-                    "\n".join(next_checks),
-                ]
-            )
-            return "\n\n".join(sections)
         sections.extend(
             self._build_style_fallback_sections(
                 report_style=report_style,
@@ -239,7 +219,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             float(getattr(round_state, "coverage_ratio", 0.0)) if round_state else 0.0
         )
         unresolved_conflicts = (
-            int(getattr(round_state, "unresolved_conflicts", 0)) if round_state else 0
+            getattr(round_state, "unresolved_conflicts", 0) if round_state else 0
         )
         missing_entities = (
             list(getattr(round_state, "missing_entities", []))[:4]
@@ -261,7 +241,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             ),
             TrackInsightPointPayload(
                 conclusion="Conflict level directly affects final recommendation stability.",
-                condition=f"unresolved_conflicts={int(unresolved_conflicts)}",
+                condition=f"unresolved_conflicts={unresolved_conflicts}",
                 impact="Higher unresolved conflict means lower decision reliability.",
             ),
         ]
@@ -277,7 +257,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             next_actions=[
                 (
                     "Add targeted verification queries for missing entities: "
-                    + ", ".join(str(item) for item in missing_entities)
+                    + ", ".join(missing_entities)
                 )
                 if missing_entities
                 else "Add one additional authoritative source to validate the key claim."
@@ -303,8 +283,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 "Current evidence supports a partial answer, but verification is still "
                 "needed for higher confidence."
             )
-        unresolved_conflicts = int(getattr(round_state, "unresolved_conflicts", 0))
-        critical_gaps = int(getattr(round_state, "critical_gaps", 0))
+        unresolved_conflicts = getattr(round_state, "unresolved_conflicts", 0)
+        critical_gaps = getattr(round_state, "critical_gaps", 0)
         if unresolved_conflicts <= 0 and critical_gaps <= 0:
             return (
                 "Current evidence supports a stable answer, with no major unresolved "
@@ -329,13 +309,13 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         if not sources:
             return ["- No source evidence is available yet."]
         out: list[str] = []
-        max_items = max(1, int(limit))
+        max_items = max(1, limit)
         for source in sources[:max_items]:
-            title = clean_whitespace(source.title or "") or "Untitled source"
-            url = clean_whitespace(str(source.url or ""))
-            snippet_raw = clean_whitespace(str(source.overview or ""))
+            title = source.title or "Untitled source"
+            url = source.url
+            snippet_raw = source.overview
             if not snippet_raw:
-                snippet_raw = clean_whitespace(str(source.content or ""))
+                snippet_raw = source.content
             snippet = self._truncate_inline_text(snippet_raw, max_chars=240)
             if not snippet:
                 snippet = "Relevant context is available from this source."
@@ -361,8 +341,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 "- Evidence quality varies across sources and still needs targeted verification.",
                 "- Confidence remains provisional until conflicts and missing data are resolved.",
             ]
-        unresolved_conflicts = int(getattr(round_state, "unresolved_conflicts", 0))
-        critical_gaps = int(getattr(round_state, "critical_gaps", 0))
+        unresolved_conflicts = getattr(round_state, "unresolved_conflicts", 0)
+        critical_gaps = getattr(round_state, "critical_gaps", 0)
         lines: list[str] = []
         if unresolved_conflicts > 0:
             lines.append(
@@ -390,11 +370,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         if round_state is None:
             return lines
         raw_entities = getattr(round_state, "missing_entities", [])
-        missing_entities = [
-            token
-            for item in list(raw_entities)[:4]
-            if (token := clean_whitespace(str(item)))
-        ]
+        missing_entities = [item for item in list(raw_entities)[:4] if item]
         if missing_entities:
             entity_text = ", ".join(missing_entities)
             lines.append(f"- Add direct evidence for missing entities: {entity_text}.")
@@ -451,10 +427,10 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         ]
 
     def _truncate_inline_text(self, text: str, *, max_chars: int) -> str:
-        raw = clean_whitespace(str(text or ""))
+        raw = text.strip()
         if not raw:
             return ""
-        limit = max(1, int(max_chars))
+        limit = max(1, max_chars)
         if len(raw) <= limit:
             return raw
         clipped = raw[: limit - 1].rstrip()
@@ -479,13 +455,13 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         lines: list[str] = [
             "# Subreport Context Packet",
             "## Theme",
-            self._normalize_block_text(packet.theme) or "n/a",
+            packet.theme,
             "## Core Question",
-            self._normalize_block_text(packet.core_question) or "n/a",
+            packet.core_question,
             "## Report Style",
-            self._normalize_block_text(packet.report_style) or "n/a",
+            packet.report_style,
             "## Target Output Language",
-            self._normalize_block_text(packet.target_output_language) or "n/a",
+            packet.target_output_language,
             "## Time Context",
             f"- UTC timestamp: {packet.utc_timestamp}",
             f"- UTC date: {packet.utc_date}",
@@ -500,24 +476,24 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         lines.extend(["## Round Trajectory"])
         if packet.round_trajectory:
             for trajectory_item in packet.round_trajectory:
-                round_index = int(trajectory_item.round_index)
+                round_index = trajectory_item.round_index
                 lines.extend(
                     [
                         f"### Round {round_index}",
-                        f"- Query strategy: {self._normalize_block_text(trajectory_item.query_strategy) or 'n/a'}",
-                        f"- Result count: {int(trajectory_item.result_count)}",
+                        f"- Query strategy: {trajectory_item.query_strategy or 'n/a'}",
+                        f"- Result count: {trajectory_item.result_count}",
                         f"- Confidence: {float(trajectory_item.confidence):.3f}",
                         f"- Coverage ratio: {float(trajectory_item.coverage_ratio):.3f}",
-                        f"- Unresolved conflicts: {int(trajectory_item.unresolved_conflicts)}",
-                        f"- Critical gaps: {int(trajectory_item.critical_gaps)}",
-                        f"- Stop: {bool(trajectory_item.stop)}",
-                        f"- Stop reason: {self._normalize_block_text(trajectory_item.stop_reason) or 'n/a'}",
+                        f"- Unresolved conflicts: {trajectory_item.unresolved_conflicts}",
+                        f"- Critical gaps: {trajectory_item.critical_gaps}",
+                        f"- Stop: {trajectory_item.stop}",
+                        f"- Stop reason: {trajectory_item.stop_reason or 'n/a'}",
                     ]
                 )
                 if trajectory_item.queries:
                     lines.append("- Queries:")
                     for query in trajectory_item.queries:
-                        token = self._normalize_block_text(str(query))
+                        token = query
                         if not token:
                             continue
                         if "\n" not in token:
@@ -535,11 +511,11 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         lines.extend(["## Source Evidence"])
         if packet.source_evidence:
             for source in packet.source_evidence:
-                source_id = int(source.source_id)
-                title = clean_whitespace(source.title) or "Untitled"
-                url = clean_whitespace(source.url) or "n/a"
-                round_index = int(source.round_index)
-                is_subpage = bool(source.is_subpage)
+                source_id = source.source_id
+                title = source.title or "Untitled"
+                url = source.url or "n/a"
+                round_index = source.round_index
+                is_subpage = source.is_subpage
                 lines.extend(
                     [
                         f"### Source {source_id}: {title}",
@@ -548,7 +524,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                         f"- Is subpage: {is_subpage}",
                     ]
                 )
-                overview = self._normalize_block_text(source.overview)
+                overview = source.overview
                 lines.append("- Overview:")
                 if overview:
                     lines.extend(
@@ -558,7 +534,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                     )
                 else:
                     lines.append("  - (none)")
-                excerpt = self._normalize_block_text(source.content_excerpt)
+                excerpt = source.content_excerpt
                 if excerpt:
                     lines.extend(
                         [
@@ -589,13 +565,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     ) -> _SubreportContextPacket:
         mode_depth = ctx.runtime.mode_depth
         selected_sources = self._select_sources_for_render(ctx)
-        report_style, style_applied = self._resolve_report_style(ctx)
-        style_label = report_style if style_applied else "baseline"
+        report_style = ctx.plan.theme_plan.report_style
         return _SubreportContextPacket(
-            theme=self._normalize_block_text(str(ctx.request.themes)),
-            core_question=self._normalize_block_text(core_question),
-            report_style=self._normalize_block_text(style_label),
-            target_output_language=self._normalize_block_text(target_language),
+            theme=ctx.request.themes,
+            core_question=core_question,
+            report_style=report_style,
+            target_output_language=target_language,
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
             theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
@@ -606,8 +581,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             ),
             notes=self._collect_recent_notes(ctx, limit=12),
             subreport_objective=self._subreport_objective_for_style(
-                report_style=report_style,
-                style_applied=style_applied,
+                report_style=report_style
             ),
         )
 
@@ -615,13 +589,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         self,
         *,
         report_style: ReportStyle,
-        style_applied: bool,
     ) -> str:
-        if not style_applied:
-            return (
-                "Build an evidence archive for one core question with complete, "
-                "traceable detail and explicit uncertainty boundaries."
-            )
         if report_style == "decision":
             return (
                 "Produce a decision-focused subreport with scenario-fit recommendations, "
@@ -644,20 +612,16 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         rounds = ctx.rounds[-8:]
         return [
             _SubreportRoundTrajectoryItem(
-                round_index=int(round_state.round_index),
-                query_strategy=clean_whitespace(round_state.query_strategy or "n/a"),
-                queries=[
-                    token
-                    for item in round_state.queries[:8]
-                    if (token := self._normalize_block_text(item))
-                ],
-                result_count=int(round_state.result_count),
+                round_index=round_state.round_index,
+                query_strategy=round_state.query_strategy or "n/a",
+                queries=[token for item in round_state.queries[:8] if (token := item)],
+                result_count=round_state.result_count,
                 confidence=float(round_state.confidence),
                 coverage_ratio=float(round_state.coverage_ratio),
-                unresolved_conflicts=int(round_state.unresolved_conflicts),
-                critical_gaps=int(round_state.critical_gaps),
-                stop=bool(round_state.stop),
-                stop_reason=clean_whitespace(round_state.stop_reason or "n/a"),
+                unresolved_conflicts=round_state.unresolved_conflicts,
+                critical_gaps=round_state.critical_gaps,
+                stop=round_state.stop,
+                stop_reason=round_state.stop_reason or "n/a",
             )
             for round_state in rounds
         ]
@@ -669,14 +633,14 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         max_chars: int,
     ) -> list[_SubreportSourceEvidenceItem]:
         out: list[_SubreportSourceEvidenceItem] = []
-        total_limit = max(1, int(max_chars))
+        total_limit = max(1, max_chars)
         consumed_chars = 0
         for source in sources:
-            content_excerpt = self._normalize_block_text(str(source.content or ""))
+            content_excerpt = source.content
             if content_excerpt:
                 remaining_chars = max(0, total_limit - consumed_chars)
                 content_excerpt = content_excerpt[:remaining_chars]
-            overview = self._normalize_block_text(str(source.overview or ""))
+            overview = source.overview
             if overview:
                 remaining_chars = max(
                     0, total_limit - consumed_chars - len(content_excerpt)
@@ -688,11 +652,11 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             consumed_chars = projected
             out.append(
                 _SubreportSourceEvidenceItem(
-                    source_id=int(source.source_id),
-                    url=str(source.url),
-                    title=clean_whitespace(source.title or ""),
-                    round_index=int(source.round_index),
-                    is_subpage=bool(source.is_subpage),
+                    source_id=source.source_id,
+                    url=source.url,
+                    title=source.title,
+                    round_index=source.round_index,
+                    is_subpage=source.is_subpage,
                     overview=overview,
                     content_excerpt=content_excerpt,
                 )
@@ -707,8 +671,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     ) -> list[str]:
         out: list[str] = []
         seen: set[str] = set()
-        for raw in reversed(ctx.notes):
-            item = self._normalize_block_text(raw)
+        for item in reversed(ctx.notes):
             if not item:
                 continue
             key = item.casefold()
@@ -716,7 +679,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 continue
             seen.add(key)
             out.append(item)
-            if len(out) >= max(1, int(limit)):
+            if len(out) >= max(1, limit):
                 break
         out.reverse()
         return out
@@ -738,12 +701,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         limit = max(1, mode_depth.content_source_topk)
         latest_round_index = 0
         if ctx.rounds:
-            latest_round_index = int(ctx.rounds[-1].round_index)
+            latest_round_index = ctx.rounds[-1].round_index
         elif ctx.current_round is not None:
             latest_round_index = ctx.current_round.round_index
         else:
             latest_round_index = max(
-                (int(item.round_index) for item in ctx.corpus.sources),
+                (item.round_index for item in ctx.corpus.sources),
                 default=0,
             )
         selected_ids = select_context_source_ids(
@@ -751,7 +714,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             round_index=latest_round_index,
             topk=limit,
             new_result_target_ratio=float(self._CONTEXT_NEW_RESULT_TARGET_RATIO),
-            min_history_sources=int(self._CONTEXT_MIN_HISTORY_SOURCES),
+            min_history_sources=self._CONTEXT_MIN_HISTORY_SOURCES,
         )
         if selected_ids:
             selected = pick_sources_by_ids(
@@ -762,16 +725,13 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 return selected
         fallback = sorted(
             ctx.corpus.sources,
-            key=lambda item: (int(item.round_index), int(item.source_id)),
+            key=lambda item: (item.round_index, item.source_id),
             reverse=True,
         )
         return list(fallback[:limit])
 
-    def _normalize_block_text(self, text: str) -> str:
-        return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-
     def _normalize_markdown(self, text: str) -> str:
-        content = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        content = text.replace("\r\n", "\n").replace("\r", "\n")
         lines: list[str] = []
         blank_count = 0
         for raw in content.split("\n"):
@@ -786,28 +746,8 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             lines.append(line)
         return "\n".join(lines).strip()
 
-    def _resolve_report_style(
-        self,
-        ctx: ResearchStepContext,
-    ) -> tuple[ReportStyle, bool]:
-        cfg = self.settings.research.report_style
-        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
-        if fallback_style_key not in {"decision", "explainer", "execution"}:
-            fallback_style_key = "explainer"
-        style = resolve_report_style(
-            raw_style=ctx.plan.theme_plan.report_style,
-            theme=self._resolve_core_question(ctx),
-            enabled=bool(cfg.enabled),
-            fallback_style=cast("ReportStyle", fallback_style_key),
-            strict_style_lock=bool(cfg.strict_style_lock),
-        )
-        return style, bool(cfg.enabled and cfg.apply_subreport)
-
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
-        return question or clean_whitespace(ctx.request.themes)
+        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
 
 __all__ = ["ResearchSubreportStep"]

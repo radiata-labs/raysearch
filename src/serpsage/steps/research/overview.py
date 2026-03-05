@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.models.research import (
     OverviewConflictPayload,
     OverviewOutputPayload,
-    ReportStyle,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.context import (
@@ -17,9 +16,6 @@ from serpsage.steps.research.context import (
 )
 from serpsage.steps.research.prompt import (
     build_overview_messages as build_overview_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    resolve_report_style,
 )
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
@@ -148,13 +144,9 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         if findings:
             ctx.notes.extend(findings[:3])
             ctx.current_round.overview_summary = " | ".join(findings[:3])
-        ctx.current_round.confidence = self._normalize_confidence(payload.confidence)
+        ctx.current_round.confidence = min(1.0, max(-1.0, payload.confidence or 0.0))
         ctx.current_round.query_strategy = clean_whitespace(
-            str(
-                payload.next_query_strategy
-                or ctx.current_round.query_strategy
-                or "mixed"
-            )
+            payload.next_query_strategy or ctx.current_round.query_strategy or "mixed"
         )
         covered_subthemes = normalize_strings(payload.covered_subthemes, limit=16)
         if covered_subthemes:
@@ -188,15 +180,15 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             [],
             limit=ctx.runtime.budget.max_queries_per_round,
         )
-        report_style = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="overview_review",
             attrs={
-                "report_style_selected": str(report_style),
+                "report_style_selected": report_style,
                 "style_applied_stage": "overview",
-                "mode_depth_profile": str(mode_depth.mode_key),
+                "mode_depth_profile": mode_depth.mode_key,
                 "overview_context_topk_effective": overview_topk,
                 "overview_source_chars_effective": overview_chars,
                 "overview_new_result_target_ratio": new_result_target_ratio,
@@ -213,17 +205,17 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> list[dict[str, str]]:
         out_lang = self._resolve_output_language(ctx)
-        out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        out_lang_name = out_lang or "unspecified"
         core_question = self._resolve_core_question(ctx)
         round_index = ctx.current_round.round_index if ctx.current_round else 0
-        report_style = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
         return build_overview_prompt_messages(
             theme=ctx.request.themes,
             core_question=core_question,
             report_style=report_style,
-            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
+            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
             round_index=round_index,
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
@@ -236,14 +228,10 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         )
 
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
-        return question or clean_whitespace(ctx.request.themes)
+        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
     def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
-        token = clean_whitespace(ctx.plan.theme_plan.output_language)
-        return token or "en"
+        return ctx.plan.theme_plan.output_language or "en"
 
     def _build_overview_schema(self, *, max_queries: int) -> dict[str, Any]:
         return {
@@ -322,16 +310,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
     def _empty_review(self) -> OverviewOutputPayload:
         return OverviewOutputPayload()
 
-    def _normalize_confidence(self, raw: object) -> float:
-        try:
-            if isinstance(raw, int | float | str):
-                value = float(raw)
-            else:
-                return 0.0
-        except Exception:  # noqa: S112
-            return 0.0
-        return min(1.0, max(0.0, value))
-
     def _extract_unresolved_topics(
         self,
         raw: list[OverviewConflictPayload],
@@ -407,19 +385,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         if round_index <= 1:
             min_history = min(min_history, 1)
         return max(0.0, min(1.0, ratio)), max(0, min_history)
-
-    def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
-        cfg = self.settings.research.report_style
-        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
-        if fallback_style_key not in {"decision", "explainer", "execution"}:
-            fallback_style_key = "explainer"
-        return resolve_report_style(
-            raw_style=ctx.plan.theme_plan.report_style,
-            theme=self._resolve_core_question(ctx),
-            enabled=cfg.enabled,
-            fallback_style=cast("ReportStyle", fallback_style_key),
-            strict_style_lock=cfg.strict_style_lock,
-        )
 
 
 __all__ = ["ResearchOverviewStep"]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from dataclasses import dataclass
@@ -68,9 +67,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
         ctx.work.search_fetched_candidates = []
-        round_action = clean_whitespace(
-            str(ctx.work.round_action or "search")
-        ).casefold()
+        round_action = (ctx.work.round_action or "search").casefold()
         if ctx.current_round.round_index <= 1:
             round_action = "search"
         if round_action != "search":
@@ -120,7 +117,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 else "max_fetch_calls"
             )
             ctx.current_round.stop = True
-            ctx.current_round.stop_reason = str(ctx.runtime.stop_reason)
+            ctx.current_round.stop_reason = ctx.runtime.stop_reason
             return ctx
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
         search_language = normalize_language_code(
@@ -134,7 +131,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 default="en",
             )
         provider_params = map_provider_language_param(
-            provider_backend=str(self.settings.provider.backend),
+            provider_backend=self.settings.provider.backend,
             search_language=search_language,
         )
         if provider_params:
@@ -143,7 +140,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         for idx, job in enumerate(jobs):
             jobs_left_after_current = max(0, len(jobs) - idx - 1)
             fetch_cap = max(1, remaining_fetch_budget - jobs_left_after_current)
-            max_subpages = max(0, int(fetch_cap) - 1)
+            max_subpages = max(0, fetch_cap - 1)
             subpages_request = (
                 FetchSubpagesRequest(
                     max_subpages=max_subpages,
@@ -188,7 +185,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx.work.search_fetched_candidates = [
             item.model_copy(deep=True) for item in prepared_candidates
         ]
-        ctx.runtime.search_calls += int(len(jobs))
+        ctx.runtime.search_calls += len(jobs)
         return ctx
 
     def _build_search_request(
@@ -200,10 +197,10 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         main_links_limit: int,
     ) -> SearchRequest:
         return SearchRequest(
-            query=str(query_job.query),
+            query=query_job.query,
             additional_queries=(
                 list(query_job.additional_queries or [])
-                if str(query_job.mode) == "deep"
+                if query_job.mode == "deep"
                 else None
             ),
             mode=query_job.mode,
@@ -223,7 +220,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 abstracts=False,
                 subpages=subpages_request,
                 overview=True,
-                others=FetchOthersRequest(max_links=int(main_links_limit)),
+                others=FetchOthersRequest(max_links=main_links_limit),
             ),
         )
 
@@ -234,12 +231,12 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         candidates: list[SearchFetchedCandidate],
         consumed_indexes: set[int],
     ) -> SearchFetchedCandidate | None:
-        target_url = clean_whitespace(str(result.url))
+        target_url = result.url
         target_key = canonicalize_url(target_url) or target_url.casefold()
         for index, candidate in enumerate(candidates):
             if index in consumed_indexes:
                 continue
-            candidate_url = clean_whitespace(str(candidate.result.url))
+            candidate_url = candidate.result.url
             candidate_key = canonicalize_url(candidate_url) or candidate_url.casefold()
             if candidate_key != target_key:
                 continue
@@ -284,14 +281,15 @@ def append_source_version(
     ctx: ResearchStepContext,
     url: str,
     title: str,
-    overview: object | None,
+    overview: str,
     content: str,
     round_index: int,
     is_subpage: bool,
 ) -> CorpusUpsertResult:
-    canonical_url = canonicalize_url(url) or clean_whitespace(url)
+    normalized_url = clean_whitespace(url)
+    canonical_url = canonicalize_url(normalized_url) or normalized_url
     normalized_title = clean_whitespace(title)
-    normalized_overview = _normalize_overview(overview)
+    normalized_overview = _normalize_text(overview)
     normalized_content = _normalize_text(content)
     fingerprint = build_content_fingerprint(
         content=normalized_content,
@@ -305,23 +303,23 @@ def append_source_version(
         if idx is None:
             continue
         source = ctx.corpus.sources[idx]
-        if int(source.round_index) != int(round_index):
+        if source.round_index != round_index:
             continue
-        if clean_whitespace(source.content_fingerprint) != fingerprint:
+        if source.content_fingerprint != fingerprint:
             continue
         updated = source.model_copy(
             update={
-                "title": clean_whitespace(source.title) or normalized_title,
+                "title": source.title or normalized_title,
                 "overview": source.overview or normalized_overview,
                 "content": source.content or normalized_content,
-                "seen_count": max(1, int(source.seen_count)) + 1,
+                "seen_count": max(1, source.seen_count) + 1,
                 "canonical_url": canonical_url,
                 "content_fingerprint": fingerprint,
             }
         )
         ctx.corpus.sources[idx] = updated
         return CorpusUpsertResult(
-            source_id=int(source_id),
+            source_id=source_id,
             canonical_url=canonical_url,
             is_new_canonical=False,
             is_new_version=False,
@@ -330,24 +328,24 @@ def append_source_version(
     ctx.corpus.sources.append(
         ResearchSource(
             source_id=source_id,
-            url=clean_whitespace(url),
+            url=normalized_url,
             canonical_url=canonical_url,
             title=normalized_title,
             overview=normalized_overview,
             content=normalized_content,
-            round_index=int(round_index),
-            is_subpage=bool(is_subpage),
+            round_index=round_index,
+            is_subpage=is_subpage,
             seen_count=1,
             content_fingerprint=fingerprint,
         )
     )
     ids = list(ctx.corpus.source_url_to_ids.get(canonical_url, []))
-    ids.append(int(source_id))
+    ids.append(source_id)
     ctx.corpus.source_url_to_ids[canonical_url] = ids
     return CorpusUpsertResult(
-        source_id=int(source_id),
+        source_id=source_id,
         canonical_url=canonical_url,
-        is_new_canonical=bool(len(existing_ids) == 0),
+        is_new_canonical=len(existing_ids) == 0,
         is_new_version=True,
     )
 
@@ -364,27 +362,27 @@ def rebuild_corpus_ranking(
     canonical_to_latest: dict[str, int] = {}
     canonical_seen: dict[str, int] = {}
     for source in ctx.corpus.sources:
-        canonical = clean_whitespace(source.canonical_url)
+        canonical = source.canonical_url
         if not canonical:
-            canonical = canonicalize_url(source.url) or clean_whitespace(source.url)
+            canonical = canonicalize_url(source.url)
         if not canonical:
             continue
         canonical_seen[canonical] = canonical_seen.get(canonical, 0) + max(
-            1, int(source.seen_count)
+            1, source.seen_count
         )
         prev = canonical_to_latest.get(canonical)
         if prev is None:
-            canonical_to_latest[canonical] = int(source.source_id)
+            canonical_to_latest[canonical] = source.source_id
             continue
         prev_source = ctx.corpus.sources[source_idx_by_id[prev]]
         if (
-            int(source.round_index),
-            int(source.source_id),
+            source.round_index,
+            source.source_id,
         ) >= (
-            int(prev_source.round_index),
-            int(prev_source.source_id),
+            prev_source.round_index,
+            prev_source.source_id,
         ):
-            canonical_to_latest[canonical] = int(source.source_id)
+            canonical_to_latest[canonical] = source.source_id
     max_seen = max(canonical_seen.values(), default=1)
     query_tokens = _build_query_tokens(ctx=ctx)
     scored: list[tuple[int, float]] = []
@@ -395,8 +393,8 @@ def rebuild_corpus_ranking(
             continue
         source = ctx.corpus.sources[idx]
         newness_score = _compute_newness_score(
-            source_round_index=int(source.round_index),
-            current_round_index=int(round_index),
+            source_round_index=source.round_index,
+            current_round_index=round_index,
         )
         relevance_score = _compute_relevance_score(
             source=source,
@@ -413,13 +411,13 @@ def rebuild_corpus_ranking(
             + float(_CORPUS_SCORE_WEIGHT_DEPTH) * depth_score
             + float(_CORPUS_SCORE_WEIGHT_STABILITY) * stability_score
         )
-        score_map[int(latest_id)] = float(final_score)
-        scored.append((int(latest_id), float(final_score)))
+        score_map[latest_id] = float(final_score)
+        scored.append((latest_id, float(final_score)))
     scored.sort(
         key=lambda item: (
             float(item[1]),
             _source_round_index(ctx=ctx, source_id=item[0]),
-            int(item[0]),
+            item[0],
         ),
         reverse=True,
     )
@@ -429,13 +427,11 @@ def rebuild_corpus_ranking(
         canonical_score = 0.0
         latest_source_id = canonical_to_latest.get(canonical)
         if latest_source_id is not None:
-            canonical_score = float(score_map.get(int(latest_source_id), 0.0))
+            canonical_score = float(score_map.get(latest_source_id, 0.0))
         for source_id in ids:
-            full_score_map[int(source_id)] = canonical_score
+            full_score_map[source_id] = canonical_score
     for idx, source in enumerate(ctx.corpus.sources):
-        canonical = clean_whitespace(source.canonical_url) or canonicalize_url(
-            source.url
-        )
+        canonical = source.canonical_url or canonicalize_url(source.url)
         if canonical != source.canonical_url:
             ctx.corpus.sources[idx] = source.model_copy(
                 update={
@@ -444,11 +440,9 @@ def rebuild_corpus_ranking(
             )
     ctx.corpus.ranked_source_ids = list(ranked_source_ids)
     ctx.corpus.source_scores = dict(full_score_map)
-    old_total = sum(
-        float(old_scores.get(int(source_id), 0.0)) for source_id in old_ranked
-    )
+    old_total = sum(float(old_scores.get(source_id, 0.0)) for source_id in old_ranked)
     new_total = sum(
-        float(ctx.corpus.source_scores.get(int(source_id), 0.0))
+        float(ctx.corpus.source_scores.get(source_id, 0.0))
         for source_id in ranked_source_ids
     )
     return max(0.0, float(new_total - old_total))
@@ -462,26 +456,24 @@ def select_context_source_ids(
     new_result_target_ratio: float,
     min_history_sources: int,
 ) -> list[int]:
-    limit = max(1, int(topk))
+    limit = max(1, topk)
     ranked_ids = _resolve_ranked_source_ids(ctx=ctx)
     if not ranked_ids:
         return []
-    source_by_id = {int(source.source_id): source for source in ctx.corpus.sources}
+    source_by_id = {source.source_id: source for source in ctx.corpus.sources}
     new_ids = [
         source_id
         for source_id in ranked_ids
-        if int(source_by_id[source_id].round_index) == int(round_index)
+        if source_by_id[source_id].round_index == round_index
     ]
     history_ids = [
         source_id
         for source_id in ranked_ids
-        if int(source_by_id[source_id].round_index) != int(round_index)
+        if source_by_id[source_id].round_index != round_index
     ]
     target_new = min(
         len(new_ids),
-        int(
-            math.ceil(float(limit) * float(max(0.0, min(1.0, new_result_target_ratio))))
-        ),
+        int(math.ceil(limit * float(max(0.0, min(1.0, new_result_target_ratio))))),
     )
     selected: list[int] = []
     selected.extend(new_ids[:target_new])
@@ -500,7 +492,7 @@ def select_context_source_ids(
             selected.append(source_id)
             if len(selected) >= limit:
                 break
-    min_history = max(0, int(min_history_sources))
+    min_history = max(0, min_history_sources)
     history_needed = min(min_history, len(history_ids))
     history_selected = sum(1 for source_id in selected if source_id in history_ids)
     if history_selected < history_needed:
@@ -535,10 +527,10 @@ def pick_sources_by_ids(
     sources: list[ResearchSource],
     source_ids: list[int],
 ) -> list[ResearchSource]:
-    source_by_id = {int(source.source_id): source for source in sources}
+    source_by_id = {source.source_id: source for source in sources}
     out: list[ResearchSource] = []
     for source_id in source_ids:
-        source = source_by_id.get(int(source_id))
+        source = source_by_id.get(source_id)
         if source is None:
             continue
         out.append(source)
@@ -550,11 +542,11 @@ def sort_source_ids_by_score(
     ctx: ResearchStepContext,
     source_ids: list[int],
 ) -> list[int]:
-    source_by_id = {int(source.source_id): source for source in ctx.corpus.sources}
+    source_by_id = {source.source_id: source for source in ctx.corpus.sources}
     out: list[int] = []
     seen: set[int] = set()
     for raw in source_ids:
-        source_id = int(raw)
+        source_id = raw
         if source_id in seen or source_id not in source_by_id:
             continue
         seen.add(source_id)
@@ -562,8 +554,8 @@ def sort_source_ids_by_score(
     out.sort(
         key=lambda source_id: (
             float(ctx.corpus.source_scores.get(source_id, 0.0)),
-            int(source_by_id[source_id].round_index),
-            int(source_id),
+            source_by_id[source_id].round_index,
+            source_id,
         ),
         reverse=True,
     )
@@ -571,65 +563,58 @@ def sort_source_ids_by_score(
 
 
 def synchronize_corpus_indexes(*, ctx: ResearchStepContext) -> None:
-    sorted_sources = sorted(ctx.corpus.sources, key=lambda item: int(item.source_id))
+    sorted_sources = sorted(ctx.corpus.sources, key=lambda item: item.source_id)
     url_to_ids: dict[str, list[int]] = {}
     for idx, source in enumerate(sorted_sources):
-        canonical = clean_whitespace(source.canonical_url) or canonicalize_url(
-            source.url
-        )
+        canonical = source.canonical_url or canonicalize_url(source.url)
         if canonical != source.canonical_url:
             source = source.model_copy(update={"canonical_url": canonical})
             sorted_sources[idx] = source
         if not canonical:
             continue
         ids = list(url_to_ids.get(canonical, []))
-        ids.append(int(source.source_id))
+        ids.append(source.source_id)
         url_to_ids[canonical] = ids
     ctx.corpus.sources = sorted_sources
     ctx.corpus.source_url_to_ids = url_to_ids
 
 
-def build_content_fingerprint(*, content: str, overview: object | None) -> str:
+def build_content_fingerprint(*, content: str, overview: str) -> str:
     normalized_content = _normalize_text(content)
     lines = [normalized_content[:5000]]
-    overview_text = _normalize_overview_text(overview)
-    if overview_text:
-        lines.append(overview_text[:5000])
+    if overview:
+        lines.append(overview[:5000])
     payload = "\n".join(lines).strip() or "__empty__"
     return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _resolve_ranked_source_ids(*, ctx: ResearchStepContext) -> list[int]:
     source_ids: list[int] = []
-    source_by_id = {int(source.source_id): source for source in ctx.corpus.sources}
+    source_by_id = {source.source_id: source for source in ctx.corpus.sources}
     seen_canonical: set[str] = set()
     for source_id in ctx.corpus.ranked_source_ids:
-        source = source_by_id.get(int(source_id))
+        source = source_by_id.get(source_id)
         if source is None:
             continue
-        canonical = clean_whitespace(source.canonical_url) or canonicalize_url(
-            source.url
-        )
+        canonical = source.canonical_url or canonicalize_url(source.url)
         if not canonical or canonical in seen_canonical:
             continue
         seen_canonical.add(canonical)
-        source_ids.append(int(source_id))
+        source_ids.append(source_id)
     if source_ids:
         return source_ids
     fallback = sorted(
         ctx.corpus.sources,
-        key=lambda item: (int(item.round_index), int(item.source_id)),
+        key=lambda item: (item.round_index, item.source_id),
         reverse=True,
     )
     out: list[int] = []
     for source in fallback:
-        canonical = clean_whitespace(source.canonical_url) or canonicalize_url(
-            source.url
-        )
+        canonical = source.canonical_url or canonicalize_url(source.url)
         if not canonical or canonical in seen_canonical:
             continue
         seen_canonical.add(canonical)
-        out.append(int(source.source_id))
+        out.append(source.source_id)
     return out
 
 
@@ -645,7 +630,7 @@ def _trim_to_limit(
         removed = False
         for idx in range(len(out) - 1, -1, -1):
             source_id = out[idx]
-            if int(source_by_id[source_id].round_index) == int(round_index):
+            if source_by_id[source_id].round_index == round_index:
                 out.pop(idx)
                 removed = True
                 break
@@ -656,8 +641,8 @@ def _trim_to_limit(
 
 def _source_round_index(*, ctx: ResearchStepContext, source_id: int) -> int:
     for source in ctx.corpus.sources:
-        if int(source.source_id) == int(source_id):
-            return int(source.round_index)
+        if source.source_id == source_id:
+            return source.round_index
     return 0
 
 
@@ -666,7 +651,7 @@ def _compute_newness_score(
     source_round_index: int,
     current_round_index: int,
 ) -> float:
-    round_gap = max(0, int(current_round_index) - int(source_round_index))
+    round_gap = max(0, current_round_index - source_round_index)
     if round_gap <= 0:
         return 1.0
     return max(0.0, 1.0 - (float(round_gap) / 5.0))
@@ -680,9 +665,9 @@ def _compute_relevance_score(
     if not query_tokens:
         return 0.0
     parts = [
-        clean_whitespace(source.title),
-        clean_whitespace(source.url),
-        _normalize_overview_text(source.overview)[:1800],
+        source.title,
+        source.url,
+        (source.overview)[:1800],
         _normalize_text(source.content)[:1800],
     ]
     haystack = " ".join(parts).casefold()
@@ -695,7 +680,7 @@ def _compute_relevance_score(
 def _compute_depth_score(source: ResearchSource) -> float:
     content_len = len(_normalize_text(source.content))
     content_score = min(1.0, float(content_len) / 2400.0)
-    overview_len = len(_normalize_overview_text(source.overview))
+    overview_len = len(source.overview)
     overview_score = min(1.0, float(overview_len) / 1200.0)
     return min(1.0, 0.7 * content_score + 0.3 * overview_score)
 
@@ -707,7 +692,7 @@ def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
         values.extend(ctx.current_round.queries)
     values.append(_resolve_core_question(ctx=ctx))
     for value in values:
-        for token in _TOKEN_PATTERN.findall(str(value).casefold()):
+        for token in _TOKEN_PATTERN.findall(value.casefold()):
             if len(token) < 2:
                 continue
             tokens.add(token)
@@ -715,36 +700,15 @@ def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
 
 
 def _build_source_idx_by_id(sources: list[ResearchSource]) -> dict[int, int]:
-    return {int(item.source_id): idx for idx, item in enumerate(sources)}
+    return {item.source_id: idx for idx, item in enumerate(sources)}
 
 
 def _resolve_core_question(*, ctx: ResearchStepContext) -> str:
-    question = clean_whitespace(ctx.plan.theme_plan.core_question or ctx.request.themes)
-    return question or clean_whitespace(ctx.request.themes)
+    return ctx.plan.theme_plan.core_question or ctx.request.themes
 
 
-def _normalize_text(raw: object) -> str:
-    return str(raw or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-
-
-def _normalize_overview(raw: object | None) -> str | object | None:
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        token = _normalize_text(raw)
-        return token or None
-    return raw
-
-
-def _normalize_overview_text(raw: object | None) -> str:
-    if raw is None:
-        return ""
-    if isinstance(raw, str):
-        return _normalize_text(raw)
-    try:
-        return _normalize_text(json.dumps(raw, ensure_ascii=False, sort_keys=True))
-    except Exception:  # noqa: S112
-        return _normalize_text(str(raw))
+def _normalize_text(raw: str) -> str:
+    return raw.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 __all__ = [

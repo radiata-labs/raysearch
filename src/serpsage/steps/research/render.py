@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 import anyio
@@ -46,9 +46,6 @@ from serpsage.steps.research.prompt import (
 from serpsage.steps.research.prompt import (
     build_render_writer_messages as build_render_writer_prompt_messages,
 )
-from serpsage.steps.research.prompt import (
-    resolve_report_style,
-)
 from serpsage.steps.research.utils import resolve_research_model
 from serpsage.utils import clean_whitespace
 
@@ -68,7 +65,7 @@ class _WriterSectionError(RuntimeError):
     ) -> None:
         self.section_id = clean_whitespace(section_id)
         self.subhead = clean_whitespace(subhead)
-        self.index = int(index)
+        self.index = index
         self.cause_type = type(cause).__name__
         self.cause_message = clean_whitespace(str(cause))
         label = self.section_id or self.subhead or f"section-{self.index}"
@@ -87,11 +84,11 @@ class _WriterSectionFailure:
 
     def to_payload(self) -> dict[str, object]:
         return {
-            "index": int(self.index),
-            "section_id": str(self.section_id),
-            "subhead": str(self.subhead),
-            "cause_type": str(self.cause_type),
-            "cause_message": str(self.cause_message),
+            "index": self.index,
+            "section_id": self.section_id,
+            "subhead": self.subhead,
+            "cause_type": self.cause_type,
+            "cause_message": self.cause_message,
         }
 
 
@@ -138,7 +135,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         target_language = self._resolve_target_language(ctx)
-        report_style, style_applied = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         schema = (
             dict(ctx.request.json_schema)
             if isinstance(ctx.request.json_schema, dict)
@@ -156,14 +153,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 stage="render",
                 attrs={
                     "mode": "final_markdown",
-                    "track_results": int(len(ctx.parallel.track_results)),
-                    "content_chars": int(len(str(ctx.output.content or ""))),
+                    "track_results": len(ctx.parallel.track_results),
+                    "content_chars": len(ctx.output.content),
                     "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
-                    "density_gate_passes_applied": int(
-                        ctx.runtime.density_gate_passes_applied
-                    ),
-                    "report_style_selected": str(report_style),
-                    "style_applied_stage": "render" if style_applied else "none",
+                    "density_gate_passes_applied": ctx.runtime.density_gate_passes_applied,
+                    "report_style_selected": report_style,
                 },
             )
             return ctx
@@ -179,11 +173,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="render",
             attrs={
                 "mode": "final_structured",
-                "track_results": int(len(ctx.parallel.track_results)),
-                "has_structured": bool(ctx.output.structured is not None),
+                "track_results": len(ctx.parallel.track_results),
+                "has_structured": ctx.output.structured is not None,
                 "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
-                "report_style_selected": str(report_style),
-                "style_applied_stage": "render" if style_applied else "none",
+                "report_style_selected": report_style,
             },
         )
         return ctx
@@ -254,14 +247,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="synthesize",
             fallback=self.settings.answer.generate.use_model,
         )
-        report_style, style_applied = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         try:
             chat_result = await self._llm.create(
                 model=model,
                 messages=self._build_architect_messages(
                     ctx=ctx,
                     report_style=report_style,
-                    style_applied=style_applied,
                     target_language=target_language,
                     now_utc=now_utc,
                     context_packet_markdown=context_packet_markdown,
@@ -279,7 +271,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 error_code="research_render_architect_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "model": str(model),
+                    "model": model,
                     "message": str(exc),
                 },
             )
@@ -297,11 +289,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         sections = list(architect_output.sections or [])
         if not sections:
             return architect_output
-        required_map = {
-            clean_whitespace(item).casefold(): clean_whitespace(item)
-            for item in required_question_ids
-            if clean_whitespace(item)
-        }
+        required_map: dict[str, str] = {}
+        for item in required_question_ids:
+            token = clean_whitespace(item)
+            if not token:
+                continue
+            required_map[token.casefold()] = token
         normalized_sections: list[RenderArchitectSectionPlan] = []
         covered_question_ids: set[str] = set()
         body_indexes: list[int] = []
@@ -369,7 +362,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
-        report_style, style_applied = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         outputs = [""] * len(architect_output.sections)
         try:
             async with anyio.create_task_group() as tg:
@@ -384,7 +377,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         architect_output,
                         section,
                         report_style,
-                        style_applied,
                         outputs,
                         index,
                     )
@@ -399,8 +391,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 error_code="research_render_writer_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "model": str(model),
-                    "sections_total": int(len(architect_output.sections)),
+                    "model": model,
+                    "sections_total": len(architect_output.sections),
                     "failed_sections": failed_section_payload,
                     "message": str(exc),
                 },
@@ -418,14 +410,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         architect_output: RenderArchitectOutput,
         section: RenderArchitectSectionPlan,
         report_style: ReportStyle,
-        style_applied: bool,
         outputs: list[str],
         index: int,
     ) -> None:
         messages = self._build_writer_messages(
             ctx=ctx,
             report_style=report_style,
-            style_applied=style_applied,
             target_language=target_language,
             now_utc=now_utc,
             context_packet_markdown=context_packet_markdown,
@@ -440,12 +430,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             )
         except Exception as exc:  # noqa: BLE001
             raise _WriterSectionError(
-                section_id=str(section.section_id or ""),
-                subhead=str(section.subhead or ""),
-                index=int(index),
+                section_id=section.section_id,
+                subhead=section.subhead,
+                index=index,
                 cause=exc if isinstance(exc, Exception) else Exception(str(exc)),
             ) from exc
-        outputs[index] = str(result.text or "")
+        outputs[index] = result.text
 
     async def _render_structured_once(
         self,
@@ -487,8 +477,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 error_code="research_render_structured_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "model": str(model),
-                    "schema_keys": sorted(str(key) for key in schema),
+                    "model": model,
+                    "schema_keys": sorted(schema),
                     "message": str(exc),
                 },
             )
@@ -501,12 +491,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         *,
         ctx: ResearchStepContext,
         report_style: ReportStyle,
-        style_applied: bool,
         target_language: str,
         now_utc: datetime,
         context_packet_markdown: str,
     ) -> list[dict[str, str]]:
-        target_language_name = clean_whitespace(target_language) or "unspecified"
+        target_language_name = target_language or "unspecified"
         return build_render_architect_prompt_messages(
             target_output_language=target_language,
             target_output_language_label=target_language_name,
@@ -517,7 +506,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 ctx.plan.theme_plan.complexity_tier
             ),
             report_style=report_style,
-            style_applied=bool(style_applied),
             context_packet_markdown=context_packet_markdown,
         )
 
@@ -526,15 +514,14 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         *,
         ctx: ResearchStepContext,
         report_style: ReportStyle,
-        style_applied: bool,
         target_language: str,
         now_utc: datetime,
         context_packet_markdown: str,
         architect_output: RenderArchitectOutput,
         section: RenderArchitectSectionPlan,
     ) -> list[dict[str, str]]:
-        target_language_name = clean_whitespace(target_language) or "unspecified"
-        section_subhead = clean_whitespace(section.subhead)
+        target_language_name = target_language or "unspecified"
+        section_subhead = section.subhead
         section_prefix_h2 = f"## {section_subhead or 'Section'}"
         section_packet_markdown = render_section_plan_markdown(section)
         all_section_plan_markdown = render_architect_plan_markdown(architect_output)
@@ -548,7 +535,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 ctx.plan.theme_plan.complexity_tier
             ),
             report_style=report_style,
-            style_applied=bool(style_applied),
             section_subhead=section_subhead,
             section_prefix_h2=section_prefix_h2,
             all_section_plan_markdown=all_section_plan_markdown,
@@ -563,8 +549,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         target_language: str,
         now_utc: datetime,
     ) -> list[dict[str, str]]:
-        target_language_name = clean_whitespace(target_language) or "unspecified"
-        report_style, style_applied = self._resolve_report_style(ctx)
+        target_language_name = target_language or "unspecified"
+        report_style = ctx.plan.theme_plan.report_style
         context_packet = self._build_final_context_packet(
             ctx=ctx,
             target_language=target_language,
@@ -578,7 +564,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_output_language_label=target_language_name,
             current_utc_date=now_utc.date().isoformat(),
             report_style=report_style,
-            style_applied=bool(style_applied),
             context_packet_markdown=context_packet_markdown,
         )
 
@@ -591,7 +576,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     ) -> str:
         report_title = self._resolve_report_title(ctx)
         parts: list[str] = [f"# {report_title}"]
-        objective = str(architect_output.report_objective or "").strip()
+        objective = (architect_output.report_objective).strip()
         if objective:
             parts.append(objective)
         for section_plan, section_content in zip(
@@ -599,18 +584,18 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             writer_outputs,
             strict=False,
         ):
-            subhead = clean_whitespace(section_plan.subhead or section_plan.section_id)
+            subhead = section_plan.subhead or section_plan.section_id
             parts.append(f"## {subhead or 'Section'}")
-            parts.append(str(section_content or "").strip())
+            parts.append((section_content).strip())
         return "\n\n".join(parts).strip()
 
     def _resolve_report_title(self, ctx: ResearchStepContext) -> str:
-        raw_theme = clean_whitespace(ctx.request.themes or "")
+        raw_theme = ctx.request.themes
         core_question = self._resolve_core_question(ctx)
         base = core_question or raw_theme or "Research Report"
         if raw_theme and base.casefold() == raw_theme.casefold():
             language_code = self._resolve_target_language(ctx)
-            if str(language_code).startswith("zh"):
+            if language_code.startswith("zh"):
                 return f"深度调研：{base}"
             return f"Research Report: {base}"
         return base
@@ -624,8 +609,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     ) -> _RenderFinalContextPacket:
         mode_depth = ctx.runtime.mode_depth
         return _RenderFinalContextPacket(
-            theme=str(self._resolve_core_question(ctx) or ctx.request.themes),
-            target_output_language=str(target_language),
+            theme=self._resolve_core_question(ctx) or ctx.request.themes,
+            target_output_language=target_language,
             mode_depth_profile=mode_depth.mode_key,
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
@@ -672,7 +657,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         return "\n".join(lines).strip()
 
     def _render_objective_for_mode(self, *, mode_key: str) -> str:
-        mode_name = clean_whitespace(mode_key).casefold()
+        mode_name = mode_key.casefold()
         if mode_name == "research-fast":
             return (
                 "Produce a concise synthesis that answers the theme directly with only "
@@ -707,7 +692,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
-        current = str(markdown or "")
+        current = markdown
         for pass_index in range(pass_cap):
             try:
                 result = await self._llm.create(
@@ -722,7 +707,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     ),
                     response_format=None,
                 )
-                candidate = self._normalize_markdown(str(result.text or ""))
+                candidate = self._normalize_markdown(result.text)
             except Exception as exc:  # noqa: BLE001
                 await self.emit_tracking_event(
                     event_name="research.density_gate.error",
@@ -732,8 +717,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     error_code="research_density_gate_failed",
                     error_type=type(exc).__name__,
                     attrs={
-                        "pass_index": int(pass_index + 1),
-                        "model": str(model),
+                        "pass_index": pass_index + 1,
+                        "model": model,
                         "message": str(exc),
                     },
                 )
@@ -755,9 +740,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         target = normalize_language_code(target_language, default="other")
         if target == "other":
             return markdown
-        if len(normalize_block_text(markdown)) < int(
-            self._FINAL_LANGUAGE_REPAIR_MIN_CHARS
-        ):
+        if len(normalize_block_text(markdown)) < self._FINAL_LANGUAGE_REPAIR_MIN_CHARS:
             return markdown
         alignment = document_language_alignment(
             text=markdown,
@@ -798,7 +781,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 ],
                 retries=self.settings.research.llm_self_heal_retries,
             )
-            candidate = normalize_block_text(str(repaired.text or ""))
+            candidate = normalize_block_text(repaired.text)
             if not candidate:
                 return markdown
             candidate_alignment = document_language_alignment(
@@ -814,7 +797,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 request_id=ctx.request_id,
                 stage="render",
                 attrs={
-                    "target_language": str(target),
+                    "target_language": target,
                     "alignment_before": float(alignment),
                     "alignment_after": float(candidate_alignment),
                 },
@@ -837,7 +820,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_output_language=target_language,
             current_utc_date=now_utc.date().isoformat(),
             mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-            pass_index=int(pass_index),
+            pass_index=pass_index,
             context_packet_markdown=context_packet_markdown,
             current_markdown=markdown,
         )
@@ -851,31 +834,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             return language_code
         return "en"
 
-    def _resolve_report_style(
-        self,
-        ctx: ResearchStepContext,
-    ) -> tuple[ReportStyle, bool]:
-        cfg = self.settings.research.report_style
-        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
-        if fallback_style_key not in {"decision", "explainer", "execution"}:
-            fallback_style_key = "explainer"
-        style = resolve_report_style(
-            raw_style=ctx.plan.theme_plan.report_style,
-            theme=self._resolve_core_question(ctx),
-            enabled=bool(cfg.enabled),
-            fallback_style=cast("ReportStyle", fallback_style_key),
-            strict_style_lock=bool(cfg.strict_style_lock),
-        )
-        return style, bool(cfg.enabled and cfg.apply_render)
-
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
-        return question or clean_whitespace(ctx.request.themes)
+        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
-    def _resolve_task_intent(self, raw: object | None) -> TaskIntent:
-        token = clean_whitespace(str(raw or "")).casefold().replace("-", "_")
+    def _resolve_task_intent(self, raw: TaskIntent | str | None) -> TaskIntent:
+        token = (raw or "").casefold().replace("-", "_")
         mapping: dict[str, TaskIntent] = {
             "how_to": "how_to",
             "howto": "how_to",
@@ -887,8 +850,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         }
         return mapping.get(token, "other")
 
-    def _resolve_task_complexity(self, raw: object | None) -> TaskComplexity:
-        token = clean_whitespace(str(raw or "")).casefold()
+    def _resolve_task_complexity(
+        self, raw: TaskComplexity | str | None
+    ) -> TaskComplexity:
+        token = (raw or "").casefold()
         mapping: dict[str, TaskComplexity] = {
             "low": "low",
             "medium": "medium",
@@ -901,22 +866,20 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     ) -> list[_RenderTrackResultPacket]:
         return [
             _RenderTrackResultPacket(
-                question_id=str(item.question_id),
-                question=str(item.question),
-                stop_reason=str(item.stop_reason),
-                rounds=int(item.rounds),
-                search_calls=int(item.search_calls),
-                fetch_calls=int(item.fetch_calls),
+                question_id=item.question_id,
+                question=item.question,
+                stop_reason=item.stop_reason,
+                rounds=item.rounds,
+                search_calls=item.search_calls,
+                fetch_calls=item.fetch_calls,
                 confidence=float(item.confidence),
                 coverage_ratio=float(item.coverage_ratio),
-                unresolved_conflicts=int(item.unresolved_conflicts),
+                unresolved_conflicts=item.unresolved_conflicts,
                 track_insight_card=self._coerce_track_insight_card(
                     item.track_insight_card
                 ),
                 key_findings=list(item.key_findings),
-                subreport_excerpt=normalize_block_text(
-                    str(item.subreport_markdown or "")
-                ),
+                subreport_excerpt=normalize_block_text(item.subreport_markdown),
             )
             for item in track_results
         ]
@@ -938,7 +901,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 for item in ctx.plan.theme_plan.question_cards
             ]
         for card in cards:
-            question_id = clean_whitespace(card.question_id)
+            question_id = card.question_id
             if not question_id:
                 continue
             if question_id in seen:
@@ -951,7 +914,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         out: list[str] = []
         seen: set[str] = set()
         for item in [*left, *right]:
-            token = clean_whitespace(item)
+            token = item
             if not token:
                 continue
             if token in seen:
@@ -968,11 +931,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     ) -> list[str]:
         if not required_question_ids:
             return []
-        required: set[str] = {
-            clean_whitespace(item)
-            for item in required_question_ids
-            if clean_whitespace(item)
-        }
+        required: set[str] = set()
+        for item in required_question_ids:
+            token = clean_whitespace(item)
+            if token:
+                required.add(token)
         covered: set[str] = set()
         for section in body_sections:
             for raw_question_id in section.question_ids:
@@ -1000,8 +963,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 for item in ctx.plan.theme_plan.question_cards
             ]
         for card in cards:
-            question_id = clean_whitespace(card.question_id)
-            question = clean_whitespace(card.question)
+            question_id = card.question_id
+            question = card.question
             if not question_id or not question:
                 continue
             out[question_id] = question
@@ -1017,7 +980,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         out: list[str] = []
         seen: set[str] = set()
         for raw in [*left, *right]:
-            token = clean_whitespace(raw)
+            token = raw
             if not token:
                 continue
             key = token.casefold()
@@ -1025,7 +988,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 continue
             seen.add(key)
             out.append(token)
-            if len(out) >= max(1, int(limit)):
+            if len(out) >= max(1, limit):
                 break
         return out
 
@@ -1138,44 +1101,36 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 continue
             out.append(
                 _WriterSectionFailure(
-                    index=int(node.index),
-                    section_id=str(node.section_id),
-                    subhead=str(node.subhead),
-                    cause_type=str(node.cause_type),
-                    cause_message=str(node.cause_message),
+                    index=node.index,
+                    section_id=node.section_id,
+                    subhead=node.subhead,
+                    cause_type=node.cause_type,
+                    cause_message=node.cause_message,
                 )
             )
         return out
 
     def _coerce_track_insight_card(
-        self, raw: object | None
+        self, raw: TrackInsightCardPayload | None
     ) -> TrackInsightCardPayload | None:
         if raw is None:
             return None
-        if isinstance(raw, TrackInsightCardPayload):
-            return raw.model_copy(deep=True)
-        if isinstance(raw, dict):
-            try:
-                return TrackInsightCardPayload.model_validate(raw)
-            except Exception:  # noqa: S112
-                return None
-        return None
+        return raw.model_copy(deep=True)
 
     def _try_parse_json_value(self, text: str) -> object:
-        raw = str(text or "")
-        if not raw:
+        if not text:
             return {}
         try:
-            return json.loads(raw)
+            return json.loads(text)
         except json.JSONDecodeError:
-            start = raw.find("{")
-            end = raw.rfind("}")
+            start = text.find("{")
+            end = text.rfind("}")
             if 0 <= start < end:
-                return json.loads(raw[start : end + 1])
+                return json.loads(text[start : end + 1])
             raise
 
     def _normalize_markdown(self, text: str) -> str:
-        content = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        content = text.replace("\r\n", "\n").replace("\r", "\n")
         lines: list[str] = []
         blank_count = 0
         for raw in content.split("\n"):

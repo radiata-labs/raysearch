@@ -187,15 +187,6 @@ class ResearchModelsSettings(Model):
     markdown: str = ""
 
 
-class ResearchReportStyleSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    enabled: bool = True
-    fallback_style: ReportStyleKey = "explainer"
-    strict_style_lock: bool = True
-    apply_subreport: bool = True
-    apply_render: bool = True
-
-
 class ResearchModeSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_rounds: int = 5
@@ -340,9 +331,6 @@ class ResearchSettings(Model):
     tool_max_attempts: int = 3
     llm_self_heal_retries: int = 2
     models: ResearchModelsSettings = Field(default_factory=ResearchModelsSettings)
-    report_style: ResearchReportStyleSettings = Field(
-        default_factory=ResearchReportStyleSettings
-    )
     research_fast: ResearchModeSettings = Field(
         default_factory=_default_research_fast_mode
     )
@@ -726,7 +714,6 @@ __all__ = [
     "ProviderSettings",
     "ReportStyleKey",
     "ResearchModelsSettings",
-    "ResearchReportStyleSettings",
     "ResearchModeSettings",
     "ResearchSettings",
     "RunnerSettings",

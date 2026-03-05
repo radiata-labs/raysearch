@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Literal
 
 from serpsage.models.research import ReportStyle, TaskComplexity, TaskIntent
-from serpsage.utils import clean_whitespace
 
 PromptStage = Literal[
     "theme",
@@ -184,7 +183,7 @@ def infer_report_style_from_theme(
     *,
     default: ReportStyle = "explainer",
 ) -> ReportStyle:
-    token = clean_whitespace(theme).casefold()
+    token = theme.strip().casefold()
     if not token:
         return default
     decision_hints = (
@@ -233,25 +232,19 @@ def resolve_report_style(
     *,
     raw_style: object | None,
     theme: str,
-    enabled: bool,
-    fallback_style: ReportStyle,
-    strict_style_lock: bool,
+    fallback_style: ReportStyle = "explainer",
 ) -> ReportStyle:
     fallback = _normalize_style(fallback_style) or "explainer"
-    if not enabled:
-        return fallback
     candidate = _normalize_style(raw_style)
     if candidate is not None:
         return candidate
-    if bool(strict_style_lock):
-        return fallback
     return infer_report_style_from_theme(theme, default=fallback)
 
 
 def build_style_overlay(*, stage: PromptStage, style: ReportStyle) -> str:
     normalized_style = _normalize_style(style) or "explainer"
     out = _STYLE_STAGE_OVERLAYS.get(normalized_style, {}).get(stage, "")
-    return clean_whitespace(out)
+    return out.strip()
 
 
 def compose_system_prompt(
@@ -260,9 +253,9 @@ def compose_system_prompt(
     style_overlay: str,
     universal_guardrails: str,
 ) -> str:
-    base = clean_whitespace(base_contract)
-    overlay = clean_whitespace(style_overlay)
-    guardrails = clean_whitespace(universal_guardrails)
+    base = base_contract.strip()
+    overlay = style_overlay.strip()
+    guardrails = universal_guardrails.strip()
     parts = [item for item in [guardrails, base] if item]
     if overlay:
         parts.append(f"Style overlay:\n{overlay}")
@@ -270,7 +263,7 @@ def compose_system_prompt(
 
 
 def _normalize_mode_name(mode_key: str) -> str:
-    return clean_whitespace(mode_key).casefold()
+    return mode_key.strip().casefold()
 
 
 def theme_depth_contract(*, mode_key: str) -> str:
@@ -347,8 +340,6 @@ def build_theme_messages(
     max_queries_per_round: int,
     card_cap: int,
     hinted_style: ReportStyle,
-    hinted_task_intent: TaskIntent,
-    hinted_complexity_tier: TaskComplexity,
 ) -> list[dict[str, str]]:
     depth_contract = theme_depth_contract(mode_key=mode_depth_profile)
     system_contract = (  # noqa: S608
@@ -469,10 +460,6 @@ def build_theme_messages(
                 "- Do not produce top-level seed_queries.\n"
                 "- evidence_focus: list what evidence dimensions to prioritize.\n"
                 "- expected_gain: concrete learning value from this card.\n\n"
-                "Classification Hints:\n"
-                f"- hinted_report_style={hinted_style}\n"
-                f"- hinted_task_intent={hinted_task_intent}\n"
-                f"- hinted_complexity_tier={hinted_complexity_tier}\n\n"
                 "Language Routing Examples:\n"
                 "- Example A: SpaceX technical progress in 2026 -> detected_input_language=zh-Hans, search_language=en.\n"
                 "- Example B: Shanghai travel guide -> detected_input_language=zh-Hans, search_language=zh-Hans.\n"
@@ -788,7 +775,7 @@ def build_content_messages(
     core_question: str,
     report_style: ReportStyle,
     mode_depth_profile: str,
-    round_index: str,
+    round_index: int,
     current_utc_timestamp: str,
     current_utc_date: str,
     required_output_language: str,
@@ -1015,16 +1002,7 @@ def build_gap_closure_messages(
 def build_subreport_flow_contract(
     *,
     report_style: ReportStyle,
-    style_applied: bool,
 ) -> str:
-    if not style_applied:
-        return (
-            "Section flow target:\n"
-            "- Direct Answer Status\n"
-            "- Evidence Highlights\n"
-            "- Conflicts and Uncertainty\n"
-            "- Targeted Next Checks"
-        )
     style_key = _normalize_style(report_style) or "explainer"
     if style_key == "decision":
         return (
@@ -1062,21 +1040,13 @@ def build_subreport_messages(
     core_question: str,
     mode_depth_profile: str,
     report_style: ReportStyle,
-    style_applied: bool,
     require_insight_card: bool,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = (
-        build_style_overlay(stage="subreport", style=report_style)
-        if style_applied
-        else ""
-    )
-    style_lock_line = (
-        f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-    )
+    style_overlay = build_style_overlay(stage="subreport", style=report_style)
+    style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
     flow_contract = build_subreport_flow_contract(
         report_style=report_style,
-        style_applied=style_applied,
     )
     system_contract = (
         "Role: Senior research analyst.\n"
@@ -1157,17 +1127,10 @@ def build_render_architect_messages(
     task_intent: TaskIntent,
     complexity_tier: TaskComplexity,
     report_style: ReportStyle,
-    style_applied: bool,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = (
-        build_style_overlay(stage="render_architect", style=report_style)
-        if style_applied
-        else ""
-    )
-    style_lock_line = (
-        f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-    )
+    style_overlay = build_style_overlay(stage="render_architect", style=report_style)
+    style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
     scope_lock_contract = research_mode_scope_lock_contract(
         mode_key=mode_depth_profile,
         task_intent=task_intent,
@@ -1242,21 +1205,14 @@ def build_render_writer_messages(
     task_intent: TaskIntent,
     complexity_tier: TaskComplexity,
     report_style: ReportStyle,
-    style_applied: bool,
     section_subhead: str,
     section_prefix_h2: str,
     all_section_plan_markdown: str,
     section_plan_markdown: str,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = (
-        build_style_overlay(stage="render_writer", style=report_style)
-        if style_applied
-        else ""
-    )
-    style_lock_line = (
-        f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-    )
+    style_overlay = build_style_overlay(stage="render_writer", style=report_style)
+    style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
     scope_lock_contract = research_mode_scope_lock_contract(
         mode_key=mode_depth_profile,
         task_intent=task_intent,
@@ -1341,17 +1297,10 @@ def build_render_structured_messages(
     target_output_language_label: str,
     current_utc_date: str,
     report_style: ReportStyle,
-    style_applied: bool,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = (
-        build_style_overlay(stage="render_structured", style=report_style)
-        if style_applied
-        else ""
-    )
-    style_lock_line = (
-        f"REPORT_STYLE_LOCKED:\n{report_style}\n\n" if style_applied else ""
-    )
+    style_overlay = build_style_overlay(stage="render_structured", style=report_style)
+    style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
     system_contract = (
         "Role: Structured Research Synthesizer.\n"
         "Mission: Build one schema-valid JSON object from FINAL_CONTEXT_PACKET.\n"
@@ -1429,7 +1378,7 @@ def build_density_gate_messages(
 
 
 def _normalize_style(raw_style: object | None) -> ReportStyle | None:
-    token = clean_whitespace(str(raw_style or "")).casefold()
+    token = str(raw_style).strip().casefold()
     if token not in _STYLE_VALUES:
         return None
     return token  # type: ignore[return-value]

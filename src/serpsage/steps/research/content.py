@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
 from serpsage.models.research import (
     ContentConflictPayload,
     ContentOutputPayload,
-    ReportStyle,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.context import (
@@ -17,9 +16,6 @@ from serpsage.steps.research.context import (
 )
 from serpsage.steps.research.prompt import (
     build_content_messages as build_content_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    resolve_report_style,
 )
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
@@ -131,10 +127,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         if findings:
             ctx.current_round.content_summary = " | ".join(findings[:3])
             ctx.notes.extend(findings[:3])
-        adjustment = self._normalize_adjustment(payload.confidence_adjustment)
         ctx.current_round.confidence = min(
             1.0,
-            max(0.0, ctx.current_round.confidence + adjustment),
+            max(0.0, ctx.current_round.confidence + payload.confidence_adjustment),
         )
         unresolved_count = self._count_unresolved(payload.conflict_resolutions)
         ctx.current_round.unresolved_conflicts = min(
@@ -154,18 +149,18 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             ),
             limit=ctx.runtime.budget.max_queries_per_round,
         )
-        strategy = clean_whitespace(str(payload.next_query_strategy or ""))
+        strategy = clean_whitespace(payload.next_query_strategy)
         if strategy:
             ctx.current_round.query_strategy = strategy
-        report_style = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="content_review",
             attrs={
-                "report_style_selected": str(report_style),
+                "report_style_selected": report_style,
                 "style_applied_stage": "content",
-                "mode_depth_profile": str(mode_depth.mode_key),
+                "mode_depth_profile": mode_depth.mode_key,
                 "content_source_topk_effective": content_topk,
                 "content_source_chars_effective": packet_max_chars,
             },
@@ -180,10 +175,10 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> list[dict[str, str]]:
         out_lang = self._resolve_output_language(ctx)
-        out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        out_lang_name = out_lang or "unspecified"
         core_question = self._resolve_core_question(ctx)
-        round_index = ctx.current_round.round_index if ctx.current_round else "unknown"
-        report_style = self._resolve_report_style(ctx)
+        round_index = ctx.current_round.round_index if ctx.current_round else 0
+        report_style = ctx.plan.theme_plan.report_style
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         overview_review_markdown = render_overview_review_markdown(
             ctx.work.overview_review
@@ -192,8 +187,8 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             theme=ctx.request.themes,
             core_question=core_question,
             report_style=report_style,
-            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
-            round_index=str(round_index),
+            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+            round_index=round_index,
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
             required_output_language=out_lang,
@@ -205,27 +200,10 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         )
 
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
-        return question or clean_whitespace(ctx.request.themes)
+        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
     def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
-        token = clean_whitespace(ctx.plan.theme_plan.output_language)
-        return token or "en"
-
-    def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
-        cfg = self.settings.research.report_style
-        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
-        if fallback_style_key not in {"decision", "explainer", "execution"}:
-            fallback_style_key = "explainer"
-        return resolve_report_style(
-            raw_style=ctx.plan.theme_plan.report_style,
-            theme=self._resolve_core_question(ctx),
-            enabled=cfg.enabled,
-            fallback_style=cast("ReportStyle", fallback_style_key),
-            strict_style_lock=cfg.strict_style_lock,
-        )
+        return ctx.plan.theme_plan.output_language or "en"
 
     def _build_content_schema(self, *, max_queries: int) -> dict[str, Any]:
         return {
@@ -291,13 +269,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
     def _empty_review(self) -> ContentOutputPayload:
         return ContentOutputPayload()
 
-    def _normalize_adjustment(self, raw: object) -> float:
-        try:
-            value = float(raw)  # type: ignore[arg-type]
-        except Exception:  # noqa: S112
-            return 0.0
-        return min(1.0, max(-1.0, value))
-
     def _count_unresolved(self, raw: list[ContentConflictPayload]) -> int:
         total = 0
         for item in raw:
@@ -318,12 +289,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         for source in sorted(sources, key=lambda item: item.source_id):
             if source.source_id not in wanted:
                 continue
-            content = (
-                str(source.content or "")
-                .replace("\r\n", "\n")
-                .replace("\r", "\n")
-                .strip()
-            )
+            content = source.content.replace("\r\n", "\n").replace("\r", "\n").strip()
             if len(content) > max_chars:
                 content = self._truncate_content_head_tail(
                     content=content,
@@ -335,7 +301,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     [
                         f"### Source {source.source_id}",
                         f"- URL: {source.url}",
-                        f"- Title: {clean_whitespace(source.title)}",
+                        f"- Title: {source.title}",
                         "- Content:",
                         "  ```markdown",
                         *[f"  {line}" for line in content_lines],

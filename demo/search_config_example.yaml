@@ -44,12 +44,6 @@ answer:
 research:
   tool_max_attempts: 3
   llm_self_heal_retries: 2
-  report_style:
-    enabled: true
-    fallback_style: explainer
-    strict_style_lock: true
-    apply_subreport: true
-    apply_render: true
   models:
     plan: kimi-k2.5
     abstract_analyze: kimi-k2.5

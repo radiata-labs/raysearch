@@ -14,7 +14,6 @@ from serpsage.models.research import (
     ResearchThemePlan,
     ResearchThemePlanCard,
 )
-from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -24,17 +23,17 @@ _NONE_BULLET_L3 = ["      - (none)"]
 
 
 def normalize_block_text(text: str) -> str:
-    return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
-def _normalize_scalar_text(value: object) -> str:
-    return clean_whitespace(str(value or ""))
+def _normalize_scalar_text(value: str) -> str:
+    return value
 
 
 def _render_markdown_bullets(values: Iterable[str], *, indent: str = "") -> list[str]:
     out: list[str] = []
     for item in values:
-        token = normalize_block_text(str(item))
+        token = normalize_block_text(item)
         if not token:
             continue
         if "\n" not in token:
@@ -56,7 +55,7 @@ def render_theme_plan_markdown(
 ) -> str:
     lines: list[str] = []
     if include_title:
-        level = max(1, int(title_level))
+        level = max(1, title_level)
         lines.append(f"{'#' * level} Theme Plan")
     lines.extend(
         [
@@ -64,7 +63,7 @@ def render_theme_plan_markdown(
             f"- Report style: {_normalize_scalar_text(plan.report_style) or 'n/a'}",
             f"- Task intent: {_normalize_scalar_text(plan.task_intent) or 'n/a'}",
             f"- Complexity tier: {_normalize_scalar_text(plan.complexity_tier) or 'n/a'}",
-            f"- Question card count: {int(len(plan.question_cards))}",
+            f"- Question card count: {len(plan.question_cards)}",
             f"- Input language: {_normalize_scalar_text(plan.input_language) or 'n/a'}",
             f"- Search language: {_normalize_scalar_text(plan.search_language) or 'n/a'}",
             f"- Output language: {_normalize_scalar_text(plan.output_language) or 'n/a'}",
@@ -100,7 +99,7 @@ def _render_theme_plan_card_lines(
         (
             f"{indent}- Card {index} "
             f"(id={_normalize_scalar_text(getattr(card, 'question_id', '')) or f'q{index}'}, "
-            f"priority={int(getattr(card, 'priority', 0) or 0)})"
+            f"priority={getattr(card, 'priority', 0) or 0})"
         ),
         f"{subindent}- Question: {_normalize_scalar_text(getattr(card, 'question', '')) or 'n/a'}",
     ]
@@ -122,25 +121,25 @@ def _render_theme_plan_card_lines(
 
 
 def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> str:
-    selected = rounds[-max(1, int(limit)) :]
+    selected = rounds[-max(1, limit) :]
     if not selected:
         return "- (none)"
     lines: list[str] = []
     for round_state in selected:
         lines.extend(
             [
-                f"### Round {int(round_state.round_index)}",
+                f"### Round {round_state.round_index}",
                 (
                     f"- Query strategy: "
                     f"{_normalize_scalar_text(round_state.query_strategy) or 'n/a'}"
                 ),
-                f"- Result count: {int(round_state.result_count)}",
+                f"- Result count: {round_state.result_count}",
                 f"- Confidence: {float(round_state.confidence):.3f}",
                 f"- Coverage ratio: {float(round_state.coverage_ratio):.3f}",
-                f"- Entity coverage complete: {bool(round_state.entity_coverage_complete)}",
-                f"- Unresolved conflicts: {int(round_state.unresolved_conflicts)}",
-                f"- Critical gaps: {int(round_state.critical_gaps)}",
-                f"- Stop: {bool(round_state.stop)}",
+                f"- Entity coverage complete: {round_state.entity_coverage_complete}",
+                f"- Unresolved conflicts: {round_state.unresolved_conflicts}",
+                f"- Critical gaps: {round_state.critical_gaps}",
+                f"- Stop: {round_state.stop}",
                 f"- Stop reason: {_normalize_scalar_text(round_state.stop_reason) or 'n/a'}",
                 "- Queries:",
             ]
@@ -148,8 +147,8 @@ def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> s
         lines.extend(
             _render_markdown_bullets(round_state.queries, indent="  ") or _NONE_BULLET
         )
-        overview_summary = normalize_block_text(str(round_state.overview_summary or ""))
-        content_summary = normalize_block_text(str(round_state.content_summary or ""))
+        overview_summary = normalize_block_text(round_state.overview_summary)
+        content_summary = normalize_block_text(round_state.content_summary)
         lines.append("- Overview summary:")
         if overview_summary:
             lines.extend(
@@ -180,9 +179,9 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
     lines: list[str] = [
         "### Overview Review",
         f"- Confidence: {float(review.confidence):.3f}",
-        f"- Entity coverage complete: {bool(review.entity_coverage_complete)}",
+        f"- Entity coverage complete: {review.entity_coverage_complete}",
         f"- Next query strategy: {_normalize_scalar_text(review.next_query_strategy) or 'n/a'}",
-        f"- Stop: {bool(review.stop)}",
+        f"- Stop: {review.stop}",
         "- Findings:",
     ]
     lines.extend(_render_markdown_bullets(review.findings, indent="  ") or _NONE_BULLET)
@@ -196,9 +195,7 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
     )
     lines.append("- Need content source IDs:")
     if review.need_content_source_ids:
-        lines.extend(
-            f"  - {int(source_id)}" for source_id in review.need_content_source_ids
-        )
+        lines.extend(f"  - {source_id}" for source_id in review.need_content_source_ids)
     else:
         lines.extend(_NONE_BULLET)
     lines.append("- Conflict arbitration:")
@@ -239,8 +236,8 @@ def render_link_candidates_markdown(
 ) -> str:
     if not candidates:
         return _NONE_BULLET[0]
-    page_limit = max(1, int(max_pages))
-    link_limit = max(1, int(max_links_per_page))
+    page_limit = max(1, max_pages)
+    link_limit = max(1, max_links_per_page)
     lines: list[str] = []
     for item in list(candidates)[:page_limit]:
         main_links = list(item.links or [])
@@ -251,12 +248,12 @@ def render_link_candidates_markdown(
         ]
         lines.extend(
             [
-                f"### Source {int(item.source_id)}",
+                f"### Source {item.source_id}",
                 f"- URL: {_normalize_scalar_text(item.url) or 'n/a'}",
                 f"- Title: {_normalize_scalar_text(item.title) or 'n/a'}",
-                f"- Round index: {int(item.round_index)}",
-                f"- Main links count: {int(len(main_links))}",
-                f"- Subpage links count: {int(len(flat_subpage_links))}",
+                f"- Round index: {item.round_index}",
+                f"- Main links count: {len(main_links)}",
+                f"- Subpage links count: {len(flat_subpage_links)}",
                 "- Link samples:",
             ]
         )

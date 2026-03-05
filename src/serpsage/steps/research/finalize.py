@@ -17,19 +17,18 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        style_cfg = ctx.settings.research.report_style
         mode_depth = ctx.runtime.mode_depth
         theme_plan = ctx.plan.theme_plan
-        search_language = str(theme_plan.search_language or "")
+        search_language = theme_plan.search_language
         provider_params = map_provider_language_param(
-            provider_backend=str(ctx.settings.provider.backend),
+            provider_backend=ctx.settings.provider.backend,
             search_language=search_language,
         )
         provider_language_param_applied = (
             ctx.runtime.provider_language_param_applied
-            or (bool(provider_params) and ctx.runtime.search_calls > 0)
+            or (provider_params and ctx.runtime.search_calls > 0)
         )
-        content_chars = len(str(ctx.output.content or ""))
+        content_chars = len(ctx.output.content)
         mode_key = mode_depth.mode_key
         await self.emit_tracking_event(
             event_name="research.finalize.summary",
@@ -37,20 +36,17 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
             stage="finalize",
             attrs={
                 "stop": ctx.runtime.stop,
-                "stop_reason": str(ctx.runtime.stop_reason or "n/a"),
+                "stop_reason": ctx.runtime.stop_reason or "n/a",
                 "content_chars": content_chars,
                 "has_structured": ctx.output.structured is not None,
-                "report_style_selected": str(theme_plan.report_style or ""),
-                "report_style_enabled": style_cfg.enabled,
-                "report_style_apply_subreport": style_cfg.apply_subreport,
-                "report_style_apply_render": style_cfg.apply_render,
-                "mode_depth_profile": str(mode_depth.mode_key),
+                "report_style_selected": theme_plan.report_style,
+                "mode_depth_profile": mode_depth.mode_key,
                 "density_gate_passes_applied": ctx.runtime.density_gate_passes_applied,
                 "gap_closure_passes_applied": ctx.runtime.gap_closure_passes_applied,
                 "llm_orchestrator_enabled": mode_key != "research-fast",
-                "input_language": str(theme_plan.input_language),
-                "output_language": str(theme_plan.output_language),
-                "search_language": str(search_language),
+                "input_language": theme_plan.input_language,
+                "output_language": theme_plan.output_language,
+                "search_language": search_language,
                 "provider_language_param_applied": provider_language_param_applied,
             },
         )

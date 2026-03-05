@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import re
 
-from serpsage.utils import clean_whitespace
-
 LanguageCode = str
 
 LANGUAGE_CODES: set[LanguageCode] = {
@@ -219,7 +217,7 @@ _LOCAL_LIFE_HINTS = (
 
 
 def normalize_language_code(raw: object, *, default: LanguageCode = "other") -> str:
-    token = clean_whitespace(str(raw or "")).casefold()
+    token = str(raw or "").strip().casefold()
     if not token:
         return default
     if token in _LANG_ALIAS:
@@ -228,7 +226,7 @@ def normalize_language_code(raw: object, *, default: LanguageCode = "other") -> 
 
 
 def detect_input_language(text: str) -> str:
-    token = clean_whitespace(text)
+    token = text.strip()
     if not token:
         return "other"
     if _RE_KANA.search(token):
@@ -251,7 +249,7 @@ def detect_input_language(text: str) -> str:
 
 def route_search_language(*, theme: str, input_language: str) -> str:
     normalized_input = normalize_language_code(input_language, default="other")
-    content = clean_whitespace(theme).casefold()
+    content = theme.strip().casefold()
     if not content:
         return normalized_input if normalized_input != "other" else "en"
     if _looks_local_life(content):
@@ -264,7 +262,7 @@ def route_search_language(*, theme: str, input_language: str) -> str:
 def map_provider_language_param(
     *, provider_backend: str, search_language: str
 ) -> dict[str, str]:
-    backend = clean_whitespace(provider_backend).casefold()
+    backend = provider_backend.strip().casefold()
     normalized = normalize_language_code(search_language, default="other")
     if backend != "searxng":
         return {}
@@ -294,7 +292,7 @@ def language_alignment_score(*, text: str, target_language: str) -> float:
     target = normalize_language_code(target_language, default="other")
     detected = detect_input_language(text)
     if target == "other":
-        return 1.0 if clean_whitespace(text) else 0.0
+        return 1.0 if text.strip() else 0.0
     if detected == target:
         return 1.0
     if {detected, target} <= {"zh-Hans", "zh-Hant"}:
@@ -310,10 +308,10 @@ def language_alignment_score(*, text: str, target_language: str) -> float:
 
 
 def document_language_alignment(*, text: str, target_language: str) -> float:
-    normalized = clean_whitespace(text)
-    if not normalized:
+    content = text.strip()
+    if not content:
         return 1.0
-    lines = [line for line in normalized.split("\n") if clean_whitespace(line)]
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
     if not lines:
         return 1.0
     sample = lines[:24]
@@ -335,7 +333,7 @@ def _detect_chinese_variant(text: str) -> str:
 
 
 def _detect_latin_language(text: str) -> str | None:
-    token = f" {clean_whitespace(text).casefold()} "
+    token = f" {text.strip().casefold()} "
     if not _RE_LATIN.search(token):
         return None
     if _contains_any(text=token, markers=_FR_HINTS):

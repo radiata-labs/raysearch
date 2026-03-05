@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from pydantic import Field
@@ -19,7 +19,6 @@ from serpsage.models.research import (
     OverviewOutputPayload,
     PlanOutputPayload,
     PlanSearchJobPayload,
-    ReportStyle,
     RoundAction,
 )
 from serpsage.steps.base import StepBase
@@ -35,9 +34,6 @@ from serpsage.steps.research.language import (
 )
 from serpsage.steps.research.prompt import (
     build_plan_messages as build_plan_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    resolve_report_style,
 )
 from serpsage.steps.research.utils import (
     merge_strings,
@@ -86,8 +82,8 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ctx.runtime.stop = True
             ctx.runtime.stop_reason = "max_fetch_calls"
             return ctx
-        remain_search_calls = budget.max_search_calls - int(ctx.runtime.search_calls)
-        next_round_index = int(ctx.runtime.round_index) + 1
+        remain_search_calls = budget.max_search_calls - ctx.runtime.search_calls
+        next_round_index = ctx.runtime.round_index + 1
         if remain_search_calls <= 0 and not self._can_attempt_explore(
             ctx=ctx,
             round_index=next_round_index,
@@ -148,11 +144,11 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 error_code="research_round_plan_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "round_index": int(round_index),
+                    "round_index": round_index,
                     "message": str(exc),
                 },
             )
-        strategy = clean_whitespace(str(payload.query_strategy or "mixed"))
+        strategy = clean_whitespace(payload.query_strategy or "mixed")
         allow_explore = self._can_attempt_explore(
             ctx=ctx,
             round_index=round_index,
@@ -182,9 +178,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             round_action = "search"
         ctx.work.round_action = round_action
         ctx.work.explore_target_source_ids = list(explore_target_source_ids)
-        ctx.current_round.query_strategy = strategy or str(round_action)
-        remain_search_calls = budget.max_search_calls - int(ctx.runtime.search_calls)
-        job_limit = max(0, min(budget.max_queries_per_round, int(remain_search_calls)))
+        ctx.current_round.query_strategy = strategy or round_action
+        remain_search_calls = budget.max_search_calls - ctx.runtime.search_calls
+        job_limit = max(0, min(budget.max_queries_per_round, remain_search_calls))
         jobs = self._normalize_jobs(
             payload.search_jobs,
             job_limit=job_limit,
@@ -204,7 +200,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             jobs=jobs,
             search_language=search_language,
-            model=str(model),
+            model=model,
             now_utc=now_utc,
         )
         if query_language_repair_applied:
@@ -214,9 +210,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 request_id=ctx.request_id,
                 stage="plan",
                 attrs={
-                    "round_index": int(round_index),
-                    "search_language": str(search_language),
-                    "jobs": int(len(jobs)),
+                    "round_index": round_index,
+                    "search_language": search_language,
+                    "jobs": len(jobs),
                 },
             )
         jobs, fallback_applied = self._apply_progressive_language_fallback(
@@ -233,14 +229,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 request_id=ctx.request_id,
                 stage="plan",
                 attrs={
-                    "round_index": int(round_index),
-                    "search_language": str(search_language),
-                    "output_language": str(
-                        normalize_language_code(
-                            self._resolve_output_language(ctx)
-                            or ctx.plan.theme_plan.input_language,
-                            default="other",
-                        )
+                    "round_index": round_index,
+                    "search_language": search_language,
+                    "output_language": normalize_language_code(
+                        self._resolve_output_language(ctx)
+                        or ctx.plan.theme_plan.input_language,
+                        default="other",
                     ),
                 },
             )
@@ -321,7 +315,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         out: list[str] = []
         seen: set[str] = set()
         for item in values:
-            token = clean_whitespace(str(item or ""))
+            token = clean_whitespace(item)
             if not token:
                 continue
             key = token.casefold()
@@ -329,7 +323,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 continue
             seen.add(key)
             out.append(token)
-            if len(out) >= max(1, int(limit)):
+            if len(out) >= max(1, limit):
                 break
         return out
 
@@ -340,7 +334,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         candidate_queries: list[str],
         job_limit: int,
     ) -> list[ResearchSearchJob]:
-        if int(job_limit) != 1 or not jobs:
+        if job_limit != 1 or not jobs:
             return jobs
         head = jobs[0]
         extras = self._normalize_strings(
@@ -351,11 +345,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ),
             limit=8,
         )
-        extras = [
-            item
-            for item in extras
-            if item.casefold() != clean_whitespace(head.query).casefold()
-        ]
+        extras = [item for item in extras if item.casefold() != head.query.casefold()]
         if not extras:
             return jobs
         jobs[0] = head.model_copy(
@@ -414,7 +404,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             for score in scores
             if score < float(self._QUERY_LANGUAGE_ALIGNMENT_THRESHOLD)
         )
-        return bool(low_count > (len(scores) // 2))
+        return low_count > (len(scores) // 2)
 
     async def _repair_jobs_language_if_needed(
         self,
@@ -461,7 +451,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             raw=payload,
             baseline=jobs,
         )
-        return repaired, bool(repaired != jobs)
+        return repaired, repaired != jobs
 
     def _build_query_language_repair_messages(
         self,
@@ -561,12 +551,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 out.append(base.model_copy(deep=True))
                 continue
             item = payload_jobs[index]
-            query = clean_whitespace(str(item.query or "")) or base.query
+            query = clean_whitespace(item.query) or base.query
             additional_queries = self._normalize_strings(
                 list(item.additional_queries),
                 limit=8,
             )
-            if str(base.mode) != "deep":
+            if base.mode != "deep":
                 additional_queries = []
             out.append(
                 base.model_copy(
@@ -590,7 +580,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> tuple[list[ResearchSearchJob], bool]:
         if round_action != "search":
             return jobs, False
-        if int(job_limit) <= 0:
+        if job_limit <= 0:
             return jobs, False
         if not self._should_apply_progressive_language_fallback(
             ctx=ctx,
@@ -602,14 +592,14 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             return jobs, False
         out = [item.model_copy(deep=True) for item in jobs]
         rescue_key = rescue_query.casefold()
-        if any(clean_whitespace(item.query).casefold() == rescue_key for item in out):
+        if any(item.query.casefold() == rescue_key for item in out):
             return out, False
         rescue_job = ResearchSearchJob(
             query=rescue_query,
             intent="refresh",
             mode="auto",
         )
-        if len(out) < int(job_limit):
+        if len(out) < job_limit:
             out.append(rescue_job)
             return out, True
         if not out:
@@ -638,7 +628,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         return all(self._is_low_gain_round(item) for item in rounds)
 
     def _is_low_gain_round(self, round_state: ResearchRoundState) -> bool:
-        if int(round_state.result_count) <= 0:
+        if round_state.result_count <= 0:
             return True
         return float(round_state.corpus_score_gain) < float(self._LOW_GAIN_THRESHOLD)
 
@@ -646,7 +636,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         query = self._resolve_core_question(ctx)
         if query:
             return query
-        return clean_whitespace(ctx.request.themes)
+        return ctx.request.themes
 
     def _build_plan_messages(
         self,
@@ -659,13 +649,13 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         budget = ctx.runtime.budget
         mode_depth = ctx.runtime.mode_depth
         out_lang = self._resolve_output_language(ctx) or "en"
-        out_lang_name = clean_whitespace(out_lang) or "unspecified"
+        out_lang_name = out_lang or "unspecified"
         search_language = self._resolve_search_language(ctx)
-        report_style = self._resolve_report_style(ctx)
+        report_style = ctx.plan.theme_plan.report_style
         theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
         previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
         candidate_queries_markdown = render_queries_markdown(candidate_queries)
-        round_index = int(ctx.runtime.round_index)
+        round_index = ctx.runtime.round_index
         last_round_candidates = self._resolve_last_round_candidates(
             ctx=ctx,
             round_index=round_index,
@@ -679,7 +669,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             theme=ctx.request.themes,
             core_question=core_question,
             report_style=report_style,
-            mode_depth_profile=str(mode_depth.mode_key),
+            mode_depth_profile=mode_depth.mode_key,
             round_index=round_index,
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
@@ -774,7 +764,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     def _can_attempt_explore(
         self, *, ctx: ResearchStepContext, round_index: int
     ) -> bool:
-        if int(round_index) <= 1:
+        if round_index <= 1:
             return False
         if ctx.runtime.budget.max_fetch_calls <= ctx.runtime.fetch_calls:
             return False
@@ -782,7 +772,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             round_index=round_index,
         )
-        return bool(candidates)
+        return len(candidates) > 0
 
     def _resolve_last_round_candidates(
         self,
@@ -790,8 +780,8 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         round_index: int,
     ) -> list[ResearchLinkCandidate]:
-        expected_round = max(0, int(round_index) - 1)
-        if int(ctx.plan.last_round_link_candidates_round) != expected_round:
+        expected_round = max(0, round_index - 1)
+        if ctx.plan.last_round_link_candidates_round != expected_round:
             return []
         return [
             item.model_copy(deep=True) for item in ctx.plan.last_round_link_candidates
@@ -800,16 +790,16 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     def _normalize_round_action(
         self,
         *,
-        raw: object,
+        raw: RoundAction | None,
         round_index: int,
         allow_explore: bool,
     ) -> RoundAction:
-        if int(round_index) <= 1:
+        if round_index <= 1:
             return "search"
-        action_key = clean_whitespace(str(raw or "search")).casefold()
+        action_key = clean_whitespace(raw or "search").casefold()
         if action_key != "explore":
             return "search"
-        return "explore" if bool(allow_explore) else "search"
+        return "explore" if allow_explore else "search"
 
     def _normalize_explore_target_source_ids(
         self,
@@ -820,12 +810,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> list[int]:
         if not raw or not candidates:
             return []
-        cap = max(1, int(limit))
-        allowed = {int(item.source_id) for item in candidates}
+        cap = max(1, limit)
+        allowed = {item.source_id for item in candidates}
         out: list[int] = []
         seen: set[int] = set()
         for item in raw:
-            source_id = int(item)
+            source_id = item
             if source_id in seen or source_id not in allowed:
                 continue
             seen.add(source_id)
@@ -842,11 +832,11 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> list[int]:
         if not candidates:
             return []
-        cap = max(1, int(limit))
+        cap = max(1, limit)
         out: list[int] = []
         seen: set[int] = set()
         for item in candidates:
-            source_id = int(item.source_id)
+            source_id = item.source_id
             if source_id in seen:
                 continue
             seen.add(source_id)
@@ -855,27 +845,11 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 break
         return out
 
-    def _resolve_report_style(self, ctx: ResearchStepContext) -> ReportStyle:
-        cfg = self.settings.research.report_style
-        fallback_style_key = clean_whitespace(str(cfg.fallback_style)).casefold()
-        if fallback_style_key not in {"decision", "explainer", "execution"}:
-            fallback_style_key = "explainer"
-        return resolve_report_style(
-            raw_style=ctx.plan.theme_plan.report_style,
-            theme=self._resolve_core_question(ctx),
-            enabled=bool(cfg.enabled),
-            fallback_style=cast("ReportStyle", fallback_style_key),
-            strict_style_lock=bool(cfg.strict_style_lock),
-        )
-
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
-        return question or clean_whitespace(ctx.request.themes)
+        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
     def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
-        return clean_whitespace(ctx.plan.theme_plan.output_language)
+        return ctx.plan.theme_plan.output_language
 
 
 __all__ = ["ResearchPlanStep"]

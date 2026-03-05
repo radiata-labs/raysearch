@@ -36,7 +36,6 @@ from serpsage.steps.research.utils import (
     normalize_strings,
     resolve_research_model,
 )
-from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
@@ -55,11 +54,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         mode_depth = ctx.runtime.mode_depth
         prompt_card_cap = max(1, mode_depth.max_question_cards_effective)
         seed_limit = max(6, ctx.runtime.budget.max_queries_per_round * 3)
-        style_cfg = self.settings.research.report_style
-        hinted_style = infer_report_style_from_theme(
-            ctx.request.themes,
-            default=self._normalize_style_fallback(style_cfg.fallback_style),
-        )
+        fallback_report_style = infer_report_style_from_theme(ctx.request.themes)
         fallback_input_language = detect_input_language(ctx.request.themes)
         fallback_search_language = route_search_language(
             theme=ctx.request.themes,
@@ -68,7 +63,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         fallback_task_intent = self._normalize_task_intent(
             raw=None,
             theme=ctx.request.themes,
-            report_style=hinted_style,
+            report_style=fallback_report_style,
         )
         fallback_complexity = self._normalize_task_complexity(
             raw=None,
@@ -84,7 +79,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             detected_input_language=fallback_input_language,
             search_language=fallback_search_language,
             core_question=ctx.request.themes,
-            report_style=hinted_style,
+            report_style=fallback_report_style,
             task_intent=fallback_task_intent,
             complexity_tier=fallback_complexity,
             subthemes=[],
@@ -98,6 +93,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     ctx,
                     now_utc=now_utc,
                     card_cap=prompt_card_cap,
+                    report_style=fallback_report_style,
                 ),
                 response_format=ThemeOutputPayload,
                 format_override=self._build_theme_schema(card_cap=prompt_card_cap),
@@ -113,7 +109,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 error_code="research_theme_plan_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "model": str(model),
+                    "model": model,
                     "message": str(exc),
                 },
             )
@@ -121,47 +117,39 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             payload.detected_input_language,
             default=fallback_input_language,
         )
-        core_question = clean_whitespace(
-            str(payload.core_question or ctx.request.themes)
-        )
+        core_question = (payload.core_question or ctx.request.themes).strip()
         if not core_question:
             core_question = ctx.request.themes
+        resolved_theme = core_question or ctx.request.themes
         search_language = normalize_language_code(
             payload.search_language,
             default="other",
         )
         if search_language == "other":
             search_language = route_search_language(
-                theme=core_question or ctx.request.themes,
+                theme=resolved_theme,
                 input_language=input_language,
             )
         report_style = resolve_report_style(
             raw_style=payload.report_style,
-            theme=core_question or ctx.request.themes,
-            enabled=bool(style_cfg.enabled),
-            fallback_style=self._normalize_style_fallback(style_cfg.fallback_style),
-            strict_style_lock=bool(style_cfg.strict_style_lock),
+            theme=resolved_theme,
         )
-        raw_style_token = clean_whitespace(str(payload.report_style or "")).casefold()
-        style_fallback_used = bool(raw_style_token != str(report_style))
+        raw_style_token = payload.report_style.strip().casefold()
+        style_fallback_used = raw_style_token != report_style
         task_intent = self._normalize_task_intent(
             raw=payload.task_intent,
-            theme=core_question or ctx.request.themes,
+            theme=resolved_theme,
             report_style=report_style,
         )
-        raw_task_intent_token = clean_whitespace(
-            str(payload.task_intent or "")
-        ).casefold()
-        intent_fallback_used = bool(raw_task_intent_token != str(task_intent))
+        raw_task_intent_token = payload.task_intent.strip().casefold()
+        intent_fallback_used = raw_task_intent_token != task_intent
         complexity_tier = self._normalize_task_complexity(
             raw=payload.complexity_tier,
-            theme=core_question or ctx.request.themes,
+            theme=resolved_theme,
             task_intent=task_intent,
         )
-        raw_complexity_token = clean_whitespace(
-            str(payload.complexity_tier or "")
-        ).casefold()
-        complexity_fallback_used = bool(raw_complexity_token != str(complexity_tier))
+        raw_complexity_token = payload.complexity_tier.strip().casefold()
+        complexity_fallback_used = raw_complexity_token != complexity_tier
         adaptive_applied = self._apply_mode_adaptive_depth(
             ctx=ctx,
             complexity_tier=complexity_tier,
@@ -217,7 +205,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             [core_question],
             limit=next_query_limit,
         )
-        ctx.corpus.coverage_state.total_subthemes = int(len(subthemes))
+        ctx.corpus.coverage_state.total_subthemes = len(subthemes)
         ctx.notes.append(
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
         )
@@ -238,9 +226,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             request_id=ctx.request_id,
             stage="theme_plan",
             attrs={
-                "input_language": str(theme_plan.input_language),
-                "output_language": str(theme_plan.output_language),
-                "search_language": str(theme_plan.search_language),
+                "input_language": theme_plan.input_language,
+                "output_language": theme_plan.output_language,
+                "search_language": theme_plan.search_language,
             },
         )
         await self.emit_tracking_event(
@@ -248,12 +236,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             request_id=ctx.request_id,
             stage="theme_plan",
             attrs={
-                "report_style_selected": str(report_style),
-                "report_style_fallback_used": bool(style_fallback_used),
-                "task_intent_selected": str(task_intent),
-                "task_intent_fallback_used": bool(intent_fallback_used),
-                "complexity_tier_selected": str(complexity_tier),
-                "complexity_tier_fallback_used": bool(complexity_fallback_used),
+                "report_style_selected": report_style,
+                "report_style_fallback_used": style_fallback_used,
+                "task_intent_selected": task_intent,
+                "task_intent_fallback_used": intent_fallback_used,
+                "complexity_tier_selected": complexity_tier,
+                "complexity_tier_fallback_used": complexity_fallback_used,
             },
         )
         if mode_key in {"research", "research-pro"}:
@@ -263,11 +251,11 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 stage="theme_plan",
                 attrs={
                     "mode_depth_profile": mode_key,
-                    "task_intent": str(task_intent),
-                    "complexity_tier": str(complexity_tier),
-                    "effective_complexity_tier": str(complexity_tier),
-                    "adaptive_applied": bool(adaptive_applied),
-                    "max_question_cards_effective": int(card_cap),
+                    "task_intent": task_intent,
+                    "complexity_tier": complexity_tier,
+                    "effective_complexity_tier": complexity_tier,
+                    "adaptive_applied": adaptive_applied,
+                    "max_question_cards_effective": card_cap,
                     "min_rounds_per_track": mode_depth.min_rounds_per_track,
                     "gap_closure_passes": mode_depth.gap_closure_passes,
                     "density_gate_passes": mode_depth.density_gate_passes,
@@ -282,18 +270,18 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "question_cards": len(cards),
                 "subthemes": len(subthemes),
                 "next_queries": len(ctx.plan.next_queries),
-                "input_language": str(theme_plan.input_language),
-                "search_language": str(theme_plan.search_language),
-                "output_language": str(theme_plan.output_language),
-                "mode_depth_profile": str(mode_depth.mode_key),
-                "mode_depth_question_card_cap": int(card_cap),
-                "report_style_selected": str(report_style),
-                "report_style_fallback_used": bool(style_fallback_used),
-                "task_intent_selected": str(task_intent),
-                "task_intent_fallback_used": bool(intent_fallback_used),
-                "complexity_tier_selected": str(complexity_tier),
-                "complexity_tier_fallback_used": bool(complexity_fallback_used),
-                "mode_depth_adaptive_applied": bool(adaptive_applied),
+                "input_language": theme_plan.input_language,
+                "search_language": theme_plan.search_language,
+                "output_language": theme_plan.output_language,
+                "mode_depth_profile": mode_depth.mode_key,
+                "mode_depth_question_card_cap": card_cap,
+                "report_style_selected": report_style,
+                "report_style_fallback_used": style_fallback_used,
+                "task_intent_selected": task_intent,
+                "task_intent_fallback_used": intent_fallback_used,
+                "complexity_tier_selected": complexity_tier,
+                "complexity_tier_fallback_used": complexity_fallback_used,
+                "mode_depth_adaptive_applied": adaptive_applied,
             },
         )
         return ctx
@@ -304,38 +292,21 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         *,
         now_utc: datetime,
         card_cap: int,
+        report_style: ReportStyle,
     ) -> list[dict[str, str]]:
         budget = ctx.runtime.budget
         mode_depth = ctx.runtime.mode_depth
-        hinted_style = infer_report_style_from_theme(
-            ctx.request.themes,
-            default=self._normalize_style_fallback(
-                self.settings.research.report_style.fallback_style
-            ),
-        )
-        hinted_intent = self._normalize_task_intent(
-            raw=None,
-            theme=ctx.request.themes,
-            report_style=hinted_style,
-        )
-        hinted_complexity = self._normalize_task_complexity(
-            raw=None,
-            theme=ctx.request.themes,
-            task_intent=hinted_intent,
-        )
         return build_theme_prompt_messages(
             theme=ctx.request.themes,
             search_mode=ctx.request.search_mode,
-            mode_depth_profile=str(mode_depth.mode_key),
+            mode_depth_profile=mode_depth.mode_key,
             current_utc_timestamp=now_utc.isoformat(),
             current_utc_date=now_utc.date().isoformat(),
             max_rounds=budget.max_rounds,
             max_search_calls=budget.max_search_calls,
             max_queries_per_round=budget.max_queries_per_round,
-            card_cap=int(card_cap),
-            hinted_style=hinted_style,
-            hinted_task_intent=hinted_intent,
-            hinted_complexity_tier=hinted_complexity,
+            card_cap=card_cap,
+            hinted_style=report_style,
         )
 
     def _build_theme_schema(self, *, card_cap: int) -> dict[str, Any]:
@@ -381,7 +352,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 },
                 "question_cards": {
                     "type": "array",
-                    "maxItems": max(1, int(card_cap)),
+                    "maxItems": max(1, card_cap),
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
@@ -428,7 +399,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         out: list[ResearchQuestionCard] = []
         seen: set[str] = set()
         for item in raw:
-            question = clean_whitespace(item.question)
+            question = item.question.strip()
             if not question:
                 continue
             key = question.casefold()
@@ -449,7 +420,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                         limit=min(seed_limit, 8),
                     ),
                     evidence_focus=normalize_strings(item.evidence_focus, limit=8),
-                    expected_gain=clean_whitespace(item.expected_gain)
+                    expected_gain=item.expected_gain.strip()
                     or "Increase evidence coverage for this question.",
                 )
             )
@@ -475,12 +446,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         out: list[ResearchQuestionCard] = []
         seen: set[str] = set()
         for branch in fallback_branches:
-            question = clean_whitespace(branch)
+            question = branch.strip()
             if not question:
                 continue
             if ":" in question:
                 _, tail = question.split(":", 1)
-                question = clean_whitespace(tail) or question
+                question = tail.strip() or question
             key = question.casefold()
             if key in seen:
                 continue
@@ -512,20 +483,14 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             )
         ]
 
-    def _normalize_style_fallback(self, raw: object) -> ReportStyle:
-        token = clean_whitespace(str(raw or "")).casefold()
-        if token in {"decision", "explainer", "execution"}:
-            return token  # type: ignore[return-value]
-        return "explainer"
-
     def _normalize_task_intent(
         self,
         *,
-        raw: object | None,
+        raw: TaskIntent | str | None,
         theme: str,
         report_style: ReportStyle,
     ) -> TaskIntent:
-        token = clean_whitespace(str(raw or "")).casefold().replace("-", "_")
+        token = str(raw or "").strip().casefold().replace("-", "_")
         mapping: dict[str, TaskIntent] = {
             "how_to": "how_to",
             "howto": "how_to",
@@ -545,7 +510,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         theme: str,
         report_style: ReportStyle,
     ) -> TaskIntent:
-        token = clean_whitespace(theme).casefold()
+        token = theme.strip().casefold()
         if not token:
             return "other"
         diagnosis_hints = (
@@ -611,11 +576,11 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     def _normalize_task_complexity(
         self,
         *,
-        raw: object | None,
+        raw: TaskComplexity | str | None,
         theme: str,
         task_intent: TaskIntent,
     ) -> TaskComplexity:
-        token = clean_whitespace(str(raw or "")).casefold()
+        token = str(raw or "").strip().casefold()
         if token in {"low", "medium", "high"}:
             return token  # type: ignore[return-value]
         return self._fallback_task_complexity(theme=theme, task_intent=task_intent)
@@ -626,7 +591,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         theme: str,
         task_intent: TaskIntent,
     ) -> TaskComplexity:
-        token = clean_whitespace(theme).casefold()
+        token = theme.strip().casefold()
         if not token:
             return "medium"
         high_hints = (

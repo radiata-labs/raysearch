@@ -17,7 +17,6 @@ from serpsage.models.pipeline import (
 )
 from serpsage.models.research import ResearchThemePlan
 from serpsage.steps.base import StepBase
-from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
@@ -43,7 +42,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         mode = self._normalize_search_mode(ctx.request.search_mode)
-        themes = clean_whitespace(ctx.request.themes or "")
+        themes = ctx.request.themes.strip()
         profile = self._resolve_profile(mode)
         ctx.request = ctx.request.model_copy(
             update={"search_mode": mode, "themes": themes}
@@ -142,7 +141,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         return ctx
 
     def _normalize_search_mode(self, raw_mode: object | None) -> str:
-        token = clean_whitespace(str(raw_mode or self._DEFAULT_SEARCH_MODE)).casefold()
+        token = str(raw_mode or self._DEFAULT_SEARCH_MODE).strip().casefold()
         if token in self._KNOWN_MODES:
             return token
         return self._DEFAULT_SEARCH_MODE
@@ -156,11 +155,11 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         return profiles.get(mode, self.settings.research.research)
 
     def _resolve_global_budget_multiplier(self, mode: str) -> float:
-        token = clean_whitespace(mode).casefold()
+        token = mode.strip().casefold()
         return self._GLOBAL_BUDGET_MULTIPLIER_BY_MODE.get(token, 2.0)
 
     def _mode_uses_orchestrator(self, mode: str) -> bool:
-        mode_name = clean_whitespace(mode).casefold()
+        mode_name = mode.strip().casefold()
         return mode_name != "research-fast"
 
 

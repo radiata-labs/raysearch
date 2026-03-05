@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from urllib.parse import urlparse
 
 from serpsage.models.pipeline import ResearchSource, ResearchStepContext
@@ -31,7 +30,7 @@ def _append_unique_token(
     raw: object,
     limit: int,
 ) -> bool:
-    value = clean_whitespace(str(raw or ""))
+    value = clean_whitespace(raw if isinstance(raw, str) else str(raw or ""))
     if not value:
         return False
     key = value.casefold()
@@ -39,7 +38,7 @@ def _append_unique_token(
         return False
     seen.add(key)
     out.append(value)
-    return bool(len(out) >= max(1, int(limit)))
+    return len(out) >= max(1, limit)
 
 
 def normalize_strings(raw: object, *, limit: int) -> list[str]:
@@ -68,26 +67,26 @@ def build_overview_packet(
 ) -> str:
     blocks: list[str] = []
     for source in sorted(sources, key=lambda item: item.source_id):
-        source_title = clean_whitespace(source.title)
-        source_url = clean_whitespace(str(source.url or ""))
+        source_title = source.title
+        source_url = source.url
         source_host = _normalize_url_host(source_url)
         source_url_hint = _infer_url_evidence_hint(
             url=source_url,
             title=source_title,
         )
-        overview_text = _normalize_overview_text(source.overview)
-        if len(overview_text) > max(1, int(max_overview_chars)):
-            overview_text = overview_text[: max(1, int(max_overview_chars))]
+        overview_text = source.overview
+        if len(overview_text) > max(1, max_overview_chars):
+            overview_text = overview_text[: max(1, max_overview_chars)]
         overview_lines = (overview_text or "(none)").split("\n")
         blocks.append(
             "\n".join(
                 [
-                    f"### Source {int(source.source_id)}",
+                    f"### Source {source.source_id}",
                     f"- URL: {source_url or 'n/a'}",
                     f"- URL host: {source_host or 'n/a'}",
                     f"- URL evidence hint: {source_url_hint}",
                     f"- Title: {source_title}",
-                    f"- Is subpage: {str(bool(source.is_subpage)).lower()}",
+                    f"- Is subpage: {'true' if source.is_subpage else 'false'}",
                     "- Overview:",
                     "  ```text",
                     *[f"  {line}" for line in overview_lines],
@@ -98,41 +97,22 @@ def build_overview_packet(
     return "\n\n".join(blocks)
 
 
-def _normalize_block_text(text: str) -> str:
-    return str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-
-
-def _normalize_overview_text(raw: object) -> str:
-    if raw is None:
-        return ""
-    if isinstance(raw, str):
-        return _normalize_block_text(raw)
-    try:
-        return _normalize_block_text(
-            json.dumps(raw, ensure_ascii=False, sort_keys=True, indent=2)
-        )
-    except Exception:  # noqa: S112
-        return _normalize_block_text(str(raw))
-
-
 def _normalize_url_host(url: str) -> str:
-    raw = clean_whitespace(url)
-    if not raw:
+    if not url:
         return ""
-    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
-    host = clean_whitespace(parsed.netloc or "")
-    if not host and parsed.path and "://" not in raw:
-        host = clean_whitespace(parsed.path.split("/")[0])
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = parsed.netloc or ""
+    if not host and parsed.path and "://" not in url:
+        host = parsed.path.split("/")[0]
     host = host.split("@")[-1].split(":")[0].strip(".").lower()
     return host.removeprefix("www.")
 
 
 def _infer_url_evidence_hint(*, url: str, title: str) -> str:
-    raw = clean_whitespace(url)
-    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
-    host = _normalize_url_host(raw)
-    path = clean_whitespace(parsed.path or "").casefold()
-    clue_text = f"{host} {path} {clean_whitespace(title).casefold()}"
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = _normalize_url_host(url)
+    path = (parsed.path or "").strip().casefold()
+    clue_text = f"{host} {path} {title.casefold()}"
     tags: list[str] = []
     if any(
         token in clue_text
@@ -228,7 +208,5 @@ def normalize_entity_coverage(
     if not missing:
         covered_keys = {item.casefold() for item in covered}
         missing = [item for item in required if item.casefold() not in covered_keys]
-    complete = bool(
-        (bool(entity_coverage_complete) or not missing_entities) and not missing
-    )
+    complete = (entity_coverage_complete or not missing_entities) and not missing
     return complete, covered, missing

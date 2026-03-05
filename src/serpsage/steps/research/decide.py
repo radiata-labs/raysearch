@@ -14,7 +14,6 @@ from serpsage.steps.research.utils import (
     normalize_strings,
     resolve_research_model,
 )
-from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
@@ -42,7 +41,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         round_state = ctx.current_round
         overview_stop = ctx.work.overview_review.stop
         content_stop = ctx.work.content_review.stop
-        strategy = str(round_state.query_strategy or "").strip().casefold()
+        strategy = str(round_state.query_strategy).strip().casefold()
         model_stop = overview_stop or content_stop or strategy == "stop-ready"
         confidence_ok = round_state.confidence >= budget.stop_confidence
         coverage_ok = round_state.coverage_ratio >= budget.min_coverage_ratio
@@ -167,7 +166,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         ctx.plan.next_queries = list(next_queries)
         ctx.rounds.append(round_state)
         if llm_signal is not None:
-            reason = clean_whitespace(llm_signal.reason)
+            reason = llm_signal.reason.strip()
             if reason:
                 ctx.notes.append(f"Decide signal: {reason}")
         await self.emit_tracking_event(
@@ -263,10 +262,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         )
 
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        question = clean_whitespace(
-            ctx.plan.theme_plan.core_question or ctx.request.themes
-        )
-        return question or clean_whitespace(ctx.request.themes)
+        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
     def _build_entity_backfill_queries(
         self,
@@ -275,10 +271,10 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         missing_entities: list[str],
         limit: int,
     ) -> list[str]:
-        base = clean_whitespace(core_question)
+        base = core_question
         queries: list[str] = []
         for item in normalize_strings(missing_entities, limit=16):
-            entity = clean_whitespace(item)
+            entity = item
             if not entity:
                 continue
             if base:
