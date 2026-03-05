@@ -80,7 +80,8 @@ All edits must be coordinated through `.codex/SCOPES.md`.
 
 ### 3.1 Before Editing
 
-- Scan related code and strictly define the exact file scope.
+- Scan related code and define scope progressively; do not force a fully complete file list at the very beginning.
+- Start with the files you currently know, then expand scope immediately when new target files are discovered.
 - Append a new task section in `.codex/SCOPES.md` for this work.
 - Mark each planned file as `WAITING`.
 - Check existing active scope records from other tasks and avoid interference.
@@ -92,7 +93,9 @@ All edits must be coordinated through `.codex/SCOPES.md`.
 ### 3.2 During Editing
 
 - Stay strictly inside the declared scope for the current task.
-- After each file is edited, update its status from `WAITING` to `MODIFYING`.
+- For every file, switch status to `MODIFYING` before any edit is made.
+- Prefer switching early rather than late.
+- Never edit first and switch to `MODIFYING` afterward.
 - You may only update status records that you created in the current task section.
 - Do not create or update status entries for control files.
 - Never manually change any file status from `MODIFYING` to `COMPLETED`.
