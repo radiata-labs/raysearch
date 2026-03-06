@@ -26,7 +26,6 @@ from serpsage.models.pipeline import (
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
     map_provider_language_param,
-    normalize_language_code,
 )
 from serpsage.utils import clean_whitespace
 
@@ -120,16 +119,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ctx.current_round.stop_reason = ctx.runtime.stop_reason
             return ctx
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
-        search_language = normalize_language_code(
-            ctx.plan.theme_plan.search_language,
-            default="other",
-        )
-        if search_language == "other":
-            search_language = normalize_language_code(
-                ctx.plan.theme_plan.output_language
-                or ctx.plan.theme_plan.input_language,
-                default="en",
-            )
+        search_language = ctx.plan.theme_plan.search_language
         provider_params = map_provider_language_param(
             provider_backend=self.settings.provider.backend,
             search_language=search_language,
@@ -691,7 +681,7 @@ def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
     values = list(ctx.plan.next_queries)
     if ctx.current_round is not None:
         values.extend(ctx.current_round.queries)
-    values.append(_resolve_core_question(ctx=ctx))
+    values.append(ctx.plan.theme_plan.core_question)
     for value in values:
         for token in _TOKEN_PATTERN.findall(value.casefold()):
             if len(token) < 2:
@@ -702,10 +692,6 @@ def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
 
 def _build_source_idx_by_id(sources: list[ResearchSource]) -> dict[int, int]:
     return {item.source_id: idx for idx, item in enumerate(sources)}
-
-
-def _resolve_core_question(*, ctx: ResearchStepContext) -> str:
-    return ctx.plan.theme_plan.core_question or ctx.request.themes
 
 
 def _normalize_text(raw: str) -> str:

@@ -87,7 +87,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         )
         ctx.plan = ResearchPlanState(
             theme_plan=ResearchThemePlan(core_question=themes),
-            next_queries=[themes],
+            next_queries=[],
         )
         ctx.parallel = ResearchParallelState(
             question_cards=[],

@@ -23,7 +23,7 @@ from serpsage.models.research import (
     TaskComplexity,
     TaskIntent,
 )
-from serpsage.steps.research.language import normalize_language_code
+from serpsage.steps.research.language import describe_language
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -290,6 +290,28 @@ def research_mode_scope_lock_contract(
     )
 
 
+def _resolve_language_label(language_code: str) -> str:
+    return describe_language(
+        language_code,
+        default=language_code or "the required language",
+    )
+
+
+def _build_language_lock_block(
+    *,
+    field_name: str,
+    language_code: str,
+    language_label: str,
+) -> str:
+    return (
+        f"{field_name}_LABEL:\n{language_code} ({language_label})\n\n"
+        f"{field_name}_LOCK:\n"
+        f"- {field_name} is {language_code} ({language_label}).\n"
+        f"- Write all user-facing prose and every free-text string directly in {language_label}.\n"
+        f"- Do not answer in English unless {field_name} is en (English).\n"
+    )
+
+
 def _build_theme_messages(
     *,
     theme: str,
@@ -337,7 +359,7 @@ def _build_theme_messages(
         "D) Trend / Forecast question:\n"
         "- Split into current baseline, drivers, constraints, and forward-looking scenarios with time anchors.\n"
         "Hard Constraints:\n"
-        "1) Output free-text in detected_input_language.\n"
+        "1) Output free-text in detected_input_language; this means the actual prose itself, not a language tag.\n"
         "2) Every question card must be externally verifiable by web evidence.\n"
         "3) question_cards must be deduplicated and practical for a single track loop.\n"
         "4) Each card must focus on one sub-problem, not the entire THEME restated.\n"
@@ -411,6 +433,9 @@ def _build_theme_messages(
                 "- Make evidence_focus mutually informative (little overlap).\n"
                 "- For comparison themes, include candidate-specific cards and one final synthesis card.\n\n"
                 "Output Notes:\n"
+                "LANGUAGE_POLICY:\n"
+                "- Preserve the writing language of THEME in every free-text field.\n"
+                "- If THEME is Chinese, write free-text in Chinese characters instead of English paraphrases.\n\n"
                 "- core_question: one-sentence anchor question.\n"
                 "- report_style: classify best user-facing report style as decision/explainer/execution.\n"
                 "- task_intent: classify user task intent as how_to/comparison/explainer/diagnosis/other.\n"
@@ -528,7 +553,7 @@ def _build_plan_messages(
                 "- Prefer fresh/authoritative sources for recency queries.\n\n"
                 "LANGUAGE_POLICY:\n"
                 f"- required_search_language={required_search_language}\n"
-                f"- required_output_language={required_output_language} ({required_output_language_label})\n"
+                f"{_build_language_lock_block(field_name='required_output_language', language_code=required_output_language, language_label=required_output_language_label)}\n"
                 "- search_jobs.query and search_jobs.additional_queries must use required_search_language.\n"
                 "- Keep other textual fields in required_output_language.\n\n"
                 "ROUND_ACTION_POLICY:\n"
@@ -714,7 +739,7 @@ def _build_overview_messages(
                 "- Ban generic filler such as broad restatements with no new information.\n"
                 "- next_queries must be non-overlapping and ranked by expected gain.\n\n"
                 "LANGUAGE_POLICY:\n"
-                f"- required_output_language={required_output_language} ({required_output_language_label})\n"
+                f"{_build_language_lock_block(field_name='required_output_language', language_code=required_output_language, language_label=required_output_language_label)}\n"
                 "- Keep all free-text fields strictly in required_output_language.\n"
                 "- Do not mix another language/script except unavoidable proper nouns.\n\n"
                 f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
@@ -806,7 +831,7 @@ def _build_content_messages(
                 "- If latest/current intent exists, prefer the most recent trustworthy evidence and flag stale content.\n"
                 "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
                 "LANGUAGE_POLICY:\n"
-                f"- required_output_language={required_output_language} ({required_output_language_label})\n"
+                f"{_build_language_lock_block(field_name='required_output_language', language_code=required_output_language, language_label=required_output_language_label)}\n"
                 "- Keep all free-text fields strictly in required_output_language.\n"
                 "- Do not mix another language/script except unavoidable proper nouns.\n\n"
                 f"THEME_PLAN_MARKDOWN:\n{theme_plan_markdown}\n\n"
@@ -1108,7 +1133,7 @@ def _build_subreport_messages(
         {
             "role": "user",
             "content": (
-                f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_output_language} ({target_output_language_label})\n\n"
+                f"{_build_language_lock_block(field_name='TARGET_OUTPUT_LANGUAGE', language_code=target_output_language, language_label=target_output_language_label)}\n\n"
                 f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
                 f"CORE_QUESTION:\n{core_question}\n\n"
                 f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
@@ -1187,7 +1212,7 @@ def _build_render_architect_messages(
         {
             "role": "user",
             "content": (
-                f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_output_language} ({target_output_language_label})\n\n"
+                f"{_build_language_lock_block(field_name='TARGET_OUTPUT_LANGUAGE', language_code=target_output_language, language_label=target_output_language_label)}\n\n"
                 f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
                 f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
                 f"TASK_INTENT:\n{task_intent}\n\n"
@@ -1272,7 +1297,7 @@ def _build_render_writer_messages(
         {
             "role": "user",
             "content": (
-                f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_output_language} ({target_output_language_label})\n\n"
+                f"{_build_language_lock_block(field_name='TARGET_OUTPUT_LANGUAGE', language_code=target_output_language, language_label=target_output_language_label)}\n\n"
                 f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
                 f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
                 f"TASK_INTENT:\n{task_intent}\n\n"
@@ -1335,7 +1360,7 @@ def _build_render_structured_messages(
         {
             "role": "user",
             "content": (
-                f"TARGET_OUTPUT_LANGUAGE_LABEL:\n{target_output_language} ({target_output_language_label})\n\n"
+                f"{_build_language_lock_block(field_name='TARGET_OUTPUT_LANGUAGE', language_code=target_output_language, language_label=target_output_language_label)}\n\n"
                 f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
                 f"{style_lock_line}"
                 f"FINAL_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
@@ -1450,8 +1475,8 @@ def build_plan_prompt_messages(
 ) -> list[dict[str, str]]:
     budget = ctx.runtime.budget
     mode_depth = ctx.runtime.mode_depth
-    output_language = _resolve_output_language_from_ctx(ctx)
-    search_language = _resolve_search_language_from_ctx(ctx)
+    output_language = ctx.plan.theme_plan.output_language
+    search_language = ctx.plan.theme_plan.search_language
     round_index = ctx.runtime.round_index
     last_round_candidates_markdown = render_link_candidates_markdown(
         last_round_candidates,
@@ -1468,7 +1493,7 @@ def build_plan_prompt_messages(
         current_utc_date=now_utc.date().isoformat(),
         required_search_language=search_language,
         required_output_language=output_language,
-        required_output_language_label=output_language,
+        required_output_language_label=_resolve_language_label(output_language),
         theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
         previous_rounds_markdown=render_rounds_markdown(ctx.rounds, limit=3),
         candidate_queries_markdown=render_queries_markdown(candidate_queries),
@@ -1525,10 +1550,7 @@ def build_query_language_repair_prompt_messages(
     search_language: str,
     now_utc: datetime,
 ) -> list[dict[str, str]]:
-    output_language = normalize_language_code(
-        ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
-        default="other",
-    )
+    output_language = ctx.plan.theme_plan.output_language
     current_jobs = [
         {
             "query": item.query,
@@ -1540,7 +1562,7 @@ def build_query_language_repair_prompt_messages(
     ]
     return _build_query_language_repair_messages(
         current_utc_date=now_utc.date().isoformat(),
-        core_question=_resolve_core_question_from_ctx(ctx),
+        core_question=ctx.plan.theme_plan.core_question,
         required_search_language=search_language,
         required_output_language=output_language,
         current_search_jobs_json=json.dumps(current_jobs, ensure_ascii=False),
@@ -1553,17 +1575,17 @@ def build_overview_prompt_messages(
     sources: list[ResearchSource],
     now_utc: datetime,
 ) -> list[dict[str, str]]:
-    output_language = _resolve_output_language_from_ctx(ctx)
+    output_language = ctx.plan.theme_plan.output_language
     return _build_overview_messages(
         theme=ctx.request.themes,
-        core_question=_resolve_core_question_from_ctx(ctx),
+        core_question=ctx.plan.theme_plan.core_question,
         report_style=ctx.plan.theme_plan.report_style,
         mode_depth_profile=ctx.runtime.mode_depth.mode_key,
         round_index=ctx.current_round.round_index if ctx.current_round else 0,
         current_utc_timestamp=now_utc.isoformat(),
         current_utc_date=now_utc.date().isoformat(),
         required_output_language=output_language,
-        required_output_language_label=output_language,
+        required_output_language_label=_resolve_language_label(output_language),
         theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
         previous_rounds_markdown=render_rounds_markdown(ctx.rounds, limit=3),
         required_entities=list(ctx.plan.theme_plan.required_entities),
@@ -1578,17 +1600,17 @@ def build_content_prompt_messages(
     source_ids: list[int],
     now_utc: datetime,
 ) -> list[dict[str, str]]:
-    output_language = _resolve_output_language_from_ctx(ctx)
+    output_language = ctx.plan.theme_plan.output_language
     return _build_content_messages(
         theme=ctx.request.themes,
-        core_question=_resolve_core_question_from_ctx(ctx),
+        core_question=ctx.plan.theme_plan.core_question,
         report_style=ctx.plan.theme_plan.report_style,
         mode_depth_profile=ctx.runtime.mode_depth.mode_key,
         round_index=ctx.current_round.round_index if ctx.current_round else 0,
         current_utc_timestamp=now_utc.isoformat(),
         current_utc_date=now_utc.date().isoformat(),
         required_output_language=output_language,
-        required_output_language_label=output_language,
+        required_output_language_label=_resolve_language_label(output_language),
         theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
         overview_review_markdown=render_overview_review_markdown(
             ctx.work.overview_review
@@ -1609,7 +1631,7 @@ def build_decide_prompt_messages(
     if round_state is None:
         return []
     return _build_decide_signal_messages(
-        core_question=_resolve_core_question_from_ctx(ctx),
+        core_question=ctx.plan.theme_plan.core_question,
         mode_depth_profile=ctx.runtime.mode_depth.mode_key,
         confidence=round_state.confidence,
         coverage_ratio=round_state.coverage_ratio,
@@ -1635,7 +1657,7 @@ def build_track_orchestrator_prompt_messages(
     budget = root.runtime.budget
     return _build_track_orchestrator_messages(
         mode_depth_profile=root.runtime.mode_depth.mode_key,
-        core_question=_resolve_core_question_from_ctx(root),
+        core_question=root.plan.theme_plan.core_question,
         search_remaining=max(
             0,
             budget.max_search_calls - root.runtime.search_calls,
@@ -1656,7 +1678,7 @@ def build_gap_closure_prompt_messages(
 ) -> list[dict[str, str]]:
     latest = _latest_round_from_track(track_ctx)
     return _build_gap_closure_messages(
-        core_question=_resolve_core_question_from_ctx(track_ctx) or card.question,
+        core_question=track_ctx.plan.theme_plan.core_question or card.question,
         question_id=card.question_id,
         pass_index=pass_index,
         confidence=float(latest.confidence) if latest is not None else 0.0,
@@ -1683,15 +1705,15 @@ def build_subreport_prompt_messages(
     report_style = ctx.plan.theme_plan.report_style
     return _build_subreport_messages(
         target_output_language=target_language,
-        target_output_language_label=target_language,
+        target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
-        core_question=_resolve_core_question_from_ctx(ctx),
+        core_question=ctx.plan.theme_plan.core_question,
         mode_depth_profile=ctx.runtime.mode_depth.mode_key,
         report_style=report_style,
         require_insight_card=require_insight_card,
         context_packet_markdown=build_subreport_context_packet_markdown(
             theme=ctx.request.themes,
-            core_question=_resolve_core_question_from_ctx(ctx),
+            core_question=ctx.plan.theme_plan.core_question,
             report_style=report_style,
             target_output_language=target_language,
             utc_timestamp=now_utc.isoformat(),
@@ -1716,7 +1738,7 @@ def build_render_architect_prompt_messages(
 ) -> list[dict[str, str]]:
     return _build_render_architect_messages(
         target_output_language=target_language,
-        target_output_language_label=target_language,
+        target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
         mode_depth_profile=ctx.runtime.mode_depth.mode_key,
         task_intent=_resolve_task_intent_value(ctx.plan.theme_plan.task_intent),
@@ -1744,7 +1766,7 @@ def build_render_writer_prompt_messages(
     section_subhead = section.subhead
     return _build_render_writer_messages(
         target_output_language=target_language,
-        target_output_language_label=target_language,
+        target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
         mode_depth_profile=ctx.runtime.mode_depth.mode_key,
         task_intent=_resolve_task_intent_value(ctx.plan.theme_plan.task_intent),
@@ -1773,7 +1795,7 @@ def build_render_structured_prompt_messages(
 ) -> list[dict[str, str]]:
     return _build_render_structured_messages(
         target_output_language=target_language,
-        target_output_language_label=target_language,
+        target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
         report_style=ctx.plan.theme_plan.report_style,
         context_packet_markdown=_build_render_context_packet_markdown(
@@ -1820,7 +1842,7 @@ def _build_render_context_packet_markdown(
         else [item.model_copy(deep=True) for item in ctx.parallel.track_results]
     )
     return build_render_final_context_packet_markdown(
-        theme=_resolve_core_question_from_ctx(ctx) or ctx.request.themes,
+        theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
         target_output_language=target_language,
         mode_depth_profile=mode_depth.mode_key,
         utc_timestamp=now_utc.isoformat(),
@@ -1839,22 +1861,6 @@ def _normalize_style(raw_style: object | None) -> ReportStyle | None:
     if token not in _STYLE_VALUES:
         return None
     return token  # type: ignore[return-value]
-
-
-def _resolve_core_question_from_ctx(ctx: ResearchStepContext) -> str:
-    return ctx.plan.theme_plan.core_question or ctx.request.themes
-
-
-def _resolve_output_language_from_ctx(ctx: ResearchStepContext) -> str:
-    return ctx.plan.theme_plan.output_language or "en"
-
-
-def _resolve_search_language_from_ctx(ctx: ResearchStepContext) -> str:
-    return (
-        ctx.plan.theme_plan.search_language
-        or ctx.plan.theme_plan.input_language
-        or "en"
-    )
 
 
 def _latest_round_from_track(
@@ -2314,6 +2320,7 @@ def build_subreport_context_packet_markdown(
     notes: list[str],
     subreport_objective: str,
 ) -> str:
+    target_output_language_label = _resolve_language_label(target_output_language)
     lines: list[str] = [
         "# Subreport Context Packet",
         "## Theme",
@@ -2323,7 +2330,7 @@ def build_subreport_context_packet_markdown(
         "## Report Style",
         report_style,
         "## Target Output Language",
-        target_output_language,
+        f"{target_output_language} ({target_output_language_label})",
         "## Time Context",
         f"- UTC timestamp: {utc_timestamp}",
         f"- UTC date: {utc_date}",
@@ -2427,12 +2434,16 @@ def build_render_final_context_packet_markdown(
     track_results: list[ResearchTrackResult],
     render_objective: str,
 ) -> str:
+    target_output_language_label = _resolve_language_label(target_output_language)
     lines: list[str] = [
         "# Final Context Packet",
         "## Theme",
         normalize_block_text(theme) or "n/a",
         "## Target Output Language",
-        normalize_block_text(target_output_language) or "n/a",
+        (
+            f"{normalize_block_text(target_output_language) or 'n/a'} "
+            f"({target_output_language_label})"
+        ),
         "## Mode Depth Profile",
         normalize_block_text(mode_depth_profile) or "n/a",
         "## Time Context",

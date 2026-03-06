@@ -389,7 +389,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             chat_result = await self._llm.create(
                 model=model,
                 messages=build_link_picker_prompt_messages(
-                    core_question=self._resolve_core_question(ctx),
+                    core_question=ctx.plan.theme_plan.core_question,
                     report_style=report_style,
                     mode_depth_profile=ctx.runtime.mode_depth.mode_key,
                     current_utc_date=datetime.fromtimestamp(
@@ -468,7 +468,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
     ) -> list[int]:
         if not links:
             return []
-        query = self._resolve_link_rank_query(ctx=ctx)
+        query = ctx.plan.theme_plan.core_question
         texts = [self._render_rank_text(item) for item in links]
         try:
             scores = await self._ranker.score_texts(
@@ -482,12 +482,6 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             range(len(links)),
             key=lambda idx: (-_score_at(scores=scores, idx=idx), idx),
         )
-
-    def _resolve_link_rank_query(self, *, ctx: ResearchStepContext) -> str:
-        return self._resolve_core_question(ctx)
-
-    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
     def _render_rank_text(self, item: ExtractedLink) -> str:
         return f"anchor_text={item.anchor_text or '(none)'}; url={item.url}"

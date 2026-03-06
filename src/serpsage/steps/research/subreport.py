@@ -12,7 +12,6 @@ from serpsage.models.research import (
     TrackInsightPointPayload,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.language import normalize_language_code
 from serpsage.steps.research.prompt import (
     build_subreport_prompt_messages,
 )
@@ -39,7 +38,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        target_language = self._resolve_target_language(ctx)
+        target_language = ctx.plan.theme_plan.output_language
         await self._render_subreport(
             ctx=ctx,
             target_language=target_language,
@@ -115,7 +114,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         )
 
     def _build_subreport_fallback(self, ctx: ResearchStepContext) -> str:
-        core_question = self._resolve_core_question(ctx)
+        core_question = ctx.plan.theme_plan.core_question
         sources = self._select_sources_for_render(ctx)
         round_state = ctx.rounds[-1] if ctx.rounds else None
         report_style = ctx.plan.theme_plan.report_style
@@ -392,15 +391,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         out.reverse()
         return out
 
-    def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
-        language_code = normalize_language_code(
-            ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
-            default="other",
-        )
-        if language_code != "other":
-            return language_code
-        return "en"
-
     def _select_sources_for_render(
         self,
         ctx: ResearchStepContext,
@@ -453,9 +443,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             blank_count = 0
             lines.append(line)
         return "\n".join(lines).strip()
-
-    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
 
 __all__ = ["ResearchSubreportStep"]

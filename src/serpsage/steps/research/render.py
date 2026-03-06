@@ -20,7 +20,6 @@ from serpsage.models.research import (
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
     document_language_alignment,
-    normalize_language_code,
 )
 from serpsage.steps.research.prompt import (
     build_final_language_repair_messages,
@@ -88,7 +87,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        target_language = self._resolve_target_language(ctx)
+        target_language = ctx.plan.theme_plan.output_language
         report_style = ctx.plan.theme_plan.report_style
         schema = (
             dict(ctx.request.json_schema)
@@ -466,15 +465,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         return "\n\n".join(parts).strip()
 
     def _resolve_report_title(self, ctx: ResearchStepContext) -> str:
-        raw_theme = ctx.request.themes
-        core_question = self._resolve_core_question(ctx)
-        base = core_question or raw_theme or "Research Report"
-        if raw_theme and base.casefold() == raw_theme.casefold():
-            language_code = self._resolve_target_language(ctx)
-            if language_code.startswith("zh"):
-                return f"深度调研：{base}"
-            return f"Research Report: {base}"
-        return base
+        return (
+            ctx.plan.theme_plan.core_question or ctx.request.themes or "Research Report"
+        )
 
     async def _repair_final_language_if_needed(
         self,
@@ -484,14 +477,13 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         target_language: str,
         now_utc: datetime,
     ) -> str:
-        target = normalize_language_code(target_language, default="other")
-        if target == "other":
+        if target_language == "other":
             return markdown
         if len(normalize_block_text(markdown)) < self._FINAL_LANGUAGE_REPAIR_MIN_CHARS:
             return markdown
         alignment = document_language_alignment(
             text=markdown,
-            target_language=target,
+            target_language=target_language,
         )
         if alignment >= float(self._FINAL_LANGUAGE_ALIGNMENT_MIN):
             return markdown
@@ -504,7 +496,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             repaired = await self._llm.create(
                 model=model,
                 messages=build_final_language_repair_messages(
-                    target_language=target,
+                    target_language=target_language,
                     current_utc_date=now_utc.date().isoformat(),
                     markdown=markdown,
                 ),
@@ -515,7 +507,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 return markdown
             candidate_alignment = document_language_alignment(
                 text=candidate,
-                target_language=target,
+                target_language=target_language,
             )
             if (candidate_alignment - alignment) < float(
                 self._FINAL_LANGUAGE_REPAIR_MIN_IMPROVEMENT
@@ -526,7 +518,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 request_id=ctx.request_id,
                 stage="render",
                 attrs={
-                    "target_language": target,
+                    "target_language": target_language,
                     "alignment_before": float(alignment),
                     "alignment_after": float(candidate_alignment),
                 },
@@ -534,18 +526,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             return candidate
         except Exception:
             return markdown
-
-    def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
-        language_code = normalize_language_code(
-            ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
-            default="other",
-        )
-        if language_code != "other":
-            return language_code
-        return "en"
-
-    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
     def _resolve_question_ids(self, ctx: ResearchStepContext) -> list[str]:
         out: list[str] = []

@@ -92,7 +92,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             limit=budget.max_queries_per_round,
         )
         next_queries = list(raw_next_queries)
-        core_question = self._resolve_core_question(ctx)
+        core_question = ctx.plan.theme_plan.core_question
         if required_entities and not entity_coverage_ok:
             next_queries = merge_strings(
                 self._build_entity_backfill_queries(
@@ -217,9 +217,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 },
             )
             return None
-
-    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.core_question or ctx.request.themes
 
     def _build_entity_backfill_queries(
         self,

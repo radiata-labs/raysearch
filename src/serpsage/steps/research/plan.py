@@ -23,7 +23,6 @@ from serpsage.models.research import (
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
     language_alignment_score,
-    normalize_language_code,
 )
 from serpsage.steps.research.prompt import (
     build_plan_prompt_messages,
@@ -101,7 +100,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx.work.content_review = ContentOutputPayload()
         ctx.work.need_content_source_ids = []
         ctx.work.next_queries = []
-        core_question = self._resolve_core_question(ctx)
+        core_question = ctx.plan.theme_plan.core_question
         if not core_question:
             core_question = ctx.request.themes
         candidate_queries = merge_strings(
@@ -192,7 +191,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             candidate_queries=candidate_queries,
             job_limit=job_limit,
         )
-        search_language = self._resolve_search_language(ctx)
+        search_language = ctx.plan.theme_plan.search_language
         (
             jobs,
             query_language_repair_applied,
@@ -231,11 +230,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 attrs={
                     "round_index": round_index,
                     "search_language": search_language,
-                    "output_language": normalize_language_code(
-                        self._resolve_output_language(ctx)
-                        or ctx.plan.theme_plan.input_language,
-                        default="other",
-                    ),
+                    "output_language": ctx.plan.theme_plan.output_language,
                 },
             )
         if round_action == "search" and not jobs:
@@ -340,21 +335,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         )
         return jobs
 
-    def _resolve_search_language(self, ctx: ResearchStepContext) -> str:
-        from_plan = normalize_language_code(
-            ctx.plan.theme_plan.search_language,
-            default="other",
-        )
-        if from_plan != "other":
-            return from_plan
-        from_output = normalize_language_code(
-            self._resolve_output_language(ctx) or ctx.plan.theme_plan.input_language,
-            default="other",
-        )
-        if from_output != "other":
-            return from_output
-        return "en"
-
     def _jobs_need_language_repair(
         self,
         *,
@@ -363,21 +343,20 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> bool:
         if not jobs:
             return False
-        target = normalize_language_code(search_language, default="other")
-        if target == "other":
+        if search_language == "other":
             return False
         scores: list[float] = []
         for job in jobs:
             scores.append(
                 language_alignment_score(
                     text=job.query,
-                    target_language=target,
+                    target_language=search_language,
                 )
             )
             scores.extend(
                 language_alignment_score(
                     text=extra,
-                    target_language=target,
+                    target_language=search_language,
                 )
                 for extra in list(job.additional_queries or [])
             )
@@ -514,14 +493,10 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         search_language: str,
     ) -> bool:
-        output_language = normalize_language_code(
-            self._resolve_output_language(ctx) or ctx.plan.theme_plan.input_language,
-            default="other",
-        )
-        search_lang = normalize_language_code(search_language, default="other")
-        if output_language == "other" or search_lang == "other":
+        output_language = ctx.plan.theme_plan.output_language
+        if output_language == "other" or search_language == "other":
             return False
-        if output_language == search_lang:
+        if output_language == search_language:
             return False
         rounds = list(ctx.rounds)[-2:]
         if len(rounds) < 2:
@@ -534,7 +509,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         return float(round_state.corpus_score_gain) < float(self._LOW_GAIN_THRESHOLD)
 
     def _build_output_language_rescue_query(self, *, ctx: ResearchStepContext) -> str:
-        query = self._resolve_core_question(ctx)
+        query = ctx.plan.theme_plan.core_question
         if query:
             return query
         return ctx.request.themes
@@ -622,12 +597,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             if len(out) >= cap:
                 break
         return out
-
-    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.core_question or ctx.request.themes
-
-    def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.output_language
 
 
 __all__ = ["ResearchPlanStep"]

@@ -42,7 +42,8 @@ _ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
     "max_question_cards_effective",
     "min_rounds_per_track",
     "source_topk",
-    "content_source_chars",
+    "source_chars",
+    "content_chars",
     "explore_target_pages_per_round",
     "explore_links_per_page",
 )
@@ -124,38 +125,29 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             default=fallback_input_language,
         )
         core_question = (payload.core_question or ctx.request.themes).strip()
-        if not core_question:
-            core_question = ctx.request.themes
-        resolved_theme = core_question or ctx.request.themes
         search_language = normalize_language_code(
             payload.search_language,
             default="other",
         )
         if search_language == "other":
             search_language = route_search_language(
-                theme=resolved_theme,
+                theme=core_question,
                 input_language=input_language,
             )
         report_style = self._resolve_report_style(
-            theme=resolved_theme,
+            theme=core_question,
             raw_style=payload.report_style,
         )
-        raw_style_token = payload.report_style.strip().casefold()
-        style_fallback_used = raw_style_token != report_style
         task_intent = self._normalize_task_intent(
             raw=payload.task_intent,
-            theme=resolved_theme,
+            theme=core_question,
             report_style=report_style,
         )
-        raw_task_intent_token = payload.task_intent.strip().casefold()
-        intent_fallback_used = raw_task_intent_token != task_intent
         complexity_tier = self._normalize_task_complexity(
             raw=payload.complexity_tier,
-            theme=resolved_theme,
+            theme=core_question,
             task_intent=task_intent,
         )
-        raw_complexity_token = payload.complexity_tier.strip().casefold()
-        complexity_fallback_used = raw_complexity_token != complexity_tier
         adaptive_applied = self._apply_mode_adaptive_depth(
             ctx=ctx,
             complexity_tier=complexity_tier,
@@ -204,13 +196,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             ],
         )
         ctx.plan.theme_plan = theme_plan
-        seed_groups = [list(item.seed_queries) for item in cards]
-        next_query_limit = max(8, ctx.runtime.budget.max_queries_per_round * 3)
-        ctx.plan.next_queries = merge_strings(
-            *seed_groups,
-            [core_question],
-            limit=next_query_limit,
-        )
         ctx.corpus.coverage_state.total_subthemes = len(subthemes)
         ctx.notes.append(
             f"Theme plan built with {len(cards)} question cards and {len(subthemes)} subthemes."
@@ -243,11 +228,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             stage="theme_plan",
             attrs={
                 "report_style_selected": report_style,
-                "report_style_fallback_used": style_fallback_used,
                 "task_intent_selected": task_intent,
-                "task_intent_fallback_used": intent_fallback_used,
                 "complexity_tier_selected": complexity_tier,
-                "complexity_tier_fallback_used": complexity_fallback_used,
             },
         )
         if mode_key in {"research", "research-pro"}:
@@ -277,18 +259,14 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "core_question": theme_plan.core_question,
                 "question_cards": len(cards),
                 "subthemes": len(subthemes),
-                "next_queries": len(ctx.plan.next_queries),
                 "input_language": theme_plan.input_language,
                 "search_language": theme_plan.search_language,
                 "output_language": theme_plan.output_language,
                 "mode_depth_profile": mode_depth.mode_key,
                 "mode_depth_question_card_cap": card_cap,
                 "report_style_selected": report_style,
-                "report_style_fallback_used": style_fallback_used,
                 "task_intent_selected": task_intent,
-                "task_intent_fallback_used": intent_fallback_used,
                 "complexity_tier_selected": complexity_tier,
-                "complexity_tier_fallback_used": complexity_fallback_used,
                 "mode_depth_adaptive_applied": adaptive_applied,
             },
         )

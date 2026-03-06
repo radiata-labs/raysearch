@@ -36,8 +36,8 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "What is skill in agent and how to make a skill?",
-        "research-fast",
+        "Agent里的Skill是什么，我该如何使用它？我该如何创建一个Skill？",
+        "research-pro",
         None,
     )
     print(out["research_result"])

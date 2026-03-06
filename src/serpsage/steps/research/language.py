@@ -31,11 +31,29 @@ _RE_ARABIC = re.compile(r"[\u0600-\u06ff]")
 _RE_DEVANAGARI = re.compile(r"[\u0900-\u097f]")
 
 _TRADITIONAL_HINT_CHARS = set(
-    "繁體臺萬與為於後發說點電體學習驗證應該實際權限開啟設定資源導覽機會"
+    "體臺萬與為於後發說點電體學習驗證應該實際權限開啟設定資源導航機會調查覺聽觀證讀寫變讓醫藝務標準難關壓邊"
 )
 _SIMPLIFIED_HINT_CHARS = set(
-    "简体台万与为于后发说点电体学习验证应该实际权限开启设置资源导航机会"
+    "体台万与为于后发说点电体学习验证应该实际权限开启设置资源导航机会调查觉听观证读写变让医艺务标准难关压边"
 )
+
+_LANGUAGE_DISPLAY_NAMES: dict[LanguageCode, str] = {
+    "zh-Hans": "Simplified Chinese",
+    "zh-Hant": "Traditional Chinese",
+    "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "ru": "Russian",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "tr": "Turkish",
+    "other": "the required language",
+}
 
 _LANG_ALIAS: dict[str, LanguageCode] = {
     "zh": "zh-Hans",
@@ -164,8 +182,8 @@ _GLOBAL_TECH_HINTS = (
     "arxiv",
     "paper",
     "论文",
-    "技術",
     "技术",
+    "技术栈",
     "official docs",
     "documentation",
     "doc",
@@ -178,7 +196,7 @@ _GLOBAL_TECH_HINTS = (
     "release note",
     "open source",
     "开源",
-    "標準",
+    "数据库",
     "标准",
     "spec",
     "repository",
@@ -192,7 +210,6 @@ _GLOBAL_TECH_HINTS = (
 _LOCAL_LIFE_HINTS = (
     "旅行",
     "旅游",
-    "旅遊",
     "攻略",
     "景点",
     "景點",
@@ -223,6 +240,11 @@ def normalize_language_code(raw: object, *, default: LanguageCode = "other") -> 
     if token in _LANG_ALIAS:
         return _LANG_ALIAS[token]
     return default
+
+
+def describe_language(raw: object, *, default: str = "the required language") -> str:
+    normalized = normalize_language_code(raw, default="other")
+    return _LANGUAGE_DISPLAY_NAMES.get(normalized, default)
 
 
 def detect_input_language(text: str) -> str:
@@ -365,6 +387,7 @@ def _contains_any(*, text: str, markers: tuple[str, ...]) -> bool:
 
 __all__ = [
     "LANGUAGE_CODES",
+    "describe_language",
     "detect_input_language",
     "document_language_alignment",
     "language_alignment_score",
