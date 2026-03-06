@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import importlib
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
@@ -11,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 from bs4.element import Tag
 
 from serpsage.components.extract.base import ExtractorBase
-from serpsage.components.extract.markdown.dom import (
+from serpsage.components.extract.html.dom import (
     cleanup_dom,
     is_descendant_of,
     is_noise_container,
@@ -20,12 +19,12 @@ from serpsage.components.extract.markdown.dom import (
     score_primary_candidate,
     text_len,
 )
-from serpsage.components.extract.markdown.postprocess import (
+from serpsage.components.extract.html.postprocess import (
     finalize_markdown,
     markdown_to_abstract_text,
     markdown_to_text,
 )
-from serpsage.components.extract.markdown.render import (
+from serpsage.components.extract.html.render import (
     render_markdown,
     render_secondary_markdown,
 )
@@ -44,15 +43,18 @@ from serpsage.models.extract import (
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
+    import trafilatura
     from bs4 import BeautifulSoup
 
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import AppSettings
-trafilatura: Any | None = None
-try:
-    trafilatura = importlib.import_module("trafilatura")
-except Exception:  # noqa: BLE001
-    trafilatura = None
+else:
+    trafilatura: Any | None = None
+    try:
+        import importlib
+        trafilatura = importlib.import_module("trafilatura")
+    except Exception:  # noqa: BLE001
+        trafilatura = None
 StatValue: TypeAlias = int | float | str | bool
 StatsMap: TypeAlias = dict[str, StatValue]
 SectionName: TypeAlias = Literal["primary", "secondary"]
@@ -130,7 +132,7 @@ _PRIMARY_ROOT_SELECTORS: tuple[str, ...] = (
 _MIN_HTML_CAPTURE_CHARS = 5_000_000
 
 
-class MarkdownExtractor(ExtractorBase):
+class HtmlExtractor(ExtractorBase):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         self._profile = build_extract_profile(settings=self.settings)

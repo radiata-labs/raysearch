@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import re
 from collections import Counter
 from io import BytesIO
@@ -16,20 +15,27 @@ from pypdf.errors import (
 )
 
 from serpsage.components.extract.base import ExtractorBase
-from serpsage.components.extract.markdown.postprocess import markdown_to_abstract_text
+from serpsage.components.extract.html.postprocess import markdown_to_abstract_text
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-fitz: Any | None = None
-try:
-    fitz = importlib.import_module("fitz")
+    import fitz
+
     PYMUPDF_AVAILABLE = True
-except Exception:  # noqa: BLE001
-    fitz = None
-    PYMUPDF_AVAILABLE = False
+
+    from serpsage.core.runtime import Runtime
+else:
+    fitz: Any | None = None
+    try:
+        import importlib
+
+        fitz = importlib.import_module("fitz")
+        PYMUPDF_AVAILABLE = True
+    except Exception:  # noqa: BLE001
+        fitz = None
+        PYMUPDF_AVAILABLE = False
 _LINE_SPLIT_RE = re.compile(r"\r?\n+")
 
 

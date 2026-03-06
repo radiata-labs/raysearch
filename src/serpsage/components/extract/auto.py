@@ -8,7 +8,7 @@ from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
 
 if TYPE_CHECKING:
-    from serpsage.components.extract.markdown import MarkdownExtractor
+    from serpsage.components.extract.html import HtmlExtractor
     from serpsage.components.extract.pdf import PdfExtractor
     from serpsage.core.runtime import Runtime
 
@@ -18,7 +18,7 @@ class AutoExtractor(ExtractorBase):
         self,
         *,
         rt: Runtime,
-        markdown_extractor: MarkdownExtractor,
+        markdown_extractor: HtmlExtractor,
         pdf_extractor: PdfExtractor,
     ) -> None:
         super().__init__(rt=rt)

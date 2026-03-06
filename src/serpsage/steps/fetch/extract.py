@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.components.extract.markdown.postprocess import markdown_to_text
+from serpsage.components.extract.html.postprocess import markdown_to_text
 from serpsage.models.extract import ExtractedLink
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase

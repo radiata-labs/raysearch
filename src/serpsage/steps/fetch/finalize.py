@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.app.response import FetchResultItem
-from serpsage.components.extract.markdown.postprocess import finalize_markdown
+from serpsage.components.extract.html.postprocess import finalize_markdown
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
 

@@ -12,8 +12,8 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from bs4.element import Comment, Doctype, NavigableString, Tag
 
-from serpsage.components.extract.markdown.dom import is_descendant_of
-from serpsage.components.extract.markdown.postprocess import markdown_to_text
+from serpsage.components.extract.html.dom import is_descendant_of
+from serpsage.components.extract.html.postprocess import markdown_to_text
 from serpsage.utils import clean_whitespace
 
 RenderStatValue = int | float | bool | str
