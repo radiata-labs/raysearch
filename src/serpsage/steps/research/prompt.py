@@ -1739,6 +1739,7 @@ def build_render_writer_prompt_messages(
     now_utc: datetime,
     architect_output: RenderArchitectOutput,
     section: RenderArchitectSectionPlan,
+    track_results: list[ResearchTrackResult],
 ) -> list[dict[str, str]]:
     section_subhead = section.subhead
     return _build_render_writer_messages(
@@ -1759,6 +1760,7 @@ def build_render_writer_prompt_messages(
             ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
+            track_results=track_results,
         ),
     )
 
@@ -1809,8 +1811,14 @@ def _build_render_context_packet_markdown(
     ctx: ResearchStepContext,
     target_language: str,
     now_utc: datetime,
+    track_results: list[ResearchTrackResult] | None = None,
 ) -> str:
     mode_depth = ctx.runtime.mode_depth
+    selected_track_results = (
+        [item.model_copy(deep=True) for item in track_results]
+        if track_results is not None
+        else [item.model_copy(deep=True) for item in ctx.parallel.track_results]
+    )
     return build_render_final_context_packet_markdown(
         theme=_resolve_core_question_from_ctx(ctx) or ctx.request.themes,
         target_output_language=target_language,
@@ -1821,9 +1829,7 @@ def _build_render_context_packet_markdown(
         question_cards=[
             item.model_copy(deep=True) for item in ctx.parallel.question_cards
         ],
-        track_results=[
-            item.model_copy(deep=True) for item in ctx.parallel.track_results
-        ],
+        track_results=selected_track_results,
         render_objective=_render_objective_for_mode(mode_key=mode_depth.mode_key),
     )
 

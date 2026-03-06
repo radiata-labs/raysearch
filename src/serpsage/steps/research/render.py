@@ -11,6 +11,7 @@ import anyio
 from serpsage.models.pipeline import (
     ResearchQuestionCard,
     ResearchStepContext,
+    ResearchTrackResult,
 )
 from serpsage.models.research import (
     RenderArchitectOutput,
@@ -338,12 +339,17 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         outputs: list[str],
         index: int,
     ) -> None:
+        section_track_results = self._select_track_results_for_section(
+            ctx=ctx,
+            section=section,
+        )
         messages = build_render_writer_prompt_messages(
             ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
             architect_output=architect_output,
             section=section,
+            track_results=section_track_results,
         )
         try:
             result = await self._llm.create(
@@ -359,6 +365,34 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 cause=exc if isinstance(exc, Exception) else Exception(str(exc)),
             ) from exc
         outputs[index] = result.text
+
+    def _select_track_results_for_section(
+        self,
+        *,
+        ctx: ResearchStepContext,
+        section: RenderArchitectSectionPlan,
+    ) -> list[ResearchTrackResult]:
+        track_results = list(ctx.parallel.track_results)
+        if not track_results:
+            return []
+        selected_question_ids: list[str] = []
+        seen_question_ids: set[str] = set()
+        for raw_question_id in section.question_ids:
+            question_id = clean_whitespace(raw_question_id)
+            if not question_id or question_id in seen_question_ids:
+                continue
+            seen_question_ids.add(question_id)
+            selected_question_ids.append(question_id)
+        if not selected_question_ids:
+            return []
+        track_result_map = {
+            clean_whitespace(item.question_id): item for item in track_results
+        }
+        return [
+            track_result_map[question_id].model_copy(deep=True)
+            for question_id in selected_question_ids
+            if question_id in track_result_map
+        ]
 
     async def _render_structured_once(
         self,
