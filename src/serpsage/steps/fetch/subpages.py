@@ -170,6 +170,10 @@ def _to_subpage_result(value: FetchResultItem) -> FetchSubpagesResult:
     return FetchSubpagesResult(
         url=str(value.url),
         title=str(value.title),
+        published_date=str(value.published_date),
+        author=str(value.author),
+        image=str(value.image),
+        favicon=str(value.favicon),
         content=str(value.content),
         abstracts=[str(item) for item in list(value.abstracts or [])],
         abstract_scores=[float(item) for item in list(value.abstract_scores or [])],

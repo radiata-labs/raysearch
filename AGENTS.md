@@ -28,7 +28,7 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |- components/
 |  |  |  |- cache/
 |  |  |  |- extract/
-|  |  |  |  |- markdown/
+|  |  |  |  |- html/
 |  |  |  |- fetch/
 |  |  |  |- http/
 |  |  |  |- llm/

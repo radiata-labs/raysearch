@@ -103,7 +103,7 @@ runner:
   queue_size: 256
 
 fetch:
-  backend: playwright # auto|curl_cffi|playwright
+  backend: auto # auto|curl_cffi|playwright
   timeout_s: 20
   follow_redirects: true
   user_agent: serpsage-bot/4.0

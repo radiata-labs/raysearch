@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
@@ -7,10 +8,9 @@ import anyio
 
 from serpsage.components.fetch.base import FetcherBase
 from serpsage.components.fetch.utils import (
-    blocked_marker_hit,
+    analyze_content,
     browser_headers,
     classify_content_kind,
-    estimate_text_quality,
     get_delay_s,
     parse_retry_after_s,
 )
@@ -24,9 +24,19 @@ try:
     CURL_CFFI_AVAILABLE = True
 except Exception:  # noqa: BLE001
     CURL_CFFI_AVAILABLE = False
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from serpsage.core.runtime import Runtime
     from serpsage.settings.models import RetrySettings
+
+
+@dataclass(slots=True)
+class CurlProgressiveResult:
+    attempt: FetchAttempt
+    finished: bool
+    bytes_read: int
 
 
 class CurlCffiFetcher(FetcherBase):
@@ -84,126 +94,220 @@ class CurlCffiFetcher(FetcherBase):
         retry: RetrySettings | None = None,
         timeout_s: float | None = None,
     ) -> FetchAttempt:
+        progressive = await self.fetch_progressive_attempt(
+            url=url,
+            retry=retry,
+            timeout_s=timeout_s,
+            scout_bytes=None,
+            continue_predicate=None,
+        )
+        return progressive.attempt
+
+    async def fetch_progressive_attempt(
+        self,
+        *,
+        url: str,
+        retry: RetrySettings | None = None,
+        timeout_s: float | None = None,
+        scout_bytes: int | None,
+        continue_predicate: Callable[[FetchAttempt], bool] | None,
+    ) -> CurlProgressiveResult:
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
         fetch_cfg = self.settings.fetch
         proxy = self.settings.http.proxy
         req_timeout_s = timeout_s or fetch_cfg.timeout_s
-        max_attempts = max(
-            1,
-            int(
-                getattr(retry, "max_attempts", 0) or 2,
-            ),
-        )
+        max_attempts = max(1, int(getattr(retry, "max_attempts", 0) or 2))
         delay_ms = int(getattr(retry, "delay_ms", 0) or 90)
-        last_status: int | None = None
-        last_url = url
-        last_ct: str | None = None
-        last_body: bytes = b""
-        last_enc: str | None = None
-        last_len_hdr: str | None = None
-        last_headers: dict[str, str] = {}
-        last_truncated = False
-        for _attempt in range(1, max_attempts + 1):
+        last_result: CurlProgressiveResult | None = None
+        for attempt_index in range(1, max_attempts + 1):
             try:
-                resp = await self._session.get(
-                    url,
-                    headers=browser_headers(
-                        profile="browser",
-                        user_agent=str(fetch_cfg.user_agent),
-                        randomize=True,  # Use random UA for anti-fingerprinting
-                    ),
-                    timeout=req_timeout_s,
-                    allow_redirects=bool(fetch_cfg.follow_redirects),
+                result = await self._stream_attempt_once(
+                    url=url,
+                    timeout_s=req_timeout_s,
                     proxy=proxy,
-                    impersonate=cast("Any", "chrome124"),
-                    http_version="v2",
-                    verify=True,
+                    scout_bytes=scout_bytes,
+                    continue_predicate=continue_predicate,
                 )
-                last_status = int(getattr(resp, "status_code", 0) or 0)
-                last_url = str(getattr(resp, "url", url))
-                hdrs = cast("dict[str, str] | None", getattr(resp, "headers", None))
-                body = bytes(getattr(resp, "content", b"") or b"")
-                if not isinstance(hdrs, dict):
-                    hdrs = {}
-                last_headers = {str(k): str(v) for k, v in hdrs.items()}
-                last_ct = last_headers.get("content-type")
-                last_enc = last_headers.get("content-encoding")
-                last_len_hdr = last_headers.get("content-length")
-                last_body, last_truncated = self._truncate_by_kind(
-                    body=body,
-                    content_type=last_ct,
-                    url=last_url,
-                )
-                if last_status == 429 or (500 <= last_status < 600):
-                    if _attempt >= max_attempts:
+                last_result = result
+                status_code = int(result.attempt.status_code or 0)
+                if status_code == 429 or (500 <= status_code < 600):
+                    if attempt_index >= max_attempts:
                         break
-                    ra = parse_retry_after_s(last_headers.get("retry-after"))
-                    delay = ra if ra is not None else get_delay_s(delay_ms)
+                    retry_after = parse_retry_after_s(
+                        result.attempt.headers.get("retry-after")
+                    )
+                    delay = (
+                        retry_after
+                        if retry_after is not None
+                        else get_delay_s(delay_ms)
+                    )
                     await anyio.sleep(delay)
                     continue
-                break
-            except Exception:  # noqa: BLE001
-                if _attempt >= max_attempts:
+                return result
+            except Exception:
+                if attempt_index >= max_attempts:
                     break
-                delay = get_delay_s(delay_ms)
-                await anyio.sleep(delay)
-                continue
-        content_kind = classify_content_kind(
-            content_type=last_ct,
-            url=last_url,
-            content=last_body,
+                await anyio.sleep(get_delay_s(delay_ms))
+        if last_result is not None:
+            return last_result
+        return CurlProgressiveResult(
+            attempt=self._build_attempt(
+                url=url,
+                status_code=0,
+                content_type=None,
+                content=b"",
+                headers={},
+                finished=False,
+            ),
+            finished=False,
+            bytes_read=0,
         )
-        text_chars, content_score, script_ratio = estimate_text_quality(
-            last_body,
-            content_kind=content_kind,
+
+    async def _stream_attempt_once(
+        self,
+        *,
+        url: str,
+        timeout_s: float,
+        proxy: str | None,
+        scout_bytes: int | None,
+        continue_predicate: Callable[[FetchAttempt], bool] | None,
+    ) -> CurlProgressiveResult:
+        fetch_cfg = self.settings.fetch
+        headers = browser_headers(
+            profile="browser",
+            user_agent=str(fetch_cfg.user_agent),
+            randomize=True,
         )
-        blocked = bool(
-            blocked_marker_hit(
-                last_body,
-                markers=tuple(self.settings.fetch.quality.blocked_markers),
+        session = cast("Any", self._session)
+        async with session.stream(
+            "GET",
+            url,
+            headers=headers,
+            timeout=timeout_s,
+            allow_redirects=bool(fetch_cfg.follow_redirects),
+            proxy=proxy,
+            impersonate=cast("Any", "chrome124"),
+            http_version="v2",
+            verify=True,
+        ) as resp:
+            status_code = int(getattr(resp, "status_code", 0) or 0)
+            final_url = str(getattr(resp, "url", url) or url)
+            response_headers = cast(
+                "dict[str, str] | None",
+                getattr(resp, "headers", None),
             )
+            if not isinstance(response_headers, dict):
+                response_headers = {}
+            normalized_headers = {
+                str(key): str(value) for key, value in response_headers.items()
+            }
+            content_type = normalized_headers.get("content-type")
+            read_limit = self._read_limit_for_content(
+                content_type=content_type,
+                url=final_url,
+            )
+            target_scout_bytes = max(0, int(scout_bytes or 0))
+            chunks: list[bytes] = []
+            bytes_read = 0
+            finished = True
+            async for chunk in resp.aiter_content():
+                if not chunk:
+                    continue
+                remaining = read_limit - bytes_read
+                if remaining <= 0:
+                    finished = False
+                    break
+                if len(chunk) > remaining:
+                    chunk = chunk[:remaining]
+                    finished = False
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                if target_scout_bytes > 0 and bytes_read >= target_scout_bytes:
+                    partial_attempt = self._build_attempt(
+                        url=final_url,
+                        status_code=status_code,
+                        content_type=content_type,
+                        content=b"".join(chunks),
+                        headers=normalized_headers,
+                        finished=False,
+                    )
+                    should_continue = True
+                    if continue_predicate is not None:
+                        should_continue = bool(continue_predicate(partial_attempt))
+                    if not should_continue:
+                        return CurlProgressiveResult(
+                            attempt=partial_attempt,
+                            finished=False,
+                            bytes_read=bytes_read,
+                        )
+                    target_scout_bytes = 0
+            body = b"".join(chunks)
+            attempt = self._build_attempt(
+                url=final_url,
+                status_code=status_code,
+                content_type=content_type,
+                content=body,
+                headers=normalized_headers,
+                finished=finished,
+            )
+            return CurlProgressiveResult(
+                attempt=attempt,
+                finished=finished,
+                bytes_read=bytes_read,
+            )
+
+    def _build_attempt(
+        self,
+        *,
+        url: str,
+        status_code: int,
+        content_type: str | None,
+        content: bytes,
+        headers: dict[str, str],
+        finished: bool,
+    ) -> FetchAttempt:
+        analysis = analyze_content(
+            content=content,
+            content_type=content_type,
+            url=url,
+            markers=tuple(self.settings.fetch.quality.blocked_markers),
         )
+        attempt_chain = ["curl_cffi"]
+        if not finished:
+            attempt_chain.append("curl_cffi:scout")
         return FetchAttempt(
-            url=last_url,
-            status_code=int(last_status or 0),
-            content_type=last_ct,
-            content=last_body,
+            url=url,
+            status_code=int(status_code or 0),
+            content_type=content_type,
+            content=content,
             strategy_used="curl_cffi",
             fetch_mode="curl_cffi",
             rendered=False,
-            content_kind=content_kind,
-            headers=last_headers,
-            content_encoding=last_enc,
-            content_length_header=last_len_hdr,
-            content_score=float(content_score),
-            text_chars=int(text_chars),
-            script_ratio=float(script_ratio),
-            blocked=blocked,
-            attempt_chain=["curl_cffi"],
+            content_kind=analysis.content_kind,
+            headers=headers,
+            content_encoding=headers.get("content-encoding"),
+            content_length_header=headers.get("content-length"),
+            content_score=float(analysis.content_score),
+            text_chars=int(analysis.text_chars),
+            script_ratio=float(analysis.script_ratio),
+            blocked=bool(analysis.blocked),
+            attempt_chain=attempt_chain,
         )
 
-    def _truncate_by_kind(
-        self,
-        *,
-        body: bytes,
-        content_type: str | None,
-        url: str,
-    ) -> tuple[bytes, bool]:
+    def _read_limit_for_content(self, *, content_type: str | None, url: str) -> int:
         kind = classify_content_kind(
-            content_type=content_type, url=url, content=body[:128]
+            content_type=content_type,
+            url=url,
+            content=b"",
         )
         if kind == "pdf":
-            budget = 16_000_000
-        elif kind == "text":
-            budget = 900_000
-        elif kind in {"unknown", "binary"}:
-            budget = 3_000_000
-        else:
-            budget = 1_800_000
-        if len(body) <= budget:
-            return body, False
-        return body[:budget], True
+            return 16_000_000
+        if kind == "text":
+            return 900_000
+        if kind in {"unknown", "binary"}:
+            return 3_000_000
+        return 1_800_000
 
 
-__all__ = ["CURL_CFFI_AVAILABLE", "CurlCffiFetcher"]
+__all__ = ["CURL_CFFI_AVAILABLE", "CurlCffiFetcher", "CurlProgressiveResult"]

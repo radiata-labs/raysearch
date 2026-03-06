@@ -43,6 +43,10 @@ class ExtractedDocument(FrozenModel):
     markdown: str = ""
     md_for_abstract: str = ""
     title: str = ""
+    published_date: str = ""
+    author: str = ""
+    image: str = ""
+    favicon: str = ""
     content_kind: Literal["html", "pdf", "text", "binary"] = "binary"
     extractor_used: str = ""
     warnings: list[str] = Field(default_factory=list)

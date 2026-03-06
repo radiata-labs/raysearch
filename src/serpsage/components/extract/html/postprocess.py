@@ -15,8 +15,14 @@ _TABLE_SEP_RE = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$
 _SPECIAL_BLOCK_RE = re.compile(r"^\s*(#{1,6}\s+|>|[-*+]\s+|\d+[.)]\s+|\|)")
 _IMAGE_RE = re.compile(r"!\[[^\]]*]\([^)]+\)")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MD_REF_LINK_RE = re.compile(r"\[([^\]]+)\]\[[^\]]*\]")
 _AUTO_URL_RE = re.compile(r"<https?://[^>\s]+>", re.IGNORECASE)
 _BARE_URL_RE = re.compile(r"(?<!<)https?://\S+", re.IGNORECASE)
+_HTML_LINK_RE = re.compile(
+    r"<a\b[^>]*href\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)[^>]*>(.*?)</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+_HTML_LINK_TAG_RE = re.compile(r"</?a\b[^>]*>", re.IGNORECASE)
 _ABSTRACT_NOISE_RE = re.compile(
     r"^\s*(跳到主要内容|skip to main content)\s*$", re.IGNORECASE
 )
@@ -180,6 +186,36 @@ def markdown_to_abstract_text(markdown: str) -> str:
             continue
         if _ABSTRACT_NOISE_RE.match(line):
             continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def strip_markdown_links(markdown: str) -> str:
+    if not markdown:
+        return ""
+    out: list[str] = []
+    in_code = False
+    active_fence = ""
+    for raw in markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        fence = _fence_delimiter(raw)
+        if fence:
+            if not in_code:
+                in_code = True
+                active_fence = fence
+            elif len(fence) >= len(active_fence):
+                in_code = False
+                active_fence = ""
+            out.append(raw.rstrip())
+            continue
+        if in_code:
+            out.append(raw.rstrip())
+            continue
+        line = raw.rstrip()
+        line = _HTML_LINK_RE.sub(r"\1", line)
+        line = _HTML_LINK_TAG_RE.sub("", line)
+        line = _MD_LINK_RE.sub(r"\1", line)
+        line = _MD_REF_LINK_RE.sub(r"\1", line)
+        line = _AUTO_URL_RE.sub("", line)
         out.append(line)
     return "\n".join(out).strip()
 
@@ -405,6 +441,7 @@ __all__ = [
     "extract_feature_snippets",
     "finalize_markdown",
     "markdown_to_abstract_text",
+    "strip_markdown_links",
     "markdown_to_text",
     "merge_markdown",
 ]

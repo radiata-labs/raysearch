@@ -917,6 +917,17 @@ wheels = [
 ]
 
 [[package]]
+name = "html-to-markdown"
+version = "2.28.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/ba/dbc5f2f962889bcd16248f985c1a06538ca8947ecce6d7bb42f43c6b7487/html_to_markdown-2.28.0.tar.gz", hash = "sha256:eba7cb94231c741adb7633188f170d129dd4e4103a7b94110d686fd2ef0603a6", size = 307775, upload-time = "2026-03-05T19:35:45.155Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e2/aa/7c6365182e8ac5e746109c99f79a340e0fae78f0a030f077f490bf270286/html_to_markdown-2.28.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:211d929c8c15750b933130e285f2e574b8447d6ece4217b815101a7d068286a7", size = 8881158, upload-time = "2026-03-05T19:35:37.672Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/e8/8cbd1508e46d7d512b9e570ab364b1b54d905b4abbfd5b15964b1fe0f4b9/html_to_markdown-2.28.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:aa98adf308756700b4de935ce9c2efbcca07619c743ac38e8e1fd2e9ee204b16", size = 9691439, upload-time = "2026-03-05T19:35:40.426Z" },
+    { url = "https://files.pythonhosted.org/packages/04/64/a46a360db8e34ecf6d6a41ac886f928524230a786a413bc114ea7dabb6b7/html_to_markdown-2.28.0-cp310-abi3-win_amd64.whl", hash = "sha256:b7e6abc12b9b3d6bced7195046cdb651a7511d1cd299ce477fae4e3285ccd5df", size = 9311090, upload-time = "2026-03-05T19:35:43.031Z" },
+]
+
+[[package]]
 name = "htmldate"
 version = "1.9.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1518,6 +1529,15 @@ wheels = [
 ]
 
 [[package]]
+name = "nodeenv"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/bf/d1bda4f6168e0b2e9e5958945e01910052158313224ada5ce1fb2e1113b8/nodeenv-1.10.0.tar.gz", hash = "sha256:996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb", size = 55611, upload-time = "2025-12-20T14:08:54.006Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/b2/d0896bdcdc8d28a7fc5717c305f1a861c26e18c05047949fb371034d98bd/nodeenv-1.10.0-py2.py3-none-any.whl", hash = "sha256:5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827", size = 23438, upload-time = "2025-12-20T14:08:52.782Z" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1980,6 +2000,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fe/b2/335465d6cff28a772ace8a58beb168f125c2e1d8f7a31527da180f4d89a1/pypdf-6.7.2.tar.gz", hash = "sha256:82a1a48de500ceea59a52a7d979f5095927ef802e4e4fac25ab862a73468acbb", size = 5302986, upload-time = "2026-02-22T11:33:30.776Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/df/38b06d6e74646a4281856920a11efb431559bdeb643bf1e192bff5e29082/pypdf-6.7.2-py3-none-any.whl", hash = "sha256:331b63cd66f63138f152a700565b3e0cebdf4ec8bec3b7594b2522418782f1f3", size = 331245, upload-time = "2026-02-22T11:33:29.204Z" },
+]
+
+[[package]]
+name = "pyright"
+version = "1.1.408"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "nodeenv" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/74/b2/5db700e52554b8f025faa9c3c624c59f1f6c8841ba81ab97641b54322f16/pyright-1.1.408.tar.gz", hash = "sha256:f28f2321f96852fa50b5829ea492f6adb0e6954568d1caa3f3af3a5f555eb684", size = 4400578, upload-time = "2026-01-08T08:07:38.795Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/82/a2c93e32800940d9573fb28c346772a14778b84ba7524e691b324620ab89/pyright-1.1.408-py3-none-any.whl", hash = "sha256:090b32865f4fdb1e0e6cd82bf5618480d48eecd2eb2e70f960982a3d9a4c17c1", size = 6399144, upload-time = "2026-01-08T08:07:37.082Z" },
 ]
 
 [[package]]
@@ -2473,6 +2506,7 @@ dependencies = [
     { name = "anyio" },
     { name = "beautifulsoup4" },
     { name = "curl-cffi" },
+    { name = "html-to-markdown" },
     { name = "httpx" },
     { name = "jieba" },
     { name = "jsonschema" },
@@ -2482,6 +2516,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "pyyaml" },
     { name = "rank-bm25" },
+    { name = "selectolax" },
     { name = "trafilatura" },
     { name = "typing-extensions" },
 ]
@@ -2500,7 +2535,6 @@ cache = [
 ]
 extract-plus = [
     { name = "inscriptis" },
-    { name = "selectolax" },
 ]
 overview = [
     { name = "dashscope" },
@@ -2518,6 +2552,7 @@ to-zh-tw = [
 dev = [
     { name = "exceptiongroup" },
     { name = "mypy" },
+    { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
@@ -2542,6 +2577,7 @@ requires-dist = [
     { name = "dashscope", marker = "extra == 'overview'", specifier = ">=1.0.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.110,<1" },
     { name = "google-genai", marker = "extra == 'overview'", specifier = ">=1.63.0" },
+    { name = "html-to-markdown", specifier = ">=2.28.0" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "inscriptis", marker = "extra == 'extract-plus'", specifier = ">=2.5.0" },
     { name = "jieba" },
@@ -2555,7 +2591,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=5.2.0" },
     { name = "pyyaml" },
     { name = "rank-bm25" },
-    { name = "selectolax", marker = "extra == 'extract-plus'", specifier = ">=0.3.26" },
+    { name = "selectolax", specifier = ">=0.3.26" },
     { name = "sqlalchemy", marker = "extra == 'cache'", specifier = ">=2.0.46" },
     { name = "trafilatura", specifier = ">=1.10.0" },
     { name = "typing-extensions", specifier = ">=4.10,<5" },
@@ -2567,6 +2603,7 @@ provides-extras = ["extract-plus", "cache", "api", "overview", "to-zh-tw", "stop
 dev = [
     { name = "exceptiongroup", specifier = ">=1" },
     { name = "mypy", specifier = ">=1" },
+    { name = "pyright", specifier = ">=1.1.408" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },
     { name = "pytest-mock", specifier = ">=3" },

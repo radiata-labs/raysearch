@@ -337,12 +337,52 @@ class FetchRenderSettings(Model):
     js_concurrency: int = 12
     nav_timeout_ms: int = 8_000
     block_resources: bool = True
+    readiness_poll_ms: int = 150
+    readiness_stable_rounds: int = 2
+    post_ready_wait_ms: int = 120
 
     @field_validator("js_concurrency")
     @classmethod
     def _validate_js_concurrency(cls, value: int) -> int:
         if value < 1:
             raise ValueError("js_concurrency must be >= 1")
+        return value
+
+    @field_validator(
+        "readiness_poll_ms", "readiness_stable_rounds", "post_ready_wait_ms"
+    )
+    @classmethod
+    def _validate_render_timing(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("render timing settings must be >= 0")
+        return value
+
+
+class FetchAutoSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    scout_bytes: int = 48_000
+    route_memory_size: int = 4096
+    direct_route_min_samples: int = 3
+    direct_playwright_cost_ratio: float = 0.78
+    direct_playwright_min_useful: float = 0.72
+    learning_rate: float = 0.22
+
+    @field_validator("scout_bytes", "route_memory_size", "direct_route_min_samples")
+    @classmethod
+    def _validate_auto_ints(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("fetch auto integer settings must be > 0")
+        return value
+
+    @field_validator(
+        "direct_playwright_cost_ratio",
+        "direct_playwright_min_useful",
+        "learning_rate",
+    )
+    @classmethod
+    def _validate_auto_floats(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError("fetch auto float settings must be between 0 and 1")
         return value
 
 
@@ -406,6 +446,7 @@ class FetchSettings(Model):
     concurrency: FetchConcurrencySettings = Field(
         default_factory=FetchConcurrencySettings
     )
+    auto: FetchAutoSettings = Field(default_factory=FetchAutoSettings)
     render: FetchRenderSettings = Field(default_factory=FetchRenderSettings)
     quality: FetchQualitySettings = Field(default_factory=FetchQualitySettings)
     extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
@@ -663,6 +704,7 @@ __all__ = [
     "CacheSettings",
     "FetchBackendKey",
     "FetchAbstractSettings",
+    "FetchAutoSettings",
     "FetchConcurrencySettings",
     "FetchExtractSettings",
     "FetchOverviewSettings",

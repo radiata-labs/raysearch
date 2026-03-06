@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from typing_extensions import override
 from urllib.parse import urlparse
 
-import httpx
-
 from serpsage.components.fetch.base import FetcherBase
 from serpsage.components.fetch.utils import (
     blocked_marker_hit,
-    browser_headers,
-    classify_content_kind,
-    estimate_text_quality,
     has_nextjs_signals,
     has_spa_signals,
+    normalize_route_key,
 )
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
@@ -25,26 +22,38 @@ if TYPE_CHECKING:
     from serpsage.components.http import HttpClientBase
     from serpsage.components.rate_limit import RateLimiterBase
     from serpsage.core.runtime import Runtime
+
 _MIN_BYTES = 32
-_PROBE_MAX_BYTES = 50_000
 _BLOCK_STATUSES = {401, 403, 429}
+_MIN_SUCCESS_EPS = 0.15
 
 
 @dataclass(slots=True)
-class _ProbeSnapshot:
-    status_code: int = 0
-    final_url: str = ""
-    content_type: str | None = None
-    content_kind: str = "unknown"
-    text_chars: int = 0
-    script_ratio: float = 0.0
-    blocked_marker: bool = False
-    anti_bot: bool = False
-    nextjs: bool = False
-    spa: bool = False
-    low_text: bool = False
-    error_type: str | None = None
-    bytes_read: int = 0
+class _BackendMemory:
+    samples: int = 0
+    success_ema: float = 0.60
+    useful_ema: float = 0.60
+    latency_ema_ms: float = 700.0
+
+    def score(self) -> float:
+        probability = max(
+            _MIN_SUCCESS_EPS,
+            self.success_ema * 0.45 + self.useful_ema * 0.55,
+        )
+        return float(self.latency_ema_ms) / probability
+
+
+@dataclass(slots=True)
+class _RouteMemory:
+    curl: _BackendMemory = field(default_factory=_BackendMemory)
+    playwright: _BackendMemory = field(
+        default_factory=lambda: _BackendMemory(
+            success_ema=0.72,
+            useful_ema=0.72,
+            latency_ema_ms=1700.0,
+        )
+    )
+    last_used_ts: float = 0.0
 
 
 class AutoFetcher(FetcherBase):
@@ -59,9 +68,9 @@ class AutoFetcher(FetcherBase):
     ) -> None:
         super().__init__(rt=rt)
         self._rl = rate_limiter
-        self._http = http.client
         self._curl = curl_fetcher
         self._playwright = playwright_fetcher
+        self._route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
         self.bind_deps(
             rate_limiter,
             http,
@@ -150,173 +159,215 @@ class AutoFetcher(FetcherBase):
         url: str,
         deadline_ts: float,
     ) -> FetchAttempt:
-        probe = await self._probe_http(url=url, deadline_ts=deadline_ts)
-        selected_backend, selection_reason = self._choose_backend(probe)
-        probe_chain = self._probe_chain_item(probe)
-        decision_chain = f"decision:{selected_backend}:{selection_reason}"
-        if selected_backend == "playwright":
+        route_key = normalize_route_key(url)
+        route_memory = self._get_route_memory(route_key)
+        direct_backend = self._choose_direct_backend(route_memory)
+        if direct_backend == "playwright":
             try:
-                attempt = await self._run_playwright(
+                direct_attempt = await self._run_playwright_with_learning(
                     url=url,
                     deadline_ts=deadline_ts,
-                    render_reason=f"auto_probe:{selection_reason}",
+                    route_key=route_key,
+                    render_reason="route_memory",
+                    chain_prefix=["decision:playwright:route_memory"],
                 )
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    f"fetch_unusable:auto:playwright_error:{type(exc).__name__}"
-                ) from exc
-            if self._is_useful(attempt):
-                return self._attach_attempt_chain(
-                    winner=attempt,
-                    chain_prefix=[probe_chain, decision_chain],
-                )
-            raise RuntimeError(
-                f"fetch_unusable:auto:playwright:{int(attempt.status_code)}"
-            )
-        curl_attempt: FetchAttempt | None = None
-        curl_error_type: str | None = None
-        try:
-            curl_attempt = await self._run_curl(
-                url=url,
-                deadline_ts=deadline_ts,
-            )
-        except Exception as exc:  # noqa: BLE001
-            curl_error_type = type(exc).__name__
-        force_playwright_for_nextjs = bool(
-            curl_attempt is not None
-            and curl_attempt.content_kind == "html"
-            and has_nextjs_signals(bytes(curl_attempt.content or b""))
+            except RuntimeError:
+                direct_attempt = None
+            if direct_attempt is not None:
+                return direct_attempt
+        scout_bytes = int(self.settings.fetch.auto.scout_bytes)
+        curl_started = time.monotonic()
+        progressive = await self._curl.fetch_progressive_attempt(
+            url=url,
+            timeout_s=self._remaining_timeout_s(deadline_ts),
+            scout_bytes=scout_bytes,
+            continue_predicate=lambda attempt: self._should_continue_curl(
+                attempt=attempt,
+                route_memory=route_memory,
+            ),
         )
-        if (
-            curl_attempt is not None
-            and self._is_useful(curl_attempt)
-            and not force_playwright_for_nextjs
+        curl_attempt = progressive.attempt
+        curl_latency_ms = int((time.monotonic() - curl_started) * 1000)
+        self._record_route_result(
+            route_key=route_key,
+            backend="curl_cffi",
+            attempt=curl_attempt,
+            latency_ms=curl_latency_ms,
+        )
+        if progressive.finished and self._is_useful(curl_attempt):
+            return self._attach_attempt_chain(
+                winner=curl_attempt,
+                chain_prefix=["decision:curl_cffi:scout"],
+            )
+        if not progressive.finished and self._should_accept_truncated_curl(
+            curl_attempt
         ):
             return self._attach_attempt_chain(
                 winner=curl_attempt,
-                chain_prefix=[probe_chain, decision_chain],
+                chain_prefix=["decision:curl_cffi:truncated"],
             )
-        try:
-            playwright_attempt = await self._run_playwright(
-                url=url,
-                deadline_ts=deadline_ts,
-                render_reason="curl_nonperfect_fallback",
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                f"fetch_unusable:auto:playwright_fallback_error:{type(exc).__name__}"
-            ) from exc
-        if self._is_useful(playwright_attempt):
-            prefix = [probe_chain, decision_chain, "fallback:playwright"]
-            if curl_error_type is not None:
-                prefix.append(f"curl_error:{curl_error_type}")
-            elif curl_attempt is not None:
-                prefix.extend(list(curl_attempt.attempt_chain or ["curl_cffi"]))
+        playwright_reason = self._playwright_reason(curl_attempt)
+        playwright_attempt = await self._run_playwright_with_learning(
+            url=url,
+            deadline_ts=deadline_ts,
+            route_key=route_key,
+            render_reason=playwright_reason,
+            chain_prefix=[
+                "decision:curl_cffi:scout",
+                f"fallback:playwright:{playwright_reason}",
+            ],
+        )
+        if playwright_attempt is not None:
+            return playwright_attempt
+        if direct_backend == "playwright" and self._is_useful(curl_attempt):
             return self._attach_attempt_chain(
-                winner=playwright_attempt,
-                chain_prefix=prefix,
+                winner=curl_attempt,
+                chain_prefix=["decision:playwright:route_memory", "fallback:curl_cffi"],
             )
         raise RuntimeError(
-            f"fetch_unusable:auto:playwright:{int(playwright_attempt.status_code)}"
+            f"fetch_unusable:auto:playwright:{int(curl_attempt.status_code)}"
         )
 
-    async def _probe_http(
+    def _choose_direct_backend(self, route_memory: _RouteMemory) -> str | None:
+        auto_cfg = self.settings.fetch.auto
+        if route_memory.playwright.samples < int(auto_cfg.direct_route_min_samples):
+            return None
+        if route_memory.playwright.useful_ema < float(
+            auto_cfg.direct_playwright_min_useful
+        ):
+            return None
+        if route_memory.playwright.score() > (
+            route_memory.curl.score() * float(auto_cfg.direct_playwright_cost_ratio)
+        ):
+            return None
+        return "playwright"
+
+    def _should_continue_curl(
+        self,
+        *,
+        attempt: FetchAttempt,
+        route_memory: _RouteMemory,
+    ) -> bool:
+        if self._is_blocked(attempt):
+            return False
+        if attempt.content_kind != "html":
+            return True
+        quality = self.settings.fetch.quality
+        low_text = int(attempt.text_chars or 0) < int(quality.min_text_chars)
+        js_heavy = float(attempt.script_ratio or 0.0) >= float(
+            quality.script_ratio_threshold
+        )
+        nextjs = has_nextjs_signals(bytes(attempt.content or b""))
+        spa = has_spa_signals(bytes(attempt.content or b""))
+        curl_score, _ = self._content_quality_score(attempt)
+        route_prefers_playwright = bool(
+            route_memory.playwright.samples
+            >= int(self.settings.fetch.auto.direct_route_min_samples)
+            and route_memory.playwright.score() < route_memory.curl.score()
+        )
+        if spa and (low_text or js_heavy):
+            return False
+        if nextjs and low_text:
+            return False
+        if js_heavy and curl_score < float(quality.quality_score_threshold):
+            return False
+        return not (route_prefers_playwright and curl_score < 0.55)
+
+    def _should_accept_truncated_curl(self, attempt: FetchAttempt) -> bool:
+        if attempt.content_kind in {"pdf", "text"} and self._is_useful(attempt):
+            return True
+        if attempt.content_kind != "html":
+            return False
+        return int(attempt.text_chars or 0) >= (
+            int(self.settings.fetch.quality.min_text_chars) * 6
+        )
+
+    def _playwright_reason(self, attempt: FetchAttempt) -> str:
+        if self._is_blocked(attempt):
+            return "blocked"
+        if attempt.content_kind == "html":
+            if has_spa_signals(bytes(attempt.content or b"")):
+                return "spa"
+            if has_nextjs_signals(bytes(attempt.content or b"")):
+                return "nextjs_low_text"
+            if int(attempt.text_chars or 0) < int(
+                self.settings.fetch.quality.min_text_chars
+            ):
+                return "low_text"
+        return "curl_nonperfect_fallback"
+
+    async def _run_playwright_with_learning(
         self,
         *,
         url: str,
         deadline_ts: float,
-    ) -> _ProbeSnapshot:
-        snap = _ProbeSnapshot(final_url=url)
+        route_key: str,
+        render_reason: str,
+        chain_prefix: list[str],
+    ) -> FetchAttempt | None:
+        started = time.monotonic()
         try:
-            timeout_s = self._remaining_timeout_s(deadline_ts)
-            timeout = httpx.Timeout(timeout_s)
-            fetch_cfg = self.settings.fetch
-            probe_headers = browser_headers(
-                profile="browser",
-                user_agent=str(fetch_cfg.user_agent),
-                randomize=True,
+            attempt = await self._run_playwright(
+                url=url,
+                deadline_ts=deadline_ts,
+                render_reason=render_reason,
             )
-            # Prefer gzip/deflate so body decoding remains analyzable for probe logic.
-            probe_headers["Accept-Encoding"] = "gzip, deflate"
-            async with self._http.stream(
-                "GET",
-                url,
-                headers=probe_headers,
-                timeout=timeout,
-                follow_redirects=bool(fetch_cfg.follow_redirects),
-            ) as resp:
-                snap.status_code = int(resp.status_code)
-                snap.final_url = str(resp.url)
-                snap.content_type = resp.headers.get("content-type")
-                body = await self._read_probe_body(resp=resp)
-            quality = self.settings.fetch.quality
-            content_kind = classify_content_kind(
-                content_type=snap.content_type,
-                url=snap.final_url,
-                content=body,
+        except Exception as exc:
+            self._record_route_result(
+                route_key=route_key,
+                backend="playwright",
+                attempt=None,
+                latency_ms=int((time.monotonic() - started) * 1000),
             )
-            text_chars, _, script_ratio = estimate_text_quality(
-                body,
-                content_kind=content_kind,
+            raise RuntimeError(
+                f"fetch_unusable:auto:playwright_error:{type(exc).__name__}"
+            ) from exc
+        latency_ms = int((time.monotonic() - started) * 1000)
+        self._record_route_result(
+            route_key=route_key,
+            backend="playwright",
+            attempt=attempt,
+            latency_ms=latency_ms,
+        )
+        if self._is_useful(attempt):
+            return self._attach_attempt_chain(
+                winner=attempt,
+                chain_prefix=chain_prefix,
             )
-            marker_hit = bool(
-                blocked_marker_hit(
-                    body,
-                    markers=tuple(quality.blocked_markers or []),
-                )
-            )
-            anti_bot = int(snap.status_code) in _BLOCK_STATUSES or marker_hit
-            nextjs = bool(content_kind == "html" and has_nextjs_signals(body))
-            spa = bool(
-                content_kind == "html"
-                and script_ratio >= float(quality.script_ratio_threshold)
-                and has_spa_signals(body)
-            )
-            low_text = bool(
-                content_kind == "html" and int(text_chars) < int(quality.min_text_chars)
-            )
-            snap.content_kind = content_kind
-            snap.text_chars = int(text_chars)
-            snap.script_ratio = float(script_ratio)
-            snap.blocked_marker = marker_hit
-            snap.anti_bot = anti_bot
-            snap.nextjs = nextjs
-            snap.spa = spa
-            snap.low_text = low_text
-            snap.bytes_read = int(len(body))
-        except Exception as exc:  # noqa: BLE001
-            snap.error_type = type(exc).__name__
-        return snap
+        return None
 
-    async def _read_probe_body(self, *, resp: httpx.Response) -> bytes:
-        total = 0
-        parts: list[bytes] = []
-        async for chunk in resp.aiter_bytes():
-            if not chunk:
-                continue
-            remain = _PROBE_MAX_BYTES - total
-            if remain <= 0:
-                break
-            if len(chunk) > remain:
-                chunk = chunk[:remain]
-            parts.append(chunk)
-            total += len(chunk)
-            if total >= _PROBE_MAX_BYTES:
-                break
-        return b"".join(parts)
+    def _get_route_memory(self, route_key: str) -> _RouteMemory:
+        memory = self._route_memory.pop(route_key, None)
+        if memory is None:
+            memory = _RouteMemory()
+        memory.last_used_ts = time.monotonic()
+        self._route_memory[route_key] = memory
+        max_items = max(8, int(self.settings.fetch.auto.route_memory_size))
+        while len(self._route_memory) > max_items:
+            self._route_memory.popitem(last=False)
+        return memory
 
-    def _choose_backend(self, probe: _ProbeSnapshot) -> tuple[str, str]:
-        if probe.error_type is not None:
-            return "curl_cffi", "probe_error"
-        if probe.anti_bot:
-            return "playwright", "anti_bot"
-        if probe.nextjs:
-            return "playwright", "nextjs"
-        if probe.spa:
-            return "playwright", "spa"
-        if probe.low_text:
-            return "playwright", "low_text"
-        return "curl_cffi", "default"
+    def _record_route_result(
+        self,
+        *,
+        route_key: str,
+        backend: str,
+        attempt: FetchAttempt | None,
+        latency_ms: int,
+    ) -> None:
+        memory = self._get_route_memory(route_key)
+        stats = memory.playwright if backend == "playwright" else memory.curl
+        alpha = float(self.settings.fetch.auto.learning_rate)
+        success = (
+            1.0 if attempt is not None and int(attempt.status_code or 0) >= 200 else 0.0
+        )
+        useful = 1.0 if attempt is not None and self._is_useful(attempt) else 0.0
+        stats.samples += 1
+        stats.success_ema = ((1.0 - alpha) * stats.success_ema) + (alpha * success)
+        stats.useful_ema = ((1.0 - alpha) * stats.useful_ema) + (alpha * useful)
+        stats.latency_ema_ms = ((1.0 - alpha) * stats.latency_ema_ms) + (
+            alpha * float(max(1, latency_ms))
+        )
 
     async def _run_curl(
         self,
@@ -368,12 +419,10 @@ class AutoFetcher(FetcherBase):
         return bool(res.blocked)
 
     def _is_useful(self, res: FetchAttempt) -> bool:
-        """Legacy method for backward compatibility."""
         score, _ = self._content_quality_score(res)
-        return score >= 0.15
+        return score >= float(self.settings.fetch.quality.quality_score_threshold)
 
     def _content_quality_score(self, res: FetchAttempt) -> tuple[float, list[str]]:
-        """Calculate a quality score (0.0-1.0) for fetched content."""
         quality = self.settings.fetch.quality
         reasons: list[str] = []
         status = int(res.status_code or 0)
@@ -387,21 +436,21 @@ class AutoFetcher(FetcherBase):
         if self._is_blocked(res):
             reasons.append("blocked")
             return 0.0, reasons
-        len_ratio = min(1.0, max(0, content_len - _MIN_BYTES) / (1000 - _MIN_BYTES))
-        score += len_ratio * 0.25
-        if len_ratio < 0.3:
+        len_ratio = min(1.0, max(0, content_len - _MIN_BYTES) / (1200 - _MIN_BYTES))
+        score += len_ratio * 0.22
+        if len_ratio < 0.25:
             reasons.append(f"short_content:{content_len}")
         if res.content_kind == "html":
             text_ratio = min(
                 1.0,
                 max(0, text_chars - int(quality.min_text_chars))
-                / (1000 - int(quality.min_text_chars)),
+                / (1800 - int(quality.min_text_chars)),
             )
-            score += text_ratio * 0.45
+            score += text_ratio * 0.48
             if text_ratio < 0.3:
                 reasons.append(f"low_text:{text_chars}")
         else:
-            score += content_score * 0.45
+            score += content_score * 0.48
         if res.content_kind not in {"binary", "unknown"}:
             score += 0.15
         else:
@@ -426,11 +475,6 @@ class AutoFetcher(FetcherBase):
         if not out:
             out = [winner.fetch_mode]
         return winner.model_copy(update={"attempt_chain": out})
-
-    def _probe_chain_item(self, probe: _ProbeSnapshot) -> str:
-        if probe.error_type is not None:
-            return f"probe:error:{probe.error_type}"
-        return f"probe:http:get:{int(probe.status_code or 0)}"
 
 
 __all__ = ["AutoFetcher"]

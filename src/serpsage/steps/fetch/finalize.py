@@ -4,7 +4,10 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.app.response import FetchResultItem
-from serpsage.components.extract.html.postprocess import finalize_markdown
+from serpsage.components.extract.html.postprocess import (
+    finalize_markdown,
+    strip_markdown_links,
+)
 from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
 
@@ -39,11 +42,9 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-        markdown = (
-            ctx.artifacts.extracted.markdown
-            if ctx.resolved.content_request.include_markdown_links
-            else ctx.artifacts.extracted.md_for_abstract
-        )
+        markdown = str(ctx.artifacts.extracted.markdown or "")
+        if not ctx.resolved.content_request.include_markdown_links:
+            markdown = strip_markdown_links(markdown)
         max_chars = ctx.resolved.content_request.max_chars
         if max_chars is not None and max_chars > 0:
             markdown = finalize_markdown(markdown=markdown, max_chars=max_chars)
@@ -64,6 +65,10 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         ctx.output.result = FetchResultItem(
             url=ctx.url,
             title=str(ctx.artifacts.extracted.title or ""),
+            published_date=str(ctx.artifacts.extracted.published_date or ""),
+            author=str(ctx.artifacts.extracted.author or ""),
+            image=str(ctx.artifacts.extracted.image or ""),
+            favicon=str(ctx.artifacts.extracted.favicon or ""),
             content=content,
             abstracts=abstracts,
             abstract_scores=abstract_scores,

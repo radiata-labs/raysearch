@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 from typing_extensions import override
@@ -9,11 +10,7 @@ from typing_extensions import override
 import anyio
 
 from serpsage.components.fetch.base import FetcherBase
-from serpsage.components.fetch.utils import (
-    blocked_marker_hit,
-    classify_content_kind,
-    estimate_text_quality,
-)
+from serpsage.components.fetch.utils import analyze_content
 from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
@@ -26,8 +23,7 @@ if TYPE_CHECKING:
     )
 
     from serpsage.core.runtime import Runtime
-# Suppress "Future exception was never retrieved" warnings from Playwright
-# when background page loads are interrupted by timeouts or page.close().
+
 _original_call_exception_handler = getattr(
     asyncio.BaseEventLoop, "call_exception_handler", None
 )
@@ -41,7 +37,6 @@ def _suppress_future_exception_warning(
     self: asyncio.AbstractEventLoop,
     context: dict[str, object],
 ) -> None:
-    """Custom exception handler to suppress Playwright future warnings."""
     exc = context.get("exception")
     if exc is not None:
         exc_name = type(exc).__name__
@@ -61,6 +56,7 @@ try:
     _pw_factory = async_playwright
 except Exception:  # noqa: BLE001
     PLAYWRIGHT_AVAILABLE = False
+
 _BLOCK_RESOURCE_TYPES = {"image", "media", "font", "video", "websocket"}
 _BLOCK_TRACKING_RE = (
     "googletagmanager",
@@ -71,6 +67,13 @@ _BLOCK_TRACKING_RE = (
     "segment",
     "clarity.ms",
 )
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+"""
 
 
 class PlaywrightFetcher(FetcherBase):
@@ -110,6 +113,7 @@ class PlaywrightFetcher(FetcherBase):
             timezone_id="America/New_York",
             viewport={"width": 1920, "height": 1080},
         )
+        await self._prepare_context(self._context)
 
     @override
     async def on_close(self) -> None:
@@ -164,22 +168,19 @@ class PlaywrightFetcher(FetcherBase):
         if timeout_s is not None:
             timeout_ms = min(timeout_ms, int(timeout_s * 1000))
         page = None
+        status = 0
+        final_url = url
+        headers: dict[str, str] = {}
+        html = ""
         async with self._sem:
             try:
                 page = await self._context.new_page()
-                await self._prepare_page(page)
                 status, final_url, headers = await self._navigate(
                     page=page,
                     url=url,
                     timeout_ms=timeout_ms,
                 )
-                html = await page.content()
-                with contextlib.suppress(TimeoutError):
-                    await page.wait_for_load_state(
-                        "networkidle",
-                        timeout=timeout_ms,
-                    )
-                await page.wait_for_timeout(min(1200, timeout_ms))
+                await self._await_render_ready(page=page, timeout_ms=timeout_ms)
                 html = await page.content()
             finally:
                 if page is not None:
@@ -187,19 +188,11 @@ class PlaywrightFetcher(FetcherBase):
                         await page.close()
         body = (html or "").encode("utf-8", errors="ignore")
         content_type = headers.get("content-type")
-        content_kind = classify_content_kind(
+        analysis = analyze_content(
+            content=body,
             content_type=content_type,
             url=final_url,
-            content=body,
-        )
-        text_chars, content_score, script_ratio = estimate_text_quality(
-            body, content_kind=content_kind
-        )
-        blocked = bool(
-            blocked_marker_hit(
-                body,
-                markers=tuple(self.settings.fetch.quality.blocked_markers),
-            )
+            markers=tuple(self.settings.fetch.quality.blocked_markers),
         )
         return FetchAttempt(
             url=final_url,
@@ -209,28 +202,20 @@ class PlaywrightFetcher(FetcherBase):
             strategy_used="playwright",
             fetch_mode="playwright",
             rendered=True,
-            content_kind=content_kind,
+            content_kind=analysis.content_kind,
             headers=headers,
             content_encoding=headers.get("content-encoding"),
             content_length_header=headers.get("content-length"),
-            content_score=float(content_score),
-            text_chars=int(text_chars),
-            script_ratio=float(script_ratio),
-            blocked=blocked,
+            content_score=float(analysis.content_score),
+            text_chars=int(analysis.text_chars),
+            script_ratio=float(analysis.script_ratio),
+            blocked=bool(analysis.blocked),
             render_reason=render_reason,
             attempt_chain=["playwright"],
         )
 
-    async def _prepare_page(self, page: Page) -> None:
-        await page.add_init_script(
-            """
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
-            Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-            """
-        )
+    async def _prepare_context(self, context: BrowserContext) -> None:
+        await context.add_init_script(_STEALTH_INIT_SCRIPT)
         if not bool(self.settings.fetch.render.block_resources):
             return
 
@@ -246,7 +231,7 @@ class PlaywrightFetcher(FetcherBase):
                 return
             await route.continue_()
 
-        await page.route("**/*", route_handler)
+        await context.route("**/*", route_handler)
 
     async def _navigate(
         self,
@@ -269,11 +254,8 @@ class PlaywrightFetcher(FetcherBase):
             pass
         except Exception:
             pass
-        try:
-            with contextlib.suppress(TimeoutError):
-                await page.wait_for_selector("body", timeout=min(2000, timeout_ms))
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            await page.wait_for_selector("body", timeout=min(1800, timeout_ms))
         final_url = str(page.url or url)
         if resp is None:
             html = await page.content()
@@ -282,6 +264,94 @@ class PlaywrightFetcher(FetcherBase):
         status = int(resp.status or 0)
         headers = {str(k): str(v) for k, v in resp.headers.items()}
         return status, final_url, headers
+
+    async def _await_render_ready(self, *, page: Page, timeout_ms: int) -> None:
+        cfg = self.settings.fetch.render
+        deadline = time.monotonic() + (float(timeout_ms) / 1000.0)
+        stable_rounds_needed = max(1, int(cfg.readiness_stable_rounds))
+        poll_s = max(0.05, float(cfg.readiness_poll_ms) / 1000.0)
+        min_text_chars = int(self.settings.fetch.quality.min_text_chars)
+        stable_rounds = 0
+        last_signature: tuple[int, int, str] | None = None
+        while time.monotonic() < deadline:
+            snapshot = await self._dom_snapshot(page)
+            if snapshot is None:
+                break
+            signature = (
+                self._snapshot_int(snapshot, "text_len"),
+                self._snapshot_int(snapshot, "node_count"),
+                str(snapshot.get("ready_state", "")),
+            )
+            if last_signature is not None and self._signatures_close(
+                last_signature, signature
+            ):
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+            last_signature = signature
+            if (
+                self._snapshot_int(snapshot, "text_len") >= min_text_chars
+                and stable_rounds >= stable_rounds_needed
+            ):
+                break
+            if (
+                str(snapshot.get("ready_state", "")) == "complete"
+                and stable_rounds >= 1
+            ):
+                break
+            await anyio.sleep(poll_s)
+        settle_ms = max(0, int(cfg.post_ready_wait_ms))
+        if settle_ms > 0:
+            await page.wait_for_timeout(min(settle_ms, timeout_ms))
+
+    async def _dom_snapshot(self, page: Page) -> dict[str, object] | None:
+        try:
+            return cast(
+                "dict[str, object] | None",
+                await page.evaluate(
+                    """
+                    () => {
+                      const root =
+                        document.querySelector('main, article, [role="main"], #content, #main, .main, .article')
+                        || document.body;
+                      const text = (root?.innerText || document.body?.innerText || '').trim();
+                      const nodeCount = root?.querySelectorAll
+                        ? root.querySelectorAll('*').length
+                        : 0;
+                      return {
+                        ready_state: document.readyState || '',
+                        text_len: text.length,
+                        node_count: nodeCount
+                      };
+                    }
+                    """
+                ),
+            )
+        except Exception:
+            return None
+
+    def _signatures_close(
+        self,
+        previous: tuple[int, int, str],
+        current: tuple[int, int, str],
+    ) -> bool:
+        return (
+            abs(previous[0] - current[0]) <= 32
+            and abs(previous[1] - current[1]) <= 8
+            and previous[2] == current[2]
+        )
+
+    def _snapshot_int(self, snapshot: dict[str, object], key: str) -> int:
+        value = snapshot.get(key, 0)
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return 0
 
 
 __all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightFetcher"]

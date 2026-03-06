@@ -24,6 +24,10 @@ class FetchSubpagesResult(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     url: str
     title: str
+    published_date: str = ""
+    author: str = ""
+    image: str = ""
+    favicon: str = ""
     content: str
     abstracts: list[str]
     abstract_scores: list[float]
