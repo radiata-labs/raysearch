@@ -20,7 +20,7 @@ from serpsage.models.pipeline import (
     SearchFetchedCandidate,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt import build_link_picker_messages
+from serpsage.steps.research.prompt import build_link_picker_prompt_messages
 from serpsage.steps.research.schema import build_link_picker_schema
 from serpsage.steps.research.search import (
     CorpusUpsertResult,
@@ -391,7 +391,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         try:
             chat_result = await self._llm.create(
                 model=model,
-                messages=build_link_picker_messages(
+                messages=build_link_picker_prompt_messages(
                     core_question=self._resolve_core_question(ctx),
                     report_style=report_style,
                     mode_depth_profile=ctx.runtime.mode_depth.mode_key,

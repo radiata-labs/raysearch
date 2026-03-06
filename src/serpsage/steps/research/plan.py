@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
@@ -27,14 +26,8 @@ from serpsage.steps.research.language import (
     normalize_language_code,
 )
 from serpsage.steps.research.prompt import (
-    build_plan_messages as build_plan_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    build_query_language_repair_messages,
-    render_link_candidates_markdown,
-    render_queries_markdown,
-    render_rounds_markdown,
-    render_theme_plan_markdown,
+    build_plan_prompt_messages,
+    build_query_language_repair_prompt_messages,
 )
 from serpsage.steps.research.schema import (
     build_plan_schema,
@@ -121,6 +114,10 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
+        last_round_candidates = self._resolve_last_round_candidates(
+            ctx=ctx,
+            round_index=round_index,
+        )
         payload = PlanOutputPayload(
             query_strategy="mixed",
             round_action="search",
@@ -130,11 +127,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         try:
             chat_result = await self._llm.create(
                 model=model,
-                messages=self._build_plan_messages(
+                messages=build_plan_prompt_messages(
                     ctx=ctx,
                     candidate_queries=candidate_queries,
                     core_question=core_question,
                     now_utc=now_utc,
+                    last_round_candidates=last_round_candidates,
                 ),
                 response_format=PlanOutputPayload,
                 format_override=build_plan_schema(),
@@ -166,10 +164,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         )
         if remain_search_calls <= 0 and allow_explore:
             round_action = "explore"
-        last_round_candidates = self._resolve_last_round_candidates(
-            ctx=ctx,
-            round_index=round_index,
-        )
         explore_target_source_ids = self._normalize_explore_target_source_ids(
             raw=payload.explore_target_source_ids,
             candidates=last_round_candidates,
@@ -424,7 +418,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         try:
             chat_result = await self._llm.create(
                 model=model,
-                messages=self._build_query_language_repair_messages(
+                messages=build_query_language_repair_prompt_messages(
                     ctx=ctx,
                     jobs=jobs,
                     search_language=search_language,
@@ -442,35 +436,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             baseline=jobs,
         )
         return repaired, repaired != jobs
-
-    def _build_query_language_repair_messages(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        jobs: list[ResearchSearchJob],
-        search_language: str,
-        now_utc: datetime,
-    ) -> list[dict[str, str]]:
-        output_language = normalize_language_code(
-            self._resolve_output_language(ctx) or ctx.plan.theme_plan.input_language,
-            default="other",
-        )
-        current_jobs = [
-            {
-                "query": item.query,
-                "mode": item.mode,
-                "additional_queries": list(item.additional_queries),
-                "intent": item.intent,
-            }
-            for item in jobs
-        ]
-        return build_query_language_repair_messages(
-            current_utc_date=now_utc.date().isoformat(),
-            core_question=self._resolve_core_question(ctx),
-            required_search_language=search_language,
-            required_output_language=output_language,
-            current_search_jobs_json=json.dumps(current_jobs, ensure_ascii=False),
-        )
 
     def _normalize_repaired_search_jobs(
         self,
@@ -573,66 +538,6 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         if query:
             return query
         return ctx.request.themes
-
-    def _build_plan_messages(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        candidate_queries: list[str],
-        core_question: str,
-        now_utc: datetime,
-    ) -> list[dict[str, str]]:
-        budget = ctx.runtime.budget
-        mode_depth = ctx.runtime.mode_depth
-        out_lang = self._resolve_output_language(ctx) or "en"
-        out_lang_name = out_lang or "unspecified"
-        search_language = self._resolve_search_language(ctx)
-        report_style = ctx.plan.theme_plan.report_style
-        theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
-        previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
-        candidate_queries_markdown = render_queries_markdown(candidate_queries)
-        round_index = ctx.runtime.round_index
-        last_round_candidates = self._resolve_last_round_candidates(
-            ctx=ctx,
-            round_index=round_index,
-        )
-        last_round_candidates_markdown = render_link_candidates_markdown(
-            last_round_candidates,
-            max_pages=max(1, mode_depth.explore_target_pages_per_round),
-            max_links_per_page=6,
-        )
-        return build_plan_prompt_messages(
-            theme=ctx.request.themes,
-            core_question=core_question,
-            report_style=report_style,
-            mode_depth_profile=mode_depth.mode_key,
-            round_index=round_index,
-            current_utc_timestamp=now_utc.isoformat(),
-            current_utc_date=now_utc.date().isoformat(),
-            required_search_language=search_language,
-            required_output_language=out_lang,
-            required_output_language_label=out_lang_name,
-            theme_plan_markdown=theme_plan_markdown,
-            previous_rounds_markdown=previous_rounds_markdown,
-            candidate_queries_markdown=candidate_queries_markdown,
-            required_entities=list(ctx.plan.theme_plan.required_entities),
-            search_calls_remaining=max(
-                0,
-                budget.max_search_calls - ctx.runtime.search_calls,
-            ),
-            fetch_calls_remaining=max(
-                0,
-                budget.max_fetch_calls - ctx.runtime.fetch_calls,
-            ),
-            max_queries_this_round=budget.max_queries_per_round,
-            allow_explore=self._can_attempt_explore(
-                ctx=ctx,
-                round_index=round_index,
-            ),
-            explore_target_pages_per_round=mode_depth.explore_target_pages_per_round,
-            explore_links_per_page=mode_depth.explore_links_per_page,
-            last_round_link_candidates_markdown=last_round_candidates_markdown,
-        )
 
     def _can_attempt_explore(
         self, *, ctx: ResearchStepContext, round_index: int

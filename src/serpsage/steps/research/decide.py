@@ -8,7 +8,7 @@ from pydantic import Field
 from serpsage.core.model_base import MutableModel
 from serpsage.models.pipeline import ResearchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt import build_decide_signal_messages
+from serpsage.steps.research.prompt import build_decide_prompt_messages
 from serpsage.steps.research.utils import (
     merge_strings,
     normalize_strings,
@@ -217,7 +217,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         try:
             result = await self._llm.create(
                 model=model,
-                messages=self._build_decide_messages(ctx=ctx),
+                messages=build_decide_prompt_messages(ctx=ctx),
                 response_format=_DecideSignalPayload,
                 retries=self.settings.research.llm_self_heal_retries,
             )
@@ -236,30 +236,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 },
             )
             return None
-
-    def _build_decide_messages(
-        self, *, ctx: ResearchStepContext
-    ) -> list[dict[str, str]]:
-        round_state = ctx.current_round
-        if round_state is None:
-            return []
-        return build_decide_signal_messages(
-            core_question=self._resolve_core_question(ctx),
-            mode_depth_profile=str(ctx.runtime.mode_depth.mode_key),
-            confidence=round_state.confidence,
-            coverage_ratio=round_state.coverage_ratio,
-            unresolved_conflicts=round_state.unresolved_conflicts,
-            critical_gaps=round_state.critical_gaps,
-            missing_entities=list(round_state.missing_entities),
-            search_remaining=max(
-                0,
-                ctx.runtime.budget.max_search_calls - ctx.runtime.search_calls,
-            ),
-            fetch_remaining=max(
-                0,
-                ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
-            ),
-        )
 
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
         return ctx.plan.theme_plan.core_question or ctx.request.themes

@@ -15,9 +15,6 @@ from serpsage.models.pipeline import (
 from serpsage.models.research import (
     RenderArchitectOutput,
     RenderArchitectSectionPlan,
-    ReportStyle,
-    TaskComplexity,
-    TaskIntent,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
@@ -25,23 +22,12 @@ from serpsage.steps.research.language import (
     normalize_language_code,
 )
 from serpsage.steps.research.prompt import (
-    build_density_gate_messages as build_density_gate_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
+    build_density_gate_prompt_messages,
     build_final_language_repair_messages,
-    build_render_final_context_packet_markdown,
+    build_render_architect_prompt_messages,
+    build_render_structured_prompt_messages,
+    build_render_writer_prompt_messages,
     normalize_block_text,
-    render_architect_plan_markdown,
-    render_section_plan_markdown,
-)
-from serpsage.steps.research.prompt import (
-    build_render_architect_messages as build_render_architect_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    build_render_structured_messages as build_render_structured_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    build_render_writer_messages as build_render_writer_prompt_messages,
 )
 from serpsage.steps.research.utils import resolve_research_model
 from serpsage.utils import clean_whitespace
@@ -156,29 +142,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         target_language: str,
         now_utc: datetime,
     ) -> None:
-        mode_depth = ctx.runtime.mode_depth
-        context_packet_markdown = build_render_final_context_packet_markdown(
-            theme=self._resolve_core_question(ctx) or ctx.request.themes,
-            target_output_language=target_language,
-            mode_depth_profile=mode_depth.mode_key,
-            utc_timestamp=now_utc.isoformat(),
-            utc_date=now_utc.date().isoformat(),
-            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-            question_cards=[
-                item.model_copy(deep=True) for item in ctx.parallel.question_cards
-            ],
-            track_results=[
-                item.model_copy(deep=True) for item in ctx.parallel.track_results
-            ],
-            render_objective=self._render_objective_for_mode(
-                mode_key=mode_depth.mode_key
-            ),
-        )
         architect_output = await self._run_architect(
             ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
-            context_packet_markdown=context_packet_markdown,
         )
         architect_output = await self._validate_architect_question_coverage(
             ctx=ctx,
@@ -189,7 +156,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             architect_output=architect_output,
             target_language=target_language,
             now_utc=now_utc,
-            context_packet_markdown=context_packet_markdown,
         )
         assembled = self._assemble_markdown_from_sections(
             ctx=ctx,
@@ -201,7 +167,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             markdown=assembled,
             target_language=target_language,
             now_utc=now_utc,
-            context_packet_markdown=context_packet_markdown,
         )
         assembled = await self._repair_final_language_if_needed(
             ctx=ctx,
@@ -218,23 +183,19 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         target_language: str,
         now_utc: datetime,
-        context_packet_markdown: str,
     ) -> RenderArchitectOutput:
         model = resolve_research_model(
             ctx=ctx,
             stage="synthesize",
             fallback=self.settings.answer.generate.use_model,
         )
-        report_style = ctx.plan.theme_plan.report_style
         try:
             chat_result = await self._llm.create(
                 model=model,
-                messages=self._build_architect_messages(
+                messages=build_render_architect_prompt_messages(
                     ctx=ctx,
-                    report_style=report_style,
                     target_language=target_language,
                     now_utc=now_utc,
-                    context_packet_markdown=context_packet_markdown,
                 ),
                 response_format=RenderArchitectOutput,
                 retries=self.settings.research.llm_self_heal_retries,
@@ -333,14 +294,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         architect_output: RenderArchitectOutput,
         target_language: str,
         now_utc: datetime,
-        context_packet_markdown: str,
     ) -> list[str]:
         model = resolve_research_model(
             ctx=ctx,
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
-        report_style = ctx.plan.theme_plan.report_style
         outputs = [""] * len(architect_output.sections)
         try:
             async with anyio.create_task_group() as tg:
@@ -351,10 +310,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                         model,
                         target_language,
                         now_utc,
-                        context_packet_markdown,
                         architect_output,
                         section,
-                        report_style,
                         outputs,
                         index,
                     )
@@ -384,19 +341,15 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         model: str,
         target_language: str,
         now_utc: datetime,
-        context_packet_markdown: str,
         architect_output: RenderArchitectOutput,
         section: RenderArchitectSectionPlan,
-        report_style: ReportStyle,
         outputs: list[str],
         index: int,
     ) -> None:
-        messages = self._build_writer_messages(
+        messages = build_render_writer_prompt_messages(
             ctx=ctx,
-            report_style=report_style,
             target_language=target_language,
             now_utc=now_utc,
-            context_packet_markdown=context_packet_markdown,
             architect_output=architect_output,
             section=section,
         )
@@ -428,8 +381,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="synthesize",
             fallback=self.settings.answer.generate.use_model,
         )
-        messages = self._build_final_structured_messages(
-            ctx,
+        messages = build_render_structured_prompt_messages(
+            ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
         )
@@ -464,97 +417,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx.output.structured = payload
         ctx.output.content = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    def _build_architect_messages(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        report_style: ReportStyle,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-    ) -> list[dict[str, str]]:
-        target_language_name = target_language or "unspecified"
-        return build_render_architect_prompt_messages(
-            target_output_language=target_language,
-            target_output_language_label=target_language_name,
-            current_utc_date=now_utc.date().isoformat(),
-            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-            task_intent=self._resolve_task_intent(ctx.plan.theme_plan.task_intent),
-            complexity_tier=self._resolve_task_complexity(
-                ctx.plan.theme_plan.complexity_tier
-            ),
-            report_style=report_style,
-            context_packet_markdown=context_packet_markdown,
-        )
-
-    def _build_writer_messages(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        report_style: ReportStyle,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-        architect_output: RenderArchitectOutput,
-        section: RenderArchitectSectionPlan,
-    ) -> list[dict[str, str]]:
-        target_language_name = target_language or "unspecified"
-        section_subhead = section.subhead
-        section_prefix_h2 = f"## {section_subhead or 'Section'}"
-        section_packet_markdown = render_section_plan_markdown(section)
-        all_section_plan_markdown = render_architect_plan_markdown(architect_output)
-        return build_render_writer_prompt_messages(
-            target_output_language=target_language,
-            target_output_language_label=target_language_name,
-            current_utc_date=now_utc.date().isoformat(),
-            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-            task_intent=self._resolve_task_intent(ctx.plan.theme_plan.task_intent),
-            complexity_tier=self._resolve_task_complexity(
-                ctx.plan.theme_plan.complexity_tier
-            ),
-            report_style=report_style,
-            section_subhead=section_subhead,
-            section_prefix_h2=section_prefix_h2,
-            all_section_plan_markdown=all_section_plan_markdown,
-            section_plan_markdown=section_packet_markdown,
-            context_packet_markdown=context_packet_markdown,
-        )
-
-    def _build_final_structured_messages(
-        self,
-        ctx: ResearchStepContext,
-        *,
-        target_language: str,
-        now_utc: datetime,
-    ) -> list[dict[str, str]]:
-        target_language_name = target_language or "unspecified"
-        report_style = ctx.plan.theme_plan.report_style
-        mode_depth = ctx.runtime.mode_depth
-        context_packet_markdown = build_render_final_context_packet_markdown(
-            theme=self._resolve_core_question(ctx) or ctx.request.themes,
-            target_output_language=target_language,
-            mode_depth_profile=mode_depth.mode_key,
-            utc_timestamp=now_utc.isoformat(),
-            utc_date=now_utc.date().isoformat(),
-            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-            question_cards=[
-                item.model_copy(deep=True) for item in ctx.parallel.question_cards
-            ],
-            track_results=[
-                item.model_copy(deep=True) for item in ctx.parallel.track_results
-            ],
-            render_objective=self._render_objective_for_mode(
-                mode_key=mode_depth.mode_key
-            ),
-        )
-        return build_render_structured_prompt_messages(
-            target_output_language=target_language,
-            target_output_language_label=target_language_name,
-            current_utc_date=now_utc.date().isoformat(),
-            report_style=report_style,
-            context_packet_markdown=context_packet_markdown,
-        )
-
     def _assemble_markdown_from_sections(
         self,
         *,
@@ -588,24 +450,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             return f"Research Report: {base}"
         return base
 
-    def _render_objective_for_mode(self, *, mode_key: str) -> str:
-        mode_name = mode_key.casefold()
-        if mode_name == "research-fast":
-            return (
-                "Produce a concise synthesis that answers the theme directly with only "
-                "the highest-impact findings."
-            )
-        if mode_name == "research-pro":
-            return (
-                "Answer the core user task directly first, then expand to boundary "
-                "conditions, tradeoffs, and action-ready implications."
-            )
-        return (
-            "Answer the core user task directly first, then provide a stable "
-            "high-density synthesis with clear conclusions, conflicts, uncertainty "
-            "boundaries, and actionable implications."
-        )
-
     async def _apply_density_gate(
         self,
         *,
@@ -613,7 +457,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         markdown: str,
         target_language: str,
         now_utc: datetime,
-        context_packet_markdown: str,
     ) -> str:
         mode_depth = ctx.runtime.mode_depth
         pass_cap = max(0, mode_depth.density_gate_passes)
@@ -629,12 +472,11 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             try:
                 result = await self._llm.create(
                     model=model,
-                    messages=self._build_density_gate_messages(
+                    messages=build_density_gate_prompt_messages(
                         ctx=ctx,
                         markdown=current,
                         target_language=target_language,
                         now_utc=now_utc,
-                        context_packet_markdown=context_packet_markdown,
                         pass_index=pass_index,
                     ),
                     response_format=None,
@@ -720,25 +562,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         except Exception:
             return markdown
 
-    def _build_density_gate_messages(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        markdown: str,
-        target_language: str,
-        now_utc: datetime,
-        context_packet_markdown: str,
-        pass_index: int,
-    ) -> list[dict[str, str]]:
-        return build_density_gate_prompt_messages(
-            target_output_language=target_language,
-            current_utc_date=now_utc.date().isoformat(),
-            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-            pass_index=pass_index,
-            context_packet_markdown=context_packet_markdown,
-            current_markdown=markdown,
-        )
-
     def _resolve_target_language(self, ctx: ResearchStepContext) -> str:
         language_code = normalize_language_code(
             ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
@@ -750,30 +573,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
     def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
         return ctx.plan.theme_plan.core_question or ctx.request.themes
-
-    def _resolve_task_intent(self, raw: TaskIntent | str | None) -> TaskIntent:
-        token = (raw or "").casefold().replace("-", "_")
-        mapping: dict[str, TaskIntent] = {
-            "how_to": "how_to",
-            "howto": "how_to",
-            "comparison": "comparison",
-            "compare": "comparison",
-            "explainer": "explainer",
-            "diagnosis": "diagnosis",
-            "other": "other",
-        }
-        return mapping.get(token, "other")
-
-    def _resolve_task_complexity(
-        self, raw: TaskComplexity | str | None
-    ) -> TaskComplexity:
-        token = (raw or "").casefold()
-        mapping: dict[str, TaskComplexity] = {
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-        }
-        return mapping.get(token, "medium")
 
     def _resolve_question_ids(self, ctx: ResearchStepContext) -> list[str]:
         out: list[str] = []

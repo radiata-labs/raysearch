@@ -11,12 +11,7 @@ from serpsage.models.research import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import (
-    build_overview_messages as build_overview_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    build_overview_packet,
-    render_rounds_markdown,
-    render_theme_plan_markdown,
+    build_overview_prompt_messages,
 )
 from serpsage.steps.research.schema import build_overview_schema
 from serpsage.steps.research.search import (
@@ -79,10 +74,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             ctx.work.overview_review = self._empty_review()
             ctx.work.need_content_source_ids = []
             return ctx
-        packet = build_overview_packet(
-            sources=sources,
-            max_overview_chars=overview_chars,
-        )
         model = resolve_research_model(
             ctx=ctx,
             stage="overview",
@@ -92,9 +83,10 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         try:
             chat_result = await self._llm.create(
                 model=model,
-                messages=self._build_overview_messages(
+                messages=build_overview_prompt_messages(
                     ctx=ctx,
-                    packet=packet,
+                    sources=sources,
+                    max_overview_chars=overview_chars,
                     now_utc=now_utc,
                 ),
                 response_format=OverviewOutputPayload,
@@ -197,42 +189,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             },
         )
         return ctx
-
-    def _build_overview_messages(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        packet: str,
-        now_utc: datetime,
-    ) -> list[dict[str, str]]:
-        out_lang = self._resolve_output_language(ctx)
-        out_lang_name = out_lang or "unspecified"
-        core_question = self._resolve_core_question(ctx)
-        round_index = ctx.current_round.round_index if ctx.current_round else 0
-        report_style = ctx.plan.theme_plan.report_style
-        theme_plan_markdown = render_theme_plan_markdown(ctx.plan.theme_plan)
-        previous_rounds_markdown = render_rounds_markdown(ctx.rounds, limit=3)
-        return build_overview_prompt_messages(
-            theme=ctx.request.themes,
-            core_question=core_question,
-            report_style=report_style,
-            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-            round_index=round_index,
-            current_utc_timestamp=now_utc.isoformat(),
-            current_utc_date=now_utc.date().isoformat(),
-            required_output_language=out_lang,
-            required_output_language_label=out_lang_name,
-            theme_plan_markdown=theme_plan_markdown,
-            previous_rounds_markdown=previous_rounds_markdown,
-            required_entities=list(ctx.plan.theme_plan.required_entities),
-            source_overview_packet=packet,
-        )
-
-    def _resolve_core_question(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.core_question or ctx.request.themes
-
-    def _resolve_output_language(self, ctx: ResearchStepContext) -> str:
-        return ctx.plan.theme_plan.output_language or "en"
 
     def _empty_review(self) -> OverviewOutputPayload:
         return OverviewOutputPayload()

@@ -14,10 +14,7 @@ from serpsage.models.research import (
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import normalize_language_code
 from serpsage.steps.research.prompt import (
-    build_subreport_context_packet_markdown,
-)
-from serpsage.steps.research.prompt import (
-    build_subreport_messages as build_subreport_prompt_messages,
+    build_subreport_prompt_messages,
 )
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
@@ -62,12 +59,18 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
-        messages = self._build_subreport_messages(
-            ctx,
+        require_insight_card = self._require_insight_card(ctx)
+        messages = build_subreport_prompt_messages(
+            ctx=ctx,
             target_language=target_language,
             now_utc=now_utc,
+            source_evidence=self._select_sources_for_render(ctx),
+            source_evidence_max_chars=max(
+                1, ctx.runtime.mode_depth.content_source_chars
+            ),
+            notes=self._collect_recent_notes(ctx, limit=12),
+            require_insight_card=require_insight_card,
         )
-        require_insight_card = self._require_insight_card(ctx)
         markdown_text = ""
         insight_card: TrackInsightCardPayload | None = None
         try:
@@ -111,46 +114,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 "require_insight_card": require_insight_card,
                 "has_insight_card": insight_card is not None,
             },
-        )
-
-    def _build_subreport_messages(
-        self,
-        ctx: ResearchStepContext,
-        *,
-        target_language: str,
-        now_utc: datetime,
-    ) -> list[dict[str, str]]:
-        target_language_name = target_language or "unspecified"
-        core_question = self._resolve_core_question(ctx)
-        report_style = ctx.plan.theme_plan.report_style
-        context_packet_markdown = build_subreport_context_packet_markdown(
-            theme=ctx.request.themes,
-            core_question=core_question,
-            report_style=report_style,
-            target_output_language=target_language,
-            utc_timestamp=now_utc.isoformat(),
-            utc_date=now_utc.date().isoformat(),
-            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-            rounds=list(ctx.rounds),
-            source_evidence=self._select_sources_for_render(ctx),
-            source_evidence_max_chars=max(
-                1, ctx.runtime.mode_depth.content_source_chars
-            ),
-            notes=self._collect_recent_notes(ctx, limit=12),
-            subreport_objective=self._subreport_objective_for_style(
-                report_style=report_style
-            ),
-        )
-        require_insight_card = self._require_insight_card(ctx)
-        return build_subreport_prompt_messages(
-            target_output_language=target_language,
-            target_output_language_label=target_language_name,
-            current_utc_date=now_utc.date().isoformat(),
-            core_question=core_question,
-            mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-            report_style=report_style,
-            require_insight_card=require_insight_card,
-            context_packet_markdown=context_packet_markdown,
         )
 
     def _build_subreport_fallback(self, ctx: ResearchStepContext) -> str:
@@ -409,26 +372,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         if not clipped:
             return raw[:limit]
         return f"{clipped}..."
-
-    def _subreport_objective_for_style(
-        self,
-        *,
-        report_style: ReportStyle,
-    ) -> str:
-        if report_style == "decision":
-            return (
-                "Produce a decision-focused subreport with scenario-fit recommendations, "
-                "trade-offs, and explicit risk triggers."
-            )
-        if report_style == "execution":
-            return (
-                "Produce an execution-focused subreport with prerequisites, step sequence, "
-                "validation criteria, and failure handling boundaries."
-            )
-        return (
-            "Produce an explainer-focused subreport that clarifies mechanisms, "
-            "boundary conditions, and practical understanding."
-        )
 
     def _collect_recent_notes(
         self,

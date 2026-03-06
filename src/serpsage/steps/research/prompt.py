@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
@@ -7,6 +8,7 @@ from serpsage.models.pipeline import (
     ResearchLinkCandidate,
     ResearchQuestionCard,
     ResearchRoundState,
+    ResearchSearchJob,
     ResearchSource,
     ResearchStepContext,
     ResearchTrackResult,
@@ -21,9 +23,11 @@ from serpsage.models.research import (
     TaskComplexity,
     TaskIntent,
 )
+from serpsage.steps.research.language import normalize_language_code
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from datetime import datetime
 
 PromptStage = Literal[
     "theme",
@@ -199,76 +203,13 @@ _STYLE_STAGE_OVERLAYS: dict[ReportStyle, dict[PromptStage, str]] = {
 }
 
 
-def infer_report_style_from_theme(
-    theme: str,
-    *,
-    default: ReportStyle = "explainer",
-) -> ReportStyle:
-    token = theme.strip().casefold()
-    if not token:
-        return default
-    decision_hints = (
-        "vs",
-        "versus",
-        "compare",
-        "comparison",
-        "choice",
-        "choose",
-        "select",
-        "selection",
-        "best",
-        "better",
-        "recommend",
-        "which one",
-        "trade-off",
-        "tradeoff",
-    )
-    execution_hints = (
-        "how do i",
-        "how to",
-        "step by step",
-        "step",
-        "guide",
-        "workflow",
-        "implementation",
-        "implement",
-        "execute",
-        "playbook",
-        "runbook",
-        "operational",
-        "operation",
-        "deploy",
-        "deployment",
-        "migration",
-        "rollout",
-    )
-    if any(item in token for item in decision_hints):
-        return "decision"
-    if any(item in token for item in execution_hints):
-        return "execution"
-    return default
-
-
-def resolve_report_style(
-    *,
-    raw_style: object | None,
-    theme: str,
-    fallback_style: ReportStyle = "explainer",
-) -> ReportStyle:
-    fallback = _normalize_style(fallback_style) or "explainer"
-    candidate = _normalize_style(raw_style)
-    if candidate is not None:
-        return candidate
-    return infer_report_style_from_theme(theme, default=fallback)
-
-
-def build_style_overlay(*, stage: PromptStage, style: ReportStyle) -> str:
+def _build_style_overlay(*, stage: PromptStage, style: ReportStyle) -> str:
     normalized_style = _normalize_style(style) or "explainer"
     out = _STYLE_STAGE_OVERLAYS.get(normalized_style, {}).get(stage, "")
     return out.strip()
 
 
-def compose_system_prompt(
+def _compose_system_prompt(
     *,
     base_contract: str,
     style_overlay: str,
@@ -287,7 +228,7 @@ def _normalize_mode_name(mode_key: str) -> str:
     return mode_key.strip().casefold()
 
 
-def theme_depth_contract(*, mode_key: str) -> str:
+def _theme_depth_contract(*, mode_key: str) -> str:
     mode_name = _normalize_mode_name(mode_key)
     if mode_name == "research-fast":
         return (
@@ -306,7 +247,7 @@ def theme_depth_contract(*, mode_key: str) -> str:
     )
 
 
-def mode_depth_planning_contract(*, mode_key: str) -> str:
+def _mode_depth_planning_contract(*, mode_key: str) -> str:
     mode_name = _normalize_mode_name(mode_key)
     if mode_name == "research-fast":
         return (
@@ -349,7 +290,7 @@ def research_mode_scope_lock_contract(
     )
 
 
-def build_theme_messages(
+def _build_theme_messages(
     *,
     theme: str,
     search_mode: str,
@@ -362,7 +303,7 @@ def build_theme_messages(
     card_cap: int,
     hinted_style: ReportStyle,
 ) -> list[dict[str, str]]:
-    depth_contract = theme_depth_contract(mode_key=mode_depth_profile)
+    depth_contract = _theme_depth_contract(mode_key=mode_depth_profile)
     system_contract = (  # noqa: S608
         "Role: Senior Research Architect.\n"
         "Mission: Decompose THEME into executable, non-overlapping research question cards and classify report_style, task_intent, complexity_tier, detected_input_language, and search_language.\n"
@@ -442,9 +383,9 @@ def build_theme_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
-                style_overlay=build_style_overlay(stage="theme", style=hinted_style),
+                style_overlay=_build_style_overlay(stage="theme", style=hinted_style),
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
             ),
         },
@@ -494,7 +435,7 @@ def build_theme_messages(
     ]
 
 
-def build_plan_messages(
+def _build_plan_messages(
     *,
     theme: str,
     core_question: str,
@@ -518,7 +459,7 @@ def build_plan_messages(
     explore_links_per_page: int,
     last_round_link_candidates_markdown: str,
 ) -> list[dict[str, str]]:
-    depth_contract = mode_depth_planning_contract(mode_key=mode_depth_profile)
+    depth_contract = _mode_depth_planning_contract(mode_key=mode_depth_profile)
     system_contract = (  # noqa: S608
         "Role: Principal Research Planner.\n"  # noqa: S608
         "Mission: Select the next-round action and produce focused fallback search jobs.\n"
@@ -564,9 +505,9 @@ def build_plan_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
-                style_overlay=build_style_overlay(stage="plan", style=report_style),
+                style_overlay=_build_style_overlay(stage="plan", style=report_style),
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
             ),
         },
@@ -628,7 +569,7 @@ def build_plan_messages(
     ]
 
 
-def build_link_picker_messages(
+def _build_link_picker_messages(
     *,
     core_question: str,
     report_style: ReportStyle,
@@ -656,9 +597,9 @@ def build_link_picker_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
-                style_overlay=build_style_overlay(stage="plan", style=report_style),
+                style_overlay=_build_style_overlay(stage="plan", style=report_style),
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
             ),
         },
@@ -686,7 +627,7 @@ def build_link_picker_messages(
     ]
 
 
-def build_overview_messages(
+def _build_overview_messages(
     *,
     theme: str,
     core_question: str,
@@ -740,9 +681,11 @@ def build_overview_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
-                style_overlay=build_style_overlay(stage="overview", style=report_style),
+                style_overlay=_build_style_overlay(
+                    stage="overview", style=report_style
+                ),
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
             ),
         },
@@ -790,7 +733,7 @@ def build_overview_messages(
     ]
 
 
-def build_content_messages(
+def _build_content_messages(
     *,
     theme: str,
     core_question: str,
@@ -841,9 +784,9 @@ def build_content_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
-                style_overlay=build_style_overlay(stage="content", style=report_style),
+                style_overlay=_build_style_overlay(stage="content", style=report_style),
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
             ),
         },
@@ -885,7 +828,7 @@ def build_content_messages(
     ]
 
 
-def build_decide_signal_messages(
+def _build_decide_signal_messages(
     *,
     core_question: str,
     mode_depth_profile: str,
@@ -928,7 +871,7 @@ def build_decide_signal_messages(
     ]
 
 
-def build_query_language_repair_messages(
+def _build_query_language_repair_messages(
     *,
     current_utc_date: str,
     core_question: str,
@@ -973,7 +916,7 @@ def build_query_language_repair_messages(
     ]
 
 
-def build_track_orchestrator_messages(
+def _build_track_orchestrator_messages(
     *,
     mode_depth_profile: str,
     core_question: str,
@@ -1017,7 +960,7 @@ def build_track_orchestrator_messages(
     ]
 
 
-def build_gap_closure_messages(
+def _build_gap_closure_messages(
     *,
     core_question: str,
     question_id: str,
@@ -1065,11 +1008,11 @@ def build_gap_closure_messages(
     ]
 
 
-def build_subreport_flow_contract(
+def _build_subreport_flow_contract(
     *,
     report_style: ReportStyle,
 ) -> str:
-    style_key = _normalize_style(report_style) or "explainer"
+    style_key = report_style
     if style_key == "decision":
         return (
             "Section flow target:\n"
@@ -1098,7 +1041,7 @@ def build_subreport_flow_contract(
     )
 
 
-def build_subreport_messages(
+def _build_subreport_messages(
     *,
     target_output_language: str,
     target_output_language_label: str,
@@ -1109,9 +1052,9 @@ def build_subreport_messages(
     require_insight_card: bool,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = build_style_overlay(stage="subreport", style=report_style)
+    style_overlay = _build_style_overlay(stage="subreport", style=report_style)
     style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
-    flow_contract = build_subreport_flow_contract(
+    flow_contract = _build_subreport_flow_contract(
         report_style=report_style,
     )
     system_contract = (
@@ -1156,7 +1099,7 @@ def build_subreport_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
                 style_overlay=style_overlay,
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
@@ -1184,7 +1127,7 @@ def build_subreport_messages(
     ]
 
 
-def build_render_architect_messages(
+def _build_render_architect_messages(
     *,
     target_output_language: str,
     target_output_language_label: str,
@@ -1195,7 +1138,7 @@ def build_render_architect_messages(
     report_style: ReportStyle,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = build_style_overlay(stage="render_architect", style=report_style)
+    style_overlay = _build_style_overlay(stage="render_architect", style=report_style)
     style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
     scope_lock_contract = research_mode_scope_lock_contract(
         mode_key=mode_depth_profile,
@@ -1235,7 +1178,7 @@ def build_render_architect_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
                 style_overlay=style_overlay,
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
@@ -1262,7 +1205,7 @@ def build_render_architect_messages(
     ]
 
 
-def build_render_writer_messages(
+def _build_render_writer_messages(
     *,
     target_output_language: str,
     target_output_language_label: str,
@@ -1277,7 +1220,7 @@ def build_render_writer_messages(
     section_plan_markdown: str,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = build_style_overlay(stage="render_writer", style=report_style)
+    style_overlay = _build_style_overlay(stage="render_writer", style=report_style)
     style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
     scope_lock_contract = research_mode_scope_lock_contract(
         mode_key=mode_depth_profile,
@@ -1320,7 +1263,7 @@ def build_render_writer_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
                 style_overlay=style_overlay,
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
@@ -1357,7 +1300,7 @@ def build_render_writer_messages(
     ]
 
 
-def build_render_structured_messages(
+def _build_render_structured_messages(
     *,
     target_output_language: str,
     target_output_language_label: str,
@@ -1365,7 +1308,7 @@ def build_render_structured_messages(
     report_style: ReportStyle,
     context_packet_markdown: str,
 ) -> list[dict[str, str]]:
-    style_overlay = build_style_overlay(stage="render_structured", style=report_style)
+    style_overlay = _build_style_overlay(stage="render_structured", style=report_style)
     style_lock_line = f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
     system_contract = (
         "Role: Structured Research Synthesizer.\n"
@@ -1383,7 +1326,7 @@ def build_render_structured_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(
+            "content": _compose_system_prompt(
                 base_contract=system_contract,
                 style_overlay=style_overlay,
                 universal_guardrails=UNIVERSAL_GUARDRAILS,
@@ -1401,7 +1344,7 @@ def build_render_structured_messages(
     ]
 
 
-def build_density_gate_messages(
+def _build_density_gate_messages(
     *,
     target_output_language: str,
     current_utc_date: str,
@@ -1474,11 +1417,527 @@ def build_final_language_repair_messages(
     ]
 
 
+def build_theme_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    now_utc: datetime,
+    card_cap: int,
+    report_style: ReportStyle,
+) -> list[dict[str, str]]:
+    budget = ctx.runtime.budget
+    mode_depth = ctx.runtime.mode_depth
+    return _build_theme_messages(
+        theme=ctx.request.themes,
+        search_mode=ctx.request.search_mode,
+        mode_depth_profile=mode_depth.mode_key,
+        current_utc_timestamp=now_utc.isoformat(),
+        current_utc_date=now_utc.date().isoformat(),
+        max_rounds=budget.max_rounds,
+        max_search_calls=budget.max_search_calls,
+        max_queries_per_round=budget.max_queries_per_round,
+        card_cap=card_cap,
+        hinted_style=report_style,
+    )
+
+
+def build_plan_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    candidate_queries: list[str],
+    core_question: str,
+    now_utc: datetime,
+    last_round_candidates: list[ResearchLinkCandidate],
+) -> list[dict[str, str]]:
+    budget = ctx.runtime.budget
+    mode_depth = ctx.runtime.mode_depth
+    output_language = _resolve_output_language_from_ctx(ctx)
+    search_language = _resolve_search_language_from_ctx(ctx)
+    round_index = ctx.runtime.round_index
+    last_round_candidates_markdown = render_link_candidates_markdown(
+        last_round_candidates,
+        max_pages=max(1, mode_depth.explore_target_pages_per_round),
+        max_links_per_page=6,
+    )
+    return _build_plan_messages(
+        theme=ctx.request.themes,
+        core_question=core_question,
+        report_style=ctx.plan.theme_plan.report_style,
+        mode_depth_profile=mode_depth.mode_key,
+        round_index=round_index,
+        current_utc_timestamp=now_utc.isoformat(),
+        current_utc_date=now_utc.date().isoformat(),
+        required_search_language=search_language,
+        required_output_language=output_language,
+        required_output_language_label=output_language,
+        theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
+        previous_rounds_markdown=render_rounds_markdown(ctx.rounds, limit=3),
+        candidate_queries_markdown=render_queries_markdown(candidate_queries),
+        required_entities=list(ctx.plan.theme_plan.required_entities),
+        search_calls_remaining=max(
+            0,
+            budget.max_search_calls - ctx.runtime.search_calls,
+        ),
+        fetch_calls_remaining=max(
+            0,
+            budget.max_fetch_calls - ctx.runtime.fetch_calls,
+        ),
+        max_queries_this_round=budget.max_queries_per_round,
+        allow_explore=_can_attempt_explore(
+            ctx=ctx,
+            round_index=round_index,
+            last_round_candidates=last_round_candidates,
+        ),
+        explore_target_pages_per_round=mode_depth.explore_target_pages_per_round,
+        explore_links_per_page=mode_depth.explore_links_per_page,
+        last_round_link_candidates_markdown=last_round_candidates_markdown,
+    )
+
+
+def build_link_picker_prompt_messages(
+    *,
+    core_question: str,
+    report_style: ReportStyle,
+    mode_depth_profile: str,
+    current_utc_date: str,
+    source_id: int,
+    source_url: str,
+    source_title: str,
+    max_links_to_select: int,
+    candidate_links_markdown: str,
+) -> list[dict[str, str]]:
+    return _build_link_picker_messages(
+        core_question=core_question,
+        report_style=report_style,
+        mode_depth_profile=mode_depth_profile,
+        current_utc_date=current_utc_date,
+        source_id=source_id,
+        source_url=source_url,
+        source_title=source_title,
+        max_links_to_select=max_links_to_select,
+        candidate_links_markdown=candidate_links_markdown,
+    )
+
+
+def build_query_language_repair_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    jobs: list[ResearchSearchJob],
+    search_language: str,
+    now_utc: datetime,
+) -> list[dict[str, str]]:
+    output_language = normalize_language_code(
+        ctx.plan.theme_plan.output_language or ctx.plan.theme_plan.input_language,
+        default="other",
+    )
+    current_jobs = [
+        {
+            "query": item.query,
+            "mode": item.mode,
+            "additional_queries": list(item.additional_queries),
+            "intent": item.intent,
+        }
+        for item in jobs
+    ]
+    return _build_query_language_repair_messages(
+        current_utc_date=now_utc.date().isoformat(),
+        core_question=_resolve_core_question_from_ctx(ctx),
+        required_search_language=search_language,
+        required_output_language=output_language,
+        current_search_jobs_json=json.dumps(current_jobs, ensure_ascii=False),
+    )
+
+
+def build_overview_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    sources: list[ResearchSource],
+    max_overview_chars: int,
+    now_utc: datetime,
+) -> list[dict[str, str]]:
+    output_language = _resolve_output_language_from_ctx(ctx)
+    return _build_overview_messages(
+        theme=ctx.request.themes,
+        core_question=_resolve_core_question_from_ctx(ctx),
+        report_style=ctx.plan.theme_plan.report_style,
+        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        round_index=ctx.current_round.round_index if ctx.current_round else 0,
+        current_utc_timestamp=now_utc.isoformat(),
+        current_utc_date=now_utc.date().isoformat(),
+        required_output_language=output_language,
+        required_output_language_label=output_language,
+        theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
+        previous_rounds_markdown=render_rounds_markdown(ctx.rounds, limit=3),
+        required_entities=list(ctx.plan.theme_plan.required_entities),
+        source_overview_packet=build_overview_packet(
+            sources=sources,
+            max_overview_chars=max_overview_chars,
+        ),
+    )
+
+
+def build_content_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    selected_sources: list[ResearchSource],
+    source_ids: list[int],
+    max_chars: int,
+    now_utc: datetime,
+) -> list[dict[str, str]]:
+    output_language = _resolve_output_language_from_ctx(ctx)
+    return _build_content_messages(
+        theme=ctx.request.themes,
+        core_question=_resolve_core_question_from_ctx(ctx),
+        report_style=ctx.plan.theme_plan.report_style,
+        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        round_index=ctx.current_round.round_index if ctx.current_round else 0,
+        current_utc_timestamp=now_utc.isoformat(),
+        current_utc_date=now_utc.date().isoformat(),
+        required_output_language=output_language,
+        required_output_language_label=output_language,
+        theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
+        overview_review_markdown=render_overview_review_markdown(
+            ctx.work.overview_review
+        ),
+        required_entities=list(ctx.plan.theme_plan.required_entities),
+        source_content_packet=build_content_packet(
+            sources=selected_sources,
+            source_ids=source_ids,
+            max_chars=max_chars,
+        ),
+    )
+
+
+def build_decide_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+) -> list[dict[str, str]]:
+    round_state = ctx.current_round
+    if round_state is None:
+        return []
+    return _build_decide_signal_messages(
+        core_question=_resolve_core_question_from_ctx(ctx),
+        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        confidence=round_state.confidence,
+        coverage_ratio=round_state.coverage_ratio,
+        unresolved_conflicts=round_state.unresolved_conflicts,
+        critical_gaps=round_state.critical_gaps,
+        missing_entities=list(round_state.missing_entities),
+        search_remaining=max(
+            0,
+            ctx.runtime.budget.max_search_calls - ctx.runtime.search_calls,
+        ),
+        fetch_remaining=max(
+            0,
+            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
+        ),
+    )
+
+
+def build_track_orchestrator_prompt_messages(
+    *,
+    root: ResearchStepContext,
+    track_map: dict[str, ResearchStepContext],
+) -> list[dict[str, str]]:
+    budget = root.runtime.budget
+    return _build_track_orchestrator_messages(
+        mode_depth_profile=root.runtime.mode_depth.mode_key,
+        core_question=_resolve_core_question_from_ctx(root),
+        search_remaining=max(
+            0,
+            budget.max_search_calls - root.runtime.search_calls,
+        ),
+        fetch_remaining=max(
+            0,
+            budget.max_fetch_calls - root.runtime.fetch_calls,
+        ),
+        track_snapshots_markdown=render_track_snapshot_markdown(track_map),
+    )
+
+
+def build_gap_closure_prompt_messages(
+    *,
+    card: ResearchQuestionCard,
+    track_ctx: ResearchStepContext,
+    pass_index: int,
+) -> list[dict[str, str]]:
+    latest = _latest_round_from_track(track_ctx)
+    return _build_gap_closure_messages(
+        core_question=_resolve_core_question_from_ctx(track_ctx) or card.question,
+        question_id=card.question_id,
+        pass_index=pass_index,
+        confidence=float(latest.confidence) if latest is not None else 0.0,
+        coverage_ratio=float(latest.coverage_ratio) if latest is not None else 0.0,
+        unresolved_conflicts=latest.unresolved_conflicts if latest is not None else 0,
+        critical_gaps=latest.critical_gaps if latest is not None else 0,
+        missing_entities=list(latest.missing_entities) if latest is not None else [],
+        round_notes_markdown=render_track_snapshot_markdown(
+            {card.question_id: track_ctx}
+        ),
+    )
+
+
+def build_subreport_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    target_language: str,
+    now_utc: datetime,
+    source_evidence: list[ResearchSource],
+    source_evidence_max_chars: int,
+    notes: list[str],
+    require_insight_card: bool,
+) -> list[dict[str, str]]:
+    report_style = ctx.plan.theme_plan.report_style
+    return _build_subreport_messages(
+        target_output_language=target_language,
+        target_output_language_label=target_language,
+        current_utc_date=now_utc.date().isoformat(),
+        core_question=_resolve_core_question_from_ctx(ctx),
+        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        report_style=report_style,
+        require_insight_card=require_insight_card,
+        context_packet_markdown=build_subreport_context_packet_markdown(
+            theme=ctx.request.themes,
+            core_question=_resolve_core_question_from_ctx(ctx),
+            report_style=report_style,
+            target_output_language=target_language,
+            utc_timestamp=now_utc.isoformat(),
+            utc_date=now_utc.date().isoformat(),
+            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
+            rounds=list(ctx.rounds),
+            source_evidence=source_evidence,
+            source_evidence_max_chars=source_evidence_max_chars,
+            notes=notes,
+            subreport_objective=_subreport_objective_for_style(
+                report_style=report_style
+            ),
+        ),
+    )
+
+
+def build_render_architect_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    target_language: str,
+    now_utc: datetime,
+) -> list[dict[str, str]]:
+    return _build_render_architect_messages(
+        target_output_language=target_language,
+        target_output_language_label=target_language,
+        current_utc_date=now_utc.date().isoformat(),
+        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        task_intent=_resolve_task_intent_value(ctx.plan.theme_plan.task_intent),
+        complexity_tier=_resolve_task_complexity_value(
+            ctx.plan.theme_plan.complexity_tier
+        ),
+        report_style=ctx.plan.theme_plan.report_style,
+        context_packet_markdown=_build_render_context_packet_markdown(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+        ),
+    )
+
+
+def build_render_writer_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    target_language: str,
+    now_utc: datetime,
+    architect_output: RenderArchitectOutput,
+    section: RenderArchitectSectionPlan,
+) -> list[dict[str, str]]:
+    section_subhead = section.subhead
+    return _build_render_writer_messages(
+        target_output_language=target_language,
+        target_output_language_label=target_language,
+        current_utc_date=now_utc.date().isoformat(),
+        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        task_intent=_resolve_task_intent_value(ctx.plan.theme_plan.task_intent),
+        complexity_tier=_resolve_task_complexity_value(
+            ctx.plan.theme_plan.complexity_tier
+        ),
+        report_style=ctx.plan.theme_plan.report_style,
+        section_subhead=section_subhead,
+        section_prefix_h2=f"## {section_subhead or 'Section'}",
+        all_section_plan_markdown=render_architect_plan_markdown(architect_output),
+        section_plan_markdown=render_section_plan_markdown(section),
+        context_packet_markdown=_build_render_context_packet_markdown(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+        ),
+    )
+
+
+def build_render_structured_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    target_language: str,
+    now_utc: datetime,
+) -> list[dict[str, str]]:
+    return _build_render_structured_messages(
+        target_output_language=target_language,
+        target_output_language_label=target_language,
+        current_utc_date=now_utc.date().isoformat(),
+        report_style=ctx.plan.theme_plan.report_style,
+        context_packet_markdown=_build_render_context_packet_markdown(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+        ),
+    )
+
+
+def build_density_gate_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    markdown: str,
+    target_language: str,
+    now_utc: datetime,
+    pass_index: int,
+) -> list[dict[str, str]]:
+    return _build_density_gate_messages(
+        target_output_language=target_language,
+        current_utc_date=now_utc.date().isoformat(),
+        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        pass_index=pass_index,
+        context_packet_markdown=_build_render_context_packet_markdown(
+            ctx=ctx,
+            target_language=target_language,
+            now_utc=now_utc,
+        ),
+        current_markdown=markdown,
+    )
+
+
+def _build_render_context_packet_markdown(
+    *,
+    ctx: ResearchStepContext,
+    target_language: str,
+    now_utc: datetime,
+) -> str:
+    mode_depth = ctx.runtime.mode_depth
+    return build_render_final_context_packet_markdown(
+        theme=_resolve_core_question_from_ctx(ctx) or ctx.request.themes,
+        target_output_language=target_language,
+        mode_depth_profile=mode_depth.mode_key,
+        utc_timestamp=now_utc.isoformat(),
+        utc_date=now_utc.date().isoformat(),
+        theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
+        question_cards=[
+            item.model_copy(deep=True) for item in ctx.parallel.question_cards
+        ],
+        track_results=[
+            item.model_copy(deep=True) for item in ctx.parallel.track_results
+        ],
+        render_objective=_render_objective_for_mode(mode_key=mode_depth.mode_key),
+    )
+
+
 def _normalize_style(raw_style: object | None) -> ReportStyle | None:
     token = str(raw_style).strip().casefold()
     if token not in _STYLE_VALUES:
         return None
     return token  # type: ignore[return-value]
+
+
+def _resolve_core_question_from_ctx(ctx: ResearchStepContext) -> str:
+    return ctx.plan.theme_plan.core_question or ctx.request.themes
+
+
+def _resolve_output_language_from_ctx(ctx: ResearchStepContext) -> str:
+    return ctx.plan.theme_plan.output_language or "en"
+
+
+def _resolve_search_language_from_ctx(ctx: ResearchStepContext) -> str:
+    return (
+        ctx.plan.theme_plan.search_language
+        or ctx.plan.theme_plan.input_language
+        or "en"
+    )
+
+
+def _latest_round_from_track(
+    track_ctx: ResearchStepContext,
+) -> ResearchRoundState | None:
+    if track_ctx.rounds:
+        return track_ctx.rounds[-1]
+    return track_ctx.current_round
+
+
+def _can_attempt_explore(
+    *,
+    ctx: ResearchStepContext,
+    round_index: int,
+    last_round_candidates: list[ResearchLinkCandidate],
+) -> bool:
+    if round_index <= 1:
+        return False
+    if ctx.runtime.budget.max_fetch_calls <= ctx.runtime.fetch_calls:
+        return False
+    return len(last_round_candidates) > 0
+
+
+def _subreport_objective_for_style(*, report_style: ReportStyle) -> str:
+    if report_style == "decision":
+        return (
+            "Produce a decision-focused subreport with scenario-fit recommendations, "
+            "trade-offs, and explicit risk triggers."
+        )
+    if report_style == "execution":
+        return (
+            "Produce an execution-focused subreport with prerequisites, step sequence, "
+            "validation criteria, and failure handling boundaries."
+        )
+    return (
+        "Produce an explainer-focused subreport that clarifies mechanisms, "
+        "boundary conditions, and practical understanding."
+    )
+
+
+def _render_objective_for_mode(*, mode_key: str) -> str:
+    mode_name = mode_key.casefold()
+    if mode_name == "research-fast":
+        return (
+            "Produce a concise synthesis that answers the theme directly with only "
+            "the highest-impact findings."
+        )
+    if mode_name == "research-pro":
+        return (
+            "Answer the core user task directly first, then expand to boundary "
+            "conditions, tradeoffs, and action-ready implications."
+        )
+    return (
+        "Answer the core user task directly first, then provide a stable "
+        "high-density synthesis with clear conclusions, conflicts, uncertainty "
+        "boundaries, and actionable implications."
+    )
+
+
+def _resolve_task_intent_value(raw: TaskIntent | str | None) -> TaskIntent:
+    token = (raw or "").casefold().replace("-", "_")
+    mapping: dict[str, TaskIntent] = {
+        "how_to": "how_to",
+        "howto": "how_to",
+        "comparison": "comparison",
+        "compare": "comparison",
+        "explainer": "explainer",
+        "diagnosis": "diagnosis",
+        "other": "other",
+    }
+    return mapping.get(token, "other")
+
+
+def _resolve_task_complexity_value(
+    raw: TaskComplexity | str | None,
+) -> TaskComplexity:
+    token = (raw or "").casefold()
+    mapping: dict[str, TaskComplexity] = {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+    }
+    return mapping.get(token, "medium")
 
 
 _NONE_BULLET = ["  - (none)"]
@@ -2320,44 +2779,20 @@ def _render_track_results_markdown(track_results: list[ResearchTrackResult]) -> 
 
 
 __all__ = [
-    "PromptStage",
-    "UNIVERSAL_GUARDRAILS",
-    "UNIVERSAL_PRIVACY_GUARDRAILS",
-    "UNIVERSAL_QUALITY_GUARDRAILS",
-    "build_content_packet",
-    "build_content_messages",
-    "build_decide_signal_messages",
+    "build_content_prompt_messages",
+    "build_decide_prompt_messages",
     "build_final_language_repair_messages",
-    "build_density_gate_messages",
-    "build_gap_closure_messages",
-    "build_link_picker_messages",
-    "build_overview_packet",
-    "build_overview_messages",
-    "build_plan_messages",
-    "build_query_language_repair_messages",
-    "build_render_final_context_packet_markdown",
-    "build_render_architect_messages",
-    "build_render_structured_messages",
-    "build_render_writer_messages",
-    "build_subreport_context_packet_markdown",
-    "build_subreport_flow_contract",
-    "build_subreport_messages",
-    "build_style_overlay",
-    "build_theme_messages",
-    "build_track_orchestrator_messages",
-    "compose_system_prompt",
-    "infer_report_style_from_theme",
-    "mode_depth_planning_contract",
+    "build_density_gate_prompt_messages",
+    "build_gap_closure_prompt_messages",
+    "build_link_picker_prompt_messages",
+    "build_overview_prompt_messages",
+    "build_plan_prompt_messages",
+    "build_query_language_repair_prompt_messages",
+    "build_render_architect_prompt_messages",
+    "build_render_structured_prompt_messages",
+    "build_render_writer_prompt_messages",
+    "build_subreport_prompt_messages",
+    "build_theme_prompt_messages",
+    "build_track_orchestrator_prompt_messages",
     "normalize_block_text",
-    "render_architect_plan_markdown",
-    "render_link_candidates_markdown",
-    "render_overview_review_markdown",
-    "render_queries_markdown",
-    "render_question_cards_markdown",
-    "render_rounds_markdown",
-    "render_section_plan_markdown",
-    "render_theme_plan_markdown",
-    "render_track_snapshot_markdown",
-    "resolve_report_style",
-    "theme_depth_contract",
 ]

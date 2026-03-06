@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 from serpsage.models.pipeline import (
@@ -24,13 +24,7 @@ from serpsage.steps.research.language import (
     normalize_language_code,
     route_search_language,
 )
-from serpsage.steps.research.prompt import (
-    build_theme_messages as build_theme_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    infer_report_style_from_theme,
-    resolve_report_style,
-)
+from serpsage.steps.research.prompt import build_theme_prompt_messages
 from serpsage.steps.research.schema import build_theme_schema
 from serpsage.steps.research.utils import (
     merge_strings,
@@ -41,6 +35,8 @@ from serpsage.steps.research.utils import (
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
+
+_STYLE_VALUES: set[str] = {"decision", "explainer", "execution"}
 
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
@@ -55,7 +51,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         mode_depth = ctx.runtime.mode_depth
         prompt_card_cap = max(1, mode_depth.max_question_cards_effective)
         seed_limit = max(6, ctx.runtime.budget.max_queries_per_round * 3)
-        fallback_report_style = infer_report_style_from_theme(ctx.request.themes)
+        fallback_report_style = self._resolve_report_style(theme=ctx.request.themes)
         fallback_input_language = detect_input_language(ctx.request.themes)
         fallback_search_language = route_search_language(
             theme=ctx.request.themes,
@@ -90,8 +86,8 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         try:
             chat_result = await self._llm.create(
                 model=model,
-                messages=self._build_theme_messages(
-                    ctx,
+                messages=build_theme_prompt_messages(
+                    ctx=ctx,
                     now_utc=now_utc,
                     card_cap=prompt_card_cap,
                     report_style=fallback_report_style,
@@ -131,9 +127,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 theme=resolved_theme,
                 input_language=input_language,
             )
-        report_style = resolve_report_style(
-            raw_style=payload.report_style,
+        report_style = self._resolve_report_style(
             theme=resolved_theme,
+            raw_style=payload.report_style,
         )
         raw_style_token = payload.report_style.strip().casefold()
         style_fallback_used = raw_style_token != report_style
@@ -286,29 +282,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             },
         )
         return ctx
-
-    def _build_theme_messages(
-        self,
-        ctx: ResearchStepContext,
-        *,
-        now_utc: datetime,
-        card_cap: int,
-        report_style: ReportStyle,
-    ) -> list[dict[str, str]]:
-        budget = ctx.runtime.budget
-        mode_depth = ctx.runtime.mode_depth
-        return build_theme_prompt_messages(
-            theme=ctx.request.themes,
-            search_mode=ctx.request.search_mode,
-            mode_depth_profile=mode_depth.mode_key,
-            current_utc_timestamp=now_utc.isoformat(),
-            current_utc_date=now_utc.date().isoformat(),
-            max_rounds=budget.max_rounds,
-            max_search_calls=budget.max_search_calls,
-            max_queries_per_round=budget.max_queries_per_round,
-            card_cap=card_cap,
-            hinted_style=report_style,
-        )
 
     def _normalize_question_cards(
         self,
@@ -642,6 +615,59 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         mode_depth.content_source_chars = content_source_chars
         mode_depth.explore_target_pages_per_round = explore_target_pages_per_round
         mode_depth.explore_links_per_page = explore_links_per_page
+
+    def _resolve_report_style(
+        self,
+        *,
+        theme: str,
+        raw_style: str | None = None,
+    ) -> ReportStyle:
+        candidate = str(raw_style).strip().casefold()
+        if candidate in _STYLE_VALUES:
+            return cast("ReportStyle", candidate)
+        token = theme.strip().casefold()
+        if not token:
+            return "explainer"
+        decision_hints = (
+            "vs",
+            "versus",
+            "compare",
+            "comparison",
+            "choice",
+            "choose",
+            "select",
+            "selection",
+            "best",
+            "better",
+            "recommend",
+            "which one",
+            "trade-off",
+            "tradeoff",
+        )
+        execution_hints = (
+            "how do i",
+            "how to",
+            "step by step",
+            "step",
+            "guide",
+            "workflow",
+            "implementation",
+            "implement",
+            "execute",
+            "playbook",
+            "runbook",
+            "operational",
+            "operation",
+            "deploy",
+            "deployment",
+            "migration",
+            "rollout",
+        )
+        if any(item in token for item in decision_hints):
+            return "decision"
+        if any(item in token for item in execution_hints):
+            return "execution"
+        return "explainer"
 
 
 __all__ = ["ResearchThemeStep"]

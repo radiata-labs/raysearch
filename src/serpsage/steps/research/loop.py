@@ -19,13 +19,8 @@ from serpsage.models.pipeline import (
 from serpsage.models.research import TrackInsightCardPayload
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import (
-    build_gap_closure_messages as build_gap_closure_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    build_track_orchestrator_messages as build_track_orchestrator_prompt_messages,
-)
-from serpsage.steps.research.prompt import (
-    render_track_snapshot_markdown,
+    build_gap_closure_prompt_messages,
+    build_track_orchestrator_prompt_messages,
 )
 from serpsage.steps.research.utils import (
     merge_strings,
@@ -518,7 +513,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         try:
             result = await self._llm.create(
                 model=model,
-                messages=self._build_track_orchestrator_messages(
+                messages=build_track_orchestrator_prompt_messages(
                     root=root,
                     track_map=track_map,
                 ),
@@ -540,28 +535,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 },
             )
             return None
-
-    def _build_track_orchestrator_messages(
-        self,
-        *,
-        root: ResearchStepContext,
-        track_map: dict[str, ResearchStepContext],
-    ) -> list[dict[str, str]]:
-        budget = root.runtime.budget
-        snapshot_markdown = render_track_snapshot_markdown(track_map)
-        return build_track_orchestrator_prompt_messages(
-            mode_depth_profile=root.runtime.mode_depth.mode_key,
-            core_question=self._resolve_core_question(root),
-            search_remaining=max(
-                0,
-                budget.max_search_calls - root.runtime.search_calls,
-            ),
-            fetch_remaining=max(
-                0,
-                budget.max_fetch_calls - root.runtime.fetch_calls,
-            ),
-            track_snapshots_markdown=snapshot_markdown,
-        )
 
     async def _run_gap_closure_passes(
         self,
@@ -667,8 +640,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         try:
             result = await self._llm.create(
                 model=model,
-                messages=self._build_gap_closure_messages(
-                    root=root,
+                messages=build_gap_closure_prompt_messages(
                     card=card,
                     track_ctx=track_ctx,
                     pass_index=pass_index,
@@ -698,35 +670,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 },
             )
         return fallback_queries
-
-    def _build_gap_closure_messages(
-        self,
-        *,
-        root: ResearchStepContext,
-        card: ResearchQuestionCard,
-        track_ctx: ResearchStepContext,
-        pass_index: int,
-    ) -> list[dict[str, str]]:
-        latest = self._latest_round(track_ctx)
-        return build_gap_closure_prompt_messages(
-            core_question=self._resolve_core_question(
-                track_ctx, fallback=card.question
-            ),
-            question_id=card.question_id,
-            pass_index=pass_index,
-            confidence=float(latest.confidence) if latest is not None else 0.0,
-            coverage_ratio=float(latest.coverage_ratio) if latest is not None else 0.0,
-            unresolved_conflicts=(
-                latest.unresolved_conflicts if latest is not None else 0
-            ),
-            critical_gaps=latest.critical_gaps if latest is not None else 0,
-            missing_entities=list(latest.missing_entities)
-            if latest is not None
-            else [],
-            round_notes_markdown=render_track_snapshot_markdown(
-                {card.question_id: track_ctx}
-            ),
-        )
 
     async def _commit_track_usage(
         self,
