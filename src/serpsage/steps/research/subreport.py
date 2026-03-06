@@ -65,9 +65,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             target_language=target_language,
             now_utc=now_utc,
             source_evidence=self._select_sources_for_render(ctx),
-            source_evidence_max_chars=max(
-                1, ctx.runtime.mode_depth.content_source_chars
-            ),
+            source_evidence_max_chars=max(1, ctx.runtime.mode_depth.source_chars),
             notes=self._collect_recent_notes(ctx, limit=12),
             require_insight_card=require_insight_card,
         )
@@ -408,7 +406,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
     ) -> list[ResearchSource]:
         mode_depth = ctx.runtime.mode_depth
-        limit = max(1, mode_depth.content_source_topk)
+        limit = max(1, mode_depth.source_topk)
         latest_round_index = 0
         if ctx.rounds:
             latest_round_index = ctx.rounds[-1].round_index

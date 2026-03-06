@@ -184,10 +184,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         )
         if not selected_urls:
             return False
-        fetch_cap = min(
-            remaining_fetch_budget,
-            ctx.runtime.budget.max_fetch_per_round,
-        )
+        fetch_cap = remaining_fetch_budget
         if fetch_cap <= 0:
             return False
         selected_urls = selected_urls[:fetch_cap]
@@ -625,6 +622,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         urls: list[str],
     ) -> list[FetchStepContext]:
+        max_chars = ctx.runtime.mode_depth.content_chars
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
         request = FetchRequest(
             urls=list(urls),
@@ -632,6 +630,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             crawl_timeout=30.0,
             content=FetchContentRequest(
                 detail="full",
+                max_chars=max_chars,
                 include_markdown_links=False,
                 include_html_tags=False,
             ),

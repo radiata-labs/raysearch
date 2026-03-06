@@ -1551,7 +1551,6 @@ def build_overview_prompt_messages(
     *,
     ctx: ResearchStepContext,
     sources: list[ResearchSource],
-    max_overview_chars: int,
     now_utc: datetime,
 ) -> list[dict[str, str]]:
     output_language = _resolve_output_language_from_ctx(ctx)
@@ -1568,10 +1567,7 @@ def build_overview_prompt_messages(
         theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
         previous_rounds_markdown=render_rounds_markdown(ctx.rounds, limit=3),
         required_entities=list(ctx.plan.theme_plan.required_entities),
-        source_overview_packet=build_overview_packet(
-            sources=sources,
-            max_overview_chars=max_overview_chars,
-        ),
+        source_overview_packet=build_overview_packet(sources=sources),
     )
 
 
@@ -1580,7 +1576,6 @@ def build_content_prompt_messages(
     ctx: ResearchStepContext,
     selected_sources: list[ResearchSource],
     source_ids: list[int],
-    max_chars: int,
     now_utc: datetime,
 ) -> list[dict[str, str]]:
     output_language = _resolve_output_language_from_ctx(ctx)
@@ -1602,7 +1597,6 @@ def build_content_prompt_messages(
         source_content_packet=build_content_packet(
             sources=selected_sources,
             source_ids=source_ids,
-            max_chars=max_chars,
         ),
     )
 
@@ -2201,9 +2195,7 @@ def render_link_candidates_markdown(
     return "\n".join(lines).strip()
 
 
-def build_overview_packet(
-    *, sources: list[ResearchSource], max_overview_chars: int = 5000
-) -> str:
+def build_overview_packet(*, sources: list[ResearchSource]) -> str:
     blocks: list[str] = []
     for source in sorted(sources, key=lambda item: item.source_id):
         source_title = source.title
@@ -2214,8 +2206,6 @@ def build_overview_packet(
             title=source_title,
         )
         overview_text = source.overview
-        if len(overview_text) > max(1, max_overview_chars):
-            overview_text = overview_text[: max(1, max_overview_chars)]
         overview_lines = (overview_text or "(none)").split("\n")
         blocks.append(
             "\n".join(
@@ -2240,7 +2230,6 @@ def build_content_packet(
     *,
     sources: list[ResearchSource],
     source_ids: list[int],
-    max_chars: int,
 ) -> str:
     wanted = set(source_ids)
     blocks: list[str] = []
@@ -2248,11 +2237,6 @@ def build_content_packet(
         if source.source_id not in wanted:
             continue
         content = normalize_block_text(source.content)
-        if len(content) > max_chars:
-            content = _truncate_content_head_tail(
-                content=content,
-                max_chars=max_chars,
-            )
         content_lines = (content or "(empty)").split("\n")
         blocks.append(
             "\n".join(
@@ -2642,20 +2626,6 @@ def _infer_url_evidence_hint(*, url: str, title: str) -> str:
         seen.add(item)
         out.append(item)
     return ", ".join(out)
-
-
-def _truncate_content_head_tail(*, content: str, max_chars: int) -> str:
-    limit = max(1, max_chars)
-    if len(content) <= limit:
-        return content
-    marker = "\n...\n[content omitted]\n...\n"
-    if limit <= len(marker) + 80:
-        return content[:limit]
-    available = limit - len(marker)
-    head_len = max(40, int(available * 0.70))
-    tail_len = max(40, int(available - head_len))
-    clipped = f"{content[:head_len]}{marker}{content[-tail_len:]}"
-    return clipped[:limit]
 
 
 def _build_subreport_source_evidence(

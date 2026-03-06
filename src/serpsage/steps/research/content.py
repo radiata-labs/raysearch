@@ -43,15 +43,14 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
         mode_depth = ctx.runtime.mode_depth
-        content_topk = max(1, mode_depth.content_source_topk)
-        packet_max_chars = max(1000, mode_depth.content_source_chars)
+        source_topk = max(1, mode_depth.source_topk)
         source_ids = list(ctx.work.need_content_source_ids or [])
         if not source_ids:
             source_ids = list(ctx.current_round.context_source_ids or [])
         source_ids = sort_source_ids_by_score(
             ctx=ctx,
             source_ids=source_ids,
-        )[:content_topk]
+        )[:source_topk]
         if not source_ids:
             ctx.work.content_review = self._empty_review()
             return ctx
@@ -75,7 +74,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     ctx=ctx,
                     selected_sources=selected_sources,
                     source_ids=source_ids,
-                    max_chars=packet_max_chars,
                     now_utc=now_utc,
                 ),
                 response_format=ContentOutputPayload,
@@ -155,8 +153,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 "report_style_selected": report_style,
                 "style_applied_stage": "content",
                 "mode_depth_profile": mode_depth.mode_key,
-                "content_source_topk_effective": content_topk,
-                "content_source_chars_effective": packet_max_chars,
+                "source_topk_effective": source_topk,
             },
         )
         return ctx

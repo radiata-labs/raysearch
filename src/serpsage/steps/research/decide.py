@@ -45,9 +45,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         model_stop = overview_stop or content_stop or strategy == "stop-ready"
         confidence_ok = round_state.confidence >= budget.stop_confidence
         coverage_ok = round_state.coverage_ratio >= budget.min_coverage_ratio
-        conflict_ok = (
-            round_state.unresolved_conflicts <= budget.max_unresolved_conflicts
-        )
         gaps_ok = round_state.critical_gaps == 0
         required_entities = normalize_strings(
             ctx.plan.theme_plan.required_entities,
@@ -60,7 +57,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             model_stop
             and confidence_ok
             and coverage_ok
-            and conflict_ok
             and gaps_ok
             and entity_coverage_ok
         )
@@ -75,10 +71,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             )
         else:
             progress = (len(round_state.new_source_ids) > 0) or corpus_score_gain > 0.0
-        if progress:
-            ctx.runtime.no_progress_rounds = 0
-        else:
-            ctx.runtime.no_progress_rounds += 1
         llm_signal = await self._query_decide_signal(ctx=ctx)
         llm_prefers_continue = llm_signal is not None and (
             llm_signal.continue_research or llm_signal.high_yield_remaining
@@ -115,20 +107,12 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         fetch_exhausted = ctx.runtime.fetch_calls >= budget.max_fetch_calls
         can_search_now = (not search_exhausted) and (not fetch_exhausted)
         can_explore_without_search = self._can_continue_with_explore_only(ctx=ctx)
-        no_progress_threshold = max(
-            1,
-            ctx.runtime.mode_depth.no_progress_rounds_to_stop_effective,
-        )
         min_rounds_per_track = max(1, ctx.runtime.mode_depth.min_rounds_per_track)
         round_count_after_commit = len(ctx.rounds) + 1
         must_continue_for_min_rounds = round_count_after_commit < min_rounds_per_track
         if llm_prefers_continue and not next_queries and core_question:
             next_queries = [core_question]
-        allow_auto_seed = (
-            not multi_signal_stop
-            and ctx.runtime.no_progress_rounds < no_progress_threshold
-            and can_search_now
-        )
+        allow_auto_seed = not multi_signal_stop and can_search_now
         if allow_auto_seed and not next_queries and core_question:
             next_queries = [core_question]
         if not multi_signal_stop and not next_queries and progress and can_search_now:
@@ -138,8 +122,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         can_execute_next_round = (
             can_search_now and (len(next_queries) > 0)
         ) or can_explore_without_search
-        no_progress_stop_ready = ctx.runtime.no_progress_rounds >= no_progress_threshold
-        stop_readiness_high = multi_signal_stop or no_progress_stop_ready
+        stop_readiness_high = multi_signal_stop
         stop = False
         stop_reason = ""
         if (
@@ -178,8 +161,6 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 "llm_prefers_continue": llm_prefers_continue,
                 "min_rounds_per_track": min_rounds_per_track,
                 "must_continue_for_min_rounds": must_continue_for_min_rounds,
-                "no_progress_threshold": no_progress_threshold,
-                "no_progress_stop_ready": no_progress_stop_ready,
                 "stop_readiness_high": stop_readiness_high,
                 "can_search_now": can_search_now,
                 "can_explore_without_search": can_explore_without_search,

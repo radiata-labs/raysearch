@@ -214,6 +214,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 crawl_timeout=30.0,
                 content=FetchContentRequest(
                     detail="full",
+                    max_chars=ctx.runtime.mode_depth.content_chars,
                     include_markdown_links=False,
                     include_html_tags=False,
                 ),

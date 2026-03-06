@@ -244,10 +244,8 @@ class ResearchBudgetState(MutableModel):
     max_fetch_calls: int = 1
     max_results_per_search: int = 1
     max_queries_per_round: int = 1
-    max_fetch_per_round: int = 1
     stop_confidence: float = 0.80
     min_coverage_ratio: float = 0.80
-    max_unresolved_conflicts: int = 1
 
 
 class ResearchSource(MutableModel):
@@ -316,12 +314,9 @@ class ResearchModeDepthState(MutableModel):
     mode_key: Literal["research-fast", "research", "research-pro"] = "research"
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
-    no_progress_rounds_to_stop_effective: int = 2
-    gap_closure_passes: int = 1
-    density_gate_passes: int = 1
-    overview_source_topk: int = 20
-    content_source_topk: int = 10
-    content_source_chars: int = 10_000
+    source_topk: int = 20
+    source_chars: int = 180_000
+    content_chars: int = 10_000
     explore_target_pages_per_round: int = 3
     explore_links_per_page: int = 8
 
@@ -340,9 +335,6 @@ class ResearchRuntimeState(MutableModel):
     budget: ResearchBudgetState = Field(default_factory=ResearchBudgetState)
     search_calls: int = 0
     fetch_calls: int = 0
-    no_progress_rounds: int = 0
-    gap_closure_passes_applied: int = 0
-    density_gate_passes_applied: int = 0
     provider_language_param_applied: bool = False
     query_language_repair_applied: bool = False
     search_language_fallback_applied: bool = False

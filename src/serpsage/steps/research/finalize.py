@@ -41,8 +41,6 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                 "has_structured": ctx.output.structured is not None,
                 "report_style_selected": theme_plan.report_style,
                 "mode_depth_profile": mode_depth.mode_key,
-                "density_gate_passes_applied": ctx.runtime.density_gate_passes_applied,
-                "gap_closure_passes_applied": ctx.runtime.gap_closure_passes_applied,
                 "llm_orchestrator_enabled": mode_key != "research-fast",
                 "input_language": theme_plan.input_language,
                 "output_language": theme_plan.output_language,

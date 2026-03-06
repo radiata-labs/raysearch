@@ -18,15 +18,8 @@ from serpsage.models.pipeline import (
 )
 from serpsage.models.research import TrackInsightCardPayload
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt import (
-    build_gap_closure_prompt_messages,
-    build_track_orchestrator_prompt_messages,
-)
-from serpsage.steps.research.utils import (
-    merge_strings,
-    normalize_strings,
-    resolve_research_model,
-)
+from serpsage.steps.research.prompt import build_track_orchestrator_prompt_messages
+from serpsage.steps.research.utils import resolve_research_model
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
@@ -71,11 +64,6 @@ class _TrackOrchestratorOutputPayload(MutableModel):
         max_length=24,
     )
     rationale: str = ""
-
-
-class _GapClosureOutputPayload(MutableModel):
-    queries: list[str] = Field(default_factory=list, max_length=8)
-    objective: str = ""
 
 
 class ResearchLoopStep(StepBase[ResearchStepContext]):
@@ -222,16 +210,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                         reservation_state=reservation_state,
                         budget_lock=budget_lock,
                     )
-            local_ctx = await self._run_gap_closure_passes(
-                root=root,
-                card=card,
-                track_ctx=local_ctx,
-                track_map=track_map,
-                reservation_state=reservation_state,
-                orchestrator_state=orchestrator_state,
-                budget_lock=budget_lock,
-                orchestrator_lock=orchestrator_lock,
-            )
             if not local_ctx.runtime.stop:
                 local_ctx.runtime.stop = True
                 if self._global_budget_exhausted(root):
@@ -346,10 +324,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     )
                 fetch_grant = max(
                     1,
-                    min(
-                        remaining_fetch,
-                        root.runtime.budget.max_fetch_per_round,
-                    ),
+                    remaining_fetch,
                 )
                 reservation_state.fetch_reserved += fetch_grant
                 return _TrackAllocation(
@@ -536,141 +511,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             )
             return None
 
-    async def _run_gap_closure_passes(
-        self,
-        *,
-        root: ResearchStepContext,
-        card: ResearchQuestionCard,
-        track_ctx: ResearchStepContext,
-        track_map: dict[str, ResearchStepContext],
-        reservation_state: _BudgetReservationState,
-        orchestrator_state: _OrchestratorState,
-        budget_lock: anyio.Lock,
-        orchestrator_lock: anyio.Lock,
-    ) -> ResearchStepContext:
-        mode_depth = root.runtime.mode_depth
-        pass_cap = max(0, mode_depth.gap_closure_passes)
-        if pass_cap <= 0:
-            return track_ctx
-        local_ctx = track_ctx
-        for pass_index in range(pass_cap):
-            if self._global_budget_exhausted(root):
-                break
-            planned_queries = await self._plan_gap_closure_queries(
-                root=root,
-                card=card,
-                track_ctx=local_ctx,
-                pass_index=pass_index,
-            )
-            if not planned_queries:
-                break
-            local_ctx.plan.next_queries = list(planned_queries)
-            local_ctx.runtime.stop = False
-            local_ctx.runtime.stop_reason = ""
-            alloc = await self._reserve_track_allocation(
-                root=root,
-                track_ctx=local_ctx,
-                card=card,
-                track_map=track_map,
-                reservation_state=reservation_state,
-                orchestrator_state=orchestrator_state,
-                budget_lock=budget_lock,
-                orchestrator_lock=orchestrator_lock,
-            )
-            if self._allocation_blocked(alloc):
-                local_ctx.runtime.stop = True
-                local_ctx.runtime.stop_reason = "global_budget_exhausted"
-                break
-            before_search = local_ctx.runtime.search_calls
-            before_fetch = local_ctx.runtime.fetch_calls
-            delta_search = 0
-            delta_fetch = 0
-            try:
-                self._apply_track_round_budget(
-                    track_ctx=local_ctx,
-                    alloc=alloc,
-                    base_budget=root.runtime.budget,
-                )
-                local_ctx = await self._round_runner.run(local_ctx)
-                delta_search = max(0, local_ctx.runtime.search_calls - before_search)
-                delta_fetch = max(0, local_ctx.runtime.fetch_calls - before_fetch)
-            finally:
-                await self._commit_track_usage(
-                    root=root,
-                    alloc=alloc,
-                    delta_search=delta_search,
-                    delta_fetch=delta_fetch,
-                    reservation_state=reservation_state,
-                    budget_lock=budget_lock,
-                )
-            root.runtime.gap_closure_passes_applied += 1
-            await self.emit_tracking_event(
-                event_name="research.gap_closure.applied",
-                request_id=root.request_id,
-                stage="loop",
-                attrs={
-                    "question_id": card.question_id,
-                    "pass_index": pass_index + 1,
-                    "planned_queries": len(planned_queries),
-                },
-            )
-        return local_ctx
-
-    async def _plan_gap_closure_queries(
-        self,
-        *,
-        root: ResearchStepContext,
-        card: ResearchQuestionCard,
-        track_ctx: ResearchStepContext,
-        pass_index: int,
-    ) -> list[str]:
-        latest = self._latest_round(track_ctx)
-        core_question = self._resolve_core_question(track_ctx, fallback=card.question)
-        fallback_queries = self._fallback_gap_queries(
-            core_question=core_question,
-            missing_entities=(latest.missing_entities if latest is not None else []),
-            critical_gaps=(latest.critical_gaps if latest is not None else 0),
-            limit=track_ctx.runtime.budget.max_queries_per_round,
-        )
-        model = resolve_research_model(
-            ctx=root,
-            stage="plan",
-            fallback=self.settings.answer.plan.use_model,
-        )
-        try:
-            result = await self._llm.create(
-                model=model,
-                messages=build_gap_closure_prompt_messages(
-                    card=card,
-                    track_ctx=track_ctx,
-                    pass_index=pass_index,
-                ),
-                response_format=_GapClosureOutputPayload,
-                retries=self.settings.research.llm_self_heal_retries,
-            )
-            queries = self._normalize_queries(
-                result.data.queries,
-                limit=track_ctx.runtime.budget.max_queries_per_round,
-            )
-            if queries:
-                return queries
-        except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.gap_closure.error",
-                request_id=root.request_id,
-                stage="loop",
-                status="error",
-                error_code="research_gap_closure_plan_failed",
-                error_type=type(exc).__name__,
-                attrs={
-                    "question_id": card.question_id,
-                    "pass_index": pass_index + 1,
-                    "model": model,
-                    "message": str(exc),
-                },
-            )
-        return fallback_queries
-
     async def _commit_track_usage(
         self,
         *,
@@ -772,9 +612,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             budget=budget,
             search_calls=0,
             fetch_calls=0,
-            no_progress_rounds=0,
-            gap_closure_passes_applied=0,
-            density_gate_passes_applied=0,
             stop=False,
             stop_reason="",
             round_index=0,
@@ -829,10 +666,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         budget.max_queries_per_round = max(
             1, min(search_grant, alloc.max_queries_per_round)
         )
-        budget.max_fetch_per_round = fetch_grant
         budget.stop_confidence = base_budget.stop_confidence
         budget.min_coverage_ratio = base_budget.min_coverage_ratio
-        budget.max_unresolved_conflicts = base_budget.max_unresolved_conflicts
 
     async def _finalize_track(
         self,
@@ -973,31 +808,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
 
     def _orchestrator_enabled(self, ctx: ResearchStepContext) -> bool:
         return ctx.runtime.mode_depth.mode_key != "research-fast"
-
-    def _normalize_queries(self, raw: list[str], *, limit: int) -> list[str]:
-        return normalize_strings(raw, limit=max(1, limit))
-
-    def _fallback_gap_queries(
-        self,
-        *,
-        core_question: str,
-        missing_entities: list[str],
-        critical_gaps: int,
-        limit: int,
-    ) -> list[str]:
-        base = core_question
-        items = normalize_strings(missing_entities, limit=8)
-        candidates: list[str] = []
-        for entity in items:
-            if base:
-                candidates.append(f"{base} {entity}")
-            else:
-                candidates.append(entity)
-        if base and critical_gaps > 0:
-            candidates.append(f"{base} constraints edge cases latest")
-        if base:
-            candidates.append(base)
-        return merge_strings(candidates, [], limit=max(1, limit))
 
     def _resolve_core_question(
         self, track_ctx: ResearchStepContext, *, fallback: str = ""

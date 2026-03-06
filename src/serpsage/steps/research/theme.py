@@ -35,8 +35,17 @@ from serpsage.steps.research.utils import (
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
+    from serpsage.settings.models import ResearchModeSettings
 
 _STYLE_VALUES: set[str] = {"decision", "explainer", "execution"}
+_ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
+    "max_question_cards_effective",
+    "min_rounds_per_track",
+    "source_topk",
+    "content_source_chars",
+    "explore_target_pages_per_round",
+    "explore_links_per_page",
+)
 
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
@@ -254,8 +263,10 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "adaptive_applied": adaptive_applied,
                     "max_question_cards_effective": card_cap,
                     "min_rounds_per_track": mode_depth.min_rounds_per_track,
-                    "gap_closure_passes": mode_depth.gap_closure_passes,
-                    "density_gate_passes": mode_depth.density_gate_passes,
+                    "source_topk": mode_depth.source_topk,
+                    "explore_target_pages_per_round": (
+                        mode_depth.explore_target_pages_per_round
+                    ),
                 },
             )
         await self.emit_tracking_event(
@@ -544,77 +555,70 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         mode_key = mode_depth.mode_key
         if mode_key not in {"research", "research-pro"}:
             return False
-        if mode_key == "research":
-            if complexity_tier == "high":
-                return False
-            if complexity_tier == "low":
-                self._apply_mode_depth_overrides(
-                    mode_depth=mode_depth,
-                    max_question_cards_effective=2,
-                    min_rounds_per_track=1,
-                    gap_closure_passes=0,
-                    density_gate_passes=0,
-                    overview_source_topk=14,
-                    content_source_topk=9,
-                    content_source_chars=8_500,
-                    explore_target_pages_per_round=3,
-                    explore_links_per_page=7,
-                )
-                return True
-            self._apply_mode_depth_overrides(
-                mode_depth=mode_depth,
-                max_question_cards_effective=3,
-                min_rounds_per_track=2,
-                gap_closure_passes=0,
-                density_gate_passes=1,
-                overview_source_topk=16,
-                content_source_topk=10,
-                content_source_chars=9_000,
-                explore_target_pages_per_round=4,
-                explore_links_per_page=9,
-            )
-            return True
         if complexity_tier == "high":
             return False
-        if complexity_tier == "low":
-            self._apply_mode_depth_overrides(
-                mode_depth=mode_depth,
-                max_question_cards_effective=5,
-                min_rounds_per_track=3,
-                gap_closure_passes=1,
-                density_gate_passes=1,
-                overview_source_topk=24,
-                content_source_topk=17,
-                content_source_chars=13_500,
-                explore_target_pages_per_round=5,
-                explore_links_per_page=14,
+        current_profile = self._resolve_mode_profile(mode_key)
+        lower_profile = self._resolve_mode_profile(
+            "research-fast" if mode_key == "research" else "research"
+        )
+        if mode_key == "research":
+            low_profile = self._build_midpoint_profile(lower_profile, current_profile)
+            target_profile = (
+                low_profile
+                if complexity_tier == "low"
+                else self._build_midpoint_profile(low_profile, current_profile)
             )
-            return True
-        return False
+        else:
+            target_profile = (
+                lower_profile
+                if complexity_tier == "low"
+                else self._build_midpoint_profile(lower_profile, current_profile)
+            )
+        self._apply_mode_depth_overrides(
+            mode_depth=mode_depth,
+            profile=target_profile,
+        )
+        return True
 
     def _apply_mode_depth_overrides(
         self,
         *,
         mode_depth: ResearchModeDepthState,
-        max_question_cards_effective: int,
-        min_rounds_per_track: int,
-        gap_closure_passes: int,
-        density_gate_passes: int,
-        overview_source_topk: int,
-        content_source_topk: int,
-        content_source_chars: int,
-        explore_target_pages_per_round: int,
-        explore_links_per_page: int,
+        profile: ResearchModeSettings,
     ) -> None:
-        mode_depth.max_question_cards_effective = max_question_cards_effective
-        mode_depth.min_rounds_per_track = min_rounds_per_track
-        mode_depth.gap_closure_passes = gap_closure_passes
-        mode_depth.density_gate_passes = density_gate_passes
-        mode_depth.overview_source_topk = overview_source_topk
-        mode_depth.content_source_topk = content_source_topk
-        mode_depth.content_source_chars = content_source_chars
-        mode_depth.explore_target_pages_per_round = explore_target_pages_per_round
-        mode_depth.explore_links_per_page = explore_links_per_page
+        mode_depth.max_question_cards_effective = profile.max_question_cards_effective
+        mode_depth.min_rounds_per_track = profile.min_rounds_per_track
+        mode_depth.source_topk = profile.source_topk
+        mode_depth.content_chars = profile.content_chars
+        mode_depth.explore_target_pages_per_round = (
+            profile.explore_target_pages_per_round
+        )
+        mode_depth.explore_links_per_page = profile.explore_links_per_page
+
+    def _resolve_mode_profile(self, mode_key: str) -> ResearchModeSettings:
+        profiles: dict[str, ResearchModeSettings] = {
+            "research-fast": self.settings.research.research_fast,
+            "research": self.settings.research.research,
+            "research-pro": self.settings.research.research_pro,
+        }
+        return profiles[mode_key]
+
+    def _build_midpoint_profile(
+        self,
+        left: ResearchModeSettings,
+        right: ResearchModeSettings,
+    ) -> ResearchModeSettings:
+        updates = {
+            field_name: self._midpoint_int(
+                int(getattr(left, field_name)),
+                int(getattr(right, field_name)),
+            )
+            for field_name in _ADAPTIVE_DEPTH_FIELDS
+        }
+        return right.model_copy(update=updates)
+
+    def _midpoint_int(self, left: int, right: int) -> int:
+        return (int(left) + int(right)) // 2
 
     def _resolve_report_style(
         self,

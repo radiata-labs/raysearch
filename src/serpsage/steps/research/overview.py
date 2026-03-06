@@ -52,8 +52,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             ctx.current_round.context_source_ids = []
             return ctx
         mode_depth = ctx.runtime.mode_depth
-        overview_topk = max(1, mode_depth.overview_source_topk)
-        overview_chars = max(1000, mode_depth.content_source_chars)
+        source_topk = max(1, mode_depth.source_topk)
         (
             new_result_target_ratio,
             min_history_sources,
@@ -61,7 +60,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         context_source_ids = select_context_source_ids(
             ctx=ctx,
             round_index=ctx.current_round.round_index,
-            topk=overview_topk,
+            topk=source_topk,
             new_result_target_ratio=new_result_target_ratio,
             min_history_sources=min_history_sources,
         )
@@ -86,7 +85,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 messages=build_overview_prompt_messages(
                     ctx=ctx,
                     sources=sources,
-                    max_overview_chars=overview_chars,
                     now_utc=now_utc,
                 ),
                 response_format=OverviewOutputPayload,
@@ -182,8 +180,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 "report_style_selected": report_style,
                 "style_applied_stage": "overview",
                 "mode_depth_profile": mode_depth.mode_key,
-                "overview_context_topk_effective": overview_topk,
-                "overview_source_chars_effective": overview_chars,
+                "source_topk_effective": source_topk,
                 "overview_new_result_target_ratio": new_result_target_ratio,
                 "overview_min_history_sources": min_history_sources,
             },

@@ -194,18 +194,13 @@ class ResearchModeSettings(Model):
     max_fetch_calls: int = 24
     max_results_per_search: int = 6
     max_queries_per_round: int = 3
-    max_fetch_per_round: int = 6
     stop_confidence: float = 0.80
     min_coverage_ratio: float = 0.80
-    max_unresolved_conflicts: int = 1
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
-    no_progress_rounds_to_stop_effective: int = 2
-    gap_closure_passes: int = 1
-    density_gate_passes: int = 1
-    overview_source_topk: int = 20
-    content_source_topk: int = 10
-    content_source_chars: int = 10_000
+    content_chars: int = 10_000
+    source_topk: int = 20
+    source_chars: int = 180_000
     explore_target_pages_per_round: int = 3
     explore_links_per_page: int = 8
 
@@ -221,31 +216,17 @@ class ResearchModeSettings(Model):
             raise ValueError("research mode max_results_per_search must be > 0")
         if int(self.max_queries_per_round) <= 0:
             raise ValueError("research mode max_queries_per_round must be > 0")
-        if int(self.max_fetch_per_round) <= 0:
-            raise ValueError("research mode max_fetch_per_round must be > 0")
         if not 0.0 <= float(self.stop_confidence) <= 1.0:
             raise ValueError("research mode stop_confidence must be between 0 and 1")
         if not 0.0 <= float(self.min_coverage_ratio) <= 1.0:
             raise ValueError("research mode min_coverage_ratio must be between 0 and 1")
-        if int(self.max_unresolved_conflicts) < 0:
-            raise ValueError("research mode max_unresolved_conflicts must be >= 0")
         if int(self.max_question_cards_effective) <= 0:
             raise ValueError("research mode max_question_cards_effective must be > 0")
         if int(self.min_rounds_per_track) <= 0:
             raise ValueError("research mode min_rounds_per_track must be > 0")
-        if int(self.no_progress_rounds_to_stop_effective) <= 0:
-            raise ValueError(
-                "research mode no_progress_rounds_to_stop_effective must be > 0"
-            )
-        if int(self.gap_closure_passes) < 0:
-            raise ValueError("research mode gap_closure_passes must be >= 0")
-        if int(self.density_gate_passes) < 0:
-            raise ValueError("research mode density_gate_passes must be >= 0")
-        if int(self.overview_source_topk) <= 0:
-            raise ValueError("research mode overview_source_topk must be > 0")
-        if int(self.content_source_topk) <= 0:
-            raise ValueError("research mode content_source_topk must be > 0")
-        if int(self.content_source_chars) <= 0:
+        if int(self.source_topk) <= 0:
+            raise ValueError("research mode source_topk must be > 0")
+        if int(self.content_chars) <= 0:
             raise ValueError("research mode content_source_chars must be > 0")
         if int(self.explore_target_pages_per_round) <= 0:
             raise ValueError("research mode explore_target_pages_per_round must be > 0")
@@ -261,18 +242,12 @@ def _default_research_fast_mode() -> ResearchModeSettings:
         max_fetch_calls=12,
         max_results_per_search=5,
         max_queries_per_round=3,
-        max_fetch_per_round=6,
         stop_confidence=0.72,
         min_coverage_ratio=0.70,
-        max_unresolved_conflicts=1,
         max_question_cards_effective=2,
         min_rounds_per_track=1,
-        no_progress_rounds_to_stop_effective=1,
-        gap_closure_passes=0,
-        density_gate_passes=0,
-        overview_source_topk=10,
-        content_source_topk=6,
-        content_source_chars=6000,
+        source_topk=10,
+        content_chars=6000,
         explore_target_pages_per_round=2,
         explore_links_per_page=4,
     )
@@ -285,18 +260,12 @@ def _default_research_standard_mode() -> ResearchModeSettings:
         max_fetch_calls=24,
         max_results_per_search=8,
         max_queries_per_round=5,
-        max_fetch_per_round=10,
         stop_confidence=0.80,
         min_coverage_ratio=0.80,
-        max_unresolved_conflicts=1,
         max_question_cards_effective=4,
         min_rounds_per_track=2,
-        no_progress_rounds_to_stop_effective=2,
-        gap_closure_passes=1,
-        density_gate_passes=1,
-        overview_source_topk=20,
-        content_source_topk=10,
-        content_source_chars=10_000,
+        source_topk=20,
+        content_chars=10_000,
         explore_target_pages_per_round=4,
         explore_links_per_page=10,
     )
@@ -309,18 +278,12 @@ def _default_research_pro_mode() -> ResearchModeSettings:
         max_fetch_calls=48,
         max_results_per_search=10,
         max_queries_per_round=6,
-        max_fetch_per_round=14,
         stop_confidence=0.86,
         min_coverage_ratio=0.90,
-        max_unresolved_conflicts=0,
         max_question_cards_effective=6,
         min_rounds_per_track=3,
-        no_progress_rounds_to_stop_effective=3,
-        gap_closure_passes=2,
-        density_gate_passes=2,
-        overview_source_topk=32,
-        content_source_topk=16,
-        content_source_chars=15_000,
+        source_topk=32,
+        content_chars=15_000,
         explore_target_pages_per_round=6,
         explore_links_per_page=16,
     )

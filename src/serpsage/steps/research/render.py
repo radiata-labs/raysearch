@@ -22,7 +22,6 @@ from serpsage.steps.research.language import (
     normalize_language_code,
 )
 from serpsage.steps.research.prompt import (
-    build_density_gate_prompt_messages,
     build_final_language_repair_messages,
     build_render_architect_prompt_messages,
     build_render_structured_prompt_messages,
@@ -110,7 +109,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "track_results": len(ctx.parallel.track_results),
                     "content_chars": len(ctx.output.content),
                     "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
-                    "density_gate_passes_applied": ctx.runtime.density_gate_passes_applied,
                     "report_style_selected": report_style,
                 },
             )
@@ -161,12 +159,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             architect_output=architect_output,
             writer_outputs=writer_outputs,
-        )
-        assembled = await self._apply_density_gate(
-            ctx=ctx,
-            markdown=assembled,
-            target_language=target_language,
-            now_utc=now_utc,
         )
         assembled = await self._repair_final_language_if_needed(
             ctx=ctx,
@@ -449,59 +441,6 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 return f"深度调研：{base}"
             return f"Research Report: {base}"
         return base
-
-    async def _apply_density_gate(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        markdown: str,
-        target_language: str,
-        now_utc: datetime,
-    ) -> str:
-        mode_depth = ctx.runtime.mode_depth
-        pass_cap = max(0, mode_depth.density_gate_passes)
-        if pass_cap <= 0:
-            return markdown
-        model = resolve_research_model(
-            ctx=ctx,
-            stage="markdown",
-            fallback=self.settings.answer.generate.use_model,
-        )
-        current = markdown
-        for pass_index in range(pass_cap):
-            try:
-                result = await self._llm.create(
-                    model=model,
-                    messages=build_density_gate_prompt_messages(
-                        ctx=ctx,
-                        markdown=current,
-                        target_language=target_language,
-                        now_utc=now_utc,
-                        pass_index=pass_index,
-                    ),
-                    response_format=None,
-                )
-                candidate = self._normalize_markdown(result.text)
-            except Exception as exc:  # noqa: BLE001
-                await self.emit_tracking_event(
-                    event_name="research.density_gate.error",
-                    request_id=ctx.request_id,
-                    stage="render",
-                    status="error",
-                    error_code="research_density_gate_failed",
-                    error_type=type(exc).__name__,
-                    attrs={
-                        "pass_index": pass_index + 1,
-                        "model": model,
-                        "message": str(exc),
-                    },
-                )
-                break
-            if not candidate:
-                continue
-            current = candidate
-            ctx.runtime.density_gate_passes_applied += 1
-        return current
 
     async def _repair_final_language_if_needed(
         self,
