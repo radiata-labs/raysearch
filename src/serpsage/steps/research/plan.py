@@ -501,6 +501,11 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         rounds = list(ctx.rounds)[-2:]
         if len(rounds) < 2:
             return False
+        latest = rounds[-1]
+        if latest.stop_ready and not latest.remaining_objectives:
+            return False
+        if latest.low_gain_streak < 2:
+            return False
         return all(self._is_low_gain_round(item) for item in rounds)
 
     def _is_low_gain_round(self, round_state: ResearchRoundState) -> bool:

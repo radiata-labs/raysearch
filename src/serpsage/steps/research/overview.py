@@ -21,6 +21,7 @@ from serpsage.steps.research.search import (
 from serpsage.steps.research.utils import (
     merge_strings,
     normalize_entity_coverage,
+    normalize_source_ids,
     normalize_strings,
     resolve_research_model,
 )
@@ -126,7 +127,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             }
         )
         ctx.work.overview_review = payload
-        need_content_ids = self._normalize_source_ids(
+        need_content_ids = normalize_source_ids(
             payload.need_content_source_ids,
             limit=20,
         )
@@ -160,6 +161,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             payload.conflict_arbitration
         )
         ctx.current_round.unresolved_conflicts = len(unresolved_topics)
+        ctx.current_round.unresolved_conflict_topics = list(unresolved_topics)
         ctx.current_round.critical_gaps = len(
             normalize_strings(payload.critical_gaps, limit=20)
         )
@@ -208,24 +210,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 continue
             seen.add(key)
             out.append(topic)
-        return out
-
-    def _normalize_source_ids(self, raw: list[int], *, limit: int) -> list[int]:
-        out: list[int] = []
-        seen: set[int] = set()
-        for item in raw:
-            try:
-                value = int(item)
-            except Exception:  # noqa: S112
-                continue
-            if value <= 0:
-                continue
-            if value in seen:
-                continue
-            seen.add(value)
-            out.append(value)
-            if len(out) >= max(1, limit):
-                break
         return out
 
     def _resolve_context_mix_targets(

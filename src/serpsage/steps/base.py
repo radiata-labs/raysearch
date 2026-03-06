@@ -58,10 +58,11 @@ class StepBase(WorkUnit, ABC, Generic[TContext]):
                 error_type=type(exc).__name__,
                 attrs={
                     "step": step_name,
+                    "fatal_step": True,
                     "error_message": str(exc),
                 },
             )
-            return ctx
+            raise
 
     async def _emit_step_event(
         self,

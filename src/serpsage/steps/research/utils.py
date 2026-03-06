@@ -84,9 +84,29 @@ def normalize_entity_coverage(
     return complete, covered, missing
 
 
+def normalize_source_ids(raw: object, *, limit: int) -> list[int]:
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for item in raw:
+        try:
+            value = int(item)
+        except Exception:  # noqa: S112
+            continue
+        if value <= 0 or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+        if len(out) >= max(1, limit):
+            break
+    return out
+
+
 __all__ = [
     "merge_strings",
     "normalize_entity_coverage",
+    "normalize_source_ids",
     "normalize_strings",
     "resolve_research_model",
 ]

@@ -567,6 +567,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         mode_depth.max_question_cards_effective = profile.max_question_cards_effective
         mode_depth.min_rounds_per_track = profile.min_rounds_per_track
         mode_depth.source_topk = profile.source_topk
+        mode_depth.source_chars = profile.source_chars
         mode_depth.content_chars = profile.content_chars
         mode_depth.explore_target_pages_per_round = (
             profile.explore_target_pages_per_round

@@ -276,8 +276,9 @@ def build_content_schema(*, max_queries: int) -> dict[str, Any]:
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["status"],
+                    "required": ["topic", "status"],
                     "properties": {
+                        "topic": {"type": "string"},
                         "status": {"type": "string"},
                     },
                 },

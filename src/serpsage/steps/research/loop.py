@@ -168,8 +168,21 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     orchestrator_lock=orchestrator_lock,
                 )
                 if self._allocation_blocked(alloc):
+                    latest = self._latest_round(local_ctx)
+                    min_rounds = max(
+                        1, local_ctx.runtime.mode_depth.min_rounds_per_track
+                    )
                     local_ctx.runtime.stop = True
-                    local_ctx.runtime.stop_reason = "global_budget_exhausted"
+                    local_ctx.runtime.stop_reason = (
+                        "stop_ready"
+                        if (
+                            latest is not None
+                            and latest.stop_ready
+                            and not latest.remaining_objectives
+                            and len(local_ctx.rounds) >= min_rounds
+                        )
+                        else "global_budget_exhausted"
+                    )
                     break
                 before_search = local_ctx.runtime.search_calls
                 before_fetch = local_ctx.runtime.fetch_calls
@@ -281,9 +294,27 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             state_lock=orchestrator_lock,
         )
         score = self._score_track(track_ctx, card)
+        latest = self._latest_round(track_ctx)
+        min_rounds = max(1, track_ctx.runtime.mode_depth.min_rounds_per_track)
+        track_stop_ready = (
+            latest is not None
+            and latest.stop_ready
+            and not latest.remaining_objectives
+            and len(track_ctx.rounds) >= min_rounds
+        )
+        track_has_objectives = (
+            latest is None or bool(latest.remaining_objectives) or not latest.stop_ready
+        )
         width_hint = 1
         orchestrator_enabled = self._orchestrator_enabled(root)
         has_orchestrator_priority = False
+        if track_stop_ready:
+            return _TrackAllocation(
+                search_grant=0,
+                fetch_grant=0,
+                max_queries_per_round=1,
+                bonus=False,
+            )
         if orchestrator_enabled:
             if card.question_id in orchestrator_state.priorities:
                 score = float(
@@ -315,7 +346,9 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     bonus=False,
                 )
             if remaining_search <= 0:
-                if not self._can_allocate_fetch_only_round(track_ctx):
+                if not track_has_objectives or not self._can_allocate_fetch_only_round(
+                    track_ctx
+                ):
                     return _TrackAllocation(
                         search_grant=0,
                         fetch_grant=0,
@@ -349,6 +382,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             bonus_by_width = width_hint >= bonus_width
             bonus = (
                 (bonus_by_score or bonus_by_width)
+                and track_has_objectives
                 and remaining_search >= 2
                 and remaining_fetch >= bonus_fetch
             )
@@ -635,19 +669,27 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         confidence = 0.0
         gaps = 5
         conflicts = 3
+        objective_norm = 1.0
+        low_gain_penalty = 0.0
         if latest is not None:
+            if latest.stop_ready and not latest.remaining_objectives:
+                return 0.0
             confidence = min(1.0, max(0.0, float(latest.confidence)))
             gaps = max(0, latest.critical_gaps)
             conflicts = max(0, latest.unresolved_conflicts)
+            objective_norm = min(len(latest.remaining_objectives), 4) / 4
+            low_gain_penalty = 0.10 if latest.low_gain_streak >= 2 else 0.0
         gap_norm = min(gaps, 5) / 5
         conflict_norm = min(conflicts, 3) / 3
         priority = max(1, min(5, card.priority))
-        return (
+        score = (
             0.35 * (float(priority) / 5.0)
-            + 0.35 * (1.0 - confidence)
+            + 0.30 * (1.0 - confidence)
             + 0.20 * gap_norm
             + 0.10 * conflict_norm
+            + 0.05 * objective_norm
         )
+        return max(0.0, score - low_gain_penalty)
 
     def _apply_track_round_budget(
         self,

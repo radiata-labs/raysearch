@@ -62,7 +62,7 @@ research:
     min_rounds_per_track: 1
     source_topk: 10
     content_chars: 6000
-    source_chars: 180_000
+    source_chars: 30000
     explore_target_pages_per_round: 2
     explore_links_per_page: 4
   research:
@@ -77,7 +77,7 @@ research:
     min_rounds_per_track: 2
     source_topk: 20
     content_chars: 10000
-    source_chars: 180_000
+    source_chars: 60000
     explore_target_pages_per_round: 4
     explore_links_per_page: 10
   research_pro:
@@ -91,8 +91,8 @@ research:
     max_question_cards_effective: 6
     min_rounds_per_track: 3
     source_topk: 32
-    content_chars: 15000
-    source_chars: 180_000
+    content_chars: 12000
+    source_chars: 110000
     explore_target_pages_per_round: 6
     explore_links_per_page: 16
 

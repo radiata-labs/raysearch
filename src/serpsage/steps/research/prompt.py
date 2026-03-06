@@ -688,13 +688,14 @@ def _build_overview_messages(
         "10) Free-text fields must be strictly in required_output_language.\n"
         "11) Do not mix another language/script except unavoidable proper nouns and product names.\n"
         "12) next_queries must remain strictly focused on CORE_QUESTION and must not introduce new standalone topics.\n"
-        "13) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
+        "13) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, and missing_entities.\n"
         "14) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
         "15) If no valid focused query exists, return next_queries as an empty array.\n"
         "16) Return JSON only, exactly matching schema.\n"
         "17) findings must be high-density: each item should include conclusion + condition/boundary + impact.\n"
         "18) next_queries must be de-duplicated and sorted by expected information gain.\n"
-        "19) Do not output citation tokens or evidence-audit sections.\n"
+        "19) conflict_arbitration items must include topic and status only.\n"
+        "20) Do not output citation tokens, evidence-audit sections, or evidence ledgers.\n"
         "Allowed Inputs:\n"
         "- Theme, theme plan, round summaries, overview packet.\n"
         "Failure Policy:\n"
@@ -792,12 +793,13 @@ def _build_content_messages(
         "8) Free-text fields must be strictly in required_output_language.\n"
         "9) Do not mix another language/script except unavoidable proper nouns and product names.\n"
         "10) resolved_findings must be information-dense: include conclusion + condition/boundary + impact.\n"
-        "11) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, missing_entities.\n"
+        "11) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, and missing_entities.\n"
         "12) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
         "13) If no valid focused next query exists, return next_queries as an empty array.\n"
         "14) next_queries must be de-duplicated and sorted by expected information gain.\n"
         "15) Return JSON only and match schema exactly.\n"
-        "16) Do not output citation tokens or evidence-audit sections.\n"
+        "16) conflict_resolutions items must include topic and status only.\n"
+        "17) Do not output citation tokens or evidence-audit sections.\n"
         "Allowed Inputs:\n"
         "- Theme, theme plan, overview review, selected content packet.\n"
         "Failure Policy:\n"
@@ -862,6 +864,8 @@ def _build_decide_signal_messages(
     unresolved_conflicts: int,
     critical_gaps: int,
     missing_entities: list[str],
+    remaining_objectives: list[str],
+    low_gain_streak: int,
     search_remaining: int,
     fetch_remaining: int,
 ) -> list[dict[str, str]]:
@@ -887,7 +891,9 @@ def _build_decide_signal_messages(
                 f"- coverage_ratio={coverage_ratio:.3f}\n"
                 f"- unresolved_conflicts={unresolved_conflicts}\n"
                 f"- critical_gaps={critical_gaps}\n"
-                f"- missing_entities={missing_entities}\n\n"
+                f"- missing_entities={missing_entities}\n"
+                f"- remaining_objectives={remaining_objectives}\n"
+                f"- low_gain_streak={low_gain_streak}\n\n"
                 "BUDGET_REMAINING:\n"
                 f"- search={search_remaining}\n"
                 f"- fetch={fetch_remaining}\n"
@@ -1638,6 +1644,8 @@ def build_decide_prompt_messages(
         unresolved_conflicts=round_state.unresolved_conflicts,
         critical_gaps=round_state.critical_gaps,
         missing_entities=list(round_state.missing_entities),
+        remaining_objectives=list(round_state.remaining_objectives),
+        low_gain_streak=round_state.low_gain_streak,
         search_remaining=max(
             0,
             ctx.runtime.budget.max_search_calls - ctx.runtime.search_calls,
@@ -1840,6 +1848,15 @@ def _build_render_context_packet_markdown(
         [item.model_copy(deep=True) for item in track_results]
         if track_results is not None
         else [item.model_copy(deep=True) for item in ctx.parallel.track_results]
+    )
+    selected_track_results.sort(
+        key=lambda item: (
+            float(item.confidence),
+            float(item.coverage_ratio),
+            -int(item.unresolved_conflicts),
+            len(item.key_findings),
+        ),
+        reverse=True,
     )
     return build_render_final_context_packet_markdown(
         theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
@@ -2300,8 +2317,24 @@ def render_track_snapshot_markdown(track_map: dict[str, ResearchStepContext]) ->
                     if latest is not None
                     else "- critical_gaps: 0"
                 ),
+                (
+                    f"- stop_ready: {latest.stop_ready}"
+                    if latest is not None
+                    else "- stop_ready: false"
+                ),
+                (
+                    f"- low_gain_streak: {latest.low_gain_streak}"
+                    if latest is not None
+                    else "- low_gain_streak: 0"
+                ),
             ]
         )
+        if latest is not None and latest.remaining_objectives:
+            lines.append("- remaining_objectives:")
+            lines.extend(
+                _render_markdown_bullets(latest.remaining_objectives, indent="  ")
+                or _NONE_BULLET
+            )
     return "\n".join(lines).strip() or "- (none)"
 
 

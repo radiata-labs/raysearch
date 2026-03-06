@@ -28,6 +28,8 @@ class _DecideSignalPayload(MutableModel):
 
 
 class ResearchDecideStep(StepBase[ResearchStepContext]):
+    _LOW_GAIN_THRESHOLD = 0.05
+
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -50,6 +52,10 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             ctx.plan.theme_plan.required_entities,
             limit=24,
         )
+        unresolved_conflict_topics = normalize_strings(
+            round_state.unresolved_conflict_topics,
+            limit=16,
+        )
         entity_coverage_ok = (
             round_state.entity_coverage_complete if required_entities else True
         )
@@ -59,18 +65,24 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             and coverage_ok
             and gaps_ok
             and entity_coverage_ok
+            and not unresolved_conflict_topics
         )
         corpus_score_gain = round_state.corpus_score_gain
-        if ctx.rounds:
-            prev = ctx.rounds[-1]
+        prev = ctx.rounds[-1] if ctx.rounds else None
+        current_low_gain = round_state.result_count <= 0 or float(
+            corpus_score_gain
+        ) < float(self._LOW_GAIN_THRESHOLD)
+        if prev is not None:
             progress = (
                 round_state.new_source_ids
                 or round_state.coverage_ratio > prev.coverage_ratio
                 or round_state.unresolved_conflicts < prev.unresolved_conflicts
                 or corpus_score_gain > 0.0
             )
+            low_gain_streak = (prev.low_gain_streak + 1) if current_low_gain else 0
         else:
             progress = (len(round_state.new_source_ids) > 0) or corpus_score_gain > 0.0
+            low_gain_streak = 1 if current_low_gain else 0
         llm_signal = await self._query_decide_signal(ctx=ctx)
         llm_prefers_continue = llm_signal is not None and (
             llm_signal.continue_research or llm_signal.high_yield_remaining
@@ -110,43 +122,106 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         min_rounds_per_track = max(1, ctx.runtime.mode_depth.min_rounds_per_track)
         round_count_after_commit = len(ctx.rounds) + 1
         must_continue_for_min_rounds = round_count_after_commit < min_rounds_per_track
-        if llm_prefers_continue and not next_queries and core_question:
+        if (
+            not multi_signal_stop
+            and must_continue_for_min_rounds
+            and can_search_now
+            and not next_queries
+            and core_question
+            and not current_low_gain
+        ):
             next_queries = [core_question]
-        allow_auto_seed = not multi_signal_stop and can_search_now
-        if allow_auto_seed and not next_queries and core_question:
+        if (
+            not multi_signal_stop
+            and progress
+            and can_search_now
+            and not next_queries
+            and core_question
+            and not current_low_gain
+        ):
             next_queries = [core_question]
-        if not multi_signal_stop and not next_queries and progress and can_search_now:
-            next_queries = [ctx.request.themes]
-        if not next_queries and can_search_now and core_question:
+        gap_objectives = merge_strings(
+            normalize_strings(ctx.work.overview_review.critical_gaps, limit=12),
+            normalize_strings(ctx.work.content_review.remaining_gaps, limit=12),
+            limit=24,
+        )
+        entity_objectives = self._build_prefixed_objectives(
+            prefix="missing_entity",
+            values=round_state.missing_entities,
+            limit=16,
+        )
+        conflict_objectives = self._build_prefixed_objectives(
+            prefix="conflict",
+            values=unresolved_conflict_topics,
+            limit=16,
+        )
+        stop_ready = multi_signal_stop and not (
+            gap_objectives or entity_objectives or conflict_objectives
+        )
+        if stop_ready:
+            next_queries = []
+        elif (
+            not next_queries
+            and llm_prefers_continue
+            and can_search_now
+            and core_question
+        ):
             next_queries = [core_question]
+        query_objectives = (
+            self._build_prefixed_objectives(
+                prefix="query",
+                values=next_queries,
+                limit=budget.max_queries_per_round,
+            )
+            if (
+                not stop_ready
+                and (llm_prefers_continue or must_continue_for_min_rounds)
+            )
+            else []
+        )
+        remaining_objectives = merge_strings(
+            gap_objectives,
+            entity_objectives,
+            conflict_objectives,
+            query_objectives,
+            limit=32,
+        )
         can_execute_next_round = (
             can_search_now and (len(next_queries) > 0)
         ) or can_explore_without_search
-        stop_readiness_high = multi_signal_stop
         stop = False
         stop_reason = ""
-        if (
-            must_continue_for_min_rounds
-            and not fetch_exhausted
-            and (not search_exhausted or can_explore_without_search)
-        ):
-            stop = False
-        elif fetch_exhausted:
+        if fetch_exhausted:
             stop = True
             stop_reason = "max_fetch_calls"
         elif search_exhausted and not can_explore_without_search:
             stop = True
             stop_reason = "max_search_calls"
+        elif must_continue_for_min_rounds and (
+            can_search_now or can_explore_without_search
+        ):
+            stop = False
+        elif stop_ready and not remaining_objectives:
+            stop = True
+            stop_reason = "stop_ready"
         elif (
-            stop_readiness_high
-            and (not llm_prefers_continue)
-            and (not can_execute_next_round)
+            low_gain_streak >= 2
+            and not gap_objectives
+            and not entity_objectives
+            and not conflict_objectives
         ):
             stop = True
-            stop_reason = "stop_ready_no_executable_path"
+            stop_reason = "low_gain_stalled"
+        elif not can_execute_next_round:
+            stop = True
+            stop_reason = "no_executable_path"
+        round_state.stop_ready = stop_ready
+        round_state.remaining_objectives = list(remaining_objectives)
+        round_state.low_gain_streak = low_gain_streak
+        round_state.unresolved_conflict_topics = list(unresolved_conflict_topics)
         round_state.stop = stop
         round_state.stop_reason = stop_reason
-        ctx.plan.next_queries = list(next_queries)
+        ctx.plan.next_queries = [] if stop else list(next_queries)
         ctx.rounds.append(round_state)
         if llm_signal is not None:
             reason = llm_signal.reason.strip()
@@ -161,11 +236,13 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 "llm_prefers_continue": llm_prefers_continue,
                 "min_rounds_per_track": min_rounds_per_track,
                 "must_continue_for_min_rounds": must_continue_for_min_rounds,
-                "stop_readiness_high": stop_readiness_high,
+                "stop_ready": stop_ready,
                 "can_search_now": can_search_now,
                 "can_explore_without_search": can_explore_without_search,
                 "can_execute_next_round": can_execute_next_round,
                 "next_queries": len(next_queries),
+                "remaining_objectives_count": len(remaining_objectives),
+                "low_gain_streak": low_gain_streak,
                 "stop": stop,
                 "stop_reason": str(stop_reason or "n/a"),
             },
@@ -238,6 +315,18 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         if base:
             queries.append(base)
         return merge_strings(queries, [], limit=max(1, limit))
+
+    def _build_prefixed_objectives(
+        self,
+        *,
+        prefix: str,
+        values: list[str],
+        limit: int,
+    ) -> list[str]:
+        return [
+            f"{prefix}:{item}"
+            for item in normalize_strings(values, limit=max(1, limit))
+        ]
 
 
 __all__ = ["ResearchDecideStep"]

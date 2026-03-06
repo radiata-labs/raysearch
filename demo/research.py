@@ -36,7 +36,7 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "Agent里的Skill是什么，我该如何使用它？我该如何创建一个Skill？",
+        "qwen3.5和kimi-k2.5哪家强？给我综合比较报告。",
         "research-pro",
         None,
     )

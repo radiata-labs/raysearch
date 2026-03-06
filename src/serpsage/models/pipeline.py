@@ -327,6 +327,7 @@ class ResearchLinkCandidate(MutableModel):
     title: str = ""
     links: list[ExtractedLink] = Field(default_factory=list)
     subpage_links: list[list[ExtractedLink]] = Field(default_factory=list)
+    subpage_urls: list[str] = Field(default_factory=list)
     round_index: int = 0
 
 
@@ -338,6 +339,7 @@ class ResearchRuntimeState(MutableModel):
     provider_language_param_applied: bool = False
     query_language_repair_applied: bool = False
     search_language_fallback_applied: bool = False
+    explore_resolved_relative_links: int = 0
     stop: bool = False
     stop_reason: str = ""
     round_index: int = 0
@@ -390,7 +392,11 @@ class ResearchRoundState(MutableModel):
     entity_coverage_complete: bool = False
     missing_entities: list[str] = Field(default_factory=list)
     unresolved_conflicts: int = 0
+    unresolved_conflict_topics: list[str] = Field(default_factory=list)
     critical_gaps: int = 0
+    stop_ready: bool = False
+    remaining_objectives: list[str] = Field(default_factory=list)
+    low_gain_streak: int = 0
     stop_reason: str = ""
     stop: bool = False
 

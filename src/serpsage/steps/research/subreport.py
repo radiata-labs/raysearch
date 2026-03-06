@@ -18,6 +18,7 @@ from serpsage.steps.research.prompt import (
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     select_context_source_ids,
+    source_authority_score,
 )
 from serpsage.steps.research.utils import resolve_research_model
 
@@ -420,10 +421,24 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 source_ids=selected_ids,
             )
             if selected:
-                return selected
+                return sorted(
+                    selected,
+                    key=lambda item: (
+                        float(ctx.corpus.source_scores.get(item.source_id, 0.0)),
+                        source_authority_score(item),
+                        item.round_index,
+                        item.source_id,
+                    ),
+                    reverse=True,
+                )
         fallback = sorted(
             ctx.corpus.sources,
-            key=lambda item: (item.round_index, item.source_id),
+            key=lambda item: (
+                float(ctx.corpus.source_scores.get(item.source_id, 0.0)),
+                source_authority_score(item),
+                item.round_index,
+                item.source_id,
+            ),
             reverse=True,
         )
         return list(fallback[:limit])

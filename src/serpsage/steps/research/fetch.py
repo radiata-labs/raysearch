@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from typing_extensions import override
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import anyio
 from pydantic import Field
@@ -343,7 +343,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         candidate: ResearchLinkCandidate,
         max_links: int,
     ) -> list[str]:
-        links = self._merge_and_dedupe_links(candidate)
+        links = self._merge_and_dedupe_links(ctx=ctx, candidate=candidate)
         if not links:
             return []
         ranked_indexes = await self._rank_link_indexes(ctx=ctx, links=links)
@@ -362,7 +362,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         candidate: ResearchLinkCandidate,
         max_links: int,
     ) -> list[str]:
-        links = self._merge_and_dedupe_links(candidate)
+        links = self._merge_and_dedupe_links(ctx=ctx, candidate=candidate)
         if not links:
             return []
         links = await self._prerank_links_for_llm(
@@ -500,17 +500,32 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
 
     def _merge_and_dedupe_links(
         self,
+        *,
+        ctx: ResearchStepContext | None = None,
         candidate: ResearchLinkCandidate,
     ) -> list[ExtractedLink]:
-        merged = list(candidate.links or [])
-        for links in list(candidate.subpage_links or []):
-            merged.extend(list(links or []))
+        merged: list[tuple[ExtractedLink, str]] = [
+            (item, candidate.url) for item in list(candidate.links or [])
+        ]
+        for index, links in enumerate(list(candidate.subpage_links or [])):
+            base_url = (
+                candidate.subpage_urls[index]
+                if index < len(candidate.subpage_urls)
+                else candidate.url
+            )
+            merged.extend((item, base_url) for item in list(links or []))
         out: list[ExtractedLink] = []
         seen: set[str] = set()
-        for item in merged:
-            url = self._normalize_explore_url(item.url)
+        resolved_relative_links = 0
+        for item, base_url in merged:
+            url, resolved_relative = self._normalize_explore_url_with_meta(
+                item.url,
+                base_url=base_url,
+            )
             if not url:
                 continue
+            if resolved_relative:
+                resolved_relative_links += 1
             key = canonicalize_url(url) or url.casefold()
             if key in seen:
                 continue
@@ -524,13 +539,15 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                     deep=True,
                 )
             )
+        if ctx is not None and resolved_relative_links > 0:
+            ctx.runtime.explore_resolved_relative_links += resolved_relative_links
         return out
 
     def _merge_and_dedupe_urls(self, urls: list[str]) -> list[str]:
         out: list[str] = []
         seen: set[str] = set()
         for item in urls:
-            url = self._normalize_explore_url(item)
+            url, _ = self._normalize_explore_url_with_meta(item)
             if not url:
                 continue
             key = canonicalize_url(url) or url.casefold()
@@ -555,7 +572,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         out: list[str] = []
         seen: set[str] = set()
         for item in urls:
-            url = self._normalize_explore_url(item)
+            url, _ = self._normalize_explore_url_with_meta(item)
             if not url:
                 continue
             key = canonicalize_url(url) or url.casefold()
@@ -565,33 +582,52 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             out.append(url)
         return out
 
-    def _normalize_explore_url(self, raw_url: str) -> str:
+    def _normalize_explore_url(self, raw_url: str, *, base_url: str = "") -> str:
+        return self._normalize_explore_url_with_meta(raw_url, base_url=base_url)[0]
+
+    def _normalize_explore_url_with_meta(
+        self, raw_url: str, *, base_url: str = ""
+    ) -> tuple[str, bool]:
         token = clean_whitespace(raw_url)
         if not token or token.startswith("#"):
-            return ""
+            return "", False
+        resolved_relative = False
         if token.startswith("//"):
             token = f"https:{token}"
+        elif base_url:
+            try:
+                parsed_raw = urlsplit(token)
+            except Exception:  # noqa: S112
+                parsed_raw = None
+            if parsed_raw is not None and (
+                not parsed_raw.scheme or not parsed_raw.netloc
+            ):
+                resolved_relative = True
+            token = urljoin(base_url, token)
         try:
             parsed = urlsplit(token)
         except Exception:  # noqa: S112
-            return ""
+            return "", False
         scheme = clean_whitespace(parsed.scheme).casefold()
         host = clean_whitespace(parsed.netloc)
         path = clean_whitespace(parsed.path or "/")
         if scheme not in _EXPLORE_ALLOWED_SCHEMES:
-            return ""
+            return "", False
         if not host:
-            return ""
+            return "", False
         if self._is_low_value_explore_path(path):
-            return ""
-        return urlunsplit(
-            (
-                scheme,
-                host,
-                parsed.path or "/",
-                clean_whitespace(parsed.query),
-                "",
-            )
+            return "", False
+        return (
+            urlunsplit(
+                (
+                    scheme,
+                    host,
+                    parsed.path or "/",
+                    clean_whitespace(parsed.query),
+                    "",
+                )
+            ),
+            resolved_relative,
         )
 
     def _is_low_value_explore_path(self, path: str) -> bool:
@@ -760,6 +796,10 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 [item.model_copy(deep=True) for item in list(group or [])]
                 for group in list(candidate.subpage_links or [])
             ],
+            subpage_urls=[
+                clean_whitespace(item.url)
+                for item in list(candidate.result.subpages or [])
+            ],
             round_index=round_index,
         )
 
@@ -780,11 +820,12 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             title=clean_whitespace(result.title),
             links=raw_links,
             subpage_links=[],
+            subpage_urls=[],
             round_index=round_index,
         )
         return candidate.model_copy(
             update={
-                "links": self._merge_and_dedupe_links(candidate),
+                "links": self._merge_and_dedupe_links(candidate=candidate),
                 "subpage_links": [],
             },
             deep=True,

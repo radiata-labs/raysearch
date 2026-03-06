@@ -104,6 +104,7 @@ class OverviewOutputPayload(MutableModel):
 
 
 class ContentConflictPayload(MutableModel):
+    topic: str = ""
     status: str
 
 

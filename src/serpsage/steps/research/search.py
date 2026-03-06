@@ -36,10 +36,52 @@ if TYPE_CHECKING:
 _TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
 _TRACKING_QUERY_PREFIXES = ("utm_",)
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
-_CORPUS_SCORE_WEIGHT_NEWNESS = 0.45
-_CORPUS_SCORE_WEIGHT_RELEVANCE = 0.30
+_CORPUS_SCORE_WEIGHT_NEWNESS = 0.35
+_CORPUS_SCORE_WEIGHT_RELEVANCE = 0.25
 _CORPUS_SCORE_WEIGHT_DEPTH = 0.15
 _CORPUS_SCORE_WEIGHT_STABILITY = 0.10
+_CORPUS_SCORE_WEIGHT_AUTHORITY = 0.15
+_LOW_AUTHORITY_HOST_HINTS = (
+    "medium.com",
+    "substack.com",
+    "blogspot.com",
+    "wordpress.com",
+)
+_HIGH_AUTHORITY_HOST_HINTS = (
+    "github.com",
+    "gitlab.com",
+    "huggingface.co",
+    "arxiv.org",
+    "doi.org",
+    "w3.org",
+    "ietf.org",
+    "iso.org",
+)
+_HIGH_AUTHORITY_PATH_HINTS = (
+    "/docs",
+    "/documentation",
+    "/api",
+    "/reference",
+    "/spec",
+    "/specification",
+    "/manual",
+    "/guide",
+    "/papers",
+    "/repository",
+)
+_HIGH_AUTHORITY_TITLE_HINTS = (
+    "official",
+    "documentation",
+    "reference",
+    "api",
+    "spec",
+    "specification",
+    "standard",
+    "repository",
+    "paper",
+    "preprint",
+    "whitepaper",
+)
 
 
 @dataclass(slots=True)
@@ -392,6 +434,7 @@ def rebuild_corpus_ranking(
             query_tokens=query_tokens,
         )
         depth_score = _compute_depth_score(source)
+        authority_score = source_authority_score(source)
         stability_score = min(
             1.0,
             float(canonical_seen.get(canonical, 0)) / float(max_seen or 1),
@@ -401,6 +444,7 @@ def rebuild_corpus_ranking(
             + float(_CORPUS_SCORE_WEIGHT_RELEVANCE) * relevance_score
             + float(_CORPUS_SCORE_WEIGHT_DEPTH) * depth_score
             + float(_CORPUS_SCORE_WEIGHT_STABILITY) * stability_score
+            + float(_CORPUS_SCORE_WEIGHT_AUTHORITY) * authority_score
         )
         score_map[latest_id] = float(final_score)
         scored.append((latest_id, float(final_score)))
@@ -462,13 +506,23 @@ def select_context_source_ids(
         for source_id in ranked_ids
         if source_by_id[source_id].round_index != round_index
     ]
+    history_by_authority = sorted(
+        history_ids,
+        key=lambda source_id: (
+            source_authority_score(source_by_id[source_id]),
+            float(ctx.corpus.source_scores.get(source_id, 0.0)),
+            source_by_id[source_id].round_index,
+            source_id,
+        ),
+        reverse=True,
+    )
     target_new = min(
         len(new_ids),
         int(math.ceil(limit * float(max(0.0, min(1.0, new_result_target_ratio))))),
     )
     selected: list[int] = []
     selected.extend(new_ids[:target_new])
-    selected.extend(history_ids[: max(0, limit - len(selected))])
+    selected.extend(history_by_authority[: max(0, limit - len(selected))])
     if len(selected) < limit:
         for source_id in new_ids[target_new:]:
             if source_id in selected:
@@ -477,7 +531,7 @@ def select_context_source_ids(
             if len(selected) >= limit:
                 break
     if len(selected) < limit:
-        for source_id in history_ids:
+        for source_id in history_by_authority:
             if source_id in selected:
                 continue
             selected.append(source_id)
@@ -487,7 +541,7 @@ def select_context_source_ids(
     history_needed = min(min_history, len(history_ids))
     history_selected = sum(1 for source_id in selected if source_id in history_ids)
     if history_selected < history_needed:
-        for source_id in history_ids:
+        for source_id in history_by_authority:
             if source_id in selected:
                 continue
             selected.append(source_id)
@@ -545,6 +599,7 @@ def sort_source_ids_by_score(
     out.sort(
         key=lambda source_id: (
             float(ctx.corpus.source_scores.get(source_id, 0.0)),
+            source_authority_score(source_by_id[source_id]),
             source_by_id[source_id].round_index,
             source_id,
         ),
@@ -676,6 +731,36 @@ def _compute_depth_score(source: ResearchSource) -> float:
     return min(1.0, 0.7 * content_score + 0.3 * overview_score)
 
 
+def source_authority_score(source: ResearchSource) -> float:
+    url = clean_whitespace(source.canonical_url or source.url).casefold()
+    title = clean_whitespace(source.title).casefold()
+    if not url:
+        return 0.25
+    try:
+        parsed = urlsplit(url)
+    except Exception:  # noqa: S112
+        return 0.25
+    host = clean_whitespace(parsed.netloc).casefold()
+    path = clean_whitespace(parsed.path).casefold()
+    score = 0.35
+    if host.endswith((".gov", ".edu")):
+        score = max(score, 0.95)
+    if host.startswith(("docs.", "developer.")):
+        score = max(score, 0.88)
+    if any(token in host for token in _HIGH_AUTHORITY_HOST_HINTS):
+        score = max(score, 0.90)
+    if any(
+        path.startswith(prefix) or f"{prefix}/" in path
+        for prefix in _HIGH_AUTHORITY_PATH_HINTS
+    ):
+        score = max(score, 0.82)
+    if any(token in title for token in _HIGH_AUTHORITY_TITLE_HINTS):
+        score = max(score, 0.78)
+    if any(token in host for token in _LOW_AUTHORITY_HOST_HINTS):
+        score = min(score, 0.25)
+    return min(1.0, max(0.05, score))
+
+
 def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
     tokens: set[str] = set()
     values = list(ctx.plan.next_queries)
@@ -708,5 +793,6 @@ __all__ = [
     "rebuild_corpus_ranking",
     "select_context_source_ids",
     "sort_source_ids_by_score",
+    "source_authority_score",
     "synchronize_corpus_indexes",
 ]

@@ -45,6 +45,10 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                 "input_language": theme_plan.input_language,
                 "output_language": theme_plan.output_language,
                 "search_language": search_language,
+                "authority_weight_applied": True,
+                "explore_resolved_relative_links": (
+                    ctx.runtime.explore_resolved_relative_links
+                ),
                 "provider_language_param_applied": provider_language_param_applied,
             },
         )

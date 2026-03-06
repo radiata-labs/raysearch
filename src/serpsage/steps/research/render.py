@@ -387,11 +387,21 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         track_result_map = {
             clean_whitespace(item.question_id): item for item in track_results
         }
-        return [
+        selected = [
             track_result_map[question_id].model_copy(deep=True)
             for question_id in selected_question_ids
             if question_id in track_result_map
         ]
+        selected.sort(
+            key=lambda item: (
+                float(item.confidence),
+                float(item.coverage_ratio),
+                -int(item.unresolved_conflicts),
+                len(item.key_findings),
+            ),
+            reverse=True,
+        )
+        return selected
 
     async def _render_structured_once(
         self,

@@ -123,11 +123,12 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             1.0,
             max(0.0, ctx.current_round.confidence + payload.confidence_adjustment),
         )
-        unresolved_count = self._count_unresolved(payload.conflict_resolutions)
-        ctx.current_round.unresolved_conflicts = min(
-            ctx.current_round.unresolved_conflicts,
-            unresolved_count,
+        unresolved_topics = self._merge_conflict_topics(
+            baseline=ctx.current_round.unresolved_conflict_topics,
+            raw=payload.conflict_resolutions,
         )
+        ctx.current_round.unresolved_conflicts = len(unresolved_topics)
+        ctx.current_round.unresolved_conflict_topics = list(unresolved_topics)
         ctx.current_round.critical_gaps = len(
             normalize_strings(payload.remaining_gaps, limit=20)
         )
@@ -161,13 +162,29 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
     def _empty_review(self) -> ContentOutputPayload:
         return ContentOutputPayload()
 
-    def _count_unresolved(self, raw: list[ContentConflictPayload]) -> int:
-        total = 0
+    def _merge_conflict_topics(
+        self,
+        *,
+        baseline: list[str],
+        raw: list[ContentConflictPayload],
+    ) -> list[str]:
+        active: dict[str, str] = {
+            clean_whitespace(item).casefold(): clean_whitespace(item)
+            for item in baseline
+            if clean_whitespace(item)
+        }
         for item in raw:
+            topic = clean_whitespace(item.topic)
+            if not topic:
+                continue
             status = clean_whitespace(item.status).casefold()
-            if status == "unresolved":
-                total += 1
-        return total
+            if status in {"resolved", "closed"}:
+                active.pop(topic.casefold(), None)
+                continue
+            if status not in {"unresolved", "insufficient"}:
+                continue
+            active[topic.casefold()] = topic
+        return list(active.values())
 
 
 __all__ = ["ResearchContentStep"]
