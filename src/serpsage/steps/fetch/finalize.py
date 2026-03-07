@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.app.response import FetchResultItem
-from serpsage.components.extract.html.postprocess import (
+from serpsage.components.extract.utils import (
     finalize_markdown,
     strip_markdown_links,
 )
-from serpsage.models.pipeline import FetchStepContext
 from serpsage.steps.base import StepBase
+from serpsage.steps.models import FetchStepContext
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

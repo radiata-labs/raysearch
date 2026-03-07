@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING, Literal
 from typing_extensions import override
 
 from serpsage.app.request import FetchAbstractsRequest, FetchRequestBase, SearchRequest
-from serpsage.models.pipeline import (
+from serpsage.steps.base import StepBase
+from serpsage.steps.models import (
     AnswerStepContext,
     AnswerSubQuestionPlan,
     AnswerSubSearchState,
     SearchStepContext,
 )
-from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

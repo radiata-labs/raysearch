@@ -9,8 +9,8 @@ from typing_extensions import override
 from urllib.parse import urlsplit, urlunsplit
 
 from serpsage.app.response import AnswerCitation, FetchResultItem
-from serpsage.models.pipeline import AnswerStepContext, AnswerSubSearchState
 from serpsage.steps.base import StepBase
+from serpsage.steps.models import AnswerStepContext, AnswerSubSearchState
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

@@ -10,16 +10,16 @@ from pydantic import Field
 
 from serpsage.app.request import FetchContentRequest, FetchOthersRequest, FetchRequest
 from serpsage.app.response import FetchResultItem, FetchSubpagesResult
+from serpsage.components.extract.models import ExtractedLink
 from serpsage.core.model_base import MutableModel
-from serpsage.models.extract import ExtractedLink
-from serpsage.models.pipeline import (
+from serpsage.steps.base import StepBase
+from serpsage.steps.models import (
     FetchRuntimeConfig,
     FetchStepContext,
     ResearchLinkCandidate,
     ResearchStepContext,
     SearchFetchedCandidate,
 )
-from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_link_picker_prompt_messages
 from serpsage.steps.research.schema import build_link_picker_schema
 from serpsage.steps.research.search import (

@@ -6,7 +6,7 @@ from typing_extensions import override
 from pydantic import BaseModel
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.models.llm import (
+from serpsage.components.llm.models import (
     ChatDictResult,
     ChatModelResult,
     ChatResultBase,

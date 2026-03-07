@@ -4,14 +4,14 @@ import uuid
 from abc import ABC, abstractmethod
 from typing import Any
 
-from serpsage.core.workunit import WorkUnit
-from serpsage.models.telemetry import (
+from serpsage.components.telemetry.models import (
     EventAttributes,
     EventEnvelope,
     EventStatus,
     MeterPayload,
     sanitize_attr_map,
 )
+from serpsage.core.workunit import WorkUnit
 
 
 class EventSinkBase(WorkUnit, ABC):

@@ -16,14 +16,14 @@ from serpsage.app.request import (
     SearchRequest,
 )
 from serpsage.app.response import FetchResultItem
-from serpsage.models.pipeline import (
+from serpsage.steps.base import StepBase
+from serpsage.steps.models import (
     ResearchSearchJob,
     ResearchSource,
     ResearchStepContext,
     SearchFetchedCandidate,
     SearchStepContext,
 )
-from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
     map_provider_language_param,
 )

@@ -5,9 +5,9 @@ from typing_extensions import override
 
 from serpsage.app.request import FetchOthersRequest
 from serpsage.app.response import FetchSubpagesResult
-from serpsage.models.extract import ExtractedLink
-from serpsage.models.pipeline import FetchRuntimeConfig, FetchStepContext
+from serpsage.components.extract.models import ExtractedLink
 from serpsage.steps.base import RunnerBase, StepBase
+from serpsage.steps.models import FetchRuntimeConfig, FetchStepContext
 
 if TYPE_CHECKING:
     from serpsage.app.response import FetchResultItem

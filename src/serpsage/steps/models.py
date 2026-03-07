@@ -21,20 +21,20 @@ from serpsage.app.response import (
     FetchResultItem,
     FetchSubpagesResult,
 )
-from serpsage.core.model_base import MutableModel
-from serpsage.models.extract import (
+from serpsage.components.extract.models import (
     ExtractContentOptions,
     ExtractedDocument,
     ExtractedLink,
 )
-from serpsage.models.fetch import FetchResult
-from serpsage.models.research import (
+from serpsage.components.fetch.models import FetchResult
+from serpsage.core.model_base import MutableModel
+from serpsage.settings.models import AppSettings
+from serpsage.steps.research.payloads import (
     ContentOutputPayload,
     OverviewOutputPayload,
     ResearchThemePlan,
     TrackInsightCardPayload,
 )
-from serpsage.settings.models import AppSettings
 
 
 class BaseStepContext(MutableModel):

@@ -4,7 +4,8 @@ import math
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.pipeline import (
+from serpsage.steps.base import StepBase
+from serpsage.steps.models import (
     ResearchBudgetState,
     ResearchCorpusState,
     ResearchModeDepthState,
@@ -15,8 +16,7 @@ from serpsage.models.pipeline import (
     ResearchRuntimeState,
     ResearchStepContext,
 )
-from serpsage.models.research import ResearchThemePlan
-from serpsage.steps.base import StepBase
+from serpsage.steps.research.payloads import ResearchThemePlan
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

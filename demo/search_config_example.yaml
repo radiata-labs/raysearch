@@ -208,7 +208,7 @@ llm:
       enable_structured: true
 
 cache:
-  enabled: true
+  enabled: false
   backend: sqlite # sqlite|memory|redis|mysql|sqlalchemy
   fetch_ttl_s: 86400
   sqlite:

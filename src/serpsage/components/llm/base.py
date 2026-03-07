@@ -8,13 +8,13 @@ from typing import Any, TypeAlias, TypeVar, cast, overload
 import anyio
 from pydantic import BaseModel
 
-from serpsage.core.workunit import WorkUnit
-from serpsage.models.llm import (
+from serpsage.components.llm.models import (
     ChatDictResult,
     ChatModelResult,
     ChatResultBase,
     ChatTextResult,
 )
+from serpsage.core.workunit import WorkUnit
 
 TModel = TypeVar("TModel", bound=BaseModel)
 RetryPredicate = Callable[[Exception], bool]

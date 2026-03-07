@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
-from serpsage.models.pipeline import SearchStepContext
 from serpsage.steps.base import StepBase
+from serpsage.steps.models import SearchStepContext
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

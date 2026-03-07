@@ -4,19 +4,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.pipeline import (
+from serpsage.steps.base import StepBase
+from serpsage.steps.models import (
     SearchRankedCandidate,
     SearchRankState,
     SearchStepContext,
 )
-from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
-    from serpsage.models.pipeline import SearchFetchedCandidate
+    from serpsage.steps.models import SearchFetchedCandidate
 _DEFAULT_MAX_CONTEXT_DOCS = 12
 _DEEP_MAX_CONTEXT_DOCS = 18
 _DEEP_MIN_CONTEXT_DOC_CHARS = 16
@@ -153,7 +153,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
         candidates = list(ctx.fetch.candidates or [])
         if candidates or not ctx.output.results:
             return candidates
-        from serpsage.models.pipeline import SearchFetchedCandidate  # noqa: PLC0415
+        from serpsage.steps.models import SearchFetchedCandidate  # noqa: PLC0415
 
         return [
             SearchFetchedCandidate(

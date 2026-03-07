@@ -12,8 +12,8 @@ import anyio
 from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
+    from serpsage.components.fetch.models import FetchResult
     from serpsage.core.runtime import Runtime
-    from serpsage.models.fetch import FetchResult
 _NESTED_INFLIGHT_BYPASS: ContextVar[bool] = ContextVar(
     "fetcher_inflight_nested_bypass", default=False
 )

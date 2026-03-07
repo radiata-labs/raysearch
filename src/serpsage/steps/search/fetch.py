@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.app.request import FetchRequest
-from serpsage.models.pipeline import (
+from serpsage.steps.base import StepBase
+from serpsage.steps.models import (
     FetchRuntimeConfig,
     FetchStepContext,
     SearchFetchedCandidate,
     SearchStepContext,
 )
-from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

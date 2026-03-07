@@ -4,8 +4,8 @@ import math
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.pipeline import FetchStepContext, PreparedAbstract, ScoredAbstract
 from serpsage.steps.base import StepBase
+from serpsage.steps.models import FetchStepContext, PreparedAbstract, ScoredAbstract
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
 

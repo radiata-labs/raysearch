@@ -13,7 +13,7 @@ from dashscope.api_entities.dashscope_response import (  # type: ignore[import-u
 from pydantic import BaseModel
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.models.llm import (
+from serpsage.components.llm.models import (
     ChatDictResult,
     ChatModelResult,
     ChatResultBase,

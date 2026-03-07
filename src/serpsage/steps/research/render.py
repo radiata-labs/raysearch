@@ -8,18 +8,18 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.models.pipeline import (
+from serpsage.steps.base import StepBase
+from serpsage.steps.models import (
     ResearchQuestionCard,
     ResearchStepContext,
     ResearchTrackResult,
 )
-from serpsage.models.research import (
-    RenderArchitectOutput,
-    RenderArchitectSectionPlan,
-)
-from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
     document_language_alignment,
+)
+from serpsage.steps.research.payloads import (
+    RenderArchitectOutput,
+    RenderArchitectSectionPlan,
 )
 from serpsage.steps.research.prompt import (
     build_final_language_repair_messages,

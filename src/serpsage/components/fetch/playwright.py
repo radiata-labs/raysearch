@@ -10,8 +10,8 @@ from typing_extensions import override
 import anyio
 
 from serpsage.components.fetch.base import FetcherBase
+from serpsage.components.fetch.models import FetchAttempt, FetchResult
 from serpsage.components.fetch.utils import analyze_content
-from serpsage.models.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
     from playwright.async_api import (

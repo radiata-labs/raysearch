@@ -12,7 +12,7 @@ from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from serpsage.components.telemetry.base import EventSinkBase, TelemetryEmitterBase
-from serpsage.models.telemetry import (
+from serpsage.components.telemetry.models import (
     EventAttributes,
     EventEnvelope,
     is_critical_event,

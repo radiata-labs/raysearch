@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.models.llm import (
+from serpsage.components.llm.models import (
     ChatDictResult,
     ChatModelResult,
     ChatResultBase,

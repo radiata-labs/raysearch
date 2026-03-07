@@ -7,6 +7,7 @@ from typing_extensions import override
 import anyio
 
 from serpsage.components.fetch.base import FetcherBase
+from serpsage.components.fetch.models import FetchAttempt, FetchResult
 from serpsage.components.fetch.utils import (
     analyze_content,
     browser_headers,
@@ -14,7 +15,6 @@ from serpsage.components.fetch.utils import (
     get_delay_s,
     parse_retry_after_s,
 )
-from serpsage.models.fetch import FetchAttempt, FetchResult
 
 CurlSessionFactory: type[Any] | None = None
 try:

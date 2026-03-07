@@ -17,14 +17,14 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError, PdfStreamError
 
 from serpsage.components.extract.base import ExtractorBase
-from serpsage.components.extract.html.postprocess import (
+from serpsage.components.extract.models import ExtractContentOptions, ExtractedDocument
+from serpsage.components.extract.utils import (
     finalize_markdown,
     markdown_to_abstract_text,
     markdown_to_text,
 )
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.core.runtime import Runtime
-from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
 from serpsage.utils import clean_whitespace
 
 _LINE_SPLIT_RE = re.compile(r"\r?\n+")

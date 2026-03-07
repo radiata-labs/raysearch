@@ -9,9 +9,9 @@ from serpsage.app.request import (
     FetchContentRequest,
     FetchOverviewRequest,
 )
-from serpsage.models.extract import ExtractContentOptions
-from serpsage.models.pipeline import FetchStepContext
+from serpsage.components.extract.models import ExtractContentOptions
 from serpsage.steps.base import StepBase
+from serpsage.steps.models import FetchStepContext
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

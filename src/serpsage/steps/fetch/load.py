@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from serpsage.app.response import FetchErrorTag
-from serpsage.models.fetch import FetchResult
-from serpsage.models.pipeline import FetchStepContext
-from serpsage.models.telemetry import MeterPayload
+from serpsage.components.fetch.models import FetchResult
+from serpsage.components.telemetry.models import MeterPayload
 from serpsage.steps.base import StepBase
+from serpsage.steps.models import FetchStepContext
 
 if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase

@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.extract.base import ExtractorBase
+from serpsage.components.extract.models import ExtractContentOptions, ExtractedDocument
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.models.extract import ExtractContentOptions, ExtractedDocument
 
 if TYPE_CHECKING:
     from serpsage.components.extract.html import HtmlExtractor
