@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.search import (
+    SearchCandidateForScoring,
     SearchRankedCandidate,
+    SearchRankOptions,
     SearchRankState,
+    SearchRankStats,
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
@@ -22,41 +24,6 @@ _DEEP_MAX_CONTEXT_DOCS = 18
 _DEEP_MIN_CONTEXT_DOC_CHARS = 16
 _TOP_K_SCORES = 3
 _MAIN_CONTENT_SUBPAGE_INDEX = -1  # Sentinel value for main content vs subpage indices
-
-
-@dataclass(slots=True)
-class _RankOptions:
-    content_enabled: bool
-    abstracts_enabled: bool
-    overview_enabled: bool
-    has_sort_feature: bool
-    include_text: list[str]
-    exclude_text: list[str]
-    query_tokens: list[str]
-    context_query_tokens: list[str]
-    deep_enabled: bool
-    context_docs_limit: int
-    context_doc_min_chars: int
-    max_results: int
-    page_weight: float
-    context_weight: float
-    prefetch_weight: float
-
-
-@dataclass(slots=True)
-class _RankStats:
-    filtered_count: int = 0
-    sum_page_score: float = 0.0
-    sum_context_score: float = 0.0
-    sum_prefetch_score: float = 0.0
-
-
-@dataclass(slots=True)
-class _CandidateForScoring:
-    order: int
-    candidate: SearchFetchedCandidate
-    main_text: str
-    subpage_inputs: list[tuple[str, list[float], list[float]]]
 
 
 class SearchRankStep(StepBase[SearchStepContext]):
@@ -102,7 +69,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
         )
         return ctx
 
-    def _build_rank_options(self, ctx: SearchStepContext) -> _RankOptions:
+    def _build_rank_options(self, ctx: SearchStepContext) -> SearchRankOptions:
         content_enabled = self._is_enabled(ctx.request.fetchs.content)
         abstracts_enabled = self._is_enabled(ctx.request.fetchs.abstracts)
         overview_enabled = self._is_enabled(ctx.request.fetchs.overview)
@@ -127,7 +94,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
             else int(_DEFAULT_MAX_CONTEXT_DOCS)
         )
         context_doc_min_chars = int(_DEEP_MIN_CONTEXT_DOC_CHARS) if deep_enabled else 0
-        return _RankOptions(
+        return SearchRankOptions(
             content_enabled=bool(content_enabled),
             abstracts_enabled=bool(abstracts_enabled),
             overview_enabled=bool(overview_enabled),
@@ -171,12 +138,12 @@ class SearchRankStep(StepBase[SearchStepContext]):
         *,
         ctx: SearchStepContext,
         candidates: list[SearchFetchedCandidate],
-        options: _RankOptions,
-    ) -> tuple[list[SearchRankedCandidate], _RankStats]:
+        options: SearchRankOptions,
+    ) -> tuple[list[SearchRankedCandidate], SearchRankStats]:
         ranked: list[SearchRankedCandidate] = []
-        stats = _RankStats()
+        stats = SearchRankStats()
         ctx.deep.context_scores = {}
-        ready: list[_CandidateForScoring] = []
+        ready: list[SearchCandidateForScoring] = []
         for idx, candidate in enumerate(candidates):
             main_text = clean_whitespace(str(candidate.main_md_for_abstract or ""))
             if not self._passes_text_filters(
@@ -187,7 +154,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
                 stats.filtered_count += 1
                 continue
             ready.append(
-                _CandidateForScoring(
+                SearchCandidateForScoring(
                     order=idx,
                     candidate=candidate,
                     main_text=main_text,
@@ -275,7 +242,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
     async def _batch_score_content(
         self,
         *,
-        candidates: list[_CandidateForScoring],
+        candidates: list[SearchCandidateForScoring],
         query: str,
         query_tokens: list[str],
         enabled: bool,
@@ -309,11 +276,11 @@ class SearchRankStep(StepBase[SearchStepContext]):
         self,
         *,
         ctx: SearchStepContext,
-        candidates: list[_CandidateForScoring],
+        candidates: list[SearchCandidateForScoring],
         query: str,
         query_tokens: list[str],
         enabled: bool,
-        options: _RankOptions,
+        options: SearchRankOptions,
     ) -> dict[int, float]:
         if not enabled:
             return {}
@@ -388,7 +355,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
         *,
         ctx: SearchStepContext,
         candidate: SearchFetchedCandidate,
-        options: _RankOptions,
+        options: SearchRankOptions,
     ) -> list[str]:
         result = candidate.result
         docs: list[str] = []

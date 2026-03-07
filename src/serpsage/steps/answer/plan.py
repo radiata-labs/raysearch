@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.models.steps.answer import AnswerStepContext, AnswerSubQuestionPlan
+from serpsage.models.steps.answer import (
+    AnswerPlanPayload,
+    AnswerStepContext,
+    AnswerSubQuestionPlan,
+)
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
@@ -14,20 +16,11 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
 
-_MAX_SUB_QUESTIONS = 8
-_FIXED_MAX_RESULTS = 5
-_ANSWER_MODE = Literal["direct", "summary"]
-
-
-@dataclass(slots=True)
-class _PlannedSearch:
-    answer_mode: _ANSWER_MODE
-    freshness_intent: bool
-    query_language: str
-    sub_questions: list[str]
-
 
 class AnswerPlanStep(StepBase[AnswerStepContext]):
+    _MAX_SUB_QUESTIONS = 8
+    _FIXED_MAX_RESULTS = 5
+
     def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -52,7 +45,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                     "message": str(exc),
                 },
             )
-            plan = _PlannedSearch(
+            plan = AnswerPlanPayload(
                 answer_mode="summary",
                 freshness_intent=False,
                 query_language="same as query",
@@ -61,7 +54,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         sub_questions = _normalize_sub_questions(
             plan.sub_questions,
             fallback=query_text,
-            limit=_MAX_SUB_QUESTIONS,
+            limit=self._MAX_SUB_QUESTIONS,
         )
         sub_question_plans = [
             AnswerSubQuestionPlan(question=question, search_query=question)
@@ -75,7 +68,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         ctx.plan.query_language = str(plan.query_language)
         ctx.plan.search_query = first_search_query
         ctx.plan.search_mode = "auto"
-        ctx.plan.max_results = _FIXED_MAX_RESULTS
+        ctx.plan.max_results = self._FIXED_MAX_RESULTS
         ctx.plan.additional_queries = None
         ctx.plan.sub_questions = [
             item.model_copy(deep=True) for item in sub_question_plans
@@ -87,7 +80,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         *,
         query: str,
         now_utc: datetime,
-    ) -> _PlannedSearch:
+    ) -> AnswerPlanPayload:
         schema: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
@@ -105,7 +98,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},
                     "minItems": 1,
-                    "maxItems": _MAX_SUB_QUESTIONS,
+                    "maxItems": self._MAX_SUB_QUESTIONS,
                 },
             },
         }
@@ -113,13 +106,10 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         result = await self._llm.create(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
-            response_format=schema,
+            response_format=AnswerPlanPayload,
+            format_override=schema,
         )
-        raw = (
-            result.data
-            if result.data is not None
-            else _try_parse_json_value(result.text)
-        )
+        raw = result.data
         return self._normalize_plan(raw=raw, original_query=query)
 
     def _build_messages(
@@ -165,32 +155,26 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
     def _normalize_plan(
         self,
         *,
-        raw: object,
+        raw: AnswerPlanPayload,
         original_query: str,
-    ) -> _PlannedSearch:
-        data = raw if isinstance(raw, dict) else {}
-        raw_mode = clean_whitespace(str(data.get("answer_mode") or "")).casefold()
-        answer_mode: _ANSWER_MODE = "direct" if raw_mode == "direct" else "summary"
-        freshness_intent = _coerce_bool(data.get("freshness_intent"), default=False)
-        query_language = clean_whitespace(str(data.get("query_language") or ""))
+    ) -> AnswerPlanPayload:
+        query_language = clean_whitespace(raw.query_language)
         if not query_language:
             query_language = "same as query"
-        raw_sub_questions = data.get("sub_questions")
-        sub_question_items = (
-            [clean_whitespace(str(item or "")) for item in raw_sub_questions]
-            if isinstance(raw_sub_questions, list)
-            else []
-        )
+        sub_question_items = [
+            clean_whitespace(str(item or "")) for item in raw.sub_questions
+        ]
         sub_questions = _normalize_sub_questions(
             sub_question_items,
             fallback=clean_whitespace(original_query),
-            limit=_MAX_SUB_QUESTIONS,
+            limit=self._MAX_SUB_QUESTIONS,
         )
-        return _PlannedSearch(
-            answer_mode=answer_mode,
-            freshness_intent=freshness_intent,
-            query_language=query_language,
-            sub_questions=sub_questions,
+        return raw.model_copy(
+            update={
+                "query_language": query_language,
+                "sub_questions": sub_questions,
+            },
+            deep=True,
         )
 
 
@@ -217,31 +201,6 @@ def _normalize_sub_questions(
         return out
     fallback_question = clean_whitespace(fallback)
     return [fallback_question] if fallback_question else []
-
-
-def _coerce_bool(value: object, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        token = clean_whitespace(value).casefold()
-        if token in {"1", "true", "yes", "y"}:
-            return True
-        if token in {"0", "false", "no", "n", ""}:
-            return False
-    return default
-
-
-def _try_parse_json_value(text: str) -> object:
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if 0 <= start < end:
-            return json.loads(text[start : end + 1])
-        raise
 
 
 __all__ = ["AnswerPlanStep"]

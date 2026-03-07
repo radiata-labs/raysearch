@@ -6,7 +6,6 @@ from typing_extensions import override
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import anyio
-from pydantic import Field
 
 from serpsage.models.app.request import (
     FetchContentRequest,
@@ -14,16 +13,19 @@ from serpsage.models.app.request import (
     FetchRequest,
 )
 from serpsage.models.app.response import FetchResultItem, FetchSubpagesResult
-from serpsage.models.base import MutableModel
 from serpsage.models.components.extract import ExtractedLink
 from serpsage.models.steps.fetch import FetchRuntimeConfig, FetchStepContext
-from serpsage.models.steps.research import ResearchLinkCandidate, ResearchStepContext
+from serpsage.models.steps.research import (
+    ResearchCorpusUpsertResult,
+    ResearchLinkCandidate,
+    ResearchLinkPickerPayload,
+    ResearchStepContext,
+)
 from serpsage.models.steps.search import SearchFetchedCandidate
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_link_picker_prompt_messages
 from serpsage.steps.research.schema import build_link_picker_schema
 from serpsage.steps.research.search import (
-    CorpusUpsertResult,
     append_source_version,
     canonicalize_url,
     rebuild_corpus_ranking,
@@ -50,11 +52,6 @@ _EXPLORE_LOW_VALUE_PATH_PREFIXES = (
 )
 _LINK_PICKER_PRERANK_MULTIPLIER = 4
 _LINK_PICKER_PRERANK_FLOOR = 16
-
-
-class _LinkPickerPayload(MutableModel):
-    selected_link_ids: list[int] = Field(default_factory=list, max_length=24)
-    reason: str = ""
 
 
 class ResearchFetchStep(StepBase[ResearchStepContext]):
@@ -404,7 +401,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                     max_links_to_select=max_links,
                     candidate_links_markdown=candidate_links_markdown,
                 ),
-                response_format=_LinkPickerPayload,
+                response_format=ResearchLinkPickerPayload,
                 format_override=build_link_picker_schema(),
                 retries=self.settings.research.llm_self_heal_retries,
             )
@@ -769,7 +766,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         sub: FetchSubpagesResult,
         round_index: int,
-    ) -> CorpusUpsertResult:
+    ) -> ResearchCorpusUpsertResult:
         return append_source_version(
             ctx=ctx,
             url=sub.url,

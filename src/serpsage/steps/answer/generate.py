@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 from urllib.parse import urlsplit, urlunsplit
 
 from serpsage.models.app.response import AnswerCitation, FetchResultItem
-from serpsage.models.steps.answer import AnswerStepContext, AnswerSubSearchState
+from serpsage.models.steps.answer import (
+    AnswerStepContext,
+    AnswerSubSearchState,
+    PageSource,
+    PromptSource,
+    QuestionPromptContext,
+)
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
@@ -23,33 +28,6 @@ _CITATION_GROUP_RE = re.compile(
     re.IGNORECASE,
 )
 _FIXED_ABSTRACT_MAX_CHARS = 1000
-
-
-@dataclass(slots=True)
-class _PageSource:
-    key: str
-    url: str
-    title: str
-    content: str
-    first_order: int
-    abstracts: list[str] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class _PromptSource:
-    key: str
-    url: str
-    title: str
-    content: str
-    abstracts: list[str]
-    question_index: int
-    source_index: int
-
-
-@dataclass(slots=True)
-class _QuestionPromptContext:
-    question: str
-    sources: list[_PromptSource]
 
 
 class AnswerGenerateStep(StepBase[AnswerStepContext]):
@@ -156,19 +134,19 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
 
     def _build_question_prompt_contexts(
         self, ctx: AnswerStepContext
-    ) -> tuple[list[_QuestionPromptContext], list[_PromptSource]]:
+    ) -> tuple[list[QuestionPromptContext], list[PromptSource]]:
         sub_searches = self._resolve_sub_searches(ctx)
-        question_contexts: list[_QuestionPromptContext] = []
-        prompt_sources: list[_PromptSource] = []
+        question_contexts: list[QuestionPromptContext] = []
+        prompt_sources: list[PromptSource] = []
         for question_index, sub_search in enumerate(sub_searches, start=1):
             raw_sources = self._collect_page_sources(sub_search.results)
             local_sources, _ = self._build_prompt_sources(
                 sources=raw_sources,
                 max_chars=_FIXED_ABSTRACT_MAX_CHARS,
             )
-            ordered_sources: list[_PromptSource] = []
+            ordered_sources: list[PromptSource] = []
             for source_index, source in enumerate(local_sources, start=1):
-                prompt_source = _PromptSource(
+                prompt_source = PromptSource(
                     key=source.key,
                     url=source.url,
                     title=source.title,
@@ -180,7 +158,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                 ordered_sources.append(prompt_source)
                 prompt_sources.append(prompt_source)
             question_contexts.append(
-                _QuestionPromptContext(
+                QuestionPromptContext(
                     question=clean_whitespace(sub_search.question),
                     sources=ordered_sources,
                 )
@@ -228,10 +206,8 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
             )
         ]
 
-    def _collect_page_sources(
-        self, results: list[FetchResultItem]
-    ) -> list[_PageSource]:
-        sources_by_key: dict[str, _PageSource] = {}
+    def _collect_page_sources(self, results: list[FetchResultItem]) -> list[PageSource]:
+        sources_by_key: dict[str, PageSource] = {}
         seen_abstracts: dict[str, set[str]] = {}
         page_order = 0
         for result in results:
@@ -261,7 +237,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
     def _append_page_source(
         self,
         *,
-        sources_by_key: dict[str, _PageSource],
+        sources_by_key: dict[str, PageSource],
         seen_abstracts: dict[str, set[str]],
         page_order: int,
         url: str,
@@ -276,7 +252,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         normalized_title = clean_whitespace(title)
         source = sources_by_key.get(key)
         if source is None:
-            source = _PageSource(
+            source = PageSource(
                 key=key,
                 url=clean_url,
                 title=normalized_title,
@@ -305,13 +281,13 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
     def _build_prompt_sources(
         self,
         *,
-        sources: list[_PageSource],
+        sources: list[PageSource],
         max_chars: int,
-    ) -> tuple[list[_PromptSource], int]:
+    ) -> tuple[list[PromptSource], int]:
         budget = max(0, int(max_chars))
         used_chars = 0
         selected_texts: set[str] = set()
-        prompt_sources: list[_PromptSource] = []
+        prompt_sources: list[PromptSource] = []
         for source in sources:
             selected_abstracts: list[str] = []
             for abstract in source.abstracts:
@@ -333,7 +309,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                     break
             if selected_abstracts:
                 prompt_sources.append(
-                    _PromptSource(
+                    PromptSource(
                         key=source.key,
                         url=source.url,
                         title=source.title,
@@ -351,7 +327,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         self,
         *,
         query: str,
-        question_contexts: list[_QuestionPromptContext],
+        question_contexts: list[QuestionPromptContext],
         answer_mode: str,
         mode: str,
         now_utc: datetime,
@@ -480,7 +456,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
     def _build_citations(
         self,
         *,
-        sources: list[_PromptSource],
+        sources: list[PromptSource],
         citation_indexes: list[int],
         include_content: bool,
     ) -> list[AnswerCitation]:

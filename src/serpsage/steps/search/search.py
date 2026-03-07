@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import re
 from contextlib import suppress
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
@@ -12,7 +11,10 @@ import anyio
 
 from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.search import (
+    SearchCanonicalBucket,
+    SearchNormalizedResult,
     SearchQueryJob,
+    SearchScoredHit,
     SearchSnippetContext,
     SearchStepContext,
 )
@@ -31,23 +33,6 @@ _AUTO_PREFETCH_MULTIPLIER = 1.6
 _AUTO_PREFETCH_EXTRA_CAP = 8
 _MAX_SNIPPET_CONTEXT_PER_URL = 3
 _RE_CJK_TOKEN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]")
-
-
-@dataclass(slots=True)
-class _ScoredHit:
-    job_index: int
-    order: int
-    item: _NormalizedResult
-
-
-@dataclass(slots=True)
-class _CanonicalBucket:
-    representative_url: str
-    representative_order: int
-    representative_score: float
-    hit_indexes: set[int] = field(default_factory=set)
-    hit_scores: list[float] = field(default_factory=list)
-    snippets_by_source: dict[str, SearchSnippetContext] = field(default_factory=dict)
 
 
 class SearchStep(StepBase[SearchStepContext]):
@@ -83,7 +68,7 @@ class SearchStep(StepBase[SearchStepContext]):
         query_tokens = tokenize_for_query(req.query)
         include_domains = list(req.include_domains or [])
         exclude_domains = list(req.exclude_domains or [])
-        normalized_by_job: list[list[_NormalizedResult]] = [
+        normalized_by_job: list[list[SearchNormalizedResult]] = [
             self._normalize_results(
                 raw_results[idx],
                 include_domains=include_domains,
@@ -91,14 +76,14 @@ class SearchStep(StepBase[SearchStepContext]):
             )
             for idx in range(len(query_jobs))
         ]
-        scored_hits: list[_ScoredHit] = []
+        scored_hits: list[SearchScoredHit] = []
         docs: list[str] = []
         next_order = 0
         for idx, normalized in enumerate(normalized_by_job):
             for item in normalized:
                 docs.append(f"{item.title} {item.title} {item.snippet}".strip())
                 scored_hits.append(
-                    _ScoredHit(
+                    SearchScoredHit(
                         job_index=idx,
                         order=next_order,
                         item=item,
@@ -159,10 +144,10 @@ class SearchStep(StepBase[SearchStepContext]):
         self,
         *,
         query_jobs: list[SearchQueryJob],
-        scored_hits: list[_ScoredHit],
+        scored_hits: list[SearchScoredHit],
         base_scores: list[float],
-    ) -> dict[str, _CanonicalBucket]:
-        buckets: dict[str, _CanonicalBucket] = {}
+    ) -> dict[str, SearchCanonicalBucket]:
+        buckets: dict[str, SearchCanonicalBucket] = {}
         for score_idx, hit in enumerate(scored_hits):
             if hit.job_index >= len(query_jobs):
                 continue
@@ -174,7 +159,7 @@ class SearchStep(StepBase[SearchStepContext]):
             canonical_url = str(hit.item.canonical_url or hit.item.url)
             bucket = buckets.get(canonical_url)
             if bucket is None:
-                bucket = _CanonicalBucket(
+                bucket = SearchCanonicalBucket(
                     representative_url=str(hit.item.url),
                     representative_order=int(hit.order),
                     representative_score=float(weighted_score),
@@ -430,7 +415,7 @@ class SearchStep(StepBase[SearchStepContext]):
             return 0.0
         return float(sum(top_k) / len(top_k))
 
-    def _pick_snippet(self, item: _NormalizedResult) -> str:
+    def _pick_snippet(self, item: SearchNormalizedResult) -> str:
         snippet = clean_whitespace(item.snippet)
         if snippet:
             return snippet
@@ -452,8 +437,8 @@ class SearchStep(StepBase[SearchStepContext]):
         *,
         include_domains: list[str],
         exclude_domains: list[str],
-    ) -> list[_NormalizedResult]:
-        out: list[_NormalizedResult] = []
+    ) -> list[SearchNormalizedResult]:
+        out: list[SearchNormalizedResult] = []
         for raw in raw_results:
             url = clean_whitespace(str(raw.get("url") or ""))
             if not url:
@@ -474,7 +459,7 @@ class SearchStep(StepBase[SearchStepContext]):
             snippet = clean_whitespace(strip_html(str(snippet_raw or "")))
             canonical_url = self._canonicalize_url(url)
             out.append(
-                _NormalizedResult(
+                SearchNormalizedResult(
                     url=url,
                     canonical_url=canonical_url,
                     title=title,
@@ -579,16 +564,6 @@ class SearchStep(StepBase[SearchStepContext]):
         if token in {"fast", "auto", "deep"}:
             return token  # type: ignore[return-value]
         return "auto"
-
-
-class _NormalizedResult:
-    def __init__(
-        self, *, url: str, canonical_url: str, title: str, snippet: str
-    ) -> None:
-        self.url = url
-        self.canonical_url = canonical_url
-        self.title = title
-        self.snippet = snippet
 
 
 __all__ = ["SearchStep"]

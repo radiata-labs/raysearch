@@ -127,7 +127,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                             raise
                         if not isinstance(
                             exc,
-                            retry_on + (_SchemaMismatchError,),
+                            retry_on + (SchemaMismatchError,),
                         ):
                             raise
                         attempt_messages = attempt_messages + [
@@ -156,7 +156,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     ttl_s=cache_ttl_s,
                 )
             return ctx
-        except _SchemaMismatchError as exc:
+        except SchemaMismatchError as exc:
             await self.emit_tracking_event(
                 event_name="fetch.overview.error",
                 request_id=ctx.request_id,
@@ -299,10 +299,10 @@ def _validate_json_output(*, schema: dict[str, Any], value: object) -> None:
     try:
         Draft202012Validator(schema).validate(value)
     except Exception as exc:  # noqa: BLE001
-        raise _SchemaMismatchError(str(exc)) from exc
+        raise SchemaMismatchError(str(exc)) from exc
 
 
-class _SchemaMismatchError(Exception):
+class SchemaMismatchError(Exception):
     pass
 
 

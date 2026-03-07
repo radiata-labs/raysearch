@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from serpsage.models.app.request import (
     ResearchRequest,
 )
-from serpsage.models.base import MutableModel
+from serpsage.models.base import MutableModel, UnvalidatedModel
 from serpsage.models.components.extract import (
     ExtractedLink,
 )
@@ -21,8 +21,7 @@ TaskIntent = Literal["how_to", "comparison", "explainer", "diagnosis", "other"]
 TaskComplexity = Literal["low", "medium", "high"]
 
 
-class ThemeQuestionCardPayload(MutableModel):
-    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+class ThemeQuestionCardPayload(UnvalidatedModel):
     question: str
     priority: int = Field(default=3, ge=1, le=5)
     seed_queries: list[str] = Field(default_factory=list, max_length=8)
@@ -30,8 +29,7 @@ class ThemeQuestionCardPayload(MutableModel):
     expected_gain: str = ""
 
 
-class ThemeOutputPayload(MutableModel):
-    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+class ThemeOutputPayload(UnvalidatedModel):
     detected_input_language: str = "other"
     search_language: str = "other"
     core_question: str = ""
@@ -71,7 +69,7 @@ class ResearchThemePlan(MutableModel):
     )
 
 
-class PlanSearchJobPayload(MutableModel):
+class PlanSearchJobPayload(UnvalidatedModel):
     query: str
     intent: str = "coverage"
     mode: str = "auto"
@@ -82,19 +80,19 @@ class PlanSearchJobPayload(MutableModel):
     additional_queries: list[str] = Field(default_factory=list, max_length=8)
 
 
-class PlanOutputPayload(MutableModel):
+class PlanOutputPayload(UnvalidatedModel):
     query_strategy: str = "mixed"
     round_action: RoundAction = "search"
     explore_target_source_ids: list[int] = Field(default_factory=list, max_length=12)
     search_jobs: list[PlanSearchJobPayload] = Field(default_factory=list, max_length=8)
 
 
-class OverviewConflictPayload(MutableModel):
+class OverviewConflictPayload(UnvalidatedModel):
     topic: str
     status: str
 
 
-class OverviewOutputPayload(MutableModel):
+class OverviewOutputPayload(UnvalidatedModel):
     findings: list[str] = Field(default_factory=list, max_length=20)
     conflict_arbitration: list[OverviewConflictPayload] = Field(
         default_factory=list,
@@ -112,12 +110,12 @@ class OverviewOutputPayload(MutableModel):
     stop: bool = False
 
 
-class ContentConflictPayload(MutableModel):
+class ContentConflictPayload(UnvalidatedModel):
     topic: str = ""
     status: str
 
 
-class ContentOutputPayload(MutableModel):
+class ContentOutputPayload(UnvalidatedModel):
     resolved_findings: list[str] = Field(default_factory=list, max_length=20)
     conflict_resolutions: list[ContentConflictPayload] = Field(
         default_factory=list,
@@ -133,13 +131,13 @@ class ContentOutputPayload(MutableModel):
     stop: bool = False
 
 
-class TrackInsightPointPayload(MutableModel):
+class TrackInsightPointPayload(UnvalidatedModel):
     conclusion: str = ""
     condition: str = ""
     impact: str = ""
 
 
-class TrackInsightCardPayload(MutableModel):
+class TrackInsightCardPayload(UnvalidatedModel):
     direct_answer: str = ""
     high_value_points: list[TrackInsightPointPayload] = Field(
         default_factory=list,
@@ -150,7 +148,7 @@ class TrackInsightCardPayload(MutableModel):
     next_actions: list[str] = Field(default_factory=list, max_length=10)
 
 
-class SubreportOutputPayload(MutableModel):
+class SubreportOutputPayload(UnvalidatedModel):
     subreport_markdown: str = ""
     track_insight_card: TrackInsightCardPayload | None = None
 
@@ -173,6 +171,90 @@ class RenderArchitectOutput(MutableModel):
         default_factory=list,
         min_length=5,
         max_length=10,
+    )
+
+
+class ResearchDecideSignalPayload(MutableModel):
+    continue_research: bool = False
+    high_yield_remaining: bool = False
+    next_queries: list[str] = Field(default_factory=list, max_length=8)
+    reason: str = ""
+
+
+class ResearchLinkPickerPayload(MutableModel):
+    selected_link_ids: list[int] = Field(default_factory=list, max_length=24)
+    reason: str = ""
+
+
+class ResearchTrackAllocation(MutableModel):
+    search_grant: int
+    fetch_grant: int
+    max_queries_per_round: int
+    bonus: bool = False
+    fetch_only: bool = False
+
+
+class ResearchBudgetReservationState(MutableModel):
+    search_reserved: int = 0
+    fetch_reserved: int = 0
+
+
+class ResearchOrchestratorState(MutableModel):
+    last_global_search_used: int = -1
+    priorities: dict[str, float] = Field(default_factory=dict)
+    query_width_hints: dict[str, int] = Field(default_factory=dict)
+    rationale: str = ""
+    refresh_interval_search_calls: int = 2
+
+
+class ResearchTrackOrchestratorPriorityPayload(MutableModel):
+    question_id: str
+    priority_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    query_width_hint: int = Field(default=1, ge=1, le=2)
+    reason: str = ""
+
+
+class ResearchTrackOrchestratorOutputPayload(MutableModel):
+    priorities: list[ResearchTrackOrchestratorPriorityPayload] = Field(
+        default_factory=list,
+        max_length=24,
+    )
+    rationale: str = ""
+
+
+class ResearchCorpusUpsertResult(MutableModel):
+    source_id: int
+    canonical_url: str
+    is_new_canonical: bool
+    is_new_version: bool
+
+
+class ResearchWriterSectionFailure(MutableModel):
+    index: int
+    section_id: str
+    subhead: str
+    cause_type: str
+    cause_message: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "index": self.index,
+            "section_id": self.section_id,
+            "subhead": self.subhead,
+            "cause_type": self.cause_type,
+            "cause_message": self.cause_message,
+        }
+
+
+class ResearchQueryLanguageRepairJobPayload(MutableModel):
+    query: str = ""
+    additional_queries: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ResearchQueryLanguageRepairOutputPayload(MutableModel):
+    search_jobs: list[ResearchQueryLanguageRepairJobPayload] = Field(
+        default_factory=list,
+        max_length=8,
     )
 
 
@@ -371,11 +453,22 @@ __all__ = [
     "PlanSearchJobPayload",
     "RenderArchitectOutput",
     "RenderArchitectSectionPlan",
+    "ResearchBudgetReservationState",
     "SubreportOutputPayload",
+    "ResearchCorpusUpsertResult",
+    "ResearchDecideSignalPayload",
     "TrackInsightCardPayload",
     "TrackInsightPointPayload",
+    "ResearchLinkPickerPayload",
+    "ResearchOrchestratorState",
+    "ResearchQueryLanguageRepairJobPayload",
+    "ResearchQueryLanguageRepairOutputPayload",
+    "ResearchTrackAllocation",
+    "ResearchTrackOrchestratorOutputPayload",
+    "ResearchTrackOrchestratorPriorityPayload",
     "ResearchThemePlan",
     "ResearchThemePlanCard",
+    "ResearchWriterSectionFailure",
     "ThemeOutputPayload",
     "ThemeQuestionCardPayload",
     "ResearchCorpusState",

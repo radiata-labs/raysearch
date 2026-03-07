@@ -4,15 +4,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from pydantic import Field
-
-from serpsage.models.base import MutableModel
 from serpsage.models.steps.research import (
     ContentOutputPayload,
     OverviewOutputPayload,
     PlanOutputPayload,
     PlanSearchJobPayload,
     ResearchLinkCandidate,
+    ResearchQueryLanguageRepairJobPayload,
+    ResearchQueryLanguageRepairOutputPayload,
     ResearchRoundState,
     ResearchSearchJob,
     ResearchStepContext,
@@ -40,18 +39,6 @@ from serpsage.utils import clean_whitespace
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-
-
-class _QueryLanguageRepairJobPayload(MutableModel):
-    query: str = ""
-    additional_queries: list[str] = Field(default_factory=list, max_length=8)
-
-
-class _QueryLanguageRepairOutputPayload(MutableModel):
-    search_jobs: list[_QueryLanguageRepairJobPayload] = Field(
-        default_factory=list,
-        max_length=8,
-    )
 
 
 class ResearchPlanStep(StepBase[ResearchStepContext]):
@@ -383,9 +370,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             search_language=search_language,
         ):
             return jobs, False
-        payload = _QueryLanguageRepairOutputPayload(
+        payload = ResearchQueryLanguageRepairOutputPayload(
             search_jobs=[
-                _QueryLanguageRepairJobPayload(
+                ResearchQueryLanguageRepairJobPayload(
                     query=item.query,
                     additional_queries=list(item.additional_queries),
                 )
@@ -401,7 +388,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     search_language=search_language,
                     now_utc=now_utc,
                 ),
-                response_format=_QueryLanguageRepairOutputPayload,
+                response_format=ResearchQueryLanguageRepairOutputPayload,
                 format_override=build_query_language_repair_schema(),
                 retries=self.settings.research.llm_self_heal_retries,
             )
@@ -417,7 +404,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     def _normalize_repaired_search_jobs(
         self,
         *,
-        raw: _QueryLanguageRepairOutputPayload,
+        raw: ResearchQueryLanguageRepairOutputPayload,
         baseline: list[ResearchSearchJob],
     ) -> list[ResearchSearchJob]:
         payload_jobs = list(raw.search_jobs or [])

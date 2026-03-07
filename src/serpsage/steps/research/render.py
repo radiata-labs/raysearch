@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
@@ -14,6 +13,7 @@ from serpsage.models.steps.research import (
     ResearchQuestionCard,
     ResearchStepContext,
     ResearchTrackResult,
+    ResearchWriterSectionFailure,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
@@ -52,24 +52,6 @@ class _WriterSectionError(RuntimeError):
         super().__init__(
             f"writer section failed: {label}; cause={self.cause_type}: {self.cause_message}"
         )
-
-
-@dataclass(slots=True)
-class _WriterSectionFailure:
-    index: int
-    section_id: str
-    subhead: str
-    cause_type: str
-    cause_message: str
-
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "index": self.index,
-            "section_id": self.section_id,
-            "subhead": self.subhead,
-            "cause_type": self.cause_type,
-            "cause_message": self.cause_message,
-        }
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
@@ -645,8 +627,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
 
     def _collect_writer_section_failures(
         self, exc: BaseException
-    ) -> list[_WriterSectionFailure]:
-        out: list[_WriterSectionFailure] = []
+    ) -> list[ResearchWriterSectionFailure]:
+        out: list[ResearchWriterSectionFailure] = []
         stack: list[BaseException] = [exc]
         while stack and len(out) < 16:
             node = stack.pop()
@@ -661,7 +643,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             if not isinstance(node, _WriterSectionError):
                 continue
             out.append(
-                _WriterSectionFailure(
+                ResearchWriterSectionFailure(
                     index=node.index,
                     section_id=node.section_id,
                     subhead=node.subhead,

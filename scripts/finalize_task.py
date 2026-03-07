@@ -397,6 +397,7 @@ def finalize_task(task_timestamp: str, title_contains: str | None = None) -> int
 
 
 def main() -> None:
+    # _refresh_agents_tree(Path(__file__).resolve().parents[1])
     parser = argparse.ArgumentParser(
         description=(
             "Run per-file scoped checks for one task, update status rows "

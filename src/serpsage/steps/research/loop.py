@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
-from pydantic import Field
 
-from serpsage.models.base import MutableModel
 from serpsage.models.steps.research import (
+    ResearchBudgetReservationState,
     ResearchBudgetState,
+    ResearchOrchestratorState,
     ResearchQuestionCard,
     ResearchRoundState,
     ResearchRuntimeState,
     ResearchStepContext,
+    ResearchTrackAllocation,
+    ResearchTrackOrchestratorOutputPayload,
     ResearchTrackResult,
     TrackInsightCardPayload,
 )
@@ -25,45 +26,6 @@ if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
     from serpsage.steps.base import RunnerBase
-
-
-@dataclass(slots=True)
-class _TrackAllocation:
-    search_grant: int
-    fetch_grant: int
-    max_queries_per_round: int
-    bonus: bool = False
-    fetch_only: bool = False
-
-
-@dataclass(slots=True)
-class _BudgetReservationState:
-    search_reserved: int = 0
-    fetch_reserved: int = 0
-
-
-@dataclass(slots=True)
-class _OrchestratorState:
-    last_global_search_used: int = -1
-    priorities: dict[str, float] = field(default_factory=dict)
-    query_width_hints: dict[str, int] = field(default_factory=dict)
-    rationale: str = ""
-    refresh_interval_search_calls: int = 2
-
-
-class _TrackOrchestratorPriorityPayload(MutableModel):
-    question_id: str
-    priority_score: float = Field(default=0.5, ge=0.0, le=1.0)
-    query_width_hint: int = Field(default=1, ge=1, le=2)
-    reason: str = ""
-
-
-class _TrackOrchestratorOutputPayload(MutableModel):
-    priorities: list[_TrackOrchestratorPriorityPayload] = Field(
-        default_factory=list,
-        max_length=24,
-    )
-    rationale: str = ""
 
 
 class ResearchLoopStep(StepBase[ResearchStepContext]):
@@ -99,8 +61,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             for card in cards
         }
         result_map: dict[str, ResearchTrackResult] = {}
-        reservation_state = _BudgetReservationState()
-        orchestrator_state = _OrchestratorState()
+        reservation_state = ResearchBudgetReservationState()
+        orchestrator_state = ResearchOrchestratorState()
         budget_lock = anyio.Lock()
         result_map_lock = anyio.Lock()
         orchestrator_lock = anyio.Lock()
@@ -146,8 +108,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         track_ctx: ResearchStepContext,
         track_map: dict[str, ResearchStepContext],
         result_map: dict[str, ResearchTrackResult],
-        reservation_state: _BudgetReservationState,
-        orchestrator_state: _OrchestratorState,
+        reservation_state: ResearchBudgetReservationState,
+        orchestrator_state: ResearchOrchestratorState,
         budget_lock: anyio.Lock,
         result_map_lock: anyio.Lock,
         orchestrator_lock: anyio.Lock,
@@ -271,11 +233,11 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         track_ctx: ResearchStepContext,
         card: ResearchQuestionCard,
         track_map: dict[str, ResearchStepContext],
-        reservation_state: _BudgetReservationState,
-        orchestrator_state: _OrchestratorState,
+        reservation_state: ResearchBudgetReservationState,
+        orchestrator_state: ResearchOrchestratorState,
         budget_lock: anyio.Lock,
         orchestrator_lock: anyio.Lock,
-    ) -> _TrackAllocation:
+    ) -> ResearchTrackAllocation:
         fetch_per_search_floor = max(
             1,
             root.runtime.budget.max_fetch_calls
@@ -309,7 +271,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         orchestrator_enabled = self._orchestrator_enabled(root)
         has_orchestrator_priority = False
         if track_stop_ready:
-            return _TrackAllocation(
+            return ResearchTrackAllocation(
                 search_grant=0,
                 fetch_grant=0,
                 max_queries_per_round=1,
@@ -339,7 +301,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 - reservation_state.fetch_reserved,
             )
             if remaining_fetch <= 0:
-                return _TrackAllocation(
+                return ResearchTrackAllocation(
                     search_grant=0,
                     fetch_grant=0,
                     max_queries_per_round=1,
@@ -349,7 +311,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 if not track_has_objectives or not self._can_allocate_fetch_only_round(
                     track_ctx
                 ):
-                    return _TrackAllocation(
+                    return ResearchTrackAllocation(
                         search_grant=0,
                         fetch_grant=0,
                         max_queries_per_round=1,
@@ -360,7 +322,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     remaining_fetch,
                 )
                 reservation_state.fetch_reserved += fetch_grant
-                return _TrackAllocation(
+                return ResearchTrackAllocation(
                     search_grant=0,
                     fetch_grant=fetch_grant,
                     max_queries_per_round=1,
@@ -389,7 +351,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             search_grant = 2 if bonus else 1
             search_grant = max(0, min(search_grant, remaining_search))
             if search_grant <= 0:
-                return _TrackAllocation(
+                return ResearchTrackAllocation(
                     search_grant=0,
                     fetch_grant=0,
                     max_queries_per_round=1,
@@ -408,7 +370,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     - max(0, remaining_search - search_grant) * fetch_per_search_floor
                 )
             if max_fetch_affordable < minimum_fetch_for_grant:
-                return _TrackAllocation(
+                return ResearchTrackAllocation(
                     search_grant=0,
                     fetch_grant=0,
                     max_queries_per_round=1,
@@ -424,7 +386,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 ),
             )
             if fetch_grant <= 0:
-                return _TrackAllocation(
+                return ResearchTrackAllocation(
                     search_grant=0,
                     fetch_grant=0,
                     max_queries_per_round=1,
@@ -438,7 +400,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     baseline_width,
                     min(bonus_width, max(baseline_width, width_hint)),
                 )
-            return _TrackAllocation(
+            return ResearchTrackAllocation(
                 search_grant=search_grant,
                 fetch_grant=fetch_grant,
                 max_queries_per_round=max(
@@ -453,7 +415,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         *,
         root: ResearchStepContext,
         track_map: dict[str, ResearchStepContext],
-        state: _OrchestratorState,
+        state: ResearchOrchestratorState,
         state_lock: anyio.Lock,
         force: bool = False,
     ) -> None:
@@ -513,7 +475,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         *,
         root: ResearchStepContext,
         track_map: dict[str, ResearchStepContext],
-    ) -> _TrackOrchestratorOutputPayload | None:
+    ) -> ResearchTrackOrchestratorOutputPayload | None:
         model = resolve_research_model(
             ctx=root,
             stage="plan",
@@ -526,7 +488,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     root=root,
                     track_map=track_map,
                 ),
-                response_format=_TrackOrchestratorOutputPayload,
+                response_format=ResearchTrackOrchestratorOutputPayload,
                 retries=self.settings.research.llm_self_heal_retries,
             )
             return result.data
@@ -549,10 +511,10 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         self,
         *,
         root: ResearchStepContext,
-        alloc: _TrackAllocation,
+        alloc: ResearchTrackAllocation,
         delta_search: int,
         delta_fetch: int,
-        reservation_state: _BudgetReservationState,
+        reservation_state: ResearchBudgetReservationState,
         budget_lock: anyio.Lock,
     ) -> None:
         async with budget_lock:
@@ -695,7 +657,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         self,
         *,
         track_ctx: ResearchStepContext,
-        alloc: _TrackAllocation,
+        alloc: ResearchTrackAllocation,
         base_budget: ResearchBudgetState,
     ) -> None:
         search_grant = max(0, alloc.search_grant)
@@ -832,7 +794,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             or ctx.parallel.global_fetch_used >= ctx.parallel.global_fetch_budget
         )
 
-    def _allocation_blocked(self, alloc: _TrackAllocation) -> bool:
+    def _allocation_blocked(self, alloc: ResearchTrackAllocation) -> bool:
         return alloc.fetch_grant <= 0 or (
             alloc.search_grant <= 0 and not alloc.fetch_only
         )

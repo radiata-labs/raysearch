@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from pydantic import Field
-
-from serpsage.models.base import MutableModel
-from serpsage.models.steps.research import ResearchStepContext
+from serpsage.models.steps.research import (
+    ResearchDecideSignalPayload,
+    ResearchStepContext,
+)
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_decide_prompt_messages
 from serpsage.steps.research.utils import (
@@ -18,13 +18,6 @@ from serpsage.steps.research.utils import (
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-
-
-class _DecideSignalPayload(MutableModel):
-    continue_research: bool = False
-    high_yield_remaining: bool = False
-    next_queries: list[str] = Field(default_factory=list, max_length=8)
-    reason: str = ""
 
 
 class ResearchDecideStep(StepBase[ResearchStepContext]):
@@ -264,7 +257,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
 
     async def _query_decide_signal(
         self, *, ctx: ResearchStepContext
-    ) -> _DecideSignalPayload | None:
+    ) -> ResearchDecideSignalPayload | None:
         if ctx.runtime.mode_depth.mode_key == "research-fast":
             return None
         model = resolve_research_model(
@@ -276,7 +269,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             result = await self._llm.create(
                 model=model,
                 messages=build_decide_prompt_messages(ctx=ctx),
-                response_format=_DecideSignalPayload,
+                response_format=ResearchDecideSignalPayload,
                 retries=self.settings.research.llm_self_heal_retries,
             )
             return result.data

@@ -24,6 +24,12 @@ class SearchQueryJob(MutableModel):
     source: Literal["primary", "manual", "rule", "llm"] = "primary"
 
 
+class SearchQueryCandidate(MutableModel):
+    query: str
+    weight: float = 1.0
+    source: Literal["primary", "manual", "rule", "llm"] = "primary"
+
+
 class SearchSnippetContext(MutableModel):
     snippet: str
     source_query: str
@@ -99,15 +105,86 @@ class SearchFetchedCandidate(MutableModel):
     subpages_overview_scores: list[list[float]] = Field(default_factory=list)
 
 
+class SearchNormalizedResult(MutableModel):
+    url: str
+    canonical_url: str = ""
+    title: str = ""
+    snippet: str = ""
+
+
+class SearchScoredHit(MutableModel):
+    job_index: int
+    order: int
+    item: SearchNormalizedResult
+
+
+class SearchCanonicalBucket(MutableModel):
+    representative_url: str
+    representative_order: int
+    representative_score: float
+    hit_indexes: set[int] = Field(default_factory=set)
+    hit_scores: list[float] = Field(default_factory=list)
+    snippets_by_source: dict[str, SearchSnippetContext] = Field(default_factory=dict)
+
+
+class SearchRankOptions(MutableModel):
+    content_enabled: bool
+    abstracts_enabled: bool
+    overview_enabled: bool
+    has_sort_feature: bool
+    include_text: list[str] = Field(default_factory=list)
+    exclude_text: list[str] = Field(default_factory=list)
+    query_tokens: list[str] = Field(default_factory=list)
+    context_query_tokens: list[str] = Field(default_factory=list)
+    deep_enabled: bool
+    context_docs_limit: int
+    context_doc_min_chars: int
+    max_results: int
+    page_weight: float
+    context_weight: float
+    prefetch_weight: float
+
+
+class SearchRankStats(MutableModel):
+    filtered_count: int = 0
+    sum_page_score: float = 0.0
+    sum_context_score: float = 0.0
+    sum_prefetch_score: float = 0.0
+
+
+class SearchCandidateForScoring(MutableModel):
+    order: int
+    candidate: SearchFetchedCandidate
+    main_text: str = ""
+    subpage_inputs: list[tuple[str, list[float], list[float]]] = Field(
+        default_factory=list
+    )
+
+
+class SearchOptimizedQuery(MutableModel):
+    search_query: str
+    optimize_query: bool
+    freshness_intent: bool
+    query_language: str
+
+
 __all__ = [
+    "SearchCandidateForScoring",
+    "SearchCanonicalBucket",
     "SearchDeepState",
     "SearchFetchState",
     "SearchFetchedCandidate",
+    "SearchNormalizedResult",
+    "SearchOptimizedQuery",
+    "SearchQueryCandidate",
     "SearchRankedCandidate",
+    "SearchRankOptions",
     "SearchRankState",
+    "SearchRankStats",
     "SearchQueryJob",
     "SearchOutputState",
     "SearchPrefetchState",
+    "SearchScoredHit",
     "SearchSnippetContext",
     "SearchStepContext",
 ]

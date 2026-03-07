@@ -36,6 +36,10 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |  |- rate_limit/
 |  |  |  |- telemetry/
 |  |  |- core/
+|  |  |- models/
+|  |  |  |- app/
+|  |  |  |- components/
+|  |  |  |- steps/
 |  |  |- settings/
 |  |  |- steps/
 |  |  |  |- answer/

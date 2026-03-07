@@ -44,4 +44,3 @@ if __name__ == "__main__":
     t2 = time.time()
     print(out["answer_result"])
     print(f"Answer: {out['answer']}")
-    print(f"Answer took {t2 - t1:.2f} seconds")

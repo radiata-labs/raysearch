@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Literal
 
 import anyio
@@ -36,7 +37,11 @@ async def main(
         ),
     )
     async with Engine.from_settings(settings) as engine:
+        await anyio.sleep(1)
+        t1 = time.time()
         resp = await engine.search(req)
+        t2 = time.time()
+        print(f"Search took {t2 - t1:.4f} seconds")
     return {
         "search_result": json.dumps(resp.model_dump(), ensure_ascii=False, indent=2),
     }
@@ -45,8 +50,5 @@ async def main(
 if __name__ == "__main__":
     import time
 
-    t1 = time.time()
     out = anyio.run(main, "The details of kimi-k2.5", "fast", 5)
-    t2 = time.time()
     print(out["search_result"])
-    print(f"Search took {t2 - t1:.2f} seconds")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from serpsage.models.app.request import (
@@ -10,9 +12,40 @@ from serpsage.models.app.response import (
     AnswerCitation,
     FetchResultItem,
 )
-from serpsage.models.base import MutableModel
+from serpsage.models.base import MutableModel, UnvalidatedModel
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.settings.models import AppSettings
+
+
+class AnswerPlanPayload(UnvalidatedModel):
+    answer_mode: Literal["direct", "summary"]
+    freshness_intent: bool
+    query_language: str
+    sub_questions: list[str]
+
+
+class PageSource(MutableModel):
+    key: str
+    url: str
+    title: str
+    content: str
+    first_order: int
+    abstracts: list[str] = Field(default_factory=list)
+
+
+class PromptSource(MutableModel):
+    key: str
+    url: str
+    title: str
+    content: str
+    abstracts: list[str]
+    question_index: int
+    source_index: int
+
+
+class QuestionPromptContext(MutableModel):
+    question: str
+    sources: list[PromptSource]
 
 
 class AnswerSubQuestionPlan(MutableModel):
@@ -60,6 +93,10 @@ class AnswerStepContext(BaseStepContext):
 
 
 __all__ = [
+    "AnswerPlanPayload",
+    "PageSource",
+    "PromptSource",
+    "QuestionPromptContext",
     "AnswerOutputState",
     "AnswerPlanState",
     "AnswerSubQuestionPlan",

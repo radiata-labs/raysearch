@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
 from serpsage.models.steps.search import (
     SearchDeepState,
+    SearchQueryCandidate,
     SearchQueryJob,
     SearchStepContext,
 )
@@ -36,13 +36,6 @@ _JA_EVIDENCE_SUFFIX = (
 )
 _EN_INTENT_SUFFIX = "official docs guide comparison"
 _EN_EVIDENCE_SUFFIX = "benchmark report source"
-
-
-@dataclass(slots=True)
-class _QueryCandidate:
-    query: str
-    weight: float
-    source: str
 
 
 class SearchExpandStep(StepBase[SearchStepContext]):
@@ -306,20 +299,20 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         manual_weight: float,
         rule_weight: float,
         llm_weight: float,
-    ) -> list[_QueryCandidate]:
-        candidates: list[_QueryCandidate] = [
-            _QueryCandidate(query=primary_query, weight=1.0, source="primary")
+    ) -> list[SearchQueryCandidate]:
+        candidates: list[SearchQueryCandidate] = [
+            SearchQueryCandidate(query=primary_query, weight=1.0, source="primary")
         ]
         candidates.extend(
-            _QueryCandidate(query=item, weight=manual_weight, source="manual")
+            SearchQueryCandidate(query=item, weight=manual_weight, source="manual")
             for item in manual_queries
         )
         candidates.extend(
-            _QueryCandidate(query=item, weight=rule_weight, source="rule")
+            SearchQueryCandidate(query=item, weight=rule_weight, source="rule")
             for item in rule_queries
         )
         candidates.extend(
-            _QueryCandidate(query=item, weight=llm_weight, source="llm")
+            SearchQueryCandidate(query=item, weight=llm_weight, source="llm")
             for item in llm_queries
         )
         return candidates
@@ -327,7 +320,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
     def _dedupe_candidates(
         self,
         *,
-        candidates: list[_QueryCandidate],
+        candidates: list[SearchQueryCandidate],
         max_expanded_queries: int,
     ) -> list[SearchQueryJob]:
         limit = max(0, int(max_expanded_queries))

@@ -1,26 +1,17 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
-from serpsage.models.steps.search import SearchStepContext
+from serpsage.models.steps.search import SearchOptimizedQuery, SearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-
-
-@dataclass(slots=True)
-class _OptimizedQuery:
-    search_query: str
-    optimize_query: bool
-    freshness_intent: bool
-    query_language: str
 
 
 class SearchOptimizeStep(StepBase[SearchStepContext]):
@@ -78,7 +69,7 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
         query: str,
         now_utc: datetime,
         mode: Literal["fast", "auto", "deep"],
-    ) -> _OptimizedQuery:
+    ) -> SearchOptimizedQuery:
         schema: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
@@ -167,7 +158,9 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
             "- do not broaden scope beyond the user's explicit intent.",
         ]
 
-    def _normalize_output(self, *, raw: object, original_query: str) -> _OptimizedQuery:
+    def _normalize_output(
+        self, *, raw: object, original_query: str
+    ) -> SearchOptimizedQuery:
         data = raw if isinstance(raw, dict) else {}
         optimize_query = _coerce_bool(data.get("optimize_query"), default=True)
         search_query = clean_whitespace(str(data.get("search_query") or ""))
@@ -177,7 +170,7 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
         query_language = clean_whitespace(str(data.get("query_language") or ""))
         if not query_language:
             query_language = "same as query"
-        return _OptimizedQuery(
+        return SearchOptimizedQuery(
             search_query=search_query,
             optimize_query=optimize_query,
             freshness_intent=freshness_intent,

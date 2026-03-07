@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -17,6 +16,7 @@ from serpsage.models.app.request import (
 )
 from serpsage.models.app.response import FetchResultItem
 from serpsage.models.steps.research import (
+    ResearchCorpusUpsertResult,
     ResearchSearchJob,
     ResearchSource,
     ResearchStepContext,
@@ -84,14 +84,6 @@ _HIGH_AUTHORITY_TITLE_HINTS = (
     "preprint",
     "whitepaper",
 )
-
-
-@dataclass(slots=True)
-class CorpusUpsertResult:
-    source_id: int
-    canonical_url: str
-    is_new_canonical: bool
-    is_new_version: bool
 
 
 class ResearchSearchStep(StepBase[ResearchStepContext]):
@@ -320,7 +312,7 @@ def append_source_version(
     content: str,
     round_index: int,
     is_subpage: bool,
-) -> CorpusUpsertResult:
+) -> ResearchCorpusUpsertResult:
     normalized_url = clean_whitespace(url)
     canonical_url = canonicalize_url(normalized_url) or normalized_url
     normalized_title = clean_whitespace(title)
@@ -353,7 +345,7 @@ def append_source_version(
             }
         )
         ctx.corpus.sources[idx] = updated
-        return CorpusUpsertResult(
+        return ResearchCorpusUpsertResult(
             source_id=source_id,
             canonical_url=canonical_url,
             is_new_canonical=False,
@@ -377,7 +369,7 @@ def append_source_version(
     ids = list(ctx.corpus.source_url_to_ids.get(canonical_url, []))
     ids.append(source_id)
     ctx.corpus.source_url_to_ids[canonical_url] = ids
-    return CorpusUpsertResult(
+    return ResearchCorpusUpsertResult(
         source_id=source_id,
         canonical_url=canonical_url,
         is_new_canonical=len(existing_ids) == 0,
@@ -786,7 +778,7 @@ def _normalize_text(raw: str) -> str:
 
 
 __all__ = [
-    "CorpusUpsertResult",
+    "ResearchCorpusUpsertResult",
     "ResearchSearchStep",
     "append_source_version",
     "build_content_fingerprint",

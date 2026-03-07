@@ -11,4 +11,12 @@ class MutableModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
-__all__ = ["FrozenModel", "MutableModel"]
+class UnvalidatedModel(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+
+__all__ = [
+    "FrozenModel",
+    "MutableModel",
+    "UnvalidatedModel",
+]
