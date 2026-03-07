@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
-    from serpsage.components.extract.models import (
+    from serpsage.models.components.extract import (
         ExtractContentOptions,
         ExtractedDocument,
     )

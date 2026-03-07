@@ -3,16 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.request import FetchOthersRequest
-from serpsage.app.response import FetchSubpagesResult
-from serpsage.components.extract.models import ExtractedLink
+from serpsage.models.app.request import FetchOthersRequest
+from serpsage.models.app.response import FetchSubpagesResult
+from serpsage.models.components.extract import ExtractedLink
+from serpsage.models.steps.fetch import FetchRuntimeConfig, FetchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
-from serpsage.steps.models import FetchRuntimeConfig, FetchStepContext
 
 if TYPE_CHECKING:
-    from serpsage.app.response import FetchResultItem
     from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
+    from serpsage.models.app.response import FetchResultItem
 
 
 class FetchSubpageStep(StepBase[FetchStepContext]):

@@ -4,7 +4,7 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
-from serpsage.core.model_base import FrozenModel
+from serpsage.models.base import FrozenModel
 
 TModel = TypeVar("TModel", bound=BaseModel)
 

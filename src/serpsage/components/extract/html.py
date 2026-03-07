@@ -18,13 +18,6 @@ from html_to_markdown import (
 from selectolax.parser import HTMLParser, Node
 
 from serpsage.components.extract.base import ExtractorBase
-from serpsage.components.extract.models import (
-    ExtractContentOptions,
-    ExtractContentTag,
-    ExtractedDocument,
-    ExtractedImageLink,
-    ExtractedLink,
-)
 from serpsage.components.extract.utils import (
     decode_best_effort,
     finalize_markdown,
@@ -34,6 +27,13 @@ from serpsage.components.extract.utils import (
 )
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.core.runtime import Runtime
+from serpsage.models.components.extract import (
+    ExtractContentOptions,
+    ExtractContentTag,
+    ExtractedDocument,
+    ExtractedImageLink,
+    ExtractedLink,
+)
 from serpsage.settings.models import AppSettings
 from serpsage.utils import clean_whitespace
 

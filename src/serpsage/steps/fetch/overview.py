@@ -5,9 +5,9 @@ import json
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.app.request import FetchOverviewRequest
+from serpsage.models.app.request import FetchOverviewRequest
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import FetchStepContext
 from serpsage.utils import clean_whitespace, stable_json
 
 if TYPE_CHECKING:

@@ -5,10 +5,10 @@ from typing_extensions import override
 
 import anyio
 
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.fetch.overview import FetchOverviewStep
 from serpsage.steps.fetch.subpages import FetchSubpageStep
-from serpsage.steps.models import FetchStepContext
 
 if TYPE_CHECKING:
     from serpsage.components.cache.base import CacheBase

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from serpsage.core.model_base import FrozenModel
+from serpsage.models.base import FrozenModel
 
 ExtractContentDetail = Literal["concise", "standard", "full"]
 ExtractContentTag = Literal[

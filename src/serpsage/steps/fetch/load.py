@@ -7,11 +7,11 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
-from serpsage.app.response import FetchErrorTag
-from serpsage.components.fetch.models import FetchResult
-from serpsage.components.telemetry.models import MeterPayload
+from serpsage.models.app.response import FetchErrorTag
+from serpsage.models.components.fetch import FetchResult
+from serpsage.models.components.telemetry import MeterPayload
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import FetchStepContext
 
 if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase

@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.response import FetchResultItem
 from serpsage.components.extract.utils import (
     finalize_markdown,
     strip_markdown_links,
 )
+from serpsage.models.app.response import FetchResultItem
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import FetchStepContext
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

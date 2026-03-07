@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.components.extract.models import ExtractedLink
 from serpsage.components.extract.utils import markdown_to_text
+from serpsage.models.components.extract import ExtractedLink
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import FetchStepContext
 
 if TYPE_CHECKING:
     from serpsage.components.extract import ExtractorBase

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from serpsage.steps.models import ResearchStepContext
+from serpsage.models.steps.research import ResearchStepContext
 from serpsage.utils import clean_whitespace
 
 

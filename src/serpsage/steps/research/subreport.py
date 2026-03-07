@@ -4,14 +4,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import ResearchSource, ResearchStepContext
-from serpsage.steps.research.payloads import (
+from serpsage.models.steps.research import (
     ReportStyle,
+    ResearchSource,
+    ResearchStepContext,
     SubreportOutputPayload,
     TrackInsightCardPayload,
     TrackInsightPointPayload,
 )
+from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import (
     build_subreport_prompt_messages,
 )

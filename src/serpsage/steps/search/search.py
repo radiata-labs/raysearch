@@ -10,13 +10,13 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import anyio
 
-from serpsage.components.telemetry.models import MeterPayload
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import (
+from serpsage.models.components.telemetry import MeterPayload
+from serpsage.models.steps.search import (
     SearchQueryJob,
     SearchSnippetContext,
     SearchStepContext,
 )
+from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace, strip_html
 

@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_serializer
 
-from serpsage.core.model_base import FrozenModel
+from serpsage.models.base import FrozenModel
 
 EventStatus = Literal["start", "ok", "error"]
 _MAX_ATTR_DEPTH = 5

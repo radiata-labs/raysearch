@@ -3,8 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.models.steps.search import (
+    SearchDeepState,
+    SearchRankState,
+    SearchStepContext,
+)
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import SearchDeepState, SearchRankState, SearchStepContext
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

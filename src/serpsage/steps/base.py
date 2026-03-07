@@ -13,7 +13,7 @@ from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
-    from serpsage.steps.models import BaseStepContext
+    from serpsage.models.steps.base import BaseStepContext
 
     TContext = TypeVar("TContext", bound=BaseStepContext)
 else:

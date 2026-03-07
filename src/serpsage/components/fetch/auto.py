@@ -8,13 +8,13 @@ from typing_extensions import override
 from urllib.parse import urlparse
 
 from serpsage.components.fetch.base import FetcherBase
-from serpsage.components.fetch.models import FetchAttempt, FetchResult
 from serpsage.components.fetch.utils import (
     blocked_marker_hit,
     has_nextjs_signals,
     has_spa_signals,
     normalize_route_key,
 )
+from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
     from serpsage.components.fetch.curl_cffi import CurlCffiFetcher

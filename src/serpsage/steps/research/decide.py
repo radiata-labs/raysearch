@@ -5,9 +5,9 @@ from typing_extensions import override
 
 from pydantic import Field
 
-from serpsage.core.model_base import MutableModel
+from serpsage.models.base import MutableModel
+from serpsage.models.steps.research import ResearchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import ResearchStepContext
 from serpsage.steps.research.prompt import build_decide_prompt_messages
 from serpsage.steps.research.utils import (
     merge_strings,

@@ -7,13 +7,13 @@ from typing_extensions import override
 from pydantic import BaseModel
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.components.llm.models import (
+from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
     ChatResultBase,
     ChatTextResult,
 )
-from serpsage.components.telemetry.models import EventStatus, MeterPayload
+from serpsage.models.components.telemetry import EventStatus, MeterPayload
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

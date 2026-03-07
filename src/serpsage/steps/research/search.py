@@ -8,22 +8,24 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from serpsage.app.request import (
+from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOthersRequest,
     FetchRequestBase,
     FetchSubpagesRequest,
     SearchRequest,
 )
-from serpsage.app.response import FetchResultItem
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import (
+from serpsage.models.app.response import FetchResultItem
+from serpsage.models.steps.research import (
     ResearchSearchJob,
     ResearchSource,
     ResearchStepContext,
+)
+from serpsage.models.steps.search import (
     SearchFetchedCandidate,
     SearchStepContext,
 )
+from serpsage.steps.base import StepBase
 from serpsage.steps.research.language import (
     map_provider_language_param,
 )

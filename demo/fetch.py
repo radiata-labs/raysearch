@@ -49,7 +49,7 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "https://www.bilibili.com/",
+        "https://exa.ai/docs/reference/search-best-practices",
         None,
         False,
     )

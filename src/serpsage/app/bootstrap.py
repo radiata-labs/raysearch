@@ -18,6 +18,10 @@ from serpsage.components import (
 )
 from serpsage.core.runtime import ClockBase, Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
+from serpsage.models.steps.answer import AnswerStepContext
+from serpsage.models.steps.fetch import FetchStepContext
+from serpsage.models.steps.research import ResearchStepContext
+from serpsage.models.steps.search import SearchStepContext
 from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.fetch import (
@@ -29,12 +33,6 @@ from serpsage.steps.fetch import (
     FetchOverviewStep,
     FetchParallelEnrichStep,
     FetchPrepareStep,
-)
-from serpsage.steps.models import (
-    AnswerStepContext,
-    FetchStepContext,
-    ResearchStepContext,
-    SearchStepContext,
 )
 from serpsage.steps.research import (
     ResearchContentStep,

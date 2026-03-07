@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from serpsage.app.engine import Engine
-from serpsage.app.request import (
+from serpsage.models.app.request import (
     AnswerRequest,
     CrawlMode,
     FetchAbstractsRequest,
@@ -26,7 +26,7 @@ from serpsage.app.request import (
     ResearchSearchMode,
     SearchRequest,
 )
-from serpsage.app.response import (
+from serpsage.models.app.response import (
     AnswerCitation,
     AnswerResponse,
     FetchResponse,

@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.models.steps.search import SearchRankedCandidate, SearchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import SearchRankedCandidate, SearchStepContext
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

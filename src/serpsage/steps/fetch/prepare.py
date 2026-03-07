@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 from urllib.parse import urlsplit
 
-from serpsage.app.request import (
+from serpsage.models.app.request import (
     FetchAbstractsRequest,
     FetchContentRequest,
     FetchOverviewRequest,
 )
-from serpsage.components.extract.models import ExtractContentOptions
+from serpsage.models.components.extract import ExtractContentOptions
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import FetchStepContext
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

@@ -9,7 +9,7 @@ from typing_extensions import override
 import anyio
 
 from serpsage.components.telemetry.base import EventSinkBase
-from serpsage.components.telemetry.models import EventEnvelope
+from serpsage.models.components.telemetry import EventEnvelope
 
 AioSqliteModule: Any | None = None
 try:

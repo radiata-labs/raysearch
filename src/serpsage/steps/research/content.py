@@ -4,12 +4,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import ResearchStepContext
-from serpsage.steps.research.payloads import (
+from serpsage.models.steps.research import (
     ContentConflictPayload,
     ContentOutputPayload,
+    ResearchStepContext,
 )
+from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import (
     build_content_prompt_messages,
 )

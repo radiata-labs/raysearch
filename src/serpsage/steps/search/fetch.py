@@ -3,14 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.request import FetchRequest
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import (
+from serpsage.models.app.request import FetchRequest
+from serpsage.models.steps.fetch import (
     FetchRuntimeConfig,
     FetchStepContext,
+)
+from serpsage.models.steps.search import (
     SearchFetchedCandidate,
     SearchStepContext,
 )
+from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime

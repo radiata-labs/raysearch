@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.models.steps.research import ResearchStepContext
 from serpsage.steps.base import StepBase
-from serpsage.steps.models import ResearchStepContext
 from serpsage.steps.research.language import map_provider_language_param
 
 if TYPE_CHECKING:

@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import (
+from serpsage.models.steps.search import (
     SearchDeepState,
     SearchQueryJob,
     SearchStepContext,
 )
+from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
 

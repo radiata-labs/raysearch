@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import httpx
 from pydantic import ConfigDict
 
-from serpsage.components.cache import CacheBase
+from serpsage.components.cache.base import CacheBase
 from serpsage.components.extract import ExtractorBase
 from serpsage.components.fetch import FetcherBase
 from serpsage.components.llm import LLMClientBase
@@ -13,7 +13,7 @@ from serpsage.components.provider import SearchProviderBase
 from serpsage.components.rank import RankerBase
 from serpsage.components.rate_limit.basic import BasicRateLimiter
 from serpsage.components.telemetry import TelemetryEmitterBase
-from serpsage.core.model_base import FrozenModel, MutableModel
+from serpsage.models.base import FrozenModel, MutableModel
 from serpsage.settings.models import AppSettings
 
 

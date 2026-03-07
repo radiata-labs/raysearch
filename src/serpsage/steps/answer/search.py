@@ -3,14 +3,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 from typing_extensions import override
 
-from serpsage.app.request import FetchAbstractsRequest, FetchRequestBase, SearchRequest
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import (
+from serpsage.models.app.request import (
+    FetchAbstractsRequest,
+    FetchRequestBase,
+    SearchRequest,
+)
+from serpsage.models.steps.answer import (
     AnswerStepContext,
     AnswerSubQuestionPlan,
     AnswerSubSearchState,
-    SearchStepContext,
 )
+from serpsage.models.steps.search import SearchStepContext
+from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:

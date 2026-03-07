@@ -7,17 +7,17 @@ from typing_extensions import override
 import anyio
 from pydantic import Field
 
-from serpsage.core.model_base import MutableModel
-from serpsage.steps.base import StepBase
-from serpsage.steps.models import (
+from serpsage.models.base import MutableModel
+from serpsage.models.steps.research import (
     ResearchBudgetState,
     ResearchQuestionCard,
     ResearchRoundState,
     ResearchRuntimeState,
     ResearchStepContext,
     ResearchTrackResult,
+    TrackInsightCardPayload,
 )
-from serpsage.steps.research.payloads import TrackInsightCardPayload
+from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_track_orchestrator_prompt_messages
 from serpsage.steps.research.utils import resolve_research_model
 
