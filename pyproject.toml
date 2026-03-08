@@ -37,6 +37,7 @@ dependencies = [
     "jieba",
     "pyyaml",
     "typing_extensions>=4.10,<5",
+    "scikit-learn>=1.8.0",
 ]
 
 [project.optional-dependencies]

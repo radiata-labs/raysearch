@@ -146,33 +146,6 @@ def build_plan_schema() -> dict[str, Any]:
     }
 
 
-def build_query_language_repair_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["search_jobs"],
-        "properties": {
-            "search_jobs": {
-                "type": "array",
-                "maxItems": 8,
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["query", "additional_queries"],
-                    "properties": {
-                        "query": {"type": "string"},
-                        "additional_queries": {
-                            "type": "array",
-                            "maxItems": 8,
-                            "items": {"type": "string"},
-                        },
-                    },
-                },
-            }
-        },
-    }
-
-
 def build_overview_schema(*, max_queries: int) -> dict[str, Any]:
     return {
         "type": "object",
@@ -332,6 +305,5 @@ __all__ = [
     "build_link_picker_schema",
     "build_overview_schema",
     "build_plan_schema",
-    "build_query_language_repair_schema",
     "build_theme_schema",
 ]

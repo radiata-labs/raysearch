@@ -10,21 +10,10 @@ from serpsage.models.steps.research import (
     ResearchStepContext,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt import (
-    build_content_prompt_messages,
-)
+from serpsage.steps.research.prompt import build_content_prompt_messages
 from serpsage.steps.research.schema import build_content_schema
-from serpsage.steps.research.search import (
-    pick_sources_by_ids,
-    sort_source_ids_by_score,
-)
-from serpsage.steps.research.utils import (
-    merge_strings,
-    normalize_entity_coverage,
-    normalize_strings,
-    resolve_research_model,
-)
-from serpsage.utils import clean_whitespace
+from serpsage.steps.research.search import pick_sources_by_ids, sort_source_ids_by_score
+from serpsage.steps.research.utils import resolve_research_model
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
@@ -42,11 +31,10 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.runtime.stop or ctx.current_round is None:
             return ctx
-        mode_depth = ctx.runtime.mode_depth
-        source_topk = max(1, mode_depth.source_topk)
-        source_ids = list(ctx.work.need_content_source_ids or [])
-        if not source_ids:
-            source_ids = list(ctx.current_round.context_source_ids or [])
+        source_topk = max(1, ctx.runtime.mode_depth.source_topk)
+        source_ids = list(
+            ctx.work.need_content_source_ids or ctx.current_round.context_source_ids
+        )
         source_ids = sort_source_ids_by_score(
             ctx=ctx,
             source_ids=source_ids,
@@ -66,7 +54,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             stage="content",
             fallback=self.settings.answer.generate.use_model,
         )
-        payload = self._empty_review()
         try:
             chat_result = await self._llm.create(
                 model=model,
@@ -82,7 +69,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
-            payload = chat_result.data
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="research.content.error",
@@ -96,95 +82,93 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-            payload = self._empty_review()
-        (
-            entity_coverage_complete,
-            covered_entities,
-            missing_entities,
-        ) = normalize_entity_coverage(
-            covered_entities=payload.covered_entities,
-            missing_entities=payload.missing_entities,
-            entity_coverage_complete=payload.entity_coverage_complete,
-            required_entities=ctx.plan.theme_plan.required_entities,
-        )
-        payload = payload.model_copy(
-            update={
-                "entity_coverage_complete": entity_coverage_complete,
-                "covered_entities": list(covered_entities),
-                "missing_entities": list(missing_entities),
-            }
-        )
+            raise
+        payload = chat_result.data
         ctx.work.content_review = payload
-        findings = normalize_strings(payload.resolved_findings, limit=8)
-        if findings:
-            ctx.current_round.content_summary = " | ".join(findings[:3])
-            ctx.notes.extend(findings[:3])
+        if payload.resolved_findings:
+            ctx.current_round.content_summary = " | ".join(
+                payload.resolved_findings[:3]
+            )
+            ctx.notes.extend(payload.resolved_findings[:3])
         ctx.current_round.confidence = min(
             1.0,
             max(0.0, ctx.current_round.confidence + payload.confidence_adjustment),
         )
         unresolved_topics = self._merge_conflict_topics(
             baseline=ctx.current_round.unresolved_conflict_topics,
-            raw=payload.conflict_resolutions,
+            resolutions=payload.conflict_resolutions,
         )
         ctx.current_round.unresolved_conflicts = len(unresolved_topics)
-        ctx.current_round.unresolved_conflict_topics = list(unresolved_topics)
-        ctx.current_round.critical_gaps = len(
-            normalize_strings(payload.remaining_gaps, limit=20)
-        )
-        ctx.current_round.entity_coverage_complete = entity_coverage_complete
-        ctx.current_round.missing_entities = list(missing_entities)
-        ctx.work.next_queries = merge_strings(
-            list(ctx.work.next_queries),
-            normalize_strings(
-                payload.next_queries,
-                limit=ctx.runtime.budget.max_queries_per_round,
-            ),
+        ctx.current_round.unresolved_conflict_topics = unresolved_topics
+        ctx.current_round.critical_gaps = len(payload.remaining_gaps)
+        ctx.current_round.entity_coverage_complete = payload.entity_coverage_complete
+        ctx.current_round.missing_entities = list(payload.missing_entities)
+        ctx.work.next_queries = self._merge_preserving_order(
+            left=list(ctx.work.next_queries),
+            right=list(payload.next_queries),
             limit=ctx.runtime.budget.max_queries_per_round,
         )
-        strategy = clean_whitespace(payload.next_query_strategy)
-        if strategy:
-            ctx.current_round.query_strategy = strategy
-        report_style = ctx.plan.theme_plan.report_style
+        ctx.current_round.query_strategy = payload.next_query_strategy
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="content_review",
             attrs={
-                "report_style_selected": report_style,
+                "report_style_selected": ctx.plan.theme_plan.report_style,
                 "style_applied_stage": "content",
-                "mode_depth_profile": mode_depth.mode_key,
+                "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
                 "source_topk_effective": source_topk,
             },
         )
         return ctx
 
     def _empty_review(self) -> ContentOutputPayload:
-        return ContentOutputPayload()
+        return ContentOutputPayload(
+            resolved_findings=[],
+            conflict_resolutions=[],
+            entity_coverage_complete=False,
+            covered_entities=[],
+            missing_entities=[],
+            remaining_gaps=[],
+            confidence_adjustment=0.0,
+            next_query_strategy="coverage",
+            next_queries=[],
+            stop=False,
+        )
 
     def _merge_conflict_topics(
         self,
         *,
         baseline: list[str],
-        raw: list[ContentConflictPayload],
+        resolutions: list[ContentConflictPayload],
     ) -> list[str]:
-        active: dict[str, str] = {
-            clean_whitespace(item).casefold(): clean_whitespace(item)
-            for item in baseline
-            if clean_whitespace(item)
-        }
-        for item in raw:
-            topic = clean_whitespace(item.topic)
-            if not topic:
+        active: dict[str, str] = {item.casefold(): item for item in baseline}
+        for item in resolutions:
+            topic_key = item.topic.casefold()
+            if item.status in {"resolved", "closed"}:
+                active.pop(topic_key, None)
                 continue
-            status = clean_whitespace(item.status).casefold()
-            if status in {"resolved", "closed"}:
-                active.pop(topic.casefold(), None)
-                continue
-            if status not in {"unresolved", "insufficient"}:
-                continue
-            active[topic.casefold()] = topic
+            active[topic_key] = item.topic
         return list(active.values())
+
+    def _merge_preserving_order(
+        self,
+        *,
+        left: list[str],
+        right: list[str],
+        limit: int,
+    ) -> list[str]:
+        seen: set[str] = set()
+        merged: list[str] = []
+        for item in [*left, *right]:
+            key = item.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+            if len(merged) >= max(1, limit):
+                break
+        return merged
 
 
 __all__ = ["ResearchContentStep"]

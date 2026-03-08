@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
@@ -12,7 +11,6 @@ from serpsage.models.steps.research import (
     ResearchLinkCandidate,
     ResearchQuestionCard,
     ResearchRoundState,
-    ResearchSearchJob,
     ResearchSource,
     ResearchStepContext,
     ResearchThemePlan,
@@ -485,7 +483,7 @@ def _build_plan_messages(
     depth_contract = _mode_depth_planning_contract(mode_key=mode_depth_profile)
     system_contract = (  # noqa: S608
         "Role: Principal Research Planner.\n"  # noqa: S608
-        "Mission: Select the next-round action and produce focused fallback search jobs.\n"
+        "Mission: Select the next-round action and produce focused search jobs.\n"
         "Instruction Priority:\n"
         "P1) Schema correctness and budget adherence.\n"
         "P2) Action fit (search vs explore) for CORE_QUESTION.\n"
@@ -498,7 +496,7 @@ def _build_plan_messages(
         "4) If explore is not allowed in this round, round_action must be search.\n"
         "5) If round_action=explore, select only source IDs from LAST_ROUND_LINK_CANDIDATES and keep list length <= explore_target_pages_per_round.\n"
         "6) If round_action=search, explore_target_source_ids must be an empty array.\n"
-        "7) Always return fallback search_jobs even when round_action=explore, unless search budget is already zero.\n"
+        "7) Always return a valid search_jobs array when search budget remains, even if round_action=explore.\n"
         "8) All search_jobs must serve CORE_QUESTION. Do not introduce a new independent research question.\n"
         "9) Minimize overlap between jobs while maximizing information gain.\n"
         "10) Respect remaining budget and prioritize unresolved high-value gaps.\n"
@@ -895,51 +893,6 @@ def _build_decide_signal_messages(
                 "BUDGET_REMAINING:\n"
                 f"- search={search_remaining}\n"
                 f"- fetch={fetch_remaining}\n"
-            ),
-        },
-    ]
-
-
-def _build_query_language_repair_messages(
-    *,
-    current_utc_date: str,
-    core_question: str,
-    required_search_language: str,
-    required_output_language: str,
-    current_search_jobs_json: str,
-) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": (
-                "Role: Search job language normalizer.\n"
-                "Mission: Rewrite search query fields into the required search language while preserving intent and entities.\n"
-                "Rules:\n"
-                "1) Return JSON only.\n"
-                "2) Keep search_jobs array length and order unchanged.\n"
-                "3) Rewrite only query and additional_queries text.\n"
-                "4) Preserve named entities, versions, and explicit dates.\n"
-                "5) Do not broaden topic scope.\n"
-                "6) If a query is already aligned, keep it unchanged."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
-                "CORE_QUESTION:\n"
-                f"{core_question}\n\n"
-                "LANGUAGE_POLICY:\n"
-                f"- required_search_language={required_search_language}\n"
-                f"- required_output_language={required_output_language}\n\n"
-                "CURRENT_SEARCH_JOBS_JSON:\n"
-                f"{current_search_jobs_json}\n\n"
-                "Output JSON shape:\n"
-                "{\n"
-                '  "search_jobs": [\n'
-                '    { "query": "...", "additional_queries": ["..."] }\n'
-                "  ]\n"
-                "}"
             ),
         },
     ]
@@ -1415,37 +1368,6 @@ def _build_density_gate_messages(
     ]
 
 
-def build_final_language_repair_messages(
-    *,
-    target_language: str,
-    current_utc_date: str,
-    markdown: str,
-) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": (
-                "Role: Final report language normalizer.\n"
-                "Mission: Rewrite markdown into target language while preserving all meaning and structure.\n"
-                "Rules:\n"
-                "1) Preserve every key fact, number, date, condition, and action.\n"
-                "2) Keep heading structure and markdown formatting.\n"
-                "3) Keep unavoidable proper nouns in original form when needed.\n"
-                "4) Do not add or remove substantive content.\n"
-                "5) Return markdown only."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"TARGET_LANGUAGE:\n{target_language}\n\n"
-                f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
-                f"MARKDOWN:\n{markdown}"
-            ),
-        },
-    ]
-
-
 def build_theme_prompt_messages(
     *,
     ctx: ResearchStepContext,
@@ -1547,32 +1469,6 @@ def build_link_picker_prompt_messages(
     )
 
 
-def build_query_language_repair_prompt_messages(
-    *,
-    ctx: ResearchStepContext,
-    jobs: list[ResearchSearchJob],
-    search_language: str,
-    now_utc: datetime,
-) -> list[dict[str, str]]:
-    output_language = ctx.plan.theme_plan.output_language
-    current_jobs = [
-        {
-            "query": item.query,
-            "mode": item.mode,
-            "additional_queries": list(item.additional_queries),
-            "intent": item.intent,
-        }
-        for item in jobs
-    ]
-    return _build_query_language_repair_messages(
-        current_utc_date=now_utc.date().isoformat(),
-        core_question=ctx.plan.theme_plan.core_question,
-        required_search_language=search_language,
-        required_output_language=output_language,
-        current_search_jobs_json=json.dumps(current_jobs, ensure_ascii=False),
-    )
-
-
 def build_overview_prompt_messages(
     *,
     ctx: ResearchStepContext,
@@ -1604,6 +1500,9 @@ def build_content_prompt_messages(
     source_ids: list[int],
     now_utc: datetime,
 ) -> list[dict[str, str]]:
+    overview_review = ctx.work.overview_review
+    if overview_review is None:
+        raise ValueError("content prompt requires overview review")
     output_language = ctx.plan.theme_plan.output_language
     return _build_content_messages(
         theme=ctx.request.themes,
@@ -1616,9 +1515,7 @@ def build_content_prompt_messages(
         required_output_language=output_language,
         required_output_language_label=_resolve_language_label(output_language),
         theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
-        overview_review_markdown=render_overview_review_markdown(
-            ctx.work.overview_review
-        ),
+        overview_review_markdown=render_overview_review_markdown(overview_review),
         required_entities=list(ctx.plan.theme_plan.required_entities),
         source_content_packet=build_content_packet(
             sources=selected_sources,
@@ -2799,13 +2696,11 @@ def _render_track_results_markdown(track_results: list[ResearchTrackResult]) -> 
 __all__ = [
     "build_content_prompt_messages",
     "build_decide_prompt_messages",
-    "build_final_language_repair_messages",
     "build_density_gate_prompt_messages",
     "build_gap_closure_prompt_messages",
     "build_link_picker_prompt_messages",
     "build_overview_prompt_messages",
     "build_plan_prompt_messages",
-    "build_query_language_repair_prompt_messages",
     "build_render_architect_prompt_messages",
     "build_render_structured_prompt_messages",
     "build_render_writer_prompt_messages",

@@ -14,6 +14,10 @@ def build_ranker(*, rt: Runtime) -> RankerBase:
         from serpsage.components.rank.heuristic import HeuristicRanker
 
         return HeuristicRanker(rt=rt)
+    if backend == "tfidf":
+        from serpsage.components.rank.tfidf import TfidfRanker
+
+        return TfidfRanker(rt=rt)
     if backend == "bm25":
         from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
 
@@ -32,7 +36,7 @@ def build_ranker(*, rt: Runtime) -> RankerBase:
 
         return BlendRanker(rt=rt)
     raise ValueError(
-        f"unsupported rank backend `{backend}`; expected blend|heuristic|bm25"
+        f"unsupported rank backend `{backend}`; expected blend|heuristic|tfidf|bm25"
     )
 
 

@@ -15,8 +15,8 @@ class Model(BaseModel):
 
 ProviderBackendKey = Literal["searxng"]
 FetchBackendKey = Literal["curl_cffi", "playwright", "auto"]
-RankBackendKey = Literal["blend", "heuristic", "bm25"]
-RankBlendProviderKey = Literal["heuristic", "bm25"]
+RankBackendKey = Literal["blend", "heuristic", "tfidf", "bm25"]
+RankBlendProviderKey = Literal["heuristic", "tfidf", "bm25"]
 CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
 CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
 OverviewModelBackendKey = Literal["openai", "gemini", "dashscope"]
@@ -65,7 +65,7 @@ class ProviderSettings(Model):
 
 
 def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
-    return {"heuristic": 1.0}
+    return {"heuristic": 0.7, "tfidf": 0.3}
 
 
 class OverviewProfileBase(Model):
@@ -485,6 +485,10 @@ class RankBm25Settings(Model):
     pass
 
 
+class RankTfidfSettings(Model):
+    pass
+
+
 class RankBlendSettings(Model):
     providers: dict[RankBlendProviderKey, float] = Field(
         default_factory=_default_rank_blend_providers
@@ -495,6 +499,7 @@ class RankSettings(Model):
     backend: RankBackendKey = "blend"
     blend: RankBlendSettings = Field(default_factory=RankBlendSettings)
     heuristic: HeuristicRankSettings = Field(default_factory=HeuristicRankSettings)
+    tfidf: RankTfidfSettings = Field(default_factory=RankTfidfSettings)
     bm25: RankBm25Settings = Field(default_factory=RankBm25Settings)
 
 

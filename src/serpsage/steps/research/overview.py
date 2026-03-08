@@ -11,22 +11,13 @@ from serpsage.models.steps.research import (
     ResearchStepContext,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.prompt import (
-    build_overview_prompt_messages,
-)
+from serpsage.steps.research.prompt import build_overview_prompt_messages
 from serpsage.steps.research.schema import build_overview_schema
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
     select_context_source_ids,
 )
-from serpsage.steps.research.utils import (
-    merge_strings,
-    normalize_entity_coverage,
-    normalize_source_ids,
-    normalize_strings,
-    resolve_research_model,
-)
-from serpsage.utils import clean_whitespace
+from serpsage.steps.research.utils import resolve_research_model
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
@@ -55,10 +46,12 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             return ctx
         mode_depth = ctx.runtime.mode_depth
         source_topk = max(1, mode_depth.source_topk)
-        (
-            new_result_target_ratio,
-            min_history_sources,
-        ) = self._resolve_context_mix_targets(ctx=ctx, sources=all_sources)
+        new_result_target_ratio, min_history_sources = (
+            self._resolve_context_mix_targets(
+                ctx=ctx,
+                sources=all_sources,
+            )
+        )
         context_source_ids = select_context_source_ids(
             ctx=ctx,
             round_index=ctx.current_round.round_index,
@@ -80,7 +73,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             stage="overview",
             fallback=self.settings.answer.generate.use_model,
         )
-        payload = self._empty_review()
         try:
             chat_result = await self._llm.create(
                 model=model,
@@ -95,7 +87,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
-            payload = chat_result.data
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="research.overview.error",
@@ -109,78 +100,45 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                     "message": str(exc),
                 },
             )
-            payload = self._empty_review()
-        (
-            entity_coverage_complete,
-            covered_entities,
-            missing_entities,
-        ) = normalize_entity_coverage(
-            covered_entities=payload.covered_entities,
-            missing_entities=payload.missing_entities,
-            entity_coverage_complete=payload.entity_coverage_complete,
-            required_entities=ctx.plan.theme_plan.required_entities,
-        )
-        payload = payload.model_copy(
-            update={
-                "entity_coverage_complete": entity_coverage_complete,
-                "covered_entities": list(covered_entities),
-                "missing_entities": list(missing_entities),
-            }
-        )
+            raise
+        payload = chat_result.data
         ctx.work.overview_review = payload
-        need_content_ids = normalize_source_ids(
-            payload.need_content_source_ids,
-            limit=20,
+        ctx.work.need_content_source_ids = self._resolve_need_content_source_ids(
+            payload=payload,
+            context_source_ids=context_source_ids,
         )
-        ctx.work.need_content_source_ids = need_content_ids
-        findings = normalize_strings(payload.findings, limit=8)
-        if findings:
-            ctx.notes.extend(findings[:3])
-            ctx.current_round.overview_summary = " | ".join(findings[:3])
-        ctx.current_round.confidence = min(1.0, max(-1.0, payload.confidence or 0.0))
-        ctx.current_round.query_strategy = clean_whitespace(
-            payload.next_query_strategy or ctx.current_round.query_strategy or "mixed"
-        )
-        covered_subthemes = normalize_strings(payload.covered_subthemes, limit=16)
-        if covered_subthemes:
-            ctx.corpus.coverage_state.covered_subthemes = merge_strings(
-                list(ctx.corpus.coverage_state.covered_subthemes),
-                covered_subthemes,
-                limit=64,
+        if payload.findings:
+            ctx.notes.extend(payload.findings[:3])
+            ctx.current_round.overview_summary = " | ".join(payload.findings[:3])
+        ctx.current_round.confidence = payload.confidence
+        ctx.current_round.query_strategy = payload.next_query_strategy
+        if payload.covered_subthemes:
+            ctx.corpus.coverage_state.covered_subthemes = self._merge_preserving_order(
+                left=ctx.corpus.coverage_state.covered_subthemes,
+                right=list(payload.covered_subthemes),
             )
-        total = max(1, ctx.corpus.coverage_state.total_subthemes or 0)
-        if total <= 0:
-            total = max(1, len(ctx.corpus.coverage_state.covered_subthemes))
-        coverage_ratio = min(
+        total = max(1, ctx.corpus.coverage_state.total_subthemes)
+        ctx.current_round.coverage_ratio = min(
             1.0,
             len(ctx.corpus.coverage_state.covered_subthemes) / total,
         )
-        ctx.current_round.coverage_ratio = coverage_ratio
-        ctx.current_round.entity_coverage_complete = entity_coverage_complete
-        ctx.current_round.missing_entities = list(missing_entities)
+        ctx.current_round.entity_coverage_complete = payload.entity_coverage_complete
+        ctx.current_round.missing_entities = list(payload.missing_entities)
         unresolved_topics = self._extract_unresolved_topics(
             payload.conflict_arbitration
         )
         ctx.current_round.unresolved_conflicts = len(unresolved_topics)
-        ctx.current_round.unresolved_conflict_topics = list(unresolved_topics)
-        ctx.current_round.critical_gaps = len(
-            normalize_strings(payload.critical_gaps, limit=20)
+        ctx.current_round.unresolved_conflict_topics = unresolved_topics
+        ctx.current_round.critical_gaps = len(payload.critical_gaps)
+        ctx.work.next_queries = list(
+            payload.next_queries[: ctx.runtime.budget.max_queries_per_round]
         )
-        ctx.work.next_queries = merge_strings(
-            normalize_strings(
-                payload.next_queries,
-                limit=ctx.runtime.budget.max_queries_per_round,
-            ),
-            [],
-            limit=ctx.runtime.budget.max_queries_per_round,
-        )
-        report_style = ctx.plan.theme_plan.report_style
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="overview_review",
             attrs={
-                "report_style_selected": report_style,
+                "report_style_selected": ctx.plan.theme_plan.report_style,
                 "style_applied_stage": "overview",
                 "mode_depth_profile": mode_depth.mode_key,
                 "source_topk_effective": source_topk,
@@ -191,27 +149,57 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         return ctx
 
     def _empty_review(self) -> OverviewOutputPayload:
-        return OverviewOutputPayload()
+        return OverviewOutputPayload(
+            findings=[],
+            conflict_arbitration=[],
+            covered_subthemes=[],
+            entity_coverage_complete=False,
+            covered_entities=[],
+            missing_entities=[],
+            critical_gaps=[],
+            confidence=0.0,
+            need_content_source_ids=[],
+            next_query_strategy="coverage",
+            next_queries=[],
+            stop=False,
+        )
+
+    def _resolve_need_content_source_ids(
+        self,
+        *,
+        payload: OverviewOutputPayload,
+        context_source_ids: list[int],
+    ) -> list[int]:
+        if not payload.need_content_source_ids:
+            return []
+        allowed_source_ids = set(context_source_ids)
+        return [
+            source_id
+            for source_id in payload.need_content_source_ids
+            if source_id in allowed_source_ids
+        ]
 
     def _extract_unresolved_topics(
         self,
-        raw: list[OverviewConflictPayload],
+        conflicts: list[OverviewConflictPayload],
     ) -> list[str]:
-        out: list[str] = []
+        return [item.topic for item in conflicts if item.status == "unresolved"]
+
+    def _merge_preserving_order(
+        self,
+        *,
+        left: list[str],
+        right: list[str],
+    ) -> list[str]:
         seen: set[str] = set()
-        for item in raw:
-            status = clean_whitespace(item.status).casefold()
-            if status != "unresolved":
-                continue
-            topic = clean_whitespace(item.topic)
-            if not topic:
-                continue
-            key = topic.casefold()
+        merged: list[str] = []
+        for item in [*left, *right]:
+            key = item.casefold()
             if key in seen:
                 continue
             seen.add(key)
-            out.append(topic)
-        return out
+            merged.append(item)
+        return merged
 
     def _resolve_context_mix_targets(
         self,

@@ -8,6 +8,7 @@ import anyio
 from serpsage.components.rank.base import RankerBase
 from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
 from serpsage.components.rank.heuristic import HeuristicRanker
+from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
 
 if TYPE_CHECKING:
@@ -20,8 +21,9 @@ class BlendRanker(RankerBase):
     def __init__(self, *, rt: Runtime) -> None:
         super().__init__(rt=rt)
         self._heuristic = HeuristicRanker(rt=rt)
+        self._tfidf = TfidfRanker(rt=rt)
         self._bm25: Bm25Ranker | None = Bm25Ranker(rt=rt) if BM25_AVAILABLE else None
-        self.bind_deps(self._heuristic, self._bm25)
+        self.bind_deps(self._heuristic, self._tfidf, self._bm25)
 
     def _provider_weights(self) -> dict[str, float]:
         raw = {
@@ -50,9 +52,11 @@ class BlendRanker(RankerBase):
             return []
         weights = self._provider_weights()
         heur_w = float(weights.get("heuristic", 0.0))
+        tfidf_w = float(weights.get("tfidf", 0.0))
         bm25_w = float(weights.get("bm25", 0.0))
         need_bm25 = bm25_w > 0 and self._bm25 is not None
         heur: list[float] | None = None
+        tfidf: list[float] | None = None
         bm25_raw: list[float] | None = None
 
         async def run_heuristic() -> None:
@@ -72,17 +76,30 @@ class BlendRanker(RankerBase):
                 query_tokens=query_tokens,
             )
 
+        async def run_tfidf() -> None:
+            nonlocal tfidf
+            tfidf = await self._tfidf.score_texts(
+                texts=texts,
+                query=query,
+                query_tokens=query_tokens,
+            )
+
         async with anyio.create_task_group() as tg:
             if heur_w > 0:
                 tg.start_soon(run_heuristic)
             else:
                 heur = [0.0] * len(texts)
+            if tfidf_w > 0:
+                tg.start_soon(run_tfidf)
+            else:
+                tfidf = [0.0] * len(texts)
             if need_bm25:
                 tg.start_soon(run_bm25)
         heur = heur or [0.0] * len(texts)
+        tfidf = tfidf or [0.0] * len(texts)
         max_heur = max(heur) if heur else 0.0
         anchor = float(max_heur) if float(max_heur) > 0 else 1.0
-        score_map: dict[str, list[float]] = {"heuristic": heur}
+        score_map: dict[str, list[float]] = {"heuristic": heur, "tfidf": tfidf}
         transforms: dict[str, Callable[[list[float]], list[float]]] = {}
         if need_bm25 and bm25_raw is not None:
             score_map["bm25"] = bm25_raw
