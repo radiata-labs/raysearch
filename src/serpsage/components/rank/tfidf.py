@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from anyio import to_thread
-from sklearn.feature_extraction.text import (
-    TfidfVectorizer,  # type: ignore[import-untyped]
+from sklearn.feature_extraction.text import (  # type: ignore[import-untyped]
+    TfidfVectorizer,
 )
 from sklearn.metrics.pairwise import linear_kernel  # type: ignore[import-untyped]
 

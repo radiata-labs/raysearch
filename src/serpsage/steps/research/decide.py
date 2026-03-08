@@ -26,12 +26,12 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        if ctx.current_round is None:
+        if ctx.run.current is None:
             return ctx
-        budget = ctx.runtime.budget
-        round_state = ctx.current_round
-        overview_review = ctx.work.overview_review
-        content_review = ctx.work.content_review
+        budget = ctx.run.limits
+        round_state = ctx.run.current
+        overview_review = ctx.run.current.overview_review
+        content_review = ctx.run.current.content_review
         overview_stop = (
             bool(overview_review.stop) if overview_review is not None else False
         )
@@ -45,9 +45,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         coverage_ok = round_state.coverage_ratio >= budget.min_coverage_ratio
         gaps_ok = round_state.critical_gaps == 0
         entity_coverage_ok = (
-            round_state.entity_coverage_complete
-            if ctx.plan.theme_plan.required_entities
-            else True
+            round_state.entity_coverage_complete if ctx.task.entities else True
         )
         unresolved_conflict_topics = list(round_state.unresolved_conflict_topics)
         multi_signal_stop = (
@@ -58,7 +56,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             and entity_coverage_ok
             and not unresolved_conflict_topics
         )
-        previous_round = ctx.rounds[-1] if ctx.rounds else None
+        previous_round = ctx.run.history[-1] if ctx.run.history else None
         current_low_gain = round_state.result_count <= 0 or (
             round_state.corpus_score_gain < float(self._LOW_GAIN_THRESHOLD)
         )
@@ -111,12 +109,12 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             remaining_objectives = self._merge_preserving_order(
                 [*gap_objectives, *entity_objectives, *conflict_objectives]
             )
-        search_exhausted = ctx.runtime.search_calls >= budget.max_search_calls
-        fetch_exhausted = ctx.runtime.fetch_calls >= budget.max_fetch_calls
+        search_exhausted = ctx.run.search_calls >= budget.max_search_calls
+        fetch_exhausted = ctx.run.fetch_calls >= budget.max_fetch_calls
         can_search_now = (not search_exhausted) and (not fetch_exhausted)
         can_explore_without_search = self._can_continue_with_explore_only(ctx=ctx)
-        min_rounds_per_track = max(1, ctx.runtime.mode_depth.min_rounds_per_track)
-        must_continue_for_min_rounds = (len(ctx.rounds) + 1) < min_rounds_per_track
+        min_rounds_per_track = max(1, ctx.run.limits.min_rounds_per_track)
+        must_continue_for_min_rounds = (len(ctx.run.history) + 1) < min_rounds_per_track
         can_execute_next_round = (
             can_search_now and bool(next_queries)
         ) or can_explore_without_search
@@ -153,10 +151,10 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         round_state.unresolved_conflict_topics = unresolved_conflict_topics
         round_state.stop = stop
         round_state.stop_reason = stop_reason
-        ctx.plan.next_queries = [] if stop else next_queries
-        ctx.rounds.append(round_state)
+        ctx.run.next_queries = [] if stop else next_queries
+        ctx.run.history.append(round_state)
         if llm_signal.reason:
-            ctx.notes.append(f"Decide signal: {llm_signal.reason}")
+            ctx.run.notes.append(f"Decide signal: {llm_signal.reason}")
         await self.emit_tracking_event(
             event_name="research.decide.summary",
             request_id=ctx.request_id,
@@ -177,18 +175,17 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             },
         )
         if stop:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = stop_reason
+            ctx.run.stop = True
+            ctx.run.stop_reason = stop_reason
         return ctx
 
     def _can_continue_with_explore_only(self, *, ctx: ResearchStepContext) -> bool:
-        if ctx.current_round is None:
+        if ctx.run.current is None:
             return False
-        if ctx.runtime.budget.max_fetch_calls <= ctx.runtime.fetch_calls:
+        if ctx.run.limits.max_fetch_calls <= ctx.run.fetch_calls:
             return False
-        return (
-            ctx.plan.last_round_link_candidates_round == ctx.current_round.round_index
-            and bool(ctx.plan.last_round_link_candidates)
+        return ctx.run.link_candidates_round == ctx.run.current.round_index and bool(
+            ctx.run.link_candidates
         )
 
     async def _query_decide_signal(

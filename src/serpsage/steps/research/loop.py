@@ -8,11 +8,12 @@ import anyio
 from serpsage.models.app.response import ResearchResponse
 from serpsage.models.steps.research import (
     ResearchBudgetReservationState,
-    ResearchBudgetState,
+    ResearchLimits,
     ResearchOrchestratorState,
     ResearchQuestionCard,
-    ResearchRoundState,
-    ResearchRuntimeState,
+    ResearchResult,
+    ResearchRound,
+    ResearchRun,
     ResearchStepContext,
     ResearchTrackAllocation,
     ResearchTrackOrchestratorOutputPayload,
@@ -51,13 +52,10 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         question_cards = self._resolve_question_cards(ctx)
-        ctx.parallel.question_cards = [
-            item.model_copy(deep=True) for item in question_cards
-        ]
-        ctx.parallel.track_results = []
+        ctx.result.tracks = []
         if not question_cards:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "no_question_cards"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "no_question_cards"
             return ctx
         track_map: dict[str, ResearchStepContext] = {
             card.question_id: self._build_track_context(root=ctx, card=card)
@@ -92,13 +90,13 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     result_map_lock,
                     orchestrator_lock,
                 )
-        ctx.parallel.track_results = [
+        ctx.result.tracks = [
             result_map[card.question_id]
             for card in question_cards
             if card.question_id in result_map
         ]
-        ctx.runtime.stop = True
-        ctx.runtime.stop_reason = (
+        ctx.run.stop = True
+        ctx.run.stop_reason = (
             "global_budget_exhausted"
             if self._global_budget_exhausted(ctx)
             else "all_tracks_completed"
@@ -119,7 +117,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         orchestrator_lock: anyio.Lock,
     ) -> None:
         local_ctx = track_ctx
-        while not local_ctx.runtime.stop:
+        while not local_ctx.run.stop:
             allocation = await self._reserve_track_allocation(
                 root=root,
                 track_ctx=local_ctx,
@@ -132,32 +130,32 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             )
             if self._allocation_blocked(allocation):
                 latest_round = self._latest_round(local_ctx)
-                min_rounds = max(1, local_ctx.runtime.mode_depth.min_rounds_per_track)
-                local_ctx.runtime.stop = True
-                local_ctx.runtime.stop_reason = (
+                min_rounds = max(1, local_ctx.run.limits.min_rounds_per_track)
+                local_ctx.run.stop = True
+                local_ctx.run.stop_reason = (
                     "stop_ready"
                     if (
                         latest_round is not None
                         and latest_round.stop_ready
                         and not latest_round.remaining_objectives
-                        and len(local_ctx.rounds) >= min_rounds
+                        and len(local_ctx.run.history) >= min_rounds
                     )
                     else "global_budget_exhausted"
                 )
                 break
-            before_search = local_ctx.runtime.search_calls
-            before_fetch = local_ctx.runtime.fetch_calls
+            before_search = local_ctx.run.search_calls
+            before_fetch = local_ctx.run.fetch_calls
             self._apply_track_round_budget(
                 track_ctx=local_ctx,
                 alloc=allocation,
-                base_budget=root.runtime.budget,
+                base_budget=root.run.limits,
             )
             delta_search = 0
             delta_fetch = 0
             try:
                 local_ctx = await self._round_runner.run(local_ctx)
-                delta_search = max(0, local_ctx.runtime.search_calls - before_search)
-                delta_fetch = max(0, local_ctx.runtime.fetch_calls - before_fetch)
+                delta_search = max(0, local_ctx.run.search_calls - before_search)
+                delta_fetch = max(0, local_ctx.run.fetch_calls - before_fetch)
             except Exception as exc:  # noqa: BLE001
                 await self.emit_tracking_event(
                     event_name="research.loop.error",
@@ -181,12 +179,12 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     reservation_state=reservation_state,
                     budget_lock=budget_lock,
                 )
-        if not local_ctx.runtime.stop:
-            local_ctx.runtime.stop = True
-            local_ctx.runtime.stop_reason = (
+        if not local_ctx.run.stop:
+            local_ctx.run.stop = True
+            local_ctx.run.stop_reason = (
                 "global_budget_exhausted"
                 if self._global_budget_exhausted(root)
-                else (local_ctx.runtime.stop_reason or "all_tracks_completed")
+                else (local_ctx.run.stop_reason or "all_tracks_completed")
             )
         track_result = await self._finalize_track(
             card=card,
@@ -209,8 +207,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> ResearchTrackAllocation:
         fetch_per_search_floor = max(
             1,
-            root.runtime.budget.max_fetch_calls
-            // max(1, root.runtime.budget.max_search_calls),
+            root.run.limits.max_fetch_calls // max(1, root.run.limits.max_search_calls),
         )
         baseline_width = max(1, self._BASELINE_QUERY_WIDTH)
         bonus_width = max(baseline_width, self._BONUS_QUERY_WIDTH)
@@ -222,12 +219,12 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         )
         score = self._score_track(track_ctx, card)
         latest_round = self._latest_round(track_ctx)
-        min_rounds = max(1, track_ctx.runtime.mode_depth.min_rounds_per_track)
+        min_rounds = max(1, track_ctx.run.limits.min_rounds_per_track)
         track_stop_ready = (
             latest_round is not None
             and latest_round.stop_ready
             and not latest_round.remaining_objectives
-            and len(track_ctx.rounds) >= min_rounds
+            and len(track_ctx.run.history) >= min_rounds
         )
         track_has_objectives = (
             latest_round is None
@@ -253,14 +250,14 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         async with budget_lock:
             remaining_search = max(
                 0,
-                root.parallel.global_search_budget
-                - root.parallel.global_search_used
+                root.run.global_search_budget
+                - root.run.global_search_used
                 - reservation_state.search_reserved,
             )
             remaining_fetch = max(
                 0,
-                root.parallel.global_fetch_budget
-                - root.parallel.global_fetch_used
+                root.run.global_fetch_budget
+                - root.run.global_fetch_used
                 - reservation_state.fetch_reserved,
             )
             if remaining_fetch <= 0:
@@ -373,7 +370,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> None:
         if not self._orchestrator_enabled(root):
             return
-        global_search_used = root.parallel.global_search_used
+        global_search_used = root.run.global_search_used
         if (
             not force
             and state.priorities
@@ -383,7 +380,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         ):
             return
         async with state_lock:
-            global_search_used = root.parallel.global_search_used
+            global_search_used = root.run.global_search_used
             if (
                 not force
                 and state.priorities
@@ -411,7 +408,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 request_id=root.request_id,
                 stage="loop",
                 attrs={
-                    "mode_depth_profile": root.runtime.mode_depth.mode_key,
+                    "mode_depth_profile": root.run.limits.mode_key,
                     "prioritized_tracks": len(state.priorities),
                     "global_search_used": global_search_used,
                 },
@@ -475,10 +472,10 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             )
             actual_search = max(0, min(delta_search, max(0, alloc.search_grant)))
             actual_fetch = max(0, min(delta_fetch, max(0, alloc.fetch_grant)))
-            root.parallel.global_search_used += actual_search
-            root.parallel.global_fetch_used += actual_fetch
-            root.runtime.search_calls += actual_search
-            root.runtime.fetch_calls += actual_fetch
+            root.run.global_search_used += actual_search
+            root.run.global_fetch_used += actual_fetch
+            root.run.search_calls += actual_search
+            root.run.fetch_calls += actual_fetch
 
     def _resolve_question_cards(
         self,
@@ -486,8 +483,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     ) -> list[ResearchQuestionCard]:
         return [
             item.model_copy(deep=True)
-            for item in ctx.parallel.question_cards[
-                : max(1, ctx.runtime.mode_depth.max_question_cards_effective)
+            for item in ctx.task.cards[
+                : max(1, ctx.run.limits.max_question_cards_effective)
             ]
         ]
 
@@ -513,25 +510,30 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 structured=None,
             ),
         )
-        track.runtime = ResearchRuntimeState(
-            mode_depth=root.runtime.mode_depth.model_copy(deep=True),
-            budget=root.runtime.budget.model_copy(deep=True),
+        track.task = root.task.model_copy(deep=True)
+        track.task.question = card.question
+        track.task.cards = [card.model_copy(deep=True)]
+        track.run = ResearchRun(
+            mode=root.run.mode,
+            limits=root.run.limits.model_copy(deep=True),
             search_calls=0,
             fetch_calls=0,
             stop=False,
             stop_reason="",
             round_index=0,
+            next_queries=list(card.seed_queries),
+            link_candidates=[],
+            link_candidates_round=0,
+            notes=[f"Track initialized for question `{card.question_id}`."],
+            current=None,
+            history=[],
+            global_search_budget=0,
+            global_fetch_budget=0,
+            global_search_used=0,
+            global_fetch_used=0,
         )
-        track.plan = root.plan.model_copy(deep=True)
-        track.plan.theme_plan.core_question = card.question
-        track.plan.next_queries = list(card.seed_queries)
-        track.parallel.question_cards = [card.model_copy(deep=True)]
-        track.parallel.track_results = []
-        track.parallel.global_search_budget = 0
-        track.parallel.global_fetch_budget = 0
-        track.parallel.global_search_used = 0
-        track.parallel.global_fetch_used = 0
-        track.notes = [f"Track initialized for question `{card.question_id}`."]
+        track.knowledge = root.knowledge.model_copy(deep=True)
+        track.result = ResearchResult(content="", structured=None, tracks=[])
         return track
 
     def _score_track(
@@ -570,16 +572,14 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         *,
         track_ctx: ResearchStepContext,
         alloc: ResearchTrackAllocation,
-        base_budget: ResearchBudgetState,
+        base_budget: ResearchLimits,
     ) -> None:
-        budget = track_ctx.runtime.budget
+        budget = track_ctx.run.limits
         budget.max_rounds = base_budget.max_rounds
-        budget.max_search_calls = track_ctx.runtime.search_calls + max(
+        budget.max_search_calls = track_ctx.run.search_calls + max(
             0, alloc.search_grant
         )
-        budget.max_fetch_calls = track_ctx.runtime.fetch_calls + max(
-            1, alloc.fetch_grant
-        )
+        budget.max_fetch_calls = track_ctx.run.fetch_calls + max(1, alloc.fetch_grant)
         budget.max_results_per_search = base_budget.max_results_per_search
         budget.max_queries_per_round = max(
             1,
@@ -597,8 +597,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         rendered = await self._render_step.run(track_ctx)
         latest_round = self._latest_round(rendered)
         insight_card = (
-            rendered.output.structured
-            if isinstance(rendered.output.structured, TrackInsightCardPayload)
+            rendered.result.structured
+            if isinstance(rendered.result.structured, TrackInsightCardPayload)
             else None
         )
         await self.emit_tracking_event(
@@ -607,19 +607,19 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             stage="subreport",
             attrs={
                 "question_id": card.question_id,
-                "rounds": len(rendered.rounds),
-                "stop_reason": rendered.runtime.stop_reason or "n/a",
-                "subreport_chars": len(rendered.output.content),
+                "rounds": len(rendered.run.history),
+                "stop_reason": rendered.run.stop_reason or "n/a",
+                "subreport_chars": len(rendered.result.content),
                 "has_insight_card": insight_card is not None,
             },
         )
         return ResearchTrackResult(
             question_id=card.question_id,
             question=card.question,
-            stop_reason=rendered.runtime.stop_reason,
-            rounds=len(rendered.rounds),
-            search_calls=rendered.runtime.search_calls,
-            fetch_calls=rendered.runtime.fetch_calls,
+            stop_reason=rendered.run.stop_reason,
+            rounds=len(rendered.run.history),
+            search_calls=rendered.run.search_calls,
+            fetch_calls=rendered.run.fetch_calls,
             confidence=float(latest_round.confidence)
             if latest_round is not None
             else 0.0,
@@ -629,7 +629,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             unresolved_conflicts=(
                 latest_round.unresolved_conflicts if latest_round is not None else 0
             ),
-            subreport_markdown=rendered.output.content,
+            subreport_markdown=rendered.result.content,
             track_insight_card=insight_card,
             key_findings=self._extract_key_findings(rendered),
         )
@@ -637,7 +637,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _extract_key_findings(self, track_ctx: ResearchStepContext) -> list[str]:
         findings: list[str] = []
         seen: set[str] = set()
-        for round_state in track_ctx.rounds[-8:]:
+        for round_state in track_ctx.run.history[-8:]:
             for item in round_state.overview_summary.split("|"):
                 token = item.strip()
                 if not token:
@@ -656,7 +656,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     continue
                 seen.add(key)
                 findings.append(token)
-        for note in track_ctx.notes[-12:]:
+        for note in track_ctx.run.notes[-12:]:
             key = note.casefold()
             if key in seen:
                 continue
@@ -669,15 +669,15 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _latest_round(
         self,
         track_ctx: ResearchStepContext,
-    ) -> ResearchRoundState | None:
-        if track_ctx.rounds:
-            return track_ctx.rounds[-1]
-        return track_ctx.current_round
+    ) -> ResearchRound | None:
+        if track_ctx.run.history:
+            return track_ctx.run.history[-1]
+        return track_ctx.run.current
 
     def _global_budget_exhausted(self, ctx: ResearchStepContext) -> bool:
         return (
-            ctx.parallel.global_search_used >= ctx.parallel.global_search_budget
-            or ctx.parallel.global_fetch_used >= ctx.parallel.global_fetch_budget
+            ctx.run.global_search_used >= ctx.run.global_search_budget
+            or ctx.run.global_fetch_used >= ctx.run.global_fetch_budget
         )
 
     def _allocation_blocked(self, alloc: ResearchTrackAllocation) -> bool:
@@ -686,18 +686,17 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         )
 
     def _can_allocate_fetch_only_round(self, track_ctx: ResearchStepContext) -> bool:
-        if track_ctx.runtime.budget.max_fetch_calls <= track_ctx.runtime.fetch_calls:
+        if track_ctx.run.limits.max_fetch_calls <= track_ctx.run.fetch_calls:
             return False
-        next_round_index = track_ctx.runtime.round_index + 1
+        next_round_index = track_ctx.run.round_index + 1
         if next_round_index <= 1:
             return False
-        return (
-            track_ctx.plan.last_round_link_candidates_round == next_round_index - 1
-            and bool(track_ctx.plan.last_round_link_candidates)
+        return track_ctx.run.link_candidates_round == next_round_index - 1 and bool(
+            track_ctx.run.link_candidates
         )
 
     def _orchestrator_enabled(self, ctx: ResearchStepContext) -> bool:
-        return ctx.runtime.mode_depth.mode_key != "research-fast"
+        return ctx.run.limits.mode_key != "research-fast"
 
 
 __all__ = ["ResearchLoopStep"]

@@ -64,7 +64,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         if schema is None:
             await self._render_markdown_architect_writer(
                 ctx=ctx,
-                target_language=ctx.plan.theme_plan.output_language,
+                target_language=ctx.task.output_language,
                 now_utc=now_utc,
             )
             await self.emit_tracking_event(
@@ -73,17 +73,17 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 stage="render",
                 attrs={
                     "mode": "final_markdown",
-                    "track_results": len(ctx.parallel.track_results),
-                    "content_chars": len(ctx.output.content),
-                    "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
-                    "report_style_selected": ctx.plan.theme_plan.report_style,
+                    "track_results": len(ctx.result.tracks),
+                    "content_chars": len(ctx.result.content),
+                    "mode_depth_profile": ctx.run.limits.mode_key,
+                    "report_style_selected": ctx.task.style,
                 },
             )
             return ctx
         await self._render_structured_once(
             ctx=ctx,
             schema=schema,
-            target_language=ctx.plan.theme_plan.output_language,
+            target_language=ctx.task.output_language,
             now_utc=now_utc,
         )
         await self.emit_tracking_event(
@@ -92,10 +92,10 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             stage="render",
             attrs={
                 "mode": "final_structured",
-                "track_results": len(ctx.parallel.track_results),
-                "has_structured": ctx.output.structured is not None,
-                "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
-                "report_style_selected": ctx.plan.theme_plan.report_style,
+                "track_results": len(ctx.result.tracks),
+                "has_structured": ctx.result.structured is not None,
+                "mode_depth_profile": ctx.run.limits.mode_key,
+                "report_style_selected": ctx.task.style,
             },
         )
         return ctx
@@ -118,8 +118,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             target_language=target_language,
             now_utc=now_utc,
         )
-        ctx.output.structured = None
-        ctx.output.content = self._assemble_markdown_from_sections(
+        ctx.result.structured = None
+        ctx.result.content = self._assemble_markdown_from_sections(
             ctx=ctx,
             architect_output=architect_output,
             writer_outputs=writer_outputs,
@@ -253,11 +253,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         section: RenderArchitectSectionPlan,
     ) -> list[ResearchTrackResult]:
-        if not ctx.parallel.track_results or not section.question_ids:
+        if not ctx.result.tracks or not section.question_ids:
             return []
-        track_result_map = {
-            item.question_id: item for item in ctx.parallel.track_results
-        }
+        track_result_map = {item.question_id: item for item in ctx.result.tracks}
         selected = [
             track_result_map[question_id].model_copy(deep=True)
             for question_id in section.question_ids
@@ -314,8 +312,8 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 },
             )
             raise
-        ctx.output.structured = result.data
-        ctx.output.content = json.dumps(result.data, ensure_ascii=False, indent=2)
+        ctx.result.structured = result.data
+        ctx.result.content = json.dumps(result.data, ensure_ascii=False, indent=2)
 
     def _assemble_markdown_from_sections(
         self,
@@ -337,9 +335,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         return "\n\n".join(parts)
 
     def _resolve_report_title(self, ctx: ResearchStepContext) -> str:
-        return (
-            ctx.plan.theme_plan.core_question or ctx.request.themes or "Research Report"
-        )
+        return ctx.task.question or ctx.request.themes or "Research Report"
 
     def _collect_writer_section_failures(
         self,

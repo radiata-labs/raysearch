@@ -36,15 +36,15 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        if ctx.runtime.stop or ctx.current_round is None:
+        if ctx.run.stop or ctx.run.current is None:
             return ctx
-        all_sources = list(ctx.corpus.sources)
+        all_sources = list(ctx.knowledge.sources)
         if not all_sources:
-            ctx.work.overview_review = self._empty_review()
-            ctx.work.need_content_source_ids = []
-            ctx.current_round.context_source_ids = []
+            ctx.run.current.overview_review = self._empty_review()
+            ctx.run.current.need_content_source_ids = []
+            ctx.run.current.context_source_ids = []
             return ctx
-        mode_depth = ctx.runtime.mode_depth
+        mode_depth = ctx.run.limits
         source_topk = max(1, mode_depth.source_topk)
         new_result_target_ratio, min_history_sources = (
             self._resolve_context_mix_targets(
@@ -54,19 +54,19 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         )
         context_source_ids = select_context_source_ids(
             ctx=ctx,
-            round_index=ctx.current_round.round_index,
+            round_index=ctx.run.current.round_index,
             topk=source_topk,
             new_result_target_ratio=new_result_target_ratio,
             min_history_sources=min_history_sources,
         )
-        ctx.current_round.context_source_ids = list(context_source_ids)
+        ctx.run.current.context_source_ids = list(context_source_ids)
         sources = pick_sources_by_ids(
             sources=all_sources,
             source_ids=context_source_ids,
         )
         if not sources:
-            ctx.work.overview_review = self._empty_review()
-            ctx.work.need_content_source_ids = []
+            ctx.run.current.overview_review = self._empty_review()
+            ctx.run.current.need_content_source_ids = []
             return ctx
         model = resolve_research_model(
             ctx=ctx,
@@ -83,7 +83,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=OverviewOutputPayload,
                 format_override=build_overview_schema(
-                    max_queries=ctx.runtime.budget.max_queries_per_round
+                    max_queries=ctx.run.limits.max_queries_per_round
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
@@ -96,49 +96,49 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 error_code="research_overview_review_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "round_index": ctx.current_round.round_index,
+                    "round_index": ctx.run.current.round_index,
                     "message": str(exc),
                 },
             )
             raise
         payload = chat_result.data
-        ctx.work.overview_review = payload
-        ctx.work.need_content_source_ids = self._resolve_need_content_source_ids(
+        ctx.run.current.overview_review = payload
+        ctx.run.current.need_content_source_ids = self._resolve_need_content_source_ids(
             payload=payload,
             context_source_ids=context_source_ids,
         )
         if payload.findings:
-            ctx.notes.extend(payload.findings[:3])
-            ctx.current_round.overview_summary = " | ".join(payload.findings[:3])
-        ctx.current_round.confidence = payload.confidence
-        ctx.current_round.query_strategy = payload.next_query_strategy
+            ctx.run.notes.extend(payload.findings[:3])
+            ctx.run.current.overview_summary = " | ".join(payload.findings[:3])
+        ctx.run.current.confidence = payload.confidence
+        ctx.run.current.query_strategy = payload.next_query_strategy
         if payload.covered_subthemes:
-            ctx.corpus.coverage_state.covered_subthemes = self._merge_preserving_order(
-                left=ctx.corpus.coverage_state.covered_subthemes,
+            ctx.knowledge.covered_subthemes = self._merge_preserving_order(
+                left=ctx.knowledge.covered_subthemes,
                 right=list(payload.covered_subthemes),
             )
-        total = max(1, ctx.corpus.coverage_state.total_subthemes)
-        ctx.current_round.coverage_ratio = min(
+        total = max(1, len(ctx.task.subthemes))
+        ctx.run.current.coverage_ratio = min(
             1.0,
-            len(ctx.corpus.coverage_state.covered_subthemes) / total,
+            len(ctx.knowledge.covered_subthemes) / total,
         )
-        ctx.current_round.entity_coverage_complete = payload.entity_coverage_complete
-        ctx.current_round.missing_entities = list(payload.missing_entities)
+        ctx.run.current.entity_coverage_complete = payload.entity_coverage_complete
+        ctx.run.current.missing_entities = list(payload.missing_entities)
         unresolved_topics = self._extract_unresolved_topics(
             payload.conflict_arbitration
         )
-        ctx.current_round.unresolved_conflicts = len(unresolved_topics)
-        ctx.current_round.unresolved_conflict_topics = unresolved_topics
-        ctx.current_round.critical_gaps = len(payload.critical_gaps)
-        ctx.work.next_queries = list(
-            payload.next_queries[: ctx.runtime.budget.max_queries_per_round]
+        ctx.run.current.unresolved_conflicts = len(unresolved_topics)
+        ctx.run.current.unresolved_conflict_topics = unresolved_topics
+        ctx.run.current.critical_gaps = len(payload.critical_gaps)
+        ctx.run.current.next_queries = list(
+            payload.next_queries[: ctx.run.limits.max_queries_per_round]
         )
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="overview_review",
             attrs={
-                "report_style_selected": ctx.plan.theme_plan.report_style,
+                "report_style_selected": ctx.task.style,
                 "style_applied_stage": "overview",
                 "mode_depth_profile": mode_depth.mode_key,
                 "source_topk_effective": source_topk,
@@ -207,7 +207,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         sources: list[ResearchSource],
     ) -> tuple[float, int]:
-        mode_key = ctx.runtime.mode_depth.mode_key
+        mode_key = ctx.run.limits.mode_key
         if mode_key == "research-fast":
             base_ratio = 0.70
             base_min_history = 1
@@ -217,7 +217,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         else:
             base_ratio = self._CONTEXT_NEW_RESULT_TARGET_RATIO
             base_min_history = 2
-        round_index = ctx.current_round.round_index if ctx.current_round else 0
+        round_index = ctx.run.current.round_index if ctx.run.current else 0
         new_count = sum(
             1 for item in sources if int(getattr(item, "round_index", 0)) == round_index
         )

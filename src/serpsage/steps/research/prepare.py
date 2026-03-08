@@ -5,16 +5,12 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.research import (
-    ResearchBudgetState,
-    ResearchCorpusState,
-    ResearchModeDepthState,
-    ResearchOutputState,
-    ResearchParallelState,
-    ResearchPlanState,
-    ResearchRoundWorkState,
-    ResearchRuntimeState,
+    ResearchKnowledge,
+    ResearchLimits,
+    ResearchResult,
+    ResearchRun,
     ResearchStepContext,
-    ResearchThemePlan,
+    ResearchTask,
 )
 from serpsage.steps.base import StepBase
 
@@ -47,32 +43,52 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         ctx.request = ctx.request.model_copy(
             update={"search_mode": mode, "themes": themes}
         )
-        ctx.runtime = ResearchRuntimeState(
-            mode_depth=ResearchModeDepthState(
-                mode_key=mode,  # type: ignore[arg-type]
-                max_question_cards_effective=profile.max_question_cards_effective,
-                min_rounds_per_track=profile.min_rounds_per_track,
-                source_topk=profile.source_topk,
-                source_chars=profile.source_chars,
-                content_chars=profile.content_chars,
-                explore_target_pages_per_round=profile.explore_target_pages_per_round,
-                explore_links_per_page=profile.explore_links_per_page,
-            ),
-            budget=ResearchBudgetState(
-                max_rounds=profile.max_rounds,
-                max_search_calls=profile.max_search_calls,
-                max_fetch_calls=profile.max_fetch_calls,
-                max_results_per_search=profile.max_results_per_search,
-                max_queries_per_round=profile.max_queries_per_round,
-                stop_confidence=profile.stop_confidence,
-                min_coverage_ratio=profile.min_coverage_ratio,
-            ),
+        limits = ResearchLimits(
+            mode_key=mode,  # type: ignore[arg-type]
+            max_rounds=profile.max_rounds,
+            max_search_calls=profile.max_search_calls,
+            max_fetch_calls=profile.max_fetch_calls,
+            max_results_per_search=profile.max_results_per_search,
+            max_queries_per_round=profile.max_queries_per_round,
+            stop_confidence=profile.stop_confidence,
+            min_coverage_ratio=profile.min_coverage_ratio,
+            max_question_cards_effective=profile.max_question_cards_effective,
+            min_rounds_per_track=profile.min_rounds_per_track,
+            source_topk=profile.source_topk,
+            source_chars=profile.source_chars,
+            content_chars=profile.content_chars,
+            explore_target_pages_per_round=profile.explore_target_pages_per_round,
+            explore_links_per_page=profile.explore_links_per_page,
+        )
+        ctx.task = ResearchTask(
+            question=themes,
+            style="explainer",
+            intent="other",
+            complexity="medium",
+            input_language="other",
+            search_language="other",
+            output_language="other",
+            subthemes=[],
+            entities=[],
+            cards=[],
+        )
+        ctx.run = ResearchRun(
+            mode=mode,  # type: ignore[arg-type]
+            limits=limits,
             search_calls=0,
             fetch_calls=0,
             stop=False,
             stop_reason="",
             round_index=0,
+            next_queries=[],
+            link_candidates=[],
+            link_candidates_round=0,
+            notes=[],
+            current=None,
+            history=[],
         )
+        ctx.knowledge = ResearchKnowledge()
+        ctx.result = ResearchResult(content="", structured=None, tracks=[])
         global_search_budget = max(
             1,
             math.ceil(
@@ -85,24 +101,14 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 profile.max_fetch_calls * self._resolve_global_budget_multiplier(mode)
             ),
         )
-        ctx.plan = ResearchPlanState(
-            theme_plan=ResearchThemePlan(core_question=themes),
-            next_queries=[],
+        ctx.run = ctx.run.model_copy(
+            update={
+                "global_search_budget": global_search_budget,
+                "global_fetch_budget": global_fetch_budget,
+                "global_search_used": 0,
+                "global_fetch_used": 0,
+            }
         )
-        ctx.parallel = ResearchParallelState(
-            question_cards=[],
-            track_results=[],
-            global_search_budget=global_search_budget,
-            global_fetch_budget=global_fetch_budget,
-            global_search_used=0,
-            global_fetch_used=0,
-        )
-        ctx.corpus = ResearchCorpusState()
-        ctx.work = ResearchRoundWorkState()
-        ctx.rounds = []
-        ctx.current_round = None
-        ctx.notes = []
-        ctx.output = ResearchOutputState(content="", structured=None)
         await self.emit_tracking_event(
             event_name="research.progress",
             request_id=ctx.request_id,

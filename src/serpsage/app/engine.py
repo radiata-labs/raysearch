@@ -353,8 +353,8 @@ class Engine(WorkUnit):
         )
         try:
             ctx = await self._research_runner.run(ctx)
-            ctx.response.content = ctx.output.content
-            ctx.response.structured = ctx.output.structured
+            ctx.response.content = ctx.result.content
+            ctx.response.structured = ctx.result.structured
             response = ctx.response
             await self._emit_safe(
                 event_name="request.end",

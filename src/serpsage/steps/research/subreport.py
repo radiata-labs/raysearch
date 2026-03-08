@@ -37,7 +37,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         await self._render_subreport(
             ctx=ctx,
-            target_language=ctx.plan.theme_plan.output_language,
+            target_language=ctx.task.output_language,
             now_utc=now_utc,
         )
         return ctx
@@ -63,9 +63,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                     target_language=target_language,
                     now_utc=now_utc,
                     source_evidence=self._select_sources_for_render(ctx),
-                    source_evidence_max_chars=max(
-                        1, ctx.runtime.mode_depth.source_chars
-                    ),
+                    source_evidence_max_chars=max(1, ctx.run.limits.source_chars),
                     notes=self._collect_recent_notes(ctx, limit=12),
                     require_insight_card=require_insight_card,
                 ),
@@ -89,21 +87,21 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         payload = result.data
         if require_insight_card and payload.track_insight_card is None:
             raise ValueError("subreport payload must include track_insight_card")
-        ctx.output.structured = payload.track_insight_card
-        ctx.output.content = payload.subreport_markdown
+        ctx.result.structured = payload.track_insight_card
+        ctx.result.content = payload.subreport_markdown
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="subreport",
             attrs={
-                "report_style_selected": ctx.plan.theme_plan.report_style,
+                "report_style_selected": ctx.task.style,
                 "require_insight_card": require_insight_card,
                 "has_insight_card": payload.track_insight_card is not None,
             },
         )
 
     def _require_insight_card(self, ctx: ResearchStepContext) -> bool:
-        return ctx.runtime.mode_depth.mode_key != "research-fast"
+        return ctx.run.limits.mode_key != "research-fast"
 
     def _collect_recent_notes(
         self,
@@ -113,7 +111,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     ) -> list[str]:
         seen: set[str] = set()
         notes: list[str] = []
-        for item in reversed(ctx.notes):
+        for item in reversed(ctx.run.notes):
             key = item.casefold()
             if key in seen:
                 continue
@@ -128,14 +126,14 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         self,
         ctx: ResearchStepContext,
     ) -> list[ResearchSource]:
-        limit = max(1, ctx.runtime.mode_depth.source_topk)
-        if ctx.rounds:
-            latest_round_index = ctx.rounds[-1].round_index
-        elif ctx.current_round is not None:
-            latest_round_index = ctx.current_round.round_index
+        limit = max(1, ctx.run.limits.source_topk)
+        if ctx.run.history:
+            latest_round_index = ctx.run.history[-1].round_index
+        elif ctx.run.current is not None:
+            latest_round_index = ctx.run.current.round_index
         else:
             latest_round_index = max(
-                (item.round_index for item in ctx.corpus.sources), default=0
+                (item.round_index for item in ctx.knowledge.sources), default=0
             )
         selected_ids = select_context_source_ids(
             ctx=ctx,
@@ -146,14 +144,14 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         )
         if selected_ids:
             selected_sources = pick_sources_by_ids(
-                sources=ctx.corpus.sources,
+                sources=ctx.knowledge.sources,
                 source_ids=selected_ids,
             )
             if selected_sources:
                 return sorted(
                     selected_sources,
                     key=lambda item: (
-                        float(ctx.corpus.source_scores.get(item.source_id, 0.0)),
+                        float(ctx.knowledge.source_scores.get(item.source_id, 0.0)),
                         source_authority_score(item),
                         item.round_index,
                         item.source_id,

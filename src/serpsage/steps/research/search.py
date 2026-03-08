@@ -99,44 +99,44 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        if ctx.runtime.stop or ctx.current_round is None:
+        if ctx.run.stop or ctx.run.current is None:
             return ctx
-        ctx.work.search_fetched_candidates = []
-        round_action = (ctx.work.round_action or "search").casefold()
-        if ctx.current_round.round_index <= 1:
+        ctx.run.current.search_fetched_candidates = []
+        round_action = (ctx.run.current.round_action or "search").casefold()
+        if ctx.run.current.round_index <= 1:
             round_action = "search"
         if round_action != "search":
             return ctx
         return await self._run_search_action(ctx)
 
     async def _run_search_action(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        assert ctx.current_round is not None
-        jobs = list(ctx.work.search_jobs)
+        assert ctx.run.current is not None
+        jobs = list(ctx.run.current.search_jobs)
         if not jobs:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "no_search_jobs"
-            ctx.current_round.stop = True
-            ctx.current_round.stop_reason = "no_search_jobs"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "no_search_jobs"
+            ctx.run.current.stop = True
+            ctx.run.current.stop_reason = "no_search_jobs"
             return ctx
         remaining_search_budget = max(
             0,
-            ctx.runtime.budget.max_search_calls - ctx.runtime.search_calls,
+            ctx.run.limits.max_search_calls - ctx.run.search_calls,
         )
         if remaining_search_budget <= 0:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_search_calls"
-            ctx.current_round.stop = True
-            ctx.current_round.stop_reason = "max_search_calls"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_search_calls"
+            ctx.run.current.stop = True
+            ctx.run.current.stop_reason = "max_search_calls"
             return ctx
         remaining_fetch_budget = max(
             0,
-            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
+            ctx.run.limits.max_fetch_calls - ctx.run.fetch_calls,
         )
         if remaining_fetch_budget <= 0:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_fetch_calls"
-            ctx.current_round.stop = True
-            ctx.current_round.stop_reason = "max_fetch_calls"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_fetch_calls"
+            ctx.run.current.stop = True
+            ctx.run.current.stop_reason = "max_fetch_calls"
             return ctx
         executable_jobs = min(
             len(jobs),
@@ -145,23 +145,23 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         )
         jobs = jobs[:executable_jobs]
         if not jobs:
-            ctx.runtime.stop = remaining_search_budget <= 0
-            ctx.runtime.stop_reason = (
+            ctx.run.stop = remaining_search_budget <= 0
+            ctx.run.stop_reason = (
                 "max_search_calls"
                 if remaining_search_budget <= 0
                 else "max_fetch_calls"
             )
-            ctx.current_round.stop = True
-            ctx.current_round.stop_reason = ctx.runtime.stop_reason
+            ctx.run.current.stop = True
+            ctx.run.current.stop_reason = ctx.run.stop_reason
             return ctx
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
-        search_language = ctx.plan.theme_plan.search_language
+        search_language = ctx.task.search_language
         provider_params = map_provider_language_param(
             provider_backend=self.settings.provider.backend,
             search_language=search_language,
         )
         if provider_params:
-            ctx.runtime.provider_language_param_applied = True
+            ctx.run.provider_language_param_applied = True
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
             jobs_left_after_current = max(0, len(jobs) - idx - 1)
@@ -187,14 +187,14 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     request=req,
                     response=SearchResponse(
                         request_id=(
-                            f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}"
+                            f"{ctx.request_id}:research:{ctx.run.current.round_index}:{idx}"
                         ),
                         search_mode=req.mode,
                         results=[],
                     ),
                     disable_internal_llm=True,
                     provider_params=dict(provider_params),
-                    request_id=f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}",
+                    request_id=f"{ctx.request_id}:research:{ctx.run.current.round_index}:{idx}",
                 )
             )
             remaining_fetch_budget = max(0, remaining_fetch_budget - 1)
@@ -215,10 +215,10 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 else:
                     candidate = candidate.model_copy(update={"result": result})
                 prepared_candidates.append(candidate.model_copy(deep=True))
-        ctx.work.search_fetched_candidates = [
+        ctx.run.current.search_fetched_candidates = [
             item.model_copy(deep=True) for item in prepared_candidates
         ]
-        ctx.runtime.search_calls += len(jobs)
+        ctx.run.search_calls += len(jobs)
         return ctx
 
     def _build_search_request(
@@ -237,7 +237,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 else None
             ),
             mode=query_job.mode,
-            max_results=ctx.runtime.budget.max_results_per_search,
+            max_results=ctx.run.limits.max_results_per_search,
             include_domains=(list(query_job.include_domains) or None),
             exclude_domains=(list(query_job.exclude_domains) or None),
             include_text=(list(query_job.include_text) or None),
@@ -247,7 +247,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 crawl_timeout=30.0,
                 content=FetchContentRequest(
                     detail="full",
-                    max_chars=ctx.runtime.mode_depth.content_chars,
+                    max_chars=ctx.run.limits.content_chars,
                     include_markdown_links=False,
                     include_html_tags=False,
                 ),
@@ -330,13 +330,13 @@ def append_source_version(
         overview=normalized_overview,
     )
     synchronize_corpus_indexes(ctx=ctx)
-    source_idx_by_id = _build_source_idx_by_id(ctx.corpus.sources)
-    existing_ids = list(ctx.corpus.source_url_to_ids.get(canonical_url, []))
+    source_idx_by_id = _build_source_idx_by_id(ctx.knowledge.sources)
+    existing_ids = list(ctx.knowledge.source_ids_by_url.get(canonical_url, []))
     for source_id in reversed(existing_ids):
         idx = source_idx_by_id.get(source_id)
         if idx is None:
             continue
-        source = ctx.corpus.sources[idx]
+        source = ctx.knowledge.sources[idx]
         if source.round_index != round_index:
             continue
         if source.content_fingerprint != fingerprint:
@@ -351,15 +351,15 @@ def append_source_version(
                 "content_fingerprint": fingerprint,
             }
         )
-        ctx.corpus.sources[idx] = updated
+        ctx.knowledge.sources[idx] = updated
         return ResearchCorpusUpsertResult(
             source_id=source_id,
             canonical_url=canonical_url,
             is_new_canonical=False,
             is_new_version=False,
         )
-    source_id = len(ctx.corpus.sources) + 1
-    ctx.corpus.sources.append(
+    source_id = len(ctx.knowledge.sources) + 1
+    ctx.knowledge.sources.append(
         ResearchSource(
             source_id=source_id,
             url=normalized_url,
@@ -373,9 +373,9 @@ def append_source_version(
             content_fingerprint=fingerprint,
         )
     )
-    ids = list(ctx.corpus.source_url_to_ids.get(canonical_url, []))
+    ids = list(ctx.knowledge.source_ids_by_url.get(canonical_url, []))
     ids.append(source_id)
-    ctx.corpus.source_url_to_ids[canonical_url] = ids
+    ctx.knowledge.source_ids_by_url[canonical_url] = ids
     return ResearchCorpusUpsertResult(
         source_id=source_id,
         canonical_url=canonical_url,
@@ -390,12 +390,12 @@ def rebuild_corpus_ranking(
     round_index: int,
 ) -> float:
     synchronize_corpus_indexes(ctx=ctx)
-    old_scores = dict(ctx.corpus.source_scores)
-    old_ranked = list(ctx.corpus.ranked_source_ids)
-    source_idx_by_id = _build_source_idx_by_id(ctx.corpus.sources)
+    old_scores = dict(ctx.knowledge.source_scores)
+    old_ranked = list(ctx.knowledge.ranked_source_ids)
+    source_idx_by_id = _build_source_idx_by_id(ctx.knowledge.sources)
     canonical_to_latest: dict[str, int] = {}
     canonical_seen: dict[str, int] = {}
-    for source in ctx.corpus.sources:
+    for source in ctx.knowledge.sources:
         canonical = source.canonical_url
         if not canonical:
             canonical = canonicalize_url(source.url)
@@ -408,7 +408,7 @@ def rebuild_corpus_ranking(
         if prev is None:
             canonical_to_latest[canonical] = source.source_id
             continue
-        prev_source = ctx.corpus.sources[source_idx_by_id[prev]]
+        prev_source = ctx.knowledge.sources[source_idx_by_id[prev]]
         if (
             source.round_index,
             source.source_id,
@@ -425,7 +425,7 @@ def rebuild_corpus_ranking(
         idx = source_idx_by_id.get(latest_id)
         if idx is None:
             continue
-        source = ctx.corpus.sources[idx]
+        source = ctx.knowledge.sources[idx]
         newness_score = _compute_newness_score(
             source_round_index=source.round_index,
             current_round_index=round_index,
@@ -459,26 +459,26 @@ def rebuild_corpus_ranking(
     )
     ranked_source_ids = [source_id for source_id, _ in scored]
     full_score_map: dict[int, float] = {}
-    for canonical, ids in ctx.corpus.source_url_to_ids.items():
+    for canonical, ids in ctx.knowledge.source_ids_by_url.items():
         canonical_score = 0.0
         latest_source_id = canonical_to_latest.get(canonical)
         if latest_source_id is not None:
             canonical_score = float(score_map.get(latest_source_id, 0.0))
         for source_id in ids:
             full_score_map[source_id] = canonical_score
-    for idx, source in enumerate(ctx.corpus.sources):
+    for idx, source in enumerate(ctx.knowledge.sources):
         canonical = source.canonical_url or canonicalize_url(source.url)
         if canonical != source.canonical_url:
-            ctx.corpus.sources[idx] = source.model_copy(
+            ctx.knowledge.sources[idx] = source.model_copy(
                 update={
                     "canonical_url": canonical,
                 }
             )
-    ctx.corpus.ranked_source_ids = list(ranked_source_ids)
-    ctx.corpus.source_scores = dict(full_score_map)
+    ctx.knowledge.ranked_source_ids = list(ranked_source_ids)
+    ctx.knowledge.source_scores = dict(full_score_map)
     old_total = sum(float(old_scores.get(source_id, 0.0)) for source_id in old_ranked)
     new_total = sum(
-        float(ctx.corpus.source_scores.get(source_id, 0.0))
+        float(ctx.knowledge.source_scores.get(source_id, 0.0))
         for source_id in ranked_source_ids
     )
     return max(0.0, float(new_total - old_total))
@@ -496,7 +496,7 @@ def select_context_source_ids(
     ranked_ids = _resolve_ranked_source_ids(ctx=ctx)
     if not ranked_ids:
         return []
-    source_by_id = {source.source_id: source for source in ctx.corpus.sources}
+    source_by_id = {source.source_id: source for source in ctx.knowledge.sources}
     new_ids = [
         source_id
         for source_id in ranked_ids
@@ -511,7 +511,7 @@ def select_context_source_ids(
         history_ids,
         key=lambda source_id: (
             source_authority_score(source_by_id[source_id]),
-            float(ctx.corpus.source_scores.get(source_id, 0.0)),
+            float(ctx.knowledge.source_scores.get(source_id, 0.0)),
             source_by_id[source_id].round_index,
             source_id,
         ),
@@ -588,7 +588,7 @@ def sort_source_ids_by_score(
     ctx: ResearchStepContext,
     source_ids: list[int],
 ) -> list[int]:
-    source_by_id = {source.source_id: source for source in ctx.corpus.sources}
+    source_by_id = {source.source_id: source for source in ctx.knowledge.sources}
     out: list[int] = []
     seen: set[int] = set()
     for raw in source_ids:
@@ -599,7 +599,7 @@ def sort_source_ids_by_score(
         out.append(source_id)
     out.sort(
         key=lambda source_id: (
-            float(ctx.corpus.source_scores.get(source_id, 0.0)),
+            float(ctx.knowledge.source_scores.get(source_id, 0.0)),
             source_authority_score(source_by_id[source_id]),
             source_by_id[source_id].round_index,
             source_id,
@@ -610,7 +610,7 @@ def sort_source_ids_by_score(
 
 
 def synchronize_corpus_indexes(*, ctx: ResearchStepContext) -> None:
-    sorted_sources = sorted(ctx.corpus.sources, key=lambda item: item.source_id)
+    sorted_sources = sorted(ctx.knowledge.sources, key=lambda item: item.source_id)
     url_to_ids: dict[str, list[int]] = {}
     for idx, source in enumerate(sorted_sources):
         canonical = source.canonical_url or canonicalize_url(source.url)
@@ -622,8 +622,8 @@ def synchronize_corpus_indexes(*, ctx: ResearchStepContext) -> None:
         ids = list(url_to_ids.get(canonical, []))
         ids.append(source.source_id)
         url_to_ids[canonical] = ids
-    ctx.corpus.sources = sorted_sources
-    ctx.corpus.source_url_to_ids = url_to_ids
+    ctx.knowledge.sources = sorted_sources
+    ctx.knowledge.source_ids_by_url = url_to_ids
 
 
 def build_content_fingerprint(*, content: str, overview: str) -> str:
@@ -637,9 +637,9 @@ def build_content_fingerprint(*, content: str, overview: str) -> str:
 
 def _resolve_ranked_source_ids(*, ctx: ResearchStepContext) -> list[int]:
     source_ids: list[int] = []
-    source_by_id = {source.source_id: source for source in ctx.corpus.sources}
+    source_by_id = {source.source_id: source for source in ctx.knowledge.sources}
     seen_canonical: set[str] = set()
-    for source_id in ctx.corpus.ranked_source_ids:
+    for source_id in ctx.knowledge.ranked_source_ids:
         source = source_by_id.get(source_id)
         if source is None:
             continue
@@ -651,7 +651,7 @@ def _resolve_ranked_source_ids(*, ctx: ResearchStepContext) -> list[int]:
     if source_ids:
         return source_ids
     fallback = sorted(
-        ctx.corpus.sources,
+        ctx.knowledge.sources,
         key=lambda item: (item.round_index, item.source_id),
         reverse=True,
     )
@@ -687,7 +687,7 @@ def _trim_to_limit(
 
 
 def _source_round_index(*, ctx: ResearchStepContext, source_id: int) -> int:
-    for source in ctx.corpus.sources:
+    for source in ctx.knowledge.sources:
         if source.source_id == source_id:
             return source.round_index
     return 0
@@ -764,10 +764,10 @@ def source_authority_score(source: ResearchSource) -> float:
 
 def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
     tokens: set[str] = set()
-    values = list(ctx.plan.next_queries)
-    if ctx.current_round is not None:
-        values.extend(ctx.current_round.queries)
-    values.append(ctx.plan.theme_plan.core_question)
+    values = list(ctx.run.next_queries)
+    if ctx.run.current is not None:
+        values.extend(ctx.run.current.queries)
+    values.append(ctx.task.question)
     for value in values:
         for token in _TOKEN_PATTERN.findall(value.casefold()):
             if len(token) < 2:

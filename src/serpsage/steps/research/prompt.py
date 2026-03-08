@@ -10,9 +10,10 @@ from serpsage.models.steps.research import (
     ReportStyle,
     ResearchLinkCandidate,
     ResearchQuestionCard,
-    ResearchRoundState,
+    ResearchRound,
     ResearchSource,
     ResearchStepContext,
+    ResearchTask,
     ResearchThemePlan,
     ResearchThemePlanCard,
     ResearchTrackResult,
@@ -37,6 +38,32 @@ PromptStage = Literal[
 ]
 
 _STYLE_VALUES: set[str] = {"decision", "explainer", "execution"}
+
+
+def _theme_plan_from_task(task: ResearchTask) -> ResearchThemePlan:
+    return ResearchThemePlan(
+        core_question=task.question,
+        report_style=task.style,
+        task_intent=task.intent,
+        complexity_tier=task.complexity,
+        subthemes=list(task.subthemes),
+        required_entities=list(task.entities),
+        input_language=task.input_language,
+        search_language=task.search_language,
+        output_language=task.output_language,
+        question_cards=[
+            ResearchThemePlanCard(
+                question_id=card.question_id,
+                question=card.question,
+                priority=card.priority,
+                seed_queries=list(card.seed_queries),
+                evidence_focus=list(card.evidence_focus),
+                expected_gain=card.expected_gain or card.question,
+            )
+            for card in task.cards
+        ],
+    )
+
 
 UNIVERSAL_QUALITY_GUARDRAILS = (
     "Universal quality guardrails:\n"
@@ -1375,8 +1402,8 @@ def build_theme_prompt_messages(
     card_cap: int,
     report_style: ReportStyle,
 ) -> list[dict[str, str]]:
-    budget = ctx.runtime.budget
-    mode_depth = ctx.runtime.mode_depth
+    budget = ctx.run.limits
+    mode_depth = ctx.run.limits
     return _build_theme_messages(
         theme=ctx.request.themes,
         search_mode=ctx.request.search_mode,
@@ -1399,11 +1426,12 @@ def build_plan_prompt_messages(
     now_utc: datetime,
     last_round_candidates: list[ResearchLinkCandidate],
 ) -> list[dict[str, str]]:
-    budget = ctx.runtime.budget
-    mode_depth = ctx.runtime.mode_depth
-    output_language = ctx.plan.theme_plan.output_language
-    search_language = ctx.plan.theme_plan.search_language
-    round_index = ctx.runtime.round_index
+    budget = ctx.run.limits
+    mode_depth = ctx.run.limits
+    theme_plan = _theme_plan_from_task(ctx.task)
+    output_language = theme_plan.output_language
+    search_language = theme_plan.search_language
+    round_index = ctx.run.round_index
     last_round_candidates_markdown = render_link_candidates_markdown(
         last_round_candidates,
         max_pages=max(1, mode_depth.explore_target_pages_per_round),
@@ -1412,7 +1440,7 @@ def build_plan_prompt_messages(
     return _build_plan_messages(
         theme=ctx.request.themes,
         core_question=core_question,
-        report_style=ctx.plan.theme_plan.report_style,
+        report_style=theme_plan.report_style,
         mode_depth_profile=mode_depth.mode_key,
         round_index=round_index,
         current_utc_timestamp=now_utc.isoformat(),
@@ -1420,17 +1448,17 @@ def build_plan_prompt_messages(
         required_search_language=search_language,
         required_output_language=output_language,
         required_output_language_label=_resolve_language_label(output_language),
-        theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
-        previous_rounds_markdown=render_rounds_markdown(ctx.rounds, limit=3),
+        theme_plan_markdown=render_theme_plan_markdown(theme_plan),
+        previous_rounds_markdown=render_rounds_markdown(ctx.run.history, limit=3),
         candidate_queries_markdown=render_queries_markdown(candidate_queries),
-        required_entities=list(ctx.plan.theme_plan.required_entities),
+        required_entities=list(theme_plan.required_entities),
         search_calls_remaining=max(
             0,
-            budget.max_search_calls - ctx.runtime.search_calls,
+            budget.max_search_calls - ctx.run.search_calls,
         ),
         fetch_calls_remaining=max(
             0,
-            budget.max_fetch_calls - ctx.runtime.fetch_calls,
+            budget.max_fetch_calls - ctx.run.fetch_calls,
         ),
         max_queries_this_round=budget.max_queries_per_round,
         allow_explore=_can_attempt_explore(
@@ -1475,20 +1503,21 @@ def build_overview_prompt_messages(
     sources: list[ResearchSource],
     now_utc: datetime,
 ) -> list[dict[str, str]]:
-    output_language = ctx.plan.theme_plan.output_language
+    theme_plan = _theme_plan_from_task(ctx.task)
+    output_language = theme_plan.output_language
     return _build_overview_messages(
         theme=ctx.request.themes,
-        core_question=ctx.plan.theme_plan.core_question,
-        report_style=ctx.plan.theme_plan.report_style,
-        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-        round_index=ctx.current_round.round_index if ctx.current_round else 0,
+        core_question=theme_plan.core_question,
+        report_style=theme_plan.report_style,
+        mode_depth_profile=ctx.run.limits.mode_key,
+        round_index=ctx.run.current.round_index if ctx.run.current else 0,
         current_utc_timestamp=now_utc.isoformat(),
         current_utc_date=now_utc.date().isoformat(),
         required_output_language=output_language,
         required_output_language_label=_resolve_language_label(output_language),
-        theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
-        previous_rounds_markdown=render_rounds_markdown(ctx.rounds, limit=3),
-        required_entities=list(ctx.plan.theme_plan.required_entities),
+        theme_plan_markdown=render_theme_plan_markdown(theme_plan),
+        previous_rounds_markdown=render_rounds_markdown(ctx.run.history, limit=3),
+        required_entities=list(theme_plan.required_entities),
         source_overview_packet=build_overview_packet(sources=sources),
     )
 
@@ -1500,23 +1529,24 @@ def build_content_prompt_messages(
     source_ids: list[int],
     now_utc: datetime,
 ) -> list[dict[str, str]]:
-    overview_review = ctx.work.overview_review
+    overview_review = ctx.run.current.overview_review if ctx.run.current else None
     if overview_review is None:
         raise ValueError("content prompt requires overview review")
-    output_language = ctx.plan.theme_plan.output_language
+    theme_plan = _theme_plan_from_task(ctx.task)
+    output_language = theme_plan.output_language
     return _build_content_messages(
         theme=ctx.request.themes,
-        core_question=ctx.plan.theme_plan.core_question,
-        report_style=ctx.plan.theme_plan.report_style,
-        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-        round_index=ctx.current_round.round_index if ctx.current_round else 0,
+        core_question=theme_plan.core_question,
+        report_style=theme_plan.report_style,
+        mode_depth_profile=ctx.run.limits.mode_key,
+        round_index=ctx.run.current.round_index if ctx.run.current else 0,
         current_utc_timestamp=now_utc.isoformat(),
         current_utc_date=now_utc.date().isoformat(),
         required_output_language=output_language,
         required_output_language_label=_resolve_language_label(output_language),
-        theme_plan_markdown=render_theme_plan_markdown(ctx.plan.theme_plan),
+        theme_plan_markdown=render_theme_plan_markdown(theme_plan),
         overview_review_markdown=render_overview_review_markdown(overview_review),
-        required_entities=list(ctx.plan.theme_plan.required_entities),
+        required_entities=list(theme_plan.required_entities),
         source_content_packet=build_content_packet(
             sources=selected_sources,
             source_ids=source_ids,
@@ -1528,12 +1558,12 @@ def build_decide_prompt_messages(
     *,
     ctx: ResearchStepContext,
 ) -> list[dict[str, str]]:
-    round_state = ctx.current_round
+    round_state = ctx.run.current
     if round_state is None:
         return []
     return _build_decide_signal_messages(
-        core_question=ctx.plan.theme_plan.core_question,
-        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        core_question=ctx.task.question,
+        mode_depth_profile=ctx.run.limits.mode_key,
         confidence=round_state.confidence,
         coverage_ratio=round_state.coverage_ratio,
         unresolved_conflicts=round_state.unresolved_conflicts,
@@ -1543,11 +1573,11 @@ def build_decide_prompt_messages(
         low_gain_streak=round_state.low_gain_streak,
         search_remaining=max(
             0,
-            ctx.runtime.budget.max_search_calls - ctx.runtime.search_calls,
+            ctx.run.limits.max_search_calls - ctx.run.search_calls,
         ),
         fetch_remaining=max(
             0,
-            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
+            ctx.run.limits.max_fetch_calls - ctx.run.fetch_calls,
         ),
     )
 
@@ -1557,17 +1587,17 @@ def build_track_orchestrator_prompt_messages(
     root: ResearchStepContext,
     track_map: dict[str, ResearchStepContext],
 ) -> list[dict[str, str]]:
-    budget = root.runtime.budget
+    budget = root.run.limits
     return _build_track_orchestrator_messages(
-        mode_depth_profile=root.runtime.mode_depth.mode_key,
-        core_question=root.plan.theme_plan.core_question,
+        mode_depth_profile=root.run.limits.mode_key,
+        core_question=root.task.question,
         search_remaining=max(
             0,
-            budget.max_search_calls - root.runtime.search_calls,
+            budget.max_search_calls - root.run.search_calls,
         ),
         fetch_remaining=max(
             0,
-            budget.max_fetch_calls - root.runtime.fetch_calls,
+            budget.max_fetch_calls - root.run.fetch_calls,
         ),
         track_snapshots_markdown=render_track_snapshot_markdown(track_map),
     )
@@ -1581,7 +1611,7 @@ def build_gap_closure_prompt_messages(
 ) -> list[dict[str, str]]:
     latest = _latest_round_from_track(track_ctx)
     return _build_gap_closure_messages(
-        core_question=track_ctx.plan.theme_plan.core_question or card.question,
+        core_question=track_ctx.task.question or card.question,
         question_id=card.question_id,
         pass_index=pass_index,
         confidence=float(latest.confidence) if latest is not None else 0.0,
@@ -1605,24 +1635,25 @@ def build_subreport_prompt_messages(
     notes: list[str],
     require_insight_card: bool,
 ) -> list[dict[str, str]]:
-    report_style = ctx.plan.theme_plan.report_style
+    report_style = ctx.task.style
+    theme_plan = _theme_plan_from_task(ctx.task)
     return _build_subreport_messages(
         target_output_language=target_language,
         target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
-        core_question=ctx.plan.theme_plan.core_question,
-        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        core_question=ctx.task.question,
+        mode_depth_profile=ctx.run.limits.mode_key,
         report_style=report_style,
         require_insight_card=require_insight_card,
         context_packet_markdown=build_subreport_context_packet_markdown(
             theme=ctx.request.themes,
-            core_question=ctx.plan.theme_plan.core_question,
+            core_question=ctx.task.question,
             report_style=report_style,
             target_output_language=target_language,
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
-            theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-            rounds=list(ctx.rounds),
+            theme_plan=theme_plan,
+            rounds=list(ctx.run.history),
             source_evidence=source_evidence,
             source_evidence_max_chars=source_evidence_max_chars,
             notes=notes,
@@ -1643,12 +1674,10 @@ def build_render_architect_prompt_messages(
         target_output_language=target_language,
         target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
-        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-        task_intent=_resolve_task_intent_value(ctx.plan.theme_plan.task_intent),
-        complexity_tier=_resolve_task_complexity_value(
-            ctx.plan.theme_plan.complexity_tier
-        ),
-        report_style=ctx.plan.theme_plan.report_style,
+        mode_depth_profile=ctx.run.limits.mode_key,
+        task_intent=_resolve_task_intent_value(ctx.task.intent),
+        complexity_tier=_resolve_task_complexity_value(ctx.task.complexity),
+        report_style=ctx.task.style,
         context_packet_markdown=_build_render_context_packet_markdown(
             ctx=ctx,
             target_language=target_language,
@@ -1671,12 +1700,10 @@ def build_render_writer_prompt_messages(
         target_output_language=target_language,
         target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
-        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
-        task_intent=_resolve_task_intent_value(ctx.plan.theme_plan.task_intent),
-        complexity_tier=_resolve_task_complexity_value(
-            ctx.plan.theme_plan.complexity_tier
-        ),
-        report_style=ctx.plan.theme_plan.report_style,
+        mode_depth_profile=ctx.run.limits.mode_key,
+        task_intent=_resolve_task_intent_value(ctx.task.intent),
+        complexity_tier=_resolve_task_complexity_value(ctx.task.complexity),
+        report_style=ctx.task.style,
         section_subhead=section_subhead,
         section_prefix_h2=f"## {section_subhead or 'Section'}",
         all_section_plan_markdown=render_architect_plan_markdown(architect_output),
@@ -1700,7 +1727,7 @@ def build_render_structured_prompt_messages(
         target_output_language=target_language,
         target_output_language_label=_resolve_language_label(target_language),
         current_utc_date=now_utc.date().isoformat(),
-        report_style=ctx.plan.theme_plan.report_style,
+        report_style=ctx.task.style,
         context_packet_markdown=_build_render_context_packet_markdown(
             ctx=ctx,
             target_language=target_language,
@@ -1720,7 +1747,7 @@ def build_density_gate_prompt_messages(
     return _build_density_gate_messages(
         target_output_language=target_language,
         current_utc_date=now_utc.date().isoformat(),
-        mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+        mode_depth_profile=ctx.run.limits.mode_key,
         pass_index=pass_index,
         context_packet_markdown=_build_render_context_packet_markdown(
             ctx=ctx,
@@ -1738,11 +1765,12 @@ def _build_render_context_packet_markdown(
     now_utc: datetime,
     track_results: list[ResearchTrackResult] | None = None,
 ) -> str:
-    mode_depth = ctx.runtime.mode_depth
+    mode_depth = ctx.run.limits
+    theme_plan = _theme_plan_from_task(ctx.task)
     selected_track_results = (
         [item.model_copy(deep=True) for item in track_results]
         if track_results is not None
-        else [item.model_copy(deep=True) for item in ctx.parallel.track_results]
+        else [item.model_copy(deep=True) for item in ctx.result.tracks]
     )
     selected_track_results.sort(
         key=lambda item: (
@@ -1754,15 +1782,13 @@ def _build_render_context_packet_markdown(
         reverse=True,
     )
     return build_render_final_context_packet_markdown(
-        theme=ctx.plan.theme_plan.core_question or ctx.request.themes,
+        theme=ctx.task.question or ctx.request.themes,
         target_output_language=target_language,
         mode_depth_profile=mode_depth.mode_key,
         utc_timestamp=now_utc.isoformat(),
         utc_date=now_utc.date().isoformat(),
-        theme_plan=ctx.plan.theme_plan.model_copy(deep=True),
-        question_cards=[
-            item.model_copy(deep=True) for item in ctx.parallel.question_cards
-        ],
+        theme_plan=theme_plan,
+        question_cards=[item.model_copy(deep=True) for item in ctx.task.cards],
         track_results=selected_track_results,
         render_objective=_render_objective_for_mode(mode_key=mode_depth.mode_key),
     )
@@ -1777,10 +1803,10 @@ def _normalize_style(raw_style: object | None) -> ReportStyle | None:
 
 def _latest_round_from_track(
     track_ctx: ResearchStepContext,
-) -> ResearchRoundState | None:
-    if track_ctx.rounds:
-        return track_ctx.rounds[-1]
-    return track_ctx.current_round
+) -> ResearchRound | None:
+    if track_ctx.run.history:
+        return track_ctx.run.history[-1]
+    return track_ctx.run.current
 
 
 def _can_attempt_explore(
@@ -1791,7 +1817,7 @@ def _can_attempt_explore(
 ) -> bool:
     if round_index <= 1:
         return False
-    if ctx.runtime.budget.max_fetch_calls <= ctx.runtime.fetch_calls:
+    if ctx.run.limits.max_fetch_calls <= ctx.run.fetch_calls:
         return False
     return len(last_round_candidates) > 0
 
@@ -1960,7 +1986,7 @@ def _render_theme_plan_card_lines(
     return lines
 
 
-def render_rounds_markdown(rounds: list[ResearchRoundState], *, limit: int) -> str:
+def render_rounds_markdown(rounds: list[ResearchRound], *, limit: int) -> str:
     selected = rounds[-max(1, limit) :]
     if not selected:
         return "- (none)"
@@ -2181,17 +2207,18 @@ def build_content_packet(
 def render_track_snapshot_markdown(track_map: dict[str, ResearchStepContext]) -> str:
     lines: list[str] = []
     for question_id, track_ctx in track_map.items():
-        latest = track_ctx.rounds[-1] if track_ctx.rounds else track_ctx.current_round
+        latest = (
+            track_ctx.run.history[-1]
+            if track_ctx.run.history
+            else track_ctx.run.current
+        )
         lines.extend(
             [
                 f"### {question_id}",
-                (
-                    "- question: "
-                    f"{track_ctx.plan.theme_plan.core_question or track_ctx.request.themes}"
-                ),
-                f"- rounds: {len(track_ctx.rounds)}",
-                f"- search_calls: {track_ctx.runtime.search_calls}",
-                f"- fetch_calls: {track_ctx.runtime.fetch_calls}",
+                f"- question: {track_ctx.task.question or track_ctx.request.themes}",
+                f"- rounds: {len(track_ctx.run.history)}",
+                f"- search_calls: {track_ctx.run.search_calls}",
+                f"- fetch_calls: {track_ctx.run.fetch_calls}",
                 (
                     f"- confidence: {float(latest.confidence):.3f}"
                     if latest is not None
@@ -2242,7 +2269,7 @@ def build_subreport_context_packet_markdown(
     utc_timestamp: str,
     utc_date: str,
     theme_plan: ResearchThemePlan,
-    rounds: list[ResearchRoundState],
+    rounds: list[ResearchRound],
     source_evidence: list[ResearchSource],
     source_evidence_max_chars: int,
     notes: list[str],

@@ -80,42 +80,43 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        if ctx.runtime.stop or ctx.current_round is None:
+        if ctx.run.stop or ctx.run.current is None:
             return ctx
-        round_action = (ctx.work.round_action or "search").casefold()
-        if ctx.current_round.round_index <= 1:
+        round_action = (ctx.run.current.round_action or "search").casefold()
+        if ctx.run.current.round_index <= 1:
             round_action = "search"
         if self._phase == "pre":
             if round_action == "explore":
                 executed = await self._run_explore_fetch(ctx)
                 if executed:
-                    ctx.work.search_fetched_candidates = []
+                    ctx.run.current.search_fetched_candidates = []
                     return ctx
-                ctx.work.round_action = "search"
-                ctx.work.explore_target_source_ids = []
+                ctx.run.current.round_action = "search"
+                ctx.run.current.explore_target_source_ids = []
             return ctx
         if round_action != "search":
-            ctx.work.search_fetched_candidates = []
+            ctx.run.current.search_fetched_candidates = []
             return ctx
         ctx = self._run_search_fetch(ctx)
-        ctx.work.search_fetched_candidates = []
+        if ctx.run.current is not None:
+            ctx.run.current.search_fetched_candidates = []
         return ctx
 
     def _run_search_fetch(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        assert ctx.current_round is not None
+        assert ctx.run.current is not None
         candidates = [
             item.model_copy(deep=True)
-            for item in list(ctx.work.search_fetched_candidates)
+            for item in list(ctx.run.current.search_fetched_candidates)
         ]
         remaining_fetch_budget = max(
             0,
-            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
+            ctx.run.limits.max_fetch_calls - ctx.run.fetch_calls,
         )
         if remaining_fetch_budget <= 0:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_fetch_calls"
-            ctx.current_round.stop = True
-            ctx.current_round.stop_reason = "max_fetch_calls"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_fetch_calls"
+            ctx.run.current.stop = True
+            ctx.run.current.stop_reason = "max_fetch_calls"
             return ctx
         all_results: list[FetchResultItem] = []
         new_source_ids: list[int] = []
@@ -136,7 +137,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
                 ctx=ctx,
                 result=trimmed_candidate.result,
-                round_index=ctx.current_round.round_index,
+                round_index=ctx.run.current.round_index,
             )
             for source_id in canonical_ids:
                 if source_id not in new_source_ids:
@@ -145,7 +146,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 self._build_link_candidate_from_search_candidate(
                     source_id=main_source_id,
                     candidate=trimmed_candidate,
-                    round_index=ctx.current_round.round_index,
+                    round_index=ctx.run.current.round_index,
                 )
             )
         self._finalize_round_state(
@@ -158,17 +159,17 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         return ctx
 
     async def _run_explore_fetch(self, ctx: ResearchStepContext) -> bool:
-        assert ctx.current_round is not None
+        assert ctx.run.current is not None
         remaining_fetch_budget = max(
             0,
-            ctx.runtime.budget.max_fetch_calls - ctx.runtime.fetch_calls,
+            ctx.run.limits.max_fetch_calls - ctx.run.fetch_calls,
         )
         if remaining_fetch_budget <= 0:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_fetch_calls"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_fetch_calls"
             return False
-        expected_candidate_round = ctx.current_round.round_index - 1
-        if ctx.plan.last_round_link_candidates_round != expected_candidate_round:
+        expected_candidate_round = ctx.run.current.round_index - 1
+        if ctx.run.link_candidates_round != expected_candidate_round:
             return False
         target_pages = self._select_explore_target_pages(ctx=ctx)
         if not target_pages:
@@ -209,7 +210,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
                 ctx=ctx,
                 result=result,
-                round_index=ctx.current_round.round_index,
+                round_index=ctx.run.current.round_index,
             )
             for source_id in canonical_ids:
                 if source_id not in new_source_ids:
@@ -218,7 +219,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 self._build_link_candidate_from_explore_result(
                     source_id=main_source_id,
                     result=result,
-                    round_index=ctx.current_round.round_index,
+                    round_index=ctx.run.current.round_index,
                 )
             )
         if per_round_fetch_calls <= 0:
@@ -227,7 +228,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             next_round_link_candidates = [
                 item.model_copy(
                     update={
-                        "round_index": ctx.current_round.round_index,
+                        "round_index": ctx.run.current.round_index,
                     },
                     deep=True,
                 )
@@ -251,41 +252,43 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         per_round_fetch_calls: int,
         next_round_link_candidates: list[ResearchLinkCandidate],
     ) -> None:
-        assert ctx.current_round is not None
+        assert ctx.run.current is not None
         dedup_link_candidates = self._dedupe_link_candidates_by_source_id(
             next_round_link_candidates
         )
-        ctx.plan.last_round_link_candidates = [
+        ctx.run.link_candidates = [
             item.model_copy(deep=True) for item in dedup_link_candidates
         ]
-        ctx.plan.last_round_link_candidates_round = ctx.current_round.round_index
-        ctx.current_round.result_count = max(0, result_count)
-        ctx.current_round.new_source_ids = list(new_source_ids)
-        ctx.current_round.corpus_score_gain = (
+        ctx.run.link_candidates_round = ctx.run.current.round_index
+        ctx.run.current.result_count = max(0, result_count)
+        ctx.run.current.new_source_ids = list(new_source_ids)
+        ctx.run.current.corpus_score_gain = (
             float(
                 rebuild_corpus_ranking(
                     ctx=ctx,
-                    round_index=ctx.current_round.round_index,
+                    round_index=ctx.run.current.round_index,
                 )
             )
-            if ctx.current_round.result_count > 0
+            if ctx.run.current.result_count > 0
             else 0.0
         )
-        ctx.runtime.fetch_calls += max(0, per_round_fetch_calls)
+        ctx.run.fetch_calls += max(0, per_round_fetch_calls)
 
     def _select_explore_target_pages(
         self,
         *,
         ctx: ResearchStepContext,
     ) -> list[ResearchLinkCandidate]:
-        candidates = list(ctx.plan.last_round_link_candidates or [])
+        if ctx.run.current is None:
+            return []
+        candidates = list(ctx.run.link_candidates or [])
         if not candidates:
             return []
         source_map = {item.source_id: item for item in candidates}
-        target_ids = list(ctx.work.explore_target_source_ids or [])
+        target_ids = list(ctx.run.current.explore_target_source_ids or [])
         if not target_ids:
             return []
-        cap = max(1, ctx.runtime.mode_depth.explore_target_pages_per_round)
+        cap = max(1, ctx.run.limits.explore_target_pages_per_round)
         out: list[ResearchLinkCandidate] = []
         seen: set[int] = set()
         for source_id in target_ids:
@@ -306,8 +309,8 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         target_pages: list[ResearchLinkCandidate],
     ) -> list[str]:
-        per_page_limit = max(1, ctx.runtime.mode_depth.explore_links_per_page)
-        if ctx.runtime.mode_depth.mode_key == "research-fast":
+        per_page_limit = max(1, ctx.run.limits.explore_links_per_page)
+        if ctx.run.limits.mode_key == "research-fast":
             selected: list[str] = []
             for page in target_pages:
                 selected.extend(
@@ -381,7 +384,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             stage="link_select",
             fallback=fallback_model,
         )
-        report_style = ctx.plan.theme_plan.report_style
+        report_style = ctx.task.style
         if report_style not in {"decision", "explainer", "execution"}:
             report_style = "explainer"
         candidate_links_markdown = self._render_link_candidates_for_picker(links)
@@ -390,9 +393,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             chat_result = await self._llm.create(
                 model=model,
                 messages=build_link_picker_prompt_messages(
-                    core_question=ctx.plan.theme_plan.core_question,
+                    core_question=ctx.task.question,
                     report_style=report_style,
-                    mode_depth_profile=ctx.runtime.mode_depth.mode_key,
+                    mode_depth_profile=ctx.run.limits.mode_key,
                     current_utc_date=datetime.fromtimestamp(
                         self.clock.now_ms() / 1000,
                         tz=UTC,
@@ -469,7 +472,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
     ) -> list[int]:
         if not links:
             return []
-        query = ctx.plan.theme_plan.core_question
+        query = ctx.task.question
         texts = [self._render_rank_text(item) for item in links]
         try:
             scores = await self._ranker.score_texts(
@@ -539,7 +542,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 )
             )
         if ctx is not None and resolved_relative_links > 0:
-            ctx.runtime.explore_resolved_relative_links += resolved_relative_links
+            ctx.run.explore_resolved_relative_links += resolved_relative_links
         return out
 
     def _merge_and_dedupe_urls(self, urls: list[str]) -> list[str]:
@@ -564,7 +567,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
     ) -> list[str]:
         synchronize_corpus_indexes(ctx=ctx)
         fetched_canonical_urls: set[str] = set()
-        for item in ctx.corpus.source_url_to_ids:
+        for item in ctx.knowledge.source_ids_by_url:
             token = clean_whitespace(item)
             if token:
                 fetched_canonical_urls.add(token)
@@ -651,7 +654,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         urls: list[str],
     ) -> list[FetchStepContext]:
-        max_chars = ctx.runtime.mode_depth.content_chars
+        max_chars = ctx.run.limits.content_chars
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
         request = FetchRequest(
             urls=list(urls),
@@ -670,9 +673,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         )
         contexts: list[FetchStepContext] = []
         round_index = (
-            ctx.current_round.round_index
-            if ctx.current_round is not None
-            else ctx.runtime.round_index
+            ctx.run.current.round_index
+            if ctx.run.current is not None
+            else ctx.run.round_index
         )
         for index, url in enumerate(urls):
             fetch_ctx = FetchStepContext(

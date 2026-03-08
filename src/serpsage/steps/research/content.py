@@ -29,25 +29,26 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        if ctx.runtime.stop or ctx.current_round is None:
+        if ctx.run.stop or ctx.run.current is None:
             return ctx
-        source_topk = max(1, ctx.runtime.mode_depth.source_topk)
+        source_topk = max(1, ctx.run.limits.source_topk)
         source_ids = list(
-            ctx.work.need_content_source_ids or ctx.current_round.context_source_ids
+            ctx.run.current.need_content_source_ids
+            or ctx.run.current.context_source_ids
         )
         source_ids = sort_source_ids_by_score(
             ctx=ctx,
             source_ids=source_ids,
         )[:source_topk]
         if not source_ids:
-            ctx.work.content_review = self._empty_review()
+            ctx.run.current.content_review = self._empty_review()
             return ctx
         selected_sources = pick_sources_by_ids(
-            sources=ctx.corpus.sources,
+            sources=ctx.knowledge.sources,
             source_ids=source_ids,
         )
         if not selected_sources:
-            ctx.work.content_review = self._empty_review()
+            ctx.run.current.content_review = self._empty_review()
             return ctx
         model = resolve_research_model(
             ctx=ctx,
@@ -65,7 +66,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=ContentOutputPayload,
                 format_override=build_content_schema(
-                    max_queries=ctx.runtime.budget.max_queries_per_round
+                    max_queries=ctx.run.limits.max_queries_per_round
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
@@ -78,45 +79,43 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 error_code="research_content_review_failed",
                 error_type=type(exc).__name__,
                 attrs={
-                    "round_index": ctx.current_round.round_index,
+                    "round_index": ctx.run.current.round_index,
                     "message": str(exc),
                 },
             )
             raise
         payload = chat_result.data
-        ctx.work.content_review = payload
+        ctx.run.current.content_review = payload
         if payload.resolved_findings:
-            ctx.current_round.content_summary = " | ".join(
-                payload.resolved_findings[:3]
-            )
-            ctx.notes.extend(payload.resolved_findings[:3])
-        ctx.current_round.confidence = min(
+            ctx.run.current.content_summary = " | ".join(payload.resolved_findings[:3])
+            ctx.run.notes.extend(payload.resolved_findings[:3])
+        ctx.run.current.confidence = min(
             1.0,
-            max(0.0, ctx.current_round.confidence + payload.confidence_adjustment),
+            max(0.0, ctx.run.current.confidence + payload.confidence_adjustment),
         )
         unresolved_topics = self._merge_conflict_topics(
-            baseline=ctx.current_round.unresolved_conflict_topics,
+            baseline=ctx.run.current.unresolved_conflict_topics,
             resolutions=payload.conflict_resolutions,
         )
-        ctx.current_round.unresolved_conflicts = len(unresolved_topics)
-        ctx.current_round.unresolved_conflict_topics = unresolved_topics
-        ctx.current_round.critical_gaps = len(payload.remaining_gaps)
-        ctx.current_round.entity_coverage_complete = payload.entity_coverage_complete
-        ctx.current_round.missing_entities = list(payload.missing_entities)
-        ctx.work.next_queries = self._merge_preserving_order(
-            left=list(ctx.work.next_queries),
+        ctx.run.current.unresolved_conflicts = len(unresolved_topics)
+        ctx.run.current.unresolved_conflict_topics = unresolved_topics
+        ctx.run.current.critical_gaps = len(payload.remaining_gaps)
+        ctx.run.current.entity_coverage_complete = payload.entity_coverage_complete
+        ctx.run.current.missing_entities = list(payload.missing_entities)
+        ctx.run.current.next_queries = self._merge_preserving_order(
+            left=list(ctx.run.current.next_queries),
             right=list(payload.next_queries),
-            limit=ctx.runtime.budget.max_queries_per_round,
+            limit=ctx.run.limits.max_queries_per_round,
         )
-        ctx.current_round.query_strategy = payload.next_query_strategy
+        ctx.run.current.query_strategy = payload.next_query_strategy
         await self.emit_tracking_event(
             event_name="research.style.applied",
             request_id=ctx.request_id,
             stage="content_review",
             attrs={
-                "report_style_selected": ctx.plan.theme_plan.report_style,
+                "report_style_selected": ctx.task.style,
                 "style_applied_stage": "content",
-                "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
+                "mode_depth_profile": ctx.run.limits.mode_key,
                 "source_topk_effective": source_topk,
             },
         )

@@ -7,7 +7,7 @@ from typing_extensions import override
 from serpsage.models.steps.research import (
     PlanOutputPayload,
     ResearchLinkCandidate,
-    ResearchRoundState,
+    ResearchRound,
     ResearchSearchJob,
     ResearchStepContext,
     RoundAction,
@@ -31,40 +31,32 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        if ctx.runtime.stop:
+        if ctx.run.stop:
             return ctx
-        budget = ctx.runtime.budget
-        if ctx.runtime.round_index >= budget.max_rounds:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_rounds"
+        budget = ctx.run.limits
+        if ctx.run.round_index >= budget.max_rounds:
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_rounds"
             return ctx
-        remaining_fetch = budget.max_fetch_calls - ctx.runtime.fetch_calls
+        remaining_fetch = budget.max_fetch_calls - ctx.run.fetch_calls
         if remaining_fetch <= 0:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_fetch_calls"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_fetch_calls"
             return ctx
-        remaining_search = budget.max_search_calls - ctx.runtime.search_calls
-        round_index = ctx.runtime.round_index + 1
+        remaining_search = budget.max_search_calls - ctx.run.search_calls
+        round_index = ctx.run.round_index + 1
         if remaining_search <= 0 and not self._can_attempt_explore(
             ctx=ctx,
             round_index=round_index,
         ):
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "max_search_calls"
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_search_calls"
             return ctx
-        ctx.runtime.round_index = round_index
-        ctx.current_round = ResearchRoundState(round_index=round_index)
-        ctx.work.search_jobs = []
-        ctx.work.round_action = "search"
-        ctx.work.explore_target_source_ids = []
-        ctx.work.search_fetched_candidates = []
-        ctx.work.overview_review = None
-        ctx.work.content_review = None
-        ctx.work.need_content_source_ids = []
-        ctx.work.next_queries = []
-        core_question = ctx.plan.theme_plan.core_question or ctx.request.themes
+        ctx.run.round_index = round_index
+        ctx.run.current = ResearchRound(round_index=round_index)
+        core_question = ctx.task.question or ctx.request.themes
         candidate_queries = self._build_candidate_queries(
-            next_queries=ctx.plan.next_queries,
+            next_queries=ctx.run.next_queries,
             core_question=core_question,
         )
         model = resolve_research_model(
@@ -116,20 +108,20 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         explore_target_source_ids = self._resolve_explore_target_source_ids(
             raw_source_ids=payload.explore_target_source_ids,
             candidates=last_round_candidates,
-            limit=ctx.runtime.mode_depth.explore_target_pages_per_round,
+            limit=ctx.run.limits.explore_target_pages_per_round,
         )
         if round_action == "explore" and not explore_target_source_ids:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "no_explore_targets"
-            ctx.current_round.stop = True
-            ctx.current_round.stop_reason = "no_explore_targets"
-            ctx.rounds.append(ctx.current_round)
+            ctx.run.stop = True
+            ctx.run.stop_reason = "no_explore_targets"
+            ctx.run.current.stop = True
+            ctx.run.current.stop_reason = "no_explore_targets"
+            ctx.run.history.append(ctx.run.current)
             return ctx
         search_limit = max(
             0,
             min(
                 budget.max_queries_per_round,
-                budget.max_search_calls - ctx.runtime.search_calls,
+                budget.max_search_calls - ctx.run.search_calls,
             ),
         )
         search_jobs = self._build_search_jobs(
@@ -137,17 +129,17 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             job_limit=search_limit,
         )
         if round_action == "search" and not search_jobs:
-            ctx.runtime.stop = True
-            ctx.runtime.stop_reason = "no_queries"
-            ctx.current_round.stop = True
-            ctx.current_round.stop_reason = "no_queries"
-            ctx.rounds.append(ctx.current_round)
+            ctx.run.stop = True
+            ctx.run.stop_reason = "no_queries"
+            ctx.run.current.stop = True
+            ctx.run.current.stop_reason = "no_queries"
+            ctx.run.history.append(ctx.run.current)
             return ctx
-        ctx.work.round_action = round_action
-        ctx.work.explore_target_source_ids = explore_target_source_ids
-        ctx.work.search_jobs = search_jobs
-        ctx.current_round.query_strategy = payload.query_strategy
-        ctx.current_round.queries = [job.query for job in search_jobs]
+        ctx.run.current.round_action = round_action
+        ctx.run.current.explore_target_source_ids = explore_target_source_ids
+        ctx.run.current.search_jobs = search_jobs
+        ctx.run.current.query_strategy = payload.query_strategy
+        ctx.run.current.queries = [job.query for job in search_jobs]
         return ctx
 
     def _build_candidate_queries(
@@ -187,7 +179,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     ) -> bool:
         if round_index <= 1:
             return False
-        if ctx.runtime.budget.max_fetch_calls <= ctx.runtime.fetch_calls:
+        if ctx.run.limits.max_fetch_calls <= ctx.run.fetch_calls:
             return False
         return bool(
             self._resolve_last_round_candidates(
@@ -203,11 +195,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         round_index: int,
     ) -> list[ResearchLinkCandidate]:
         expected_round = max(0, round_index - 1)
-        if ctx.plan.last_round_link_candidates_round != expected_round:
+        if ctx.run.link_candidates_round != expected_round:
             return []
-        return [
-            item.model_copy(deep=True) for item in ctx.plan.last_round_link_candidates
-        ]
+        return [item.model_copy(deep=True) for item in ctx.run.link_candidates]
 
     def _resolve_round_action(
         self,

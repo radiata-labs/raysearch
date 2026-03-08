@@ -246,16 +246,6 @@ class ResearchWriterSectionFailure(MutableModel):
         }
 
 
-class ResearchBudgetState(MutableModel):
-    max_rounds: int = 1
-    max_search_calls: int = 1
-    max_fetch_calls: int = 1
-    max_results_per_search: int = 1
-    max_queries_per_round: int = 1
-    stop_confidence: float = 0.80
-    min_coverage_ratio: float = 0.80
-
-
 class ResearchSource(MutableModel):
     source_id: int
     url: str
@@ -304,22 +294,15 @@ class ResearchTrackResult(MutableModel):
     key_findings: list[str] = Field(default_factory=list)
 
 
-class ResearchParallelState(MutableModel):
-    question_cards: list[ResearchQuestionCard] = Field(default_factory=list)
-    track_results: list[ResearchTrackResult] = Field(default_factory=list)
-    global_search_budget: int = 0
-    global_fetch_budget: int = 0
-    global_search_used: int = 0
-    global_fetch_used: int = 0
-
-
-class ResearchCoverageState(MutableModel):
-    total_subthemes: int = 0
-    covered_subthemes: list[str] = Field(default_factory=list)
-
-
-class ResearchModeDepthState(MutableModel):
+class ResearchLimits(MutableModel):
     mode_key: Literal["research-fast", "research", "research-pro"] = "research"
+    max_rounds: int = 1
+    max_search_calls: int = 1
+    max_fetch_calls: int = 1
+    max_results_per_search: int = 1
+    max_queries_per_round: int = 1
+    stop_confidence: float = 0.80
+    min_coverage_ratio: float = 0.80
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
     source_topk: int = 20
@@ -339,38 +322,33 @@ class ResearchLinkCandidate(MutableModel):
     round_index: int = 0
 
 
-class ResearchRuntimeState(MutableModel):
-    mode_depth: ResearchModeDepthState = Field(default_factory=ResearchModeDepthState)
-    budget: ResearchBudgetState = Field(default_factory=ResearchBudgetState)
-    search_calls: int = 0
-    fetch_calls: int = 0
-    provider_language_param_applied: bool = False
-    explore_resolved_relative_links: int = 0
-    stop: bool = False
-    stop_reason: str = ""
-    round_index: int = 0
+class ResearchTask(MutableModel):
+    question: str = ""
+    style: ReportStyle = "explainer"
+    intent: TaskIntent = "other"
+    complexity: TaskComplexity = "medium"
+    input_language: LanguageCode = "other"
+    search_language: LanguageCode = "other"
+    output_language: LanguageCode = "other"
+    subthemes: list[NonEmptyText] = Field(default_factory=list, max_length=12)
+    entities: list[NonEmptyText] = Field(default_factory=list, max_length=16)
+    cards: list[ResearchQuestionCard] = Field(default_factory=list, max_length=24)
 
 
-class ResearchPlanState(MutableModel):
-    theme_plan: ResearchThemePlan = Field(default_factory=ResearchThemePlan)
-    next_queries: list[str] = Field(default_factory=list)
-    last_round_link_candidates: list[ResearchLinkCandidate] = Field(
-        default_factory=list
-    )
-    last_round_link_candidates_round: int = 0
-
-
-class ResearchCorpusState(MutableModel):
+class ResearchKnowledge(MutableModel):
     sources: list[ResearchSource] = Field(default_factory=list)
-    source_url_to_ids: dict[str, list[int]] = Field(default_factory=dict)
+    source_ids_by_url: dict[str, list[int]] = Field(default_factory=dict)
     ranked_source_ids: list[int] = Field(default_factory=list)
     source_scores: dict[int, float] = Field(default_factory=dict)
-    coverage_state: ResearchCoverageState = Field(default_factory=ResearchCoverageState)
+    covered_subthemes: list[str] = Field(default_factory=list)
 
 
-class ResearchRoundWorkState(MutableModel):
-    search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
+class ResearchRound(MutableModel):
+    round_index: int = 0
     round_action: RoundAction = "search"
+    query_strategy: str = ""
+    queries: list[str] = Field(default_factory=list)
+    search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
     explore_target_source_ids: list[int] = Field(default_factory=list)
     search_fetched_candidates: list[SearchFetchedCandidate] = Field(
         default_factory=list
@@ -379,12 +357,6 @@ class ResearchRoundWorkState(MutableModel):
     content_review: ContentOutputPayload | None = None
     need_content_source_ids: list[int] = Field(default_factory=list)
     next_queries: list[str] = Field(default_factory=list)
-
-
-class ResearchRoundState(MutableModel):
-    round_index: int = 0
-    query_strategy: str = ""
-    queries: list[str] = Field(default_factory=list)
     result_count: int = 0
     new_source_ids: list[int] = Field(default_factory=list)
     context_source_ids: list[int] = Field(default_factory=list)
@@ -405,24 +377,42 @@ class ResearchRoundState(MutableModel):
     stop: bool = False
 
 
-class ResearchOutputState(MutableModel):
+class ResearchRun(MutableModel):
+    mode: Literal["research-fast", "research", "research-pro"] = "research"
+    limits: ResearchLimits = Field(default_factory=ResearchLimits)
+    search_calls: int = 0
+    fetch_calls: int = 0
+    provider_language_param_applied: bool = False
+    explore_resolved_relative_links: int = 0
+    stop: bool = False
+    stop_reason: str = ""
+    round_index: int = 0
+    next_queries: list[str] = Field(default_factory=list)
+    link_candidates: list[ResearchLinkCandidate] = Field(default_factory=list)
+    link_candidates_round: int = 0
+    notes: list[str] = Field(default_factory=list)
+    current: ResearchRound | None = None
+    history: list[ResearchRound] = Field(default_factory=list)
+    global_search_budget: int = 0
+    global_fetch_budget: int = 0
+    global_search_used: int = 0
+    global_fetch_used: int = 0
+
+
+class ResearchResult(MutableModel):
     content: str = ""
     structured: object | None = None
+    tracks: list[ResearchTrackResult] = Field(default_factory=list)
 
 
 class ResearchStepContext(BaseStepContext[ResearchRequest, ResearchResponse]):
     settings: AppSettings
     request: ResearchRequest
     response: ResearchResponse
-    runtime: ResearchRuntimeState = Field(default_factory=ResearchRuntimeState)
-    plan: ResearchPlanState = Field(default_factory=ResearchPlanState)
-    parallel: ResearchParallelState = Field(default_factory=ResearchParallelState)
-    corpus: ResearchCorpusState = Field(default_factory=ResearchCorpusState)
-    work: ResearchRoundWorkState = Field(default_factory=ResearchRoundWorkState)
-    rounds: list[ResearchRoundState] = Field(default_factory=list)
-    current_round: ResearchRoundState | None = None
-    notes: list[str] = Field(default_factory=list)
-    output: ResearchOutputState = Field(default_factory=ResearchOutputState)
+    task: ResearchTask = Field(default_factory=ResearchTask)
+    run: ResearchRun = Field(default_factory=ResearchRun)
+    knowledge: ResearchKnowledge = Field(default_factory=ResearchKnowledge)
+    result: ResearchResult = Field(default_factory=ResearchResult)
 
 
 __all__ = [
@@ -439,25 +429,21 @@ __all__ = [
     "RenderArchitectSectionPlan",
     "ReportStyle",
     "ResearchBudgetReservationState",
-    "ResearchBudgetState",
-    "ResearchCorpusState",
     "ResearchCorpusUpsertResult",
-    "ResearchCoverageState",
     "ResearchDecideSignalPayload",
+    "ResearchKnowledge",
     "ResearchLinkCandidate",
     "ResearchLinkPickerPayload",
-    "ResearchModeDepthState",
+    "ResearchLimits",
     "ResearchOrchestratorState",
-    "ResearchOutputState",
-    "ResearchParallelState",
-    "ResearchPlanState",
     "ResearchQuestionCard",
-    "ResearchRoundState",
-    "ResearchRoundWorkState",
-    "ResearchRuntimeState",
+    "ResearchResult",
+    "ResearchRound",
+    "ResearchRun",
     "ResearchSearchJob",
     "ResearchSource",
     "ResearchStepContext",
+    "ResearchTask",
     "ResearchThemePlan",
     "ResearchThemePlanCard",
     "ResearchTrackAllocation",

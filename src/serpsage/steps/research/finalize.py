@@ -17,38 +17,35 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
-        mode_depth = ctx.runtime.mode_depth
-        theme_plan = ctx.plan.theme_plan
+        mode_depth = ctx.run.limits
+        theme_plan = ctx.task
         search_language = theme_plan.search_language
         provider_params = map_provider_language_param(
             provider_backend=ctx.settings.provider.backend,
             search_language=search_language,
         )
-        provider_language_param_applied = (
-            ctx.runtime.provider_language_param_applied
-            or (provider_params and ctx.runtime.search_calls > 0)
+        provider_language_param_applied = ctx.run.provider_language_param_applied or (
+            provider_params and ctx.run.search_calls > 0
         )
-        content_chars = len(ctx.output.content)
+        content_chars = len(ctx.result.content)
         mode_key = mode_depth.mode_key
         await self.emit_tracking_event(
             event_name="research.finalize.summary",
             request_id=ctx.request_id,
             stage="finalize",
             attrs={
-                "stop": ctx.runtime.stop,
-                "stop_reason": ctx.runtime.stop_reason or "n/a",
+                "stop": ctx.run.stop,
+                "stop_reason": ctx.run.stop_reason or "n/a",
                 "content_chars": content_chars,
-                "has_structured": ctx.output.structured is not None,
-                "report_style_selected": theme_plan.report_style,
+                "has_structured": ctx.result.structured is not None,
+                "report_style_selected": theme_plan.style,
                 "mode_depth_profile": mode_depth.mode_key,
                 "llm_orchestrator_enabled": mode_key != "research-fast",
                 "input_language": theme_plan.input_language,
                 "output_language": theme_plan.output_language,
                 "search_language": search_language,
                 "authority_weight_applied": True,
-                "explore_resolved_relative_links": (
-                    ctx.runtime.explore_resolved_relative_links
-                ),
+                "explore_resolved_relative_links": ctx.run.explore_resolved_relative_links,
                 "provider_language_param_applied": provider_language_param_applied,
             },
         )

@@ -5,11 +5,10 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.research import (
-    ResearchModeDepthState,
+    ResearchLimits,
     ResearchQuestionCard,
     ResearchStepContext,
-    ResearchThemePlan,
-    ResearchThemePlanCard,
+    ResearchTask,
     TaskComplexity,
     ThemeOutputPayload,
 )
@@ -48,7 +47,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
-        card_cap = max(1, ctx.runtime.mode_depth.max_question_cards_effective)
+        card_cap = max(1, ctx.run.limits.max_question_cards_effective)
         try:
             chat_result = await self._llm.create(
                 model=model,
@@ -56,7 +55,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     ctx=ctx,
                     now_utc=now_utc,
                     card_cap=card_cap,
-                    report_style=ctx.plan.theme_plan.report_style,
+                    report_style=ctx.task.style,
                 ),
                 response_format=ThemeOutputPayload,
                 format_override=build_theme_schema(card_cap=card_cap),
@@ -83,55 +82,39 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         question_cards = self._build_question_cards(
             payload=payload,
-            card_cap=max(1, ctx.runtime.mode_depth.max_question_cards_effective),
+            card_cap=max(1, ctx.run.limits.max_question_cards_effective),
         )
-        theme_plan = ResearchThemePlan(
-            core_question=payload.core_question,
-            report_style=payload.report_style,
-            task_intent=payload.task_intent,
-            complexity_tier=payload.complexity_tier,
+        ctx.task = ResearchTask(
+            question=payload.core_question,
+            style=payload.report_style,
+            intent=payload.task_intent,
+            complexity=payload.complexity_tier,
             subthemes=list(payload.subthemes),
-            required_entities=list(payload.required_entities),
+            entities=list(payload.required_entities),
             input_language=payload.detected_input_language,
             search_language=payload.search_language,
             output_language=payload.detected_input_language,
-            question_cards=[
-                ResearchThemePlanCard(
-                    question_id=card.question_id,
-                    question=card.question,
-                    priority=card.priority,
-                    seed_queries=list(card.seed_queries),
-                    evidence_focus=list(card.evidence_focus),
-                    expected_gain=card.expected_gain,
-                )
-                for card in question_cards
-            ],
+            cards=[item.model_copy(deep=True) for item in question_cards],
         )
-        ctx.plan.theme_plan = theme_plan
-        ctx.parallel.question_cards = [
-            item.model_copy(deep=True) for item in question_cards
-        ]
-        ctx.corpus.coverage_state.total_subthemes = len(theme_plan.subthemes)
-        ctx.notes.append(
+        theme_plan = ctx.task
+        ctx.run.notes.append(
             f"Theme plan built with {len(question_cards)} question cards and {len(theme_plan.subthemes)} subthemes."
         )
-        ctx.notes.append(f"Search language fixed to {theme_plan.search_language}.")
-        ctx.notes.append(f"Report style fixed to `{theme_plan.report_style}`.")
-        ctx.notes.append(
+        ctx.run.notes.append(f"Search language fixed to {theme_plan.search_language}.")
+        ctx.run.notes.append(f"Report style fixed to `{theme_plan.style}`.")
+        ctx.run.notes.append(
             "Task intent fixed to "
-            f"`{theme_plan.task_intent}` with complexity tier `{theme_plan.complexity_tier}`."
+            f"`{theme_plan.intent}` with complexity tier `{theme_plan.complexity}`."
         )
         if adaptive_applied:
-            ctx.notes.append(
-                f"Adaptive `{ctx.runtime.mode_depth.mode_key}` depth applied based on theme complexity."
+            ctx.run.notes.append(
+                f"Adaptive `{ctx.run.limits.mode_key}` depth applied based on theme complexity."
             )
-        if theme_plan.required_entities:
-            ctx.notes.append(
-                "Required entities: "
-                + ", ".join(theme_plan.required_entities[:8])
-                + "."
+        if theme_plan.entities:
+            ctx.run.notes.append(
+                "Required entities: " + ", ".join(theme_plan.entities[:8]) + "."
             )
-        ctx.notes.append(f"Output language fixed to {theme_plan.output_language}.")
+        ctx.run.notes.append(f"Output language fixed to {theme_plan.output_language}.")
         await self.emit_tracking_event(
             event_name="research.language.selected",
             request_id=ctx.request_id,
@@ -147,30 +130,26 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             request_id=ctx.request_id,
             stage="theme_plan",
             attrs={
-                "report_style_selected": theme_plan.report_style,
-                "task_intent_selected": theme_plan.task_intent,
-                "complexity_tier_selected": theme_plan.complexity_tier,
+                "report_style_selected": theme_plan.style,
+                "task_intent_selected": theme_plan.intent,
+                "complexity_tier_selected": theme_plan.complexity,
             },
         )
-        if ctx.runtime.mode_depth.mode_key in {"research", "research-pro"}:
+        if ctx.run.limits.mode_key in {"research", "research-pro"}:
             await self.emit_tracking_event(
                 event_name="research.mode_depth.adaptive_applied",
                 request_id=ctx.request_id,
                 stage="theme_plan",
                 attrs={
-                    "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
-                    "task_intent": theme_plan.task_intent,
-                    "complexity_tier": theme_plan.complexity_tier,
-                    "effective_complexity_tier": theme_plan.complexity_tier,
+                    "mode_depth_profile": ctx.run.limits.mode_key,
+                    "task_intent": theme_plan.intent,
+                    "complexity_tier": theme_plan.complexity,
+                    "effective_complexity_tier": theme_plan.complexity,
                     "adaptive_applied": adaptive_applied,
-                    "max_question_cards_effective": (
-                        ctx.runtime.mode_depth.max_question_cards_effective
-                    ),
-                    "min_rounds_per_track": ctx.runtime.mode_depth.min_rounds_per_track,
-                    "source_topk": ctx.runtime.mode_depth.source_topk,
-                    "explore_target_pages_per_round": (
-                        ctx.runtime.mode_depth.explore_target_pages_per_round
-                    ),
+                    "max_question_cards_effective": ctx.run.limits.max_question_cards_effective,
+                    "min_rounds_per_track": ctx.run.limits.min_rounds_per_track,
+                    "source_topk": ctx.run.limits.source_topk,
+                    "explore_target_pages_per_round": ctx.run.limits.explore_target_pages_per_round,
                 },
             )
         await self.emit_tracking_event(
@@ -178,19 +157,17 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             request_id=ctx.request_id,
             stage="theme_plan",
             attrs={
-                "core_question": theme_plan.core_question,
+                "core_question": theme_plan.question,
                 "question_cards": len(question_cards),
                 "subthemes": len(theme_plan.subthemes),
                 "input_language": theme_plan.input_language,
                 "search_language": theme_plan.search_language,
                 "output_language": theme_plan.output_language,
-                "mode_depth_profile": ctx.runtime.mode_depth.mode_key,
-                "mode_depth_question_card_cap": (
-                    ctx.runtime.mode_depth.max_question_cards_effective
-                ),
-                "report_style_selected": theme_plan.report_style,
-                "task_intent_selected": theme_plan.task_intent,
-                "complexity_tier_selected": theme_plan.complexity_tier,
+                "mode_depth_profile": ctx.run.limits.mode_key,
+                "mode_depth_question_card_cap": ctx.run.limits.max_question_cards_effective,
+                "report_style_selected": theme_plan.style,
+                "task_intent_selected": theme_plan.intent,
+                "complexity_tier_selected": theme_plan.complexity,
                 "mode_depth_adaptive_applied": adaptive_applied,
             },
         )
@@ -220,7 +197,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         complexity_tier: TaskComplexity,
     ) -> bool:
-        mode_depth = ctx.runtime.mode_depth
+        mode_depth = ctx.run.limits
         mode_key = mode_depth.mode_key
         if mode_key not in {"research", "research-pro"}:
             return False
@@ -252,7 +229,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     def _apply_mode_depth_overrides(
         self,
         *,
-        mode_depth: ResearchModeDepthState,
+        mode_depth: ResearchLimits,
         profile: ResearchModeSettings,
     ) -> None:
         mode_depth.max_question_cards_effective = profile.max_question_cards_effective
