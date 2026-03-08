@@ -37,6 +37,9 @@ SearchJobIntent = Literal["coverage", "deepen", "verify", "refresh"]
 SearchJobMode = Literal["auto", "deep"]
 OverviewConflictStatus = Literal["resolved", "unresolved"]
 ContentConflictStatus = Literal["resolved", "unresolved", "insufficient", "closed"]
+ResearchTrackState = Literal["active", "waiting_for_budget", "completed", "stopped"]
+ResearchBudgetTier = Literal["base", "restored", "extension"]
+SubreportUpdateAction = Literal["update", "no_update", "stop_after_update"]
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 LooseText = Annotated[str, StringConstraints(strip_whitespace=True)]
 
@@ -51,7 +54,6 @@ class ThemeQuestionCardPayload(MutableModel):
 
 class ThemeOutputPayload(MutableModel):
     detected_input_language: LanguageCode
-    search_language: LanguageCode
     core_question: NonEmptyText
     report_style: ReportStyle
     task_intent: TaskIntent
@@ -78,7 +80,6 @@ class ResearchThemePlan(MutableModel):
     subthemes: list[NonEmptyText] = Field(default_factory=list, max_length=12)
     required_entities: list[NonEmptyText] = Field(default_factory=list, max_length=16)
     input_language: LanguageCode = "other"
-    search_language: LanguageCode = "other"
     output_language: LanguageCode = "other"
     question_cards: list[ResearchThemePlanCard] = Field(
         default_factory=list, max_length=24
@@ -89,10 +90,6 @@ class PlanSearchJobPayload(MutableModel):
     query: NonEmptyText
     intent: SearchJobIntent
     mode: SearchJobMode
-    include_domains: list[NonEmptyText] = Field(max_length=12)
-    exclude_domains: list[NonEmptyText] = Field(max_length=12)
-    include_text: list[NonEmptyText] = Field(max_length=8)
-    exclude_text: list[NonEmptyText] = Field(max_length=8)
     additional_queries: list[NonEmptyText] = Field(max_length=8)
 
 
@@ -160,6 +157,13 @@ class SubreportOutputPayload(MutableModel):
     track_insight_card: TrackInsightCardPayload | None = None
 
 
+class SubreportUpdatePayload(MutableModel):
+    action: SubreportUpdateAction
+    updated_subreport_markdown: str = ""
+    updated_track_insight_card: TrackInsightCardPayload | None = None
+    summary: LooseText = ""
+
+
 class RenderArchitectSectionPlan(MutableModel):
     section_id: NonEmptyText
     subhead: NonEmptyText
@@ -189,37 +193,45 @@ class ResearchLinkPickerPayload(MutableModel):
     reason: LooseText = ""
 
 
-class ResearchTrackAllocation(MutableModel):
-    search_grant: int
-    fetch_grant: int
-    max_queries_per_round: int
-    bonus: bool = False
-    fetch_only: bool = False
+class ResearchBudgetTierState(MutableModel):
+    search_total: int = 0
+    fetch_total: int = 0
+    search_used: int = 0
+    fetch_used: int = 0
 
 
-class ResearchBudgetReservationState(MutableModel):
-    search_reserved: int = 0
-    fetch_reserved: int = 0
+class ResearchBudgetLedger(MutableModel):
+    original_search_budget: int = 0
+    original_fetch_budget: int = 0
+    base_budget: ResearchBudgetTierState = Field(
+        default_factory=ResearchBudgetTierState
+    )
+    restored_budget: ResearchBudgetTierState = Field(
+        default_factory=ResearchBudgetTierState
+    )
+    extension_budget: ResearchBudgetTierState = Field(
+        default_factory=ResearchBudgetTierState
+    )
+    restore_used: bool = False
+    extension_used: bool = False
+    extension_multiplier: float = 0.0
 
 
-class ResearchOrchestratorState(MutableModel):
-    last_global_search_used: int = -1
-    priorities: dict[str, float] = Field(default_factory=dict)
-    query_width_hints: dict[str, int] = Field(default_factory=dict)
-    rationale: LooseText = ""
-    refresh_interval_search_calls: int = 2
-
-
-class ResearchTrackOrchestratorPriorityPayload(MutableModel):
-    question_id: NonEmptyText
-    priority_score: float = Field(default=0.5, ge=0.0, le=1.0)
-    query_width_hint: int = Field(default=1, ge=1, le=2)
-    reason: LooseText = ""
-
-
-class ResearchTrackOrchestratorOutputPayload(MutableModel):
-    priorities: list[ResearchTrackOrchestratorPriorityPayload] = Field(max_length=24)
-    rationale: LooseText = ""
+class ResearchTrackRuntime(MutableModel):
+    question_id: str = ""
+    state: ResearchTrackState = "active"
+    current_budget_tier: ResearchBudgetTier = "base"
+    waiting_reason: str = ""
+    waiting_rounds: int = 0
+    allocated_search_calls: int = 0
+    allocated_fetch_calls: int = 0
+    used_search_calls: int = 0
+    used_fetch_calls: int = 0
+    reclaimed_search_calls: int = 0
+    reclaimed_fetch_calls: int = 0
+    completed_rounds: int = 0
+    stop_reason: str = ""
+    last_budget_event: str = ""
 
 
 class ResearchCorpusUpsertResult(MutableModel):
@@ -257,6 +269,9 @@ class ResearchSource(MutableModel):
     is_subpage: bool = False
     seen_count: int = 1
     content_fingerprint: str = ""
+    admitted: bool = True
+    used_in_report: bool = False
+    used_in_final_pass: bool = False
 
 
 class ResearchSearchJob(MutableModel):
@@ -264,10 +279,6 @@ class ResearchSearchJob(MutableModel):
     intent: SearchJobIntent = "coverage"
     mode: SearchJobMode = "auto"
     additional_queries: list[NonEmptyText] = Field(default_factory=list)
-    include_domains: list[NonEmptyText] = Field(default_factory=list)
-    exclude_domains: list[NonEmptyText] = Field(default_factory=list)
-    include_text: list[NonEmptyText] = Field(default_factory=list)
-    exclude_text: list[NonEmptyText] = Field(default_factory=list)
 
 
 class ResearchQuestionCard(MutableModel):
@@ -292,6 +303,8 @@ class ResearchTrackResult(MutableModel):
     subreport_markdown: str = ""
     track_insight_card: TrackInsightCardPayload | None = None
     key_findings: list[str] = Field(default_factory=list)
+    budget_tier: ResearchBudgetTier = "base"
+    waiting_rounds: int = 0
 
 
 class ResearchLimits(MutableModel):
@@ -305,9 +318,12 @@ class ResearchLimits(MutableModel):
     min_coverage_ratio: float = 0.80
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
-    source_topk: int = 20
-    source_chars: int = 180_000
-    content_chars: int = 10_000
+    round_search_budget: int = 2
+    round_fetch_budget: int = 6
+    review_source_window: int = 48
+    report_source_batch_size: int = 8
+    report_source_batch_chars: int = 48_000
+    fetch_page_max_chars: int = 10_000
     explore_target_pages_per_round: int = 3
     explore_links_per_page: int = 8
 
@@ -328,7 +344,6 @@ class ResearchTask(MutableModel):
     intent: TaskIntent = "other"
     complexity: TaskComplexity = "medium"
     input_language: LanguageCode = "other"
-    search_language: LanguageCode = "other"
     output_language: LanguageCode = "other"
     subthemes: list[NonEmptyText] = Field(default_factory=list, max_length=12)
     entities: list[NonEmptyText] = Field(default_factory=list, max_length=16)
@@ -341,6 +356,9 @@ class ResearchKnowledge(MutableModel):
     ranked_source_ids: list[int] = Field(default_factory=list)
     source_scores: dict[int, float] = Field(default_factory=dict)
     covered_subthemes: list[str] = Field(default_factory=list)
+    admitted_source_ids: list[int] = Field(default_factory=list)
+    pending_source_ids: list[int] = Field(default_factory=list)
+    report_used_source_ids: list[int] = Field(default_factory=list)
 
 
 class ResearchRound(MutableModel):
@@ -353,12 +371,17 @@ class ResearchRound(MutableModel):
     search_fetched_candidates: list[SearchFetchedCandidate] = Field(
         default_factory=list
     )
+    pending_search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
     overview_review: OverviewOutputPayload | None = None
     content_review: ContentOutputPayload | None = None
     need_content_source_ids: list[int] = Field(default_factory=list)
     next_queries: list[str] = Field(default_factory=list)
     result_count: int = 0
     new_source_ids: list[int] = Field(default_factory=list)
+    fetched_source_ids: list[int] = Field(default_factory=list)
+    admitted_source_ids: list[int] = Field(default_factory=list)
+    deferred_candidate_urls: list[str] = Field(default_factory=list)
+    remaining_source_ids: list[int] = Field(default_factory=list)
     context_source_ids: list[int] = Field(default_factory=list)
     corpus_score_gain: float = 0.0
     overview_summary: str = ""
@@ -373,6 +396,9 @@ class ResearchRound(MutableModel):
     stop_ready: bool = False
     remaining_objectives: list[str] = Field(default_factory=list)
     low_gain_streak: int = 0
+    waiting_for_budget: bool = False
+    waiting_reason: str = ""
+    budget_tier_applied: ResearchBudgetTier = "base"
     stop_reason: str = ""
     stop: bool = False
 
@@ -382,7 +408,6 @@ class ResearchRun(MutableModel):
     limits: ResearchLimits = Field(default_factory=ResearchLimits)
     search_calls: int = 0
     fetch_calls: int = 0
-    provider_language_param_applied: bool = False
     explore_resolved_relative_links: int = 0
     stop: bool = False
     stop_reason: str = ""
@@ -397,6 +422,12 @@ class ResearchRun(MutableModel):
     global_fetch_budget: int = 0
     global_search_used: int = 0
     global_fetch_used: int = 0
+    budget_ledger: ResearchBudgetLedger = Field(default_factory=ResearchBudgetLedger)
+    track_runtime: ResearchTrackRuntime | None = None
+    track_runtimes: dict[str, ResearchTrackRuntime] = Field(default_factory=dict)
+    restored_budget_applied: bool = False
+    extension_budget_applied: bool = False
+    budget_events: list[str] = Field(default_factory=list)
 
 
 class ResearchResult(MutableModel):
@@ -428,14 +459,15 @@ __all__ = [
     "RenderArchitectOutput",
     "RenderArchitectSectionPlan",
     "ReportStyle",
-    "ResearchBudgetReservationState",
+    "ResearchBudgetLedger",
+    "ResearchBudgetTier",
+    "ResearchBudgetTierState",
     "ResearchCorpusUpsertResult",
     "ResearchDecideSignalPayload",
     "ResearchKnowledge",
     "ResearchLinkCandidate",
     "ResearchLinkPickerPayload",
     "ResearchLimits",
-    "ResearchOrchestratorState",
     "ResearchQuestionCard",
     "ResearchResult",
     "ResearchRound",
@@ -446,15 +478,16 @@ __all__ = [
     "ResearchTask",
     "ResearchThemePlan",
     "ResearchThemePlanCard",
-    "ResearchTrackAllocation",
-    "ResearchTrackOrchestratorOutputPayload",
-    "ResearchTrackOrchestratorPriorityPayload",
     "ResearchTrackResult",
+    "ResearchTrackRuntime",
+    "ResearchTrackState",
     "ResearchWriterSectionFailure",
     "RoundAction",
     "SearchJobIntent",
     "SearchJobMode",
     "SubreportOutputPayload",
+    "SubreportUpdateAction",
+    "SubreportUpdatePayload",
     "TaskComplexity",
     "TaskIntent",
     "ThemeOutputPayload",

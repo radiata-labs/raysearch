@@ -26,9 +26,6 @@ from serpsage.models.steps.search import (
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
-from serpsage.steps.research.language import (
-    map_provider_language_param,
-)
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
@@ -101,22 +98,22 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         if ctx.run.stop or ctx.run.current is None:
             return ctx
-        ctx.run.current.search_fetched_candidates = []
         round_action = (ctx.run.current.round_action or "search").casefold()
         if ctx.run.current.round_index <= 1:
             round_action = "search"
         if round_action != "search":
             return ctx
+        if (
+            ctx.run.current.search_fetched_candidates
+            and not ctx.run.current.pending_search_jobs
+        ):
+            return ctx
         return await self._run_search_action(ctx)
 
     async def _run_search_action(self, ctx: ResearchStepContext) -> ResearchStepContext:
         assert ctx.run.current is not None
-        jobs = list(ctx.run.current.search_jobs)
+        jobs = list(ctx.run.current.pending_search_jobs or ctx.run.current.search_jobs)
         if not jobs:
-            ctx.run.stop = True
-            ctx.run.stop_reason = "no_search_jobs"
-            ctx.run.current.stop = True
-            ctx.run.current.stop_reason = "no_search_jobs"
             return ctx
         remaining_search_budget = max(
             0,
@@ -125,48 +122,18 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         if remaining_search_budget <= 0:
             ctx.run.stop = True
             ctx.run.stop_reason = "max_search_calls"
-            ctx.run.current.stop = True
-            ctx.run.current.stop_reason = "max_search_calls"
+            ctx.run.current.waiting_for_budget = True
+            ctx.run.current.waiting_reason = "max_search_calls"
             return ctx
-        remaining_fetch_budget = max(
-            0,
-            ctx.run.limits.max_fetch_calls - ctx.run.fetch_calls,
-        )
-        if remaining_fetch_budget <= 0:
-            ctx.run.stop = True
-            ctx.run.stop_reason = "max_fetch_calls"
-            ctx.run.current.stop = True
-            ctx.run.current.stop_reason = "max_fetch_calls"
-            return ctx
-        executable_jobs = min(
-            len(jobs),
-            remaining_fetch_budget,
-            remaining_search_budget,
-        )
+        executable_jobs = min(len(jobs), remaining_search_budget)
         jobs = jobs[:executable_jobs]
         if not jobs:
-            ctx.run.stop = remaining_search_budget <= 0
-            ctx.run.stop_reason = (
-                "max_search_calls"
-                if remaining_search_budget <= 0
-                else "max_fetch_calls"
-            )
-            ctx.run.current.stop = True
-            ctx.run.current.stop_reason = ctx.run.stop_reason
             return ctx
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
-        search_language = ctx.task.search_language
-        provider_params = map_provider_language_param(
-            provider_backend=self.settings.provider.backend,
-            search_language=search_language,
-        )
-        if provider_params:
-            ctx.run.provider_language_param_applied = True
+        provider_params: dict[str, str] = {}
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
-            jobs_left_after_current = max(0, len(jobs) - idx - 1)
-            fetch_cap = max(1, remaining_fetch_budget - jobs_left_after_current)
-            max_subpages = max(0, fetch_cap - 1)
+            max_subpages = max(0, ctx.run.limits.round_fetch_budget - 1)
             subpages_request = (
                 FetchSubpagesRequest(
                     max_subpages=max_subpages,
@@ -197,9 +164,10 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     request_id=f"{ctx.request_id}:research:{ctx.run.current.round_index}:{idx}",
                 )
             )
-            remaining_fetch_budget = max(0, remaining_fetch_budget - 1)
         out = await self._search_runner.run_batch(contexts)
-        prepared_candidates: list[SearchFetchedCandidate] = []
+        prepared_candidates: list[SearchFetchedCandidate] = list(
+            ctx.run.current.search_fetched_candidates
+        )
         for search_ctx in out:
             results = list(search_ctx.output.results or [])
             candidates = list(search_ctx.fetch.candidates or [])
@@ -219,6 +187,21 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             item.model_copy(deep=True) for item in prepared_candidates
         ]
         ctx.run.search_calls += len(jobs)
+        ctx.run.current.pending_search_jobs = [
+            item.model_copy(deep=True)
+            for item in list(
+                (ctx.run.current.pending_search_jobs or ctx.run.current.search_jobs)[
+                    len(jobs) :
+                ]
+            )
+        ]
+        ctx.run.current.waiting_for_budget = False
+        ctx.run.current.waiting_reason = ""
+        if ctx.run.current.pending_search_jobs:
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_search_calls"
+            ctx.run.current.waiting_for_budget = True
+            ctx.run.current.waiting_reason = "max_search_calls"
         return ctx
 
     def _build_search_request(
@@ -238,16 +221,15 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             ),
             mode=query_job.mode,
             max_results=ctx.run.limits.max_results_per_search,
-            include_domains=(list(query_job.include_domains) or None),
-            exclude_domains=(list(query_job.exclude_domains) or None),
-            include_text=(list(query_job.include_text) or None),
-            exclude_text=(list(query_job.exclude_text) or None),
             fetchs=SearchFetchRequest(
                 crawl_mode="fallback",
                 crawl_timeout=30.0,
                 content=FetchContentRequest(
                     detail="full",
-                    max_chars=ctx.run.limits.content_chars,
+                    max_chars=max(
+                        ctx.run.limits.fetch_page_max_chars,
+                        ctx.run.limits.report_source_batch_chars,
+                    ),
                     include_markdown_links=False,
                     include_html_tags=False,
                 ),

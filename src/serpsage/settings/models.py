@@ -198,9 +198,12 @@ class ResearchModeSettings(Model):
     min_coverage_ratio: float = 0.80
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
-    content_chars: int = 10_000
-    source_topk: int = 20
-    source_chars: int = 180_000
+    round_search_budget: int = 2
+    round_fetch_budget: int = 6
+    review_source_window: int = 48
+    report_source_batch_size: int = 8
+    report_source_batch_chars: int = 48_000
+    fetch_page_max_chars: int = 10_000
     explore_target_pages_per_round: int = 3
     explore_links_per_page: int = 8
 
@@ -224,10 +227,18 @@ class ResearchModeSettings(Model):
             raise ValueError("research mode max_question_cards_effective must be > 0")
         if int(self.min_rounds_per_track) <= 0:
             raise ValueError("research mode min_rounds_per_track must be > 0")
-        if int(self.source_topk) <= 0:
-            raise ValueError("research mode source_topk must be > 0")
-        if int(self.content_chars) <= 0:
-            raise ValueError("research mode content_source_chars must be > 0")
+        if int(self.round_search_budget) <= 0:
+            raise ValueError("research mode round_search_budget must be > 0")
+        if int(self.round_fetch_budget) <= 0:
+            raise ValueError("research mode round_fetch_budget must be > 0")
+        if int(self.review_source_window) <= 0:
+            raise ValueError("research mode review_source_window must be > 0")
+        if int(self.report_source_batch_size) <= 0:
+            raise ValueError("research mode report_source_batch_size must be > 0")
+        if int(self.report_source_batch_chars) <= 0:
+            raise ValueError("research mode report_source_batch_chars must be > 0")
+        if int(self.fetch_page_max_chars) <= 0:
+            raise ValueError("research mode fetch_page_max_chars must be > 0")
         if int(self.explore_target_pages_per_round) <= 0:
             raise ValueError("research mode explore_target_pages_per_round must be > 0")
         if int(self.explore_links_per_page) <= 0:
@@ -246,8 +257,12 @@ def _default_research_fast_mode() -> ResearchModeSettings:
         min_coverage_ratio=0.70,
         max_question_cards_effective=2,
         min_rounds_per_track=1,
-        source_topk=10,
-        content_chars=6000,
+        round_search_budget=2,
+        round_fetch_budget=4,
+        review_source_window=24,
+        report_source_batch_size=4,
+        report_source_batch_chars=24_000,
+        fetch_page_max_chars=24_000,
         explore_target_pages_per_round=2,
         explore_links_per_page=4,
     )
@@ -264,8 +279,12 @@ def _default_research_standard_mode() -> ResearchModeSettings:
         min_coverage_ratio=0.80,
         max_question_cards_effective=4,
         min_rounds_per_track=2,
-        source_topk=20,
-        content_chars=10_000,
+        round_search_budget=3,
+        round_fetch_budget=8,
+        review_source_window=48,
+        report_source_batch_size=8,
+        report_source_batch_chars=48_000,
+        fetch_page_max_chars=48_000,
         explore_target_pages_per_round=4,
         explore_links_per_page=10,
     )
@@ -282,8 +301,12 @@ def _default_research_pro_mode() -> ResearchModeSettings:
         min_coverage_ratio=0.90,
         max_question_cards_effective=6,
         min_rounds_per_track=3,
-        source_topk=32,
-        content_chars=15_000,
+        round_search_budget=4,
+        round_fetch_budget=12,
+        review_source_window=72,
+        report_source_batch_size=12,
+        report_source_batch_chars=72_000,
+        fetch_page_max_chars=72_000,
         explore_target_pages_per_round=6,
         explore_links_per_page=16,
     )

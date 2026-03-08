@@ -31,7 +31,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.run.stop or ctx.run.current is None:
             return ctx
-        source_topk = max(1, ctx.run.limits.source_topk)
+        review_source_window = max(1, ctx.run.limits.review_source_window)
         source_ids = list(
             ctx.run.current.need_content_source_ids
             or ctx.run.current.context_source_ids
@@ -39,7 +39,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         source_ids = sort_source_ids_by_score(
             ctx=ctx,
             source_ids=source_ids,
-        )[:source_topk]
+        )[:review_source_window]
         if not source_ids:
             ctx.run.current.content_review = self._empty_review()
             return ctx
@@ -116,7 +116,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 "report_style_selected": ctx.task.style,
                 "style_applied_stage": "content",
                 "mode_depth_profile": ctx.run.limits.mode_key,
-                "source_topk_effective": source_topk,
+                "review_source_window_effective": review_source_window,
             },
         )
         return ctx

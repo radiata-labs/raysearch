@@ -49,7 +49,6 @@ def _theme_plan_from_task(task: ResearchTask) -> ResearchThemePlan:
         subthemes=list(task.subthemes),
         required_entities=list(task.entities),
         input_language=task.input_language,
-        search_language=task.search_language,
         output_language=task.output_language,
         question_cards=[
             ResearchThemePlanCard(
@@ -335,6 +334,76 @@ def _build_language_lock_block(
     )
 
 
+def _question_card_field_contract() -> str:
+    return (
+        "Field definitions and scoring rubrics:\n"
+        "- core_question: one sentence only; capture the user's true decision or understanding target, not background chatter.\n"
+        "- subthemes: 3-8 short coverage dimensions when possible; each must describe a distinct evidence slot, not a synonym of another item.\n"
+        "- required_entities: include exact names/versions only when later research must explicitly cover them; otherwise return [].\n"
+        "- priority scale: 5=core blocker or highest expected information gain, 4=important tie-break or major risk, 3=useful supporting dimension, 2=secondary nuance, 1=optional polish.\n"
+        "- question: answerable with web evidence in one isolated card loop; avoid multi-part bundles joined by 'and'.\n"
+        "- seed_queries: 1-4 preferred, 8 max; each query should open a distinct retrieval route rather than trivial wording variants.\n"
+        "- evidence_focus: list concrete evidence dimensions or discriminators such as benchmark, pricing, policy, compatibility, recency, or failure mode.\n"
+        "- expected_gain: describe the concrete user value unlocked by this card, such as eliminating a tie-break, validating a key risk, or clarifying a mechanism.\n"
+        "- Comparison tasks: include candidate-specific cards plus one synthesis card unless the request is clearly single-option.\n"
+    )
+
+
+def _plan_field_contract() -> str:
+    return (
+        "Field definitions and quantitative planning rubrics:\n"
+        "- query_strategy: 1-2 sentences stating what uncertainty this round targets and why it is highest-yield now.\n"
+        "- round_action: choose explore only when last-round links are clearly more promising than a fresh search; otherwise choose search.\n"
+        "- search_jobs: order by expected information gain; the first job should be the one you would keep if only one executes.\n"
+        "- intent rubric: coverage=fill missing subtheme/entity coverage, deepen=expand a promising evidence branch, verify=resolve contradiction or tie-break, refresh=check current/latest state.\n"
+        "- mode rubric: auto for standard retrieval, deep when broad recall, contradiction checking, or authoritative corroboration matters.\n"
+        "- query: one concrete query string, not a prose explanation.\n"
+        "- additional_queries: use for adjacent retrieval routes; avoid spelling-only variants or redundant rephrasings.\n"
+        "- De-duplication rule: if two jobs would likely return the same top results, keep the sharper one and delete the weaker one.\n"
+    )
+
+
+def _overview_field_contract() -> str:
+    return (
+        "Field definitions and calibration rules:\n"
+        "- findings: each item should compress one evidence-backed point into conclusion -> condition/boundary -> impact.\n"
+        "- conflict_arbitration.status: resolved only when overview evidence already gives a credible direction; otherwise unresolved.\n"
+        "- covered_subthemes: include only subthemes with meaningful evidence, not merely mentioned topics.\n"
+        "- entity_coverage_complete=true only when every required entity has non-trivial evidence support.\n"
+        "- critical_gaps: include only answer-blocking gaps, not minor nice-to-have follow-ups.\n"
+        "- confidence scale: 0.8 to 1.0=strong and well-supported, 0.4 to 0.79=useful but incomplete, 0.0 to 0.39=weak/mixed, below 0=conflicted, stale, or likely misleading.\n"
+        "- need_content_source_ids: choose sources that are high-impact, contradictory, authority-rich, or too important to judge from overview alone.\n"
+        "- next_query_strategy: one short rationale for the next retrieval move.\n"
+        "- next_queries: 0-4 preferred, ordered by gain; each query must reduce a concrete gap.\n"
+        "- stop=true only when the card already has enough evidence to answer safely without more search/content escalation.\n"
+    )
+
+
+def _content_field_contract() -> str:
+    return (
+        "Field definitions and calibration rules:\n"
+        "- resolved_findings: each item should compress one full-content conclusion into conclusion -> condition/boundary -> impact.\n"
+        "- conflict_resolutions.status: resolved=clear winner supported by content, unresolved=real tie remains, insufficient=not enough evidence, closed=topic no longer matters after review.\n"
+        "- entity_coverage_complete=true only when every required entity has enough full-context evidence for the current card.\n"
+        "- remaining_gaps: include only gaps that still materially weaken the answer.\n"
+        "- confidence_adjustment scale: +0.4 to +1.0 for major strengthening evidence, +0.1 to +0.39 for moderate strengthening, around 0 for little change, -0.1 to -0.39 for meaningful weakening, below -0.4 for severe contradiction or staleness.\n"
+        "- next_query_strategy: one short rationale for what evidence should be pursued next, if any.\n"
+        "- next_queries: 0-4 preferred, de-duplicated, and tightly scoped to unresolved gaps.\n"
+        "- stop=true only when additional search is unlikely to change the answer in a material way.\n"
+    )
+
+
+def _track_insight_card_contract() -> str:
+    return (
+        "Track insight card definitions:\n"
+        "- direct_answer: one compact answer sentence for the card's question.\n"
+        "- high_value_points: each point must include conclusion, condition, and impact; avoid generic summaries.\n"
+        "- key_tradeoffs_or_mechanisms: list the levers, mechanisms, or trade-offs that explain why the answer looks this way.\n"
+        "- unknowns_and_risks: include only material unresolved risks or uncertainty boundaries.\n"
+        "- next_actions: concrete user actions or checks, not abstract advice.\n"
+    )
+
+
 def _build_theme_messages(
     *,
     theme: str,
@@ -351,24 +420,23 @@ def _build_theme_messages(
     depth_contract = _theme_depth_contract(mode_key=mode_depth_profile)
     system_contract = (  # noqa: S608
         "Role: Senior Research Architect.\n"
-        "Mission: Decompose THEME into executable, non-overlapping research question cards and classify report_style, task_intent, complexity_tier, detected_input_language, and search_language.\n"
+        "Mission: Decompose THEME into executable, non-overlapping research question cards and classify report_style, task_intent, complexity_tier, and detected_input_language.\n"
         "Instruction Priority:\n"
         "P1) Schema correctness.\n"
         "P2) Question-card execution quality.\n"
         "P3) Decomposition power and coverage.\n"
         "P4) Intent/complexity classification fit for user task.\n"
         "P5) Report-style fit for user task intent.\n"
-        "P6) Language classification and search-language routing quality.\n"
+        "P6) Language classification quality.\n"
         "Step-by-step decomposition method:\n"
         "1) Classify THEME into one primary type: comparison/selection, planning/how-to, diagnosis, trend/forecast, or factual mapping.\n"
         "2) Predict task_intent as one of how_to/comparison/explainer/diagnosis/other.\n"
         "3) Predict complexity_tier as one of low/medium/high based on user task complexity.\n"
         "4) Predict best report_style for user value: decision/explainer/execution.\n"
         "5) Predict detected_input_language as canonical code (for example zh-Hans, zh-Hant, en, ja, ko, fr, de).\n"
-        "6) Predict search_language for internal retrieval using semantic routing (can differ from detected_input_language).\n"
-        "7) Define evidence dimensions before writing cards (for example: performance, cost, reliability, ecosystem, constraints, risk, recency).\n"
-        "8) Identify subthemes that ensure high coverage with low overlap.\n"
-        "9) Convert subthemes into executable question_cards, each card covering one distinct evidence objective.\n"
+        "6) Define evidence dimensions before writing cards (for example: performance, cost, reliability, ecosystem, constraints, risk, recency).\n"
+        "7) Identify subthemes that ensure high coverage with low overlap.\n"
+        "8) Convert subthemes into executable question_cards, each card covering one distinct evidence objective.\n"
         "Question-type playbook:\n"
         "A) Comparison / Selection question:\n"
         "- If THEME compares N candidates, create candidate cards (one per candidate) and one synthesis card.\n"
@@ -394,12 +462,10 @@ def _build_theme_messages(
         "10) task_intent must be exactly one of: how_to, comparison, explainer, diagnosis, other.\n"
         "11) complexity_tier must be exactly one of: low, medium, high.\n"
         "12) detected_input_language must be canonical language code.\n"
-        "13) search_language must be canonical language code and optimized for retrieval quality.\n"
-        "14) Return JSON only.\n"
+        "13) Return JSON only.\n"
         "Output Contract (STRICT JSON SHAPE):\n"
         "Top-level keys allowed:\n"
         "- detected_input_language (canonical language code string)\n"
-        "- search_language (canonical language code string)\n"
         "- core_question (string)\n"
         "- report_style (decision|explainer|execution)\n"
         "- task_intent (how_to|comparison|explainer|diagnosis|other)\n"
@@ -422,6 +488,7 @@ def _build_theme_messages(
         "- High coverage, low overlap, concrete queries, explicit expected gain.\n"
         "- Every question_cards item must include question, priority, seed_queries, evidence_focus, expected_gain.\n"
         "- Comparison questions must include per-candidate cards and one synthesis/final-decision card.\n"
+        f"{_question_card_field_contract()}"
         "Mode-depth contract:\n"
         f"{depth_contract}"
     )
@@ -464,16 +531,12 @@ def _build_theme_messages(
                 "- task_intent: classify user task intent as how_to/comparison/explainer/diagnosis/other.\n"
                 "- complexity_tier: classify task complexity as low/medium/high.\n"
                 "- detected_input_language: canonical language code for user question language.\n"
-                "- search_language: canonical language code for internal search query language.\n"
                 "- required_entities: exact strings that must be covered by evidence and later summaries.\n"
                 "- question_cards: each card is one executable sub-question for one track.\n"
                 "- Do not produce top-level seed_queries.\n"
                 "- evidence_focus: list what evidence dimensions to prioritize.\n"
                 "- expected_gain: concrete learning value from this card.\n\n"
-                "Language Routing Examples:\n"
-                "- Example A: SpaceX technical progress in 2026 -> detected_input_language=zh-Hans, search_language=en.\n"
-                "- Example B: Shanghai travel guide -> detected_input_language=zh-Hans, search_language=zh-Hans.\n"
-                "- Example C: Paris travel guide -> detected_input_language=ja, search_language=ja.\n\n"
+                f"{_question_card_field_contract()}\n"
                 "Comparison Pattern Example (generic):\n"
                 "- Card 1: evaluate candidate A under shared criteria.\n"
                 "- Card 2: evaluate candidate B under the same criteria.\n"
@@ -492,7 +555,6 @@ def _build_plan_messages(
     round_index: int,
     current_utc_timestamp: str,
     current_utc_date: str,
-    required_search_language: str,
     required_output_language: str,
     required_output_language_label: str,
     theme_plan_markdown: str,
@@ -515,7 +577,7 @@ def _build_plan_messages(
         "P1) Schema correctness and budget adherence.\n"
         "P2) Action fit (search vs explore) for CORE_QUESTION.\n"
         "P3) Information gain per query.\n"
-        "P4) Query language routing and output language consistency.\n"
+        "P4) Output language consistency.\n"
         "Hard Constraints:\n"
         "1) Return JSON with exactly: query_strategy, round_action, explore_target_source_ids, search_jobs.\n"
         "2) round_action must be exactly search or explore.\n"
@@ -528,16 +590,14 @@ def _build_plan_messages(
         "9) Minimize overlap between jobs while maximizing information gain.\n"
         "10) Respect remaining budget and prioritize unresolved high-value gaps.\n"
         "11) Use deep mode when higher recall or conflict verification is needed.\n"
-        "12) search_jobs.query and search_jobs.additional_queries must be in required_search_language.\n"
-        "13) Other free-text fields must be in required_output_language.\n"
-        "14) Temporal grounding: interpret relative time words against current UTC date.\n"
-        "15) If recency intent exists, include explicit temporal constraints in query text.\n"
-        "16) For high-impact claims, prioritize authoritative routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
-        "17) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
-        "18) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
-        "19) Domain/text route constraints are executable: include_domains, exclude_domains, include_text, exclude_text.\n"
-        "20) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
-        "21) Return JSON only; no markdown or explanations.\n"
+        "12) Free-text fields must be in required_output_language, but search queries may use the language best suited for recall.\n"
+        "13) Temporal grounding: interpret relative time words against current UTC date.\n"
+        "14) If recency intent exists, include explicit temporal constraints in query text.\n"
+        "15) For high-impact claims, prioritize authoritative routes (official documentation, primary sources, standards, vendor announcements, peer-reviewed or institution-backed reports).\n"
+        "16) Preserve required_entities exact surface forms and version strings inside query/additional_queries.\n"
+        "17) When max_queries_this_round is 1, prefer one deep job with additional_queries for breadth.\n"
+        "18) If focus cannot be preserved, return fewer search_jobs or an empty array; never drift off-topic.\n"
+        "19) Return JSON only; no markdown or explanations.\n"
         "Allowed Inputs:\n"
         "- User theme, theme plan, previous round summaries, candidate queries, and last-round link candidates.\n"
         "Failure Policy:\n"
@@ -547,6 +607,7 @@ def _build_plan_messages(
         "Quality Checklist:\n"
         "- Action choice is justified by expected information gain.\n"
         "- Distinct intent per job, no near duplicates, conflict-aware targeting.\n"
+        f"{_plan_field_contract()}"
         "Mode-depth contract:\n"
         f"{depth_contract}"
     )
@@ -575,10 +636,9 @@ def _build_plan_messages(
                 "- When no recency intent is present, avoid over-constraining by date.\n"
                 "- Prefer fresh/authoritative sources for recency queries.\n\n"
                 "LANGUAGE_POLICY:\n"
-                f"- required_search_language={required_search_language}\n"
                 f"{_build_language_lock_block(field_name='required_output_language', language_code=required_output_language, language_label=required_output_language_label)}\n"
-                "- search_jobs.query and search_jobs.additional_queries must use required_search_language.\n"
-                "- Keep other textual fields in required_output_language.\n\n"
+                "- Keep planner prose in required_output_language.\n"
+                "- Use whichever query language maximizes recall for the current card.\n\n"
                 "ROUND_ACTION_POLICY:\n"
                 "- round 1: must output round_action=search.\n"
                 "- round > 1: may choose round_action=explore only when allow_explore=true.\n"
@@ -603,8 +663,8 @@ def _build_plan_messages(
                 "- deepen: improve depth on high-value evidence branches.\n"
                 "- verify: target contradiction resolution and tie-break evidence.\n"
                 "- refresh: prioritize latest authoritative updates.\n"
-                "- use include/exclude domain and text constraints when that increases authority and precision.\n"
                 "- if max_queries_this_round=1, prefer deep mode with additional_queries for one-call breadth.\n\n"
+                f"{_plan_field_contract()}\n"
                 "OUTPUT_SHAPE_HINT:\n"
                 "{\n"
                 '  "query_strategy": "...",\n'
@@ -629,7 +689,7 @@ def _build_link_picker_messages(
     max_links_to_select: int,
     candidate_links_markdown: str,
 ) -> list[dict[str, str]]:
-    system_contract = (
+    system_contract = (  # noqa: S608
         "Role: Link Selection Analyst.\n"
         "Mission: Select the highest-yield deep-explore links for one source page.\n"
         "Hard Constraints:\n"
@@ -703,7 +763,7 @@ def _build_overview_messages(
         "2) Keep analysis scoped to CORE_QUESTION and its information dimensions.\n"
         "3) Distinguish observations from inferences.\n"
         "4) Identify unresolved conflicts and critical information gaps.\n"
-        "5) Select source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
+        "5) Choose source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
         "6) Use URL/domain/path/title cues from SOURCE_OVERVIEW_PACKET to estimate source authority and information type.\n"
         "7) For need_content_source_ids, prioritize authoritative URLs first: official documentation, standards/specs, papers/preprints, repositories/model hubs, government/education, and vendor technical docs.\n"
         "8) De-prioritize low-authority commentary or marketing-style pages unless they provide unique, decision-critical information.\n"
@@ -726,7 +786,7 @@ def _build_overview_messages(
         "Quality Checklist:\n"
         "- Coverage progression, conflict clarity, economical content escalation, calibrated confidence.\n"
         "- Every returned field must add practical value; avoid filler statements."
-    )
+    ) + _overview_field_contract()
     return [
         {
             "role": "system",
@@ -776,7 +836,8 @@ def _build_overview_messages(
                 "- Prefer IDs from authoritative URLs (official docs/specs, papers/preprints, repositories/model hubs, government/education domains, vendor technical docs).\n"
                 "- Include IDs when overview evidence is vague but potentially important.\n"
                 "- For media/blog/secondary pages, include IDs only when they carry unique high-impact facts absent elsewhere.\n"
-                "- Include IDs when evidence freshness is uncertain for latest/current requests."
+                "- Include IDs when evidence freshness is uncertain for latest/current requests.\n\n"
+                f"{_overview_field_contract()}"
             ),
         },
     ]
@@ -798,7 +859,7 @@ def _build_content_messages(
     required_entities: list[str],
     source_content_packet: str,
 ) -> list[dict[str, str]]:
-    system_contract = (
+    system_contract = (  # noqa: S608
         "Role: Content Arbiter (Full-Content Stage).\n"
         "Mission: Resolve contradictions and raise information completeness for one core question.\n"
         "Instruction Priority:\n"
@@ -830,6 +891,7 @@ def _build_content_messages(
         "Quality Checklist:\n"
         "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency.\n"
         "- Preserve detail that can later be rendered compactly (fact, conflict, constraint, gap)."
+        f"{_content_field_contract()}"
     )
     return [
         {
@@ -872,7 +934,8 @@ def _build_content_messages(
                 "- Prefer specific, decision-useful findings over generic statements.\n"
                 "- Every resolved_findings item should include conclusion, condition/boundary, and impact.\n"
                 "- Capture trade-offs and boundary conditions when relevant.\n"
-                "- Keep confidence_adjustment calibrated to evidence strength."
+                "- Keep confidence_adjustment calibrated to evidence strength.\n\n"
+                f"{_content_field_contract()}"
             ),
         },
     ]
@@ -1100,6 +1163,7 @@ def _build_subreport_messages(
         "9) track_insight_card, when present, must include direct_answer, high_value_points, key_tradeoffs_or_mechanisms, unknowns_and_risks, next_actions.\n"
         "10) high_value_points entries must each contain conclusion, condition, and impact.\n"
         f"11) track_insight_card required={str(bool(require_insight_card)).lower()}.\n"
+        f"{_track_insight_card_contract()}"
         "Self-check before final output:\n"
         "- Did each paragraph stay on CORE_QUESTION?\n"
         "- Are uncertainty boundaries explicit and non-overclaiming?\n"
@@ -1129,8 +1193,76 @@ def _build_subreport_messages(
                 "OUTPUT_SCHEMA_NOTICE:\n"
                 "- Return JSON object with subreport_markdown and track_insight_card.\n"
                 "- track_insight_card is required when MODE_DEPTH_PROFILE is research or research-pro.\n"
-                "- For each high_value_points item, include conclusion, condition, and impact.\n\n"
+                "- For each high_value_points item, include conclusion, condition, and impact.\n"
+                f"{_track_insight_card_contract()}\n\n"
                 f"SUBREPORT_CONTEXT_PACKET_MARKDOWN:\n{context_packet_markdown}"
+            ),
+        },
+    ]
+
+
+def _build_subreport_update_messages(
+    *,
+    target_output_language: str,
+    target_output_language_label: str,
+    current_utc_date: str,
+    core_question: str,
+    mode_depth_profile: str,
+    report_style: ReportStyle,
+    require_insight_card: bool,
+    update_phase: str,
+    current_report_markdown: str,
+    context_packet_markdown: str,
+) -> list[dict[str, str]]:
+    system_contract = (
+        "Role: Incremental subreport editor.\n"
+        "Mission: Update an existing subreport using only NEW_EVIDENCE_CONTEXT while keeping the report tightly scoped to CORE_QUESTION.\n"
+        "Rules:\n"
+        "1) Return JSON only.\n"
+        "2) action must be one of: update, no_update, stop_after_update.\n"
+        "3) stop_after_update is allowed only when CURRENT_REPORT_MARKDOWN is non-empty and the current pass is not the initial draft.\n"
+        "4) If action=update, updated_subreport_markdown must contain the full revised report.\n"
+        "5) If action=no_update, keep updated_subreport_markdown empty.\n"
+        "6) If action=stop_after_update, keep updated_subreport_markdown empty and use summary to explain why the current report is sufficient after this pass.\n"
+        "7) Keep prose strictly in TARGET_OUTPUT_LANGUAGE.\n"
+        "8) Use NEW_EVIDENCE_CONTEXT plus CURRENT_REPORT_MARKDOWN only; do not invent new facts.\n"
+        "9) Preserve high-value content from CURRENT_REPORT_MARKDOWN unless contradicted or superseded.\n"
+        "10) track insight card is required when require_insight_card=true and action=update.\n"
+        "11) summary should briefly explain what changed or why no update is needed.\n"
+        "12) Choose action=update only when the new evidence materially improves correctness, clarity, or user utility.\n"
+        "13) Choose action=no_update when the new evidence is redundant or too weak to justify rewriting.\n"
+        "14) Choose action=stop_after_update only after at least one update pass and only when remaining evidence is unlikely to change the answer materially.\n"
+        "15) Never return partial markdown; updated_subreport_markdown must be the full revised report when action=update.\n"
+        f"{_track_insight_card_contract()}"
+    )
+    return [
+        {
+            "role": "system",
+            "content": _compose_system_prompt(
+                base_contract=system_contract,
+                style_overlay=_build_style_overlay(
+                    stage="subreport", style=report_style
+                ),
+                universal_guardrails=UNIVERSAL_GUARDRAILS,
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{_build_language_lock_block(field_name='TARGET_OUTPUT_LANGUAGE', language_code=target_output_language, language_label=target_output_language_label)}\n\n"
+                f"CURRENT_UTC_DATE:\n{current_utc_date}\n\n"
+                f"CORE_QUESTION:\n{core_question}\n\n"
+                f"MODE_DEPTH_PROFILE:\n{mode_depth_profile}\n\n"
+                f"REPORT_STYLE_LOCKED:\n{report_style}\n\n"
+                f"SUBREPORT_UPDATE_PASS:\n{update_phase}\n\n"
+                f"TRACK_INSIGHT_CARD_REQUIRED:\n{str(bool(require_insight_card)).lower()}\n\n"
+                "ACTION_POLICY:\n"
+                "- update: revise the report because the new evidence materially changes quality or correctness.\n"
+                "- no_update: keep the current report because the new evidence is redundant, low-confidence, or immaterial.\n"
+                "- stop_after_update: end iterative updates because further unseen evidence is unlikely to change the answer materially.\n"
+                "- summary: 1-2 sentences; name the changed section or explain why no rewrite is justified.\n\n"
+                f"CURRENT_REPORT_MARKDOWN:\n{current_report_markdown or '(empty)'}\n\n"
+                f"NEW_EVIDENCE_CONTEXT:\n{context_packet_markdown}"
             ),
         },
     ]
@@ -1430,7 +1562,6 @@ def build_plan_prompt_messages(
     mode_depth = ctx.run.limits
     theme_plan = _theme_plan_from_task(ctx.task)
     output_language = theme_plan.output_language
-    search_language = theme_plan.search_language
     round_index = ctx.run.round_index
     last_round_candidates_markdown = render_link_candidates_markdown(
         last_round_candidates,
@@ -1445,7 +1576,6 @@ def build_plan_prompt_messages(
         round_index=round_index,
         current_utc_timestamp=now_utc.isoformat(),
         current_utc_date=now_utc.date().isoformat(),
-        required_search_language=search_language,
         required_output_language=output_language,
         required_output_language_label=_resolve_language_label(output_language),
         theme_plan_markdown=render_theme_plan_markdown(theme_plan),
@@ -1645,6 +1775,49 @@ def build_subreport_prompt_messages(
         mode_depth_profile=ctx.run.limits.mode_key,
         report_style=report_style,
         require_insight_card=require_insight_card,
+        context_packet_markdown=build_subreport_context_packet_markdown(
+            theme=ctx.request.themes,
+            core_question=ctx.task.question,
+            report_style=report_style,
+            target_output_language=target_language,
+            utc_timestamp=now_utc.isoformat(),
+            utc_date=now_utc.date().isoformat(),
+            theme_plan=theme_plan,
+            rounds=list(ctx.run.history),
+            source_evidence=source_evidence,
+            source_evidence_max_chars=source_evidence_max_chars,
+            notes=notes,
+            subreport_objective=_subreport_objective_for_style(
+                report_style=report_style
+            ),
+        ),
+    )
+
+
+def build_subreport_update_prompt_messages(
+    *,
+    ctx: ResearchStepContext,
+    target_language: str,
+    now_utc: datetime,
+    current_report_markdown: str,
+    source_evidence: list[ResearchSource],
+    source_evidence_max_chars: int,
+    notes: list[str],
+    require_insight_card: bool,
+    update_phase: str,
+) -> list[dict[str, str]]:
+    report_style = ctx.task.style
+    theme_plan = _theme_plan_from_task(ctx.task)
+    return _build_subreport_update_messages(
+        target_output_language=target_language,
+        target_output_language_label=_resolve_language_label(target_language),
+        current_utc_date=now_utc.date().isoformat(),
+        core_question=ctx.task.question,
+        mode_depth_profile=ctx.run.limits.mode_key,
+        report_style=report_style,
+        require_insight_card=require_insight_card,
+        update_phase=update_phase,
+        current_report_markdown=current_report_markdown,
         context_packet_markdown=build_subreport_context_packet_markdown(
             theme=ctx.request.themes,
             core_question=ctx.task.question,
@@ -1931,7 +2104,6 @@ def render_theme_plan_markdown(
             f"- Complexity tier: {_normalize_scalar_text(plan.complexity_tier) or 'n/a'}",
             f"- Question card count: {len(plan.question_cards)}",
             f"- Input language: {_normalize_scalar_text(plan.input_language) or 'n/a'}",
-            f"- Search language: {_normalize_scalar_text(plan.search_language) or 'n/a'}",
             f"- Output language: {_normalize_scalar_text(plan.output_language) or 'n/a'}",
         ]
     )
@@ -2732,6 +2904,7 @@ __all__ = [
     "build_render_structured_prompt_messages",
     "build_render_writer_prompt_messages",
     "build_subreport_prompt_messages",
+    "build_subreport_update_prompt_messages",
     "build_theme_prompt_messages",
     "build_track_orchestrator_prompt_messages",
     "normalize_block_text",

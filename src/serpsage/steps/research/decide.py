@@ -30,6 +30,14 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             return ctx
         budget = ctx.run.limits
         round_state = ctx.run.current
+        if round_state.pending_search_jobs or round_state.search_fetched_candidates:
+            round_state.waiting_for_budget = True
+            round_state.waiting_reason = (
+                round_state.waiting_reason or "budget_resume_required"
+            )
+            ctx.run.stop = True
+            ctx.run.stop_reason = round_state.waiting_reason
+            return ctx
         overview_review = ctx.run.current.overview_review
         content_review = ctx.run.current.content_review
         overview_stop = (
@@ -152,7 +160,10 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         round_state.stop = stop
         round_state.stop_reason = stop_reason
         ctx.run.next_queries = [] if stop else next_queries
+        round_state.waiting_for_budget = False
+        round_state.waiting_reason = ""
         ctx.run.history.append(round_state)
+        ctx.run.current = None
         if llm_signal.reason:
             ctx.run.notes.append(f"Decide signal: {llm_signal.reason}")
         await self.emit_tracking_event(

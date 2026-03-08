@@ -95,10 +95,13 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 ctx.run.current.explore_target_source_ids = []
             return ctx
         if round_action != "search":
-            ctx.run.current.search_fetched_candidates = []
             return ctx
         ctx = self._run_search_fetch(ctx)
-        if ctx.run.current is not None:
+        if (
+            ctx.run.current is not None
+            and not ctx.run.current.waiting_for_budget
+            and not ctx.run.current.pending_search_jobs
+        ):
             ctx.run.current.search_fetched_candidates = []
         return ctx
 
@@ -115,24 +118,22 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         if remaining_fetch_budget <= 0:
             ctx.run.stop = True
             ctx.run.stop_reason = "max_fetch_calls"
-            ctx.run.current.stop = True
-            ctx.run.current.stop_reason = "max_fetch_calls"
+            ctx.run.current.waiting_for_budget = True
+            ctx.run.current.waiting_reason = "max_fetch_calls"
+            return ctx
+        if ctx.run.current.pending_search_jobs:
             return ctx
         all_results: list[FetchResultItem] = []
         new_source_ids: list[int] = []
         per_round_fetch_calls = 0
         round_link_candidates: list[ResearchLinkCandidate] = []
-        for candidate in candidates:
-            if remaining_fetch_budget <= 0:
-                break
-            trimmed_candidate, consumed_pages = self._trim_candidate_to_fetch_budget(
-                candidate=candidate,
+        selected_candidates, deferred_candidates, per_round_fetch_calls = (
+            self._select_candidates_for_fetch_budget(
+                candidates=candidates,
                 remaining_fetch_budget=remaining_fetch_budget,
             )
-            if consumed_pages <= 0:
-                continue
-            remaining_fetch_budget = max(0, remaining_fetch_budget - consumed_pages)
-            per_round_fetch_calls += consumed_pages
+        )
+        for trimmed_candidate in selected_candidates:
             all_results.append(trimmed_candidate.result)
             main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
                 ctx=ctx,
@@ -149,6 +150,16 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                     round_index=ctx.run.current.round_index,
                 )
             )
+        ctx.run.current.search_fetched_candidates = [
+            item.model_copy(deep=True) for item in deferred_candidates
+        ]
+        ctx.run.current.waiting_for_budget = bool(deferred_candidates)
+        ctx.run.current.waiting_reason = (
+            "max_fetch_calls" if deferred_candidates else ""
+        )
+        ctx.run.current.deferred_candidate_urls = self._collect_candidate_urls(
+            deferred_candidates
+        )
         self._finalize_round_state(
             ctx=ctx,
             result_count=len(all_results),
@@ -156,6 +167,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             per_round_fetch_calls=per_round_fetch_calls,
             next_round_link_candidates=round_link_candidates,
         )
+        if deferred_candidates:
+            ctx.run.stop = True
+            ctx.run.stop_reason = "max_fetch_calls"
         return ctx
 
     async def _run_explore_fetch(self, ctx: ResearchStepContext) -> bool:
@@ -254,14 +268,31 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
     ) -> None:
         assert ctx.run.current is not None
         dedup_link_candidates = self._dedupe_link_candidates_by_source_id(
-            next_round_link_candidates
+            [*list(ctx.run.link_candidates or []), *next_round_link_candidates]
         )
         ctx.run.link_candidates = [
             item.model_copy(deep=True) for item in dedup_link_candidates
         ]
         ctx.run.link_candidates_round = ctx.run.current.round_index
-        ctx.run.current.result_count = max(0, result_count)
-        ctx.run.current.new_source_ids = list(new_source_ids)
+        ctx.run.current.result_count = max(
+            0, ctx.run.current.result_count + max(0, result_count)
+        )
+        ctx.run.current.new_source_ids = self._merge_unique_ints(
+            left=list(ctx.run.current.new_source_ids),
+            right=list(new_source_ids),
+        )
+        ctx.run.current.fetched_source_ids = self._merge_unique_ints(
+            left=list(ctx.run.current.fetched_source_ids),
+            right=list(new_source_ids),
+        )
+        ctx.run.current.admitted_source_ids = self._merge_unique_ints(
+            left=list(ctx.run.current.admitted_source_ids),
+            right=list(new_source_ids),
+        )
+        ctx.knowledge.admitted_source_ids = self._merge_unique_ints(
+            left=list(ctx.knowledge.admitted_source_ids),
+            right=list(new_source_ids),
+        )
         ctx.run.current.corpus_score_gain = (
             float(
                 rebuild_corpus_ranking(
@@ -654,7 +685,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
         urls: list[str],
     ) -> list[FetchStepContext]:
-        max_chars = ctx.run.limits.content_chars
+        max_chars = ctx.run.limits.fetch_page_max_chars
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
         request = FetchRequest(
             urls=list(urls),
@@ -733,6 +764,73 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         )
         consumed = 1 + len(trimmed_subpages)
         return trimmed, consumed
+
+    def _select_candidates_for_fetch_budget(
+        self,
+        *,
+        candidates: list[SearchFetchedCandidate],
+        remaining_fetch_budget: int,
+    ) -> tuple[list[SearchFetchedCandidate], list[SearchFetchedCandidate], int]:
+        pages_left = max(0, remaining_fetch_budget)
+        if pages_left <= 0 or not candidates:
+            return [], [item.model_copy(deep=True) for item in candidates], 0
+        main_selected = min(len(candidates), pages_left)
+        selected_slots: list[int] = [
+            1 if idx < main_selected else 0 for idx in range(len(candidates))
+        ]
+        pages_left -= main_selected
+        subpage_indexes: list[int] = [0] * len(candidates)
+        while pages_left > 0:
+            progressed = False
+            for idx, candidate in enumerate(candidates):
+                available_subpages = list(candidate.result.subpages or [])
+                if selected_slots[idx] <= 0 or subpage_indexes[idx] >= len(
+                    available_subpages
+                ):
+                    continue
+                selected_slots[idx] += 1
+                subpage_indexes[idx] += 1
+                pages_left -= 1
+                progressed = True
+                if pages_left <= 0:
+                    break
+            if not progressed:
+                break
+        selected: list[SearchFetchedCandidate] = []
+        deferred: list[SearchFetchedCandidate] = []
+        consumed = 0
+        for idx, candidate in enumerate(candidates):
+            pages_for_candidate = selected_slots[idx]
+            if pages_for_candidate <= 0:
+                deferred.append(candidate.model_copy(deep=True))
+                continue
+            trimmed_candidate, candidate_consumed = (
+                self._trim_candidate_to_fetch_budget(
+                    candidate=candidate,
+                    remaining_fetch_budget=pages_for_candidate,
+                )
+            )
+            consumed += candidate_consumed
+            selected.append(trimmed_candidate)
+            remaining_subpages = list(candidate.result.subpages or [])[
+                max(0, pages_for_candidate - 1) :
+            ]
+            remaining_subpage_links = list(candidate.subpage_links or [])[
+                max(0, pages_for_candidate - 1) :
+            ]
+            if remaining_subpages:
+                deferred.append(
+                    candidate.model_copy(
+                        update={
+                            "result": candidate.result.model_copy(
+                                update={"subpages": remaining_subpages}
+                            ),
+                            "subpage_links": remaining_subpage_links,
+                        },
+                        deep=True,
+                    )
+                )
+        return selected, deferred, consumed
 
     def _append_sources_from_fetch_result(
         self,
@@ -849,6 +947,30 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             seen_source_ids.add(source_id)
             out.append(item.model_copy(deep=True))
         return out
+
+    def _merge_unique_ints(self, *, left: list[int], right: list[int]) -> list[int]:
+        merged: list[int] = []
+        seen: set[int] = set()
+        for item in [*left, *right]:
+            if item in seen:
+                continue
+            seen.add(item)
+            merged.append(item)
+        return merged
+
+    def _collect_candidate_urls(
+        self,
+        candidates: list[SearchFetchedCandidate],
+    ) -> list[str]:
+        urls: list[str] = []
+        seen: set[str] = set()
+        for item in candidates:
+            url = clean_whitespace(item.result.url)
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+        return urls
 
     def _derive_subpage_links_limit(self, main_links_limit: int) -> int:
         return max(8, round(main_links_limit * 0.30))

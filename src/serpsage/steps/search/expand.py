@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 
     from serpsage.components.llm.base import LLMClientBase
     from serpsage.core.runtime import Runtime
-_JACCARD_SIMILARITY_THRESHOLD = 0.82
-_MANUAL_SOURCE_CAP = 2
-_RULE_SOURCE_CAP = 2
+_JACCARD_SIMILARITY_THRESHOLD = 0.92
+_MANUAL_SOURCE_CAP = 8
+_RULE_SOURCE_CAP = 8
 _RE_CJK = re.compile(r"[\u4e00-\u9fff]")
 _RE_KANA = re.compile(r"[\u3040-\u30ff]")
 _RE_VERSION_LIKE_TOKEN = re.compile(r"(?i)^[a-z]*\d+(?:[._-]\d+)+(?:[a-z0-9._-]*)$")

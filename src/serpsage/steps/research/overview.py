@@ -45,7 +45,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             ctx.run.current.context_source_ids = []
             return ctx
         mode_depth = ctx.run.limits
-        source_topk = max(1, mode_depth.source_topk)
+        review_source_window = max(1, mode_depth.review_source_window)
         new_result_target_ratio, min_history_sources = (
             self._resolve_context_mix_targets(
                 ctx=ctx,
@@ -55,7 +55,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         context_source_ids = select_context_source_ids(
             ctx=ctx,
             round_index=ctx.run.current.round_index,
-            topk=source_topk,
+            topk=review_source_window,
             new_result_target_ratio=new_result_target_ratio,
             min_history_sources=min_history_sources,
         )
@@ -105,7 +105,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         ctx.run.current.overview_review = payload
         ctx.run.current.need_content_source_ids = self._resolve_need_content_source_ids(
             payload=payload,
-            context_source_ids=context_source_ids,
         )
         if payload.findings:
             ctx.run.notes.extend(payload.findings[:3])
@@ -141,7 +140,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 "report_style_selected": ctx.task.style,
                 "style_applied_stage": "overview",
                 "mode_depth_profile": mode_depth.mode_key,
-                "source_topk_effective": source_topk,
+                "review_source_window_effective": review_source_window,
                 "overview_new_result_target_ratio": new_result_target_ratio,
                 "overview_min_history_sources": min_history_sources,
             },
@@ -168,16 +167,17 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         self,
         *,
         payload: OverviewOutputPayload,
-        context_source_ids: list[int],
     ) -> list[int]:
         if not payload.need_content_source_ids:
             return []
-        allowed_source_ids = set(context_source_ids)
-        return [
-            source_id
-            for source_id in payload.need_content_source_ids
-            if source_id in allowed_source_ids
-        ]
+        out: list[int] = []
+        seen: set[int] = set()
+        for source_id in payload.need_content_source_ids:
+            if source_id in seen:
+                continue
+            seen.add(source_id)
+            out.append(source_id)
+        return out
 
     def _extract_unresolved_topics(
         self,

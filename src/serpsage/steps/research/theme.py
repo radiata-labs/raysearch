@@ -25,9 +25,12 @@ if TYPE_CHECKING:
 _ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
     "max_question_cards_effective",
     "min_rounds_per_track",
-    "source_topk",
-    "source_chars",
-    "content_chars",
+    "round_search_budget",
+    "round_fetch_budget",
+    "review_source_window",
+    "report_source_batch_size",
+    "report_source_batch_chars",
+    "fetch_page_max_chars",
     "explore_target_pages_per_round",
     "explore_links_per_page",
 )
@@ -92,7 +95,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             subthemes=list(payload.subthemes),
             entities=list(payload.required_entities),
             input_language=payload.detected_input_language,
-            search_language=payload.search_language,
             output_language=payload.detected_input_language,
             cards=[item.model_copy(deep=True) for item in question_cards],
         )
@@ -100,7 +102,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         ctx.run.notes.append(
             f"Theme plan built with {len(question_cards)} question cards and {len(theme_plan.subthemes)} subthemes."
         )
-        ctx.run.notes.append(f"Search language fixed to {theme_plan.search_language}.")
         ctx.run.notes.append(f"Report style fixed to `{theme_plan.style}`.")
         ctx.run.notes.append(
             "Task intent fixed to "
@@ -122,7 +123,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             attrs={
                 "input_language": theme_plan.input_language,
                 "output_language": theme_plan.output_language,
-                "search_language": theme_plan.search_language,
             },
         )
         await self.emit_tracking_event(
@@ -148,7 +148,10 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     "adaptive_applied": adaptive_applied,
                     "max_question_cards_effective": ctx.run.limits.max_question_cards_effective,
                     "min_rounds_per_track": ctx.run.limits.min_rounds_per_track,
-                    "source_topk": ctx.run.limits.source_topk,
+                    "round_search_budget": ctx.run.limits.round_search_budget,
+                    "round_fetch_budget": ctx.run.limits.round_fetch_budget,
+                    "review_source_window": ctx.run.limits.review_source_window,
+                    "report_source_batch_size": ctx.run.limits.report_source_batch_size,
                     "explore_target_pages_per_round": ctx.run.limits.explore_target_pages_per_round,
                 },
             )
@@ -161,7 +164,6 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "question_cards": len(question_cards),
                 "subthemes": len(theme_plan.subthemes),
                 "input_language": theme_plan.input_language,
-                "search_language": theme_plan.search_language,
                 "output_language": theme_plan.output_language,
                 "mode_depth_profile": ctx.run.limits.mode_key,
                 "mode_depth_question_card_cap": ctx.run.limits.max_question_cards_effective,
@@ -234,9 +236,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     ) -> None:
         mode_depth.max_question_cards_effective = profile.max_question_cards_effective
         mode_depth.min_rounds_per_track = profile.min_rounds_per_track
-        mode_depth.source_topk = profile.source_topk
-        mode_depth.source_chars = profile.source_chars
-        mode_depth.content_chars = profile.content_chars
+        mode_depth.round_search_budget = profile.round_search_budget
+        mode_depth.round_fetch_budget = profile.round_fetch_budget
+        mode_depth.review_source_window = profile.review_source_window
+        mode_depth.report_source_batch_size = profile.report_source_batch_size
+        mode_depth.report_source_batch_chars = profile.report_source_batch_chars
+        mode_depth.fetch_page_max_chars = profile.fetch_page_max_chars
         mode_depth.explore_target_pages_per_round = (
             profile.explore_target_pages_per_round
         )

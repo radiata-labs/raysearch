@@ -33,6 +33,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.run.stop:
             return ctx
+        if ctx.run.current is not None and (
+            ctx.run.current.pending_search_jobs
+            or ctx.run.current.search_fetched_candidates
+            or ctx.run.current.waiting_for_budget
+        ):
+            return ctx
         budget = ctx.run.limits
         if ctx.run.round_index >= budget.max_rounds:
             ctx.run.stop = True
@@ -138,6 +144,9 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
         ctx.run.current.round_action = round_action
         ctx.run.current.explore_target_source_ids = explore_target_source_ids
         ctx.run.current.search_jobs = search_jobs
+        ctx.run.current.pending_search_jobs = [
+            item.model_copy(deep=True) for item in search_jobs
+        ]
         ctx.run.current.query_strategy = payload.query_strategy
         ctx.run.current.queries = [job.query for job in search_jobs]
         return ctx

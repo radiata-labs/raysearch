@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
@@ -21,11 +20,6 @@ if TYPE_CHECKING:
 
 class ResearchPrepareStep(StepBase[ResearchStepContext]):
     _DEFAULT_SEARCH_MODE = "research"
-    _GLOBAL_BUDGET_MULTIPLIER_BY_MODE: dict[str, float] = {
-        "research-fast": 1.5,
-        "research": 2.0,
-        "research-pro": 2.5,
-    }
     _KNOWN_MODES: set[str] = {
         "research-fast",
         "research",
@@ -54,9 +48,12 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             min_coverage_ratio=profile.min_coverage_ratio,
             max_question_cards_effective=profile.max_question_cards_effective,
             min_rounds_per_track=profile.min_rounds_per_track,
-            source_topk=profile.source_topk,
-            source_chars=profile.source_chars,
-            content_chars=profile.content_chars,
+            round_search_budget=profile.round_search_budget,
+            round_fetch_budget=profile.round_fetch_budget,
+            review_source_window=profile.review_source_window,
+            report_source_batch_size=profile.report_source_batch_size,
+            report_source_batch_chars=profile.report_source_batch_chars,
+            fetch_page_max_chars=profile.fetch_page_max_chars,
             explore_target_pages_per_round=profile.explore_target_pages_per_round,
             explore_links_per_page=profile.explore_links_per_page,
         )
@@ -66,7 +63,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             intent="other",
             complexity="medium",
             input_language="other",
-            search_language="other",
             output_language="other",
             subthemes=[],
             entities=[],
@@ -89,24 +85,27 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         )
         ctx.knowledge = ResearchKnowledge()
         ctx.result = ResearchResult(content="", structured=None, tracks=[])
-        global_search_budget = max(
-            1,
-            math.ceil(
-                profile.max_search_calls * self._resolve_global_budget_multiplier(mode)
-            ),
-        )
-        global_fetch_budget = max(
-            1,
-            math.ceil(
-                profile.max_fetch_calls * self._resolve_global_budget_multiplier(mode)
-            ),
-        )
+        global_search_budget = max(1, int(profile.max_search_calls))
+        global_fetch_budget = max(1, int(profile.max_fetch_calls))
         ctx.run = ctx.run.model_copy(
             update={
                 "global_search_budget": global_search_budget,
                 "global_fetch_budget": global_fetch_budget,
                 "global_search_used": 0,
                 "global_fetch_used": 0,
+                "budget_ledger": {
+                    "original_search_budget": global_search_budget,
+                    "original_fetch_budget": global_fetch_budget,
+                    "base_budget": {
+                        "search_total": global_search_budget,
+                        "fetch_total": global_fetch_budget,
+                    },
+                    "restored_budget": {"search_total": 0, "fetch_total": 0},
+                    "extension_budget": {"search_total": 0, "fetch_total": 0},
+                },
+                "restored_budget_applied": False,
+                "extension_budget_applied": False,
+                "budget_events": [],
             }
         )
         await self.emit_tracking_event(
@@ -121,7 +120,7 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 "mode_depth_profile": str(mode),
                 "mode_depth_question_cards": profile.max_question_cards_effective,
                 "mode_depth_min_rounds_per_track": profile.min_rounds_per_track,
-                "mode_depth_orchestrator_enabled": self._mode_uses_orchestrator(mode),
+                "mode_depth_orchestrator_enabled": False,
                 "theme": themes,
             },
         )
@@ -131,8 +130,8 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             stage="prepare",
             attrs={
                 "mode_depth_profile": str(mode),
-                "llm_orchestrator_enabled": self._mode_uses_orchestrator(mode),
-                "source_topk": profile.source_topk,
+                "llm_orchestrator_enabled": False,
+                "review_source_window": profile.review_source_window,
                 "explore_target_pages_per_round": profile.explore_target_pages_per_round,
             },
         )
@@ -151,14 +150,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             "research-pro": self.settings.research.research_pro,
         }
         return profiles.get(mode, self.settings.research.research)
-
-    def _resolve_global_budget_multiplier(self, mode: str) -> float:
-        token = mode.strip().casefold()
-        return self._GLOBAL_BUDGET_MULTIPLIER_BY_MODE.get(token, 2.0)
-
-    def _mode_uses_orchestrator(self, mode: str) -> bool:
-        mode_name = mode.strip().casefold()
-        return mode_name != "research-fast"
 
 
 __all__ = ["ResearchPrepareStep"]
