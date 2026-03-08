@@ -20,10 +20,10 @@ from serpsage.models.app.request import (
     FetchOthersRequest,
     FetchOverviewRequest,
     FetchRequest,
-    FetchRequestBase,
     FetchSubpagesRequest,
     ResearchRequest,
     ResearchSearchMode,
+    SearchFetchRequest,
     SearchRequest,
 )
 from serpsage.models.app.response import (
@@ -62,7 +62,7 @@ __all__ = [
     "FetchSubpagesRequest",
     "FetchResponse",
     "FetchSubpagesResult",
-    "FetchRequestBase",
+    "SearchFetchRequest",
     "SearchRequest",
     "SearchResponse",
     "ResearchSearchMode",

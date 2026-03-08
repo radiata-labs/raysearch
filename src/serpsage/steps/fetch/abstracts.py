@@ -4,13 +4,14 @@ import re
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.models.steps.fetch import FetchStepContext, PreparedAbstract
+from serpsage.models.steps.fetch import FetchStepContext, PreparedPassage
 from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
+
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$")
 _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
@@ -114,12 +115,12 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.fatal:
+        if ctx.error.failed:
             return ctx
-        req = ctx.resolved.abstracts_request
+        req = ctx.analysis.abstracts.request
         if req is None:
             return ctx
-        if ctx.artifacts.extracted is None:
+        if ctx.page.doc is None:
             await self.emit_tracking_event(
                 event_name="fetch.abstract_build.error",
                 request_id=ctx.request_id,
@@ -130,22 +131,20 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": False,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "missing extracted content",
                 },
             )
             return ctx
         markdown = str(
-            ctx.artifacts.extracted.md_for_abstract
-            or ctx.artifacts.extracted.markdown
-            or ""
+            ctx.page.doc.content.abstract_text or ctx.page.doc.content.markdown or ""
         )
         cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
             min_abstract_tokens=int(cfg.min_abstract_tokens),
         )
-        ctx.artifacts.prepared_abstracts = prepared
+        ctx.analysis.abstracts.prepared = prepared
         return ctx
 
     def _extract_abstracts(
@@ -153,15 +152,15 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         *,
         markdown: str,
         min_abstract_tokens: int,
-    ) -> list[PreparedAbstract]:
+    ) -> list[PreparedPassage]:
         text = (markdown or "").strip()
         if not text:
             return []
-        out: list[PreparedAbstract] = []
+        out: list[PreparedPassage] = []
         seen: set[str] = set()
         in_code = False
         current_heading = ""
-        position = 0
+        order = 0
         for raw_line in text.splitlines():
             line = raw_line.rstrip()
             stripped = line.strip()
@@ -185,13 +184,13 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                     if key not in seen:
                         seen.add(key)
                         out.append(
-                            PreparedAbstract(
+                            PreparedPassage(
                                 text=row,
                                 heading=current_heading,
-                                position=position,
+                                order=order,
                             )
                         )
-                        position += 1
+                        order += 1
                 continue
             normalized = _LIST_PREFIX_RE.sub("", stripped)
             normalized = clean_whitespace(normalized)
@@ -205,13 +204,13 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
                     continue
                 seen.add(key)
                 out.append(
-                    PreparedAbstract(
+                    PreparedPassage(
                         text=sentence,
                         heading=current_heading,
-                        position=position,
+                        order=order,
                     )
                 )
-                position += 1
+                order += 1
         return out
 
     def _dedupe_key(self, text: str) -> str:

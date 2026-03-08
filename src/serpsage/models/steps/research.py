@@ -7,9 +7,10 @@ from pydantic import Field
 from serpsage.models.app.request import (
     ResearchRequest,
 )
+from serpsage.models.app.response import ResearchResponse
 from serpsage.models.base import MutableModel, UnvalidatedModel
 from serpsage.models.components.extract import (
-    ExtractedLink,
+    ExtractRef,
 )
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.models.steps.search import SearchFetchedCandidate
@@ -345,8 +346,8 @@ class ResearchLinkCandidate(MutableModel):
     source_id: int
     url: str = ""
     title: str = ""
-    links: list[ExtractedLink] = Field(default_factory=list)
-    subpage_links: list[list[ExtractedLink]] = Field(default_factory=list)
+    links: list[ExtractRef] = Field(default_factory=list)
+    subpage_links: list[list[ExtractRef]] = Field(default_factory=list)
     subpage_urls: list[str] = Field(default_factory=list)
     round_index: int = 0
 
@@ -426,9 +427,10 @@ class ResearchOutputState(MutableModel):
     structured: object | None = None
 
 
-class ResearchStepContext(BaseStepContext):
+class ResearchStepContext(BaseStepContext[ResearchRequest, ResearchResponse]):
     settings: AppSettings
     request: ResearchRequest
+    response: ResearchResponse
     runtime: ResearchRuntimeState = Field(default_factory=ResearchRuntimeState)
     plan: ResearchPlanState = Field(default_factory=ResearchPlanState)
     parallel: ResearchParallelState = Field(default_factory=ResearchParallelState)

@@ -31,7 +31,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.fatal:
+        if ctx.error.failed:
             return ctx
         enabled, req = self._resolve_overview_request(ctx)
         if not enabled or req is None:
@@ -48,7 +48,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": False,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "no overview source content",
                 },
             )
@@ -60,8 +60,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         messages = self._build_messages(
             query=req.query,
             url=ctx.url,
-            title=(ctx.artifacts.extracted.title if ctx.artifacts.extracted else "")
-            or "",
+            title=(ctx.page.doc.meta.title if ctx.page.doc else "") or "",
             source_items=source_items,
             language_hint=str(profile.force_language or "auto"),
             mode=mode,
@@ -85,7 +84,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 except Exception:  # noqa: BLE001
                     pass
                 else:
-                    ctx.artifacts.overview_output = decoded
+                    ctx.analysis.overview.output = decoded
                     return ctx
         retries = max(0, int(profile.self_heal_retries)) if schema is not None else 0
         retry_prompt = _self_heal_message() if schema is not None else ""
@@ -103,7 +102,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 output_text = str(text_res.text or "")
                 if not output_text.strip():
                     raise ValueError("overview output is empty")
-                ctx.artifacts.overview_output = output_text
+                ctx.analysis.overview.output = output_text
             else:
                 attempt_messages = list(messages)
                 output_obj: object | None = None
@@ -125,10 +124,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     except Exception as exc:  # noqa: BLE001
                         if attempt_index >= attempts - 1:
                             raise
-                        if not isinstance(
-                            exc,
-                            retry_on + (SchemaMismatchError,),
-                        ):
+                        if not isinstance(exc, retry_on + (SchemaMismatchError,)):
                             raise
                         attempt_messages = attempt_messages + [
                             {
@@ -138,17 +134,17 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                         ]
                 if output_obj is None:
                     raise RuntimeError("json output retry loop exhausted")
-                ctx.artifacts.overview_output = output_obj
+                ctx.analysis.overview.output = output_obj
             if (
                 cache_ttl_s > 0
                 and cache_key
-                and ctx.artifacts.overview_output is not None
+                and ctx.analysis.overview.output is not None
             ):
                 await self._cache.aset(
                     namespace="overview:fetch:v4",
                     key=cache_key,
                     value=json.dumps(
-                        ctx.artifacts.overview_output,
+                        ctx.analysis.overview.output,
                         ensure_ascii=False,
                         separators=(",", ":"),
                         sort_keys=True,
@@ -168,7 +164,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": False,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": str(exc),
                 },
             )
@@ -185,12 +181,11 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": False,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": str(exc),
                 },
             )
             return ctx
-        return ctx
 
     def _resolve_overview_request(
         self, ctx: FetchStepContext
@@ -202,29 +197,21 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
 
     def _build_source_items(self, ctx: FetchStepContext) -> list[str]:
         abstracts = [
-            item.text
-            for item in list(ctx.artifacts.overview_scored_abstracts or [])
-            if item.text
+            item.text for item in list(ctx.analysis.overview.ranked or []) if item.text
         ]
         if abstracts:
             return abstracts
-        md_for_abstract = clean_whitespace(
+        abstract_text = clean_whitespace(
             (
-                (
-                    ctx.artifacts.extracted.md_for_abstract
-                    if ctx.artifacts.extracted
-                    else ""
-                )
-                or ""
+                (ctx.page.doc.content.abstract_text if ctx.page.doc else "") or ""
             ).replace("\n", " ")
         )
-        if md_for_abstract:
-            return [md_for_abstract]
+        if abstract_text:
+            return [abstract_text]
         markdown = clean_whitespace(
-            (
-                (ctx.artifacts.extracted.markdown if ctx.artifacts.extracted else "")
-                or ""
-            ).replace("\n", " ")
+            ((ctx.page.doc.content.markdown if ctx.page.doc else "") or "").replace(
+                "\n", " "
+            )
         )
         if markdown:
             return [markdown]

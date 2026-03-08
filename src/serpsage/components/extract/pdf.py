@@ -19,12 +19,17 @@ from pypdf.errors import PdfReadError, PdfStreamError
 from serpsage.components.extract.base import ExtractorBase
 from serpsage.components.extract.utils import (
     finalize_markdown,
-    markdown_to_abstract_text,
     markdown_to_text,
 )
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.core.runtime import Runtime
-from serpsage.models.components.extract import ExtractContentOptions, ExtractedDocument
+from serpsage.models.components.extract import (
+    ExtractContent,
+    ExtractedDocument,
+    ExtractMeta,
+    ExtractSpec,
+    ExtractTrace,
+)
 from serpsage.utils import clean_whitespace
 
 _LINE_SPLIT_RE = re.compile(r"\r?\n+")
@@ -54,14 +59,13 @@ class PdfExtractor(ExtractorBase):
         url: str,
         content: bytes,
         content_type: str | None,
-        content_options: ExtractContentOptions | None = None,
+        content_options: ExtractSpec | None = None,
         include_secondary_content: bool = False,
         collect_links: bool = False,
         collect_images: bool = False,
     ) -> ExtractedDocument:
         del (
             url,
-            content_options,
             include_secondary_content,
             collect_links,
             collect_images,
@@ -74,29 +78,37 @@ class PdfExtractor(ExtractorBase):
         if kind != "pdf":
             raise ValueError("PdfExtractor only handles PDF content")
         if not content:
-            return self._attach_abstract_markdown(
-                ExtractedDocument(
-                    content_kind="pdf",
-                    extractor_used="pdf:none",
-                    warnings=["empty pdf content"],
-                )
+            return self._finalize_content(
+                doc=ExtractedDocument(
+                    trace=ExtractTrace(
+                        kind="pdf",
+                        engine="pdf:none",
+                        warnings=["empty pdf content"],
+                    )
+                ),
+                content_options=content_options,
             )
 
         warnings: list[str] = []
         try:
             extracted = await self._extract_pymupdf4llm(content)
             warnings.extend(self._quality_warnings(extracted.text_chars))
-            return self._attach_abstract_markdown(
-                ExtractedDocument(
-                    markdown=extracted.markdown,
-                    title=extracted.title,
-                    published_date=extracted.published_date,
-                    author=extracted.author,
-                    content_kind="pdf",
-                    extractor_used="pdf:pymupdf4llm",
-                    warnings=warnings,
-                    stats=extracted.stats | {"engine": "pymupdf4llm"},
-                )
+            return self._finalize_content(
+                doc=ExtractedDocument(
+                    content=ExtractContent(markdown=extracted.markdown),
+                    meta=ExtractMeta(
+                        title=extracted.title,
+                        published_date=extracted.published_date,
+                        author=extracted.author,
+                    ),
+                    trace=ExtractTrace(
+                        kind="pdf",
+                        engine="pdf:pymupdf4llm",
+                        warnings=warnings,
+                        stats=extracted.stats | {"engine": "pymupdf4llm"},
+                    ),
+                ),
+                content_options=content_options,
             )
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"pymupdf4llm_failed:{type(exc).__name__}")
@@ -112,12 +124,15 @@ class PdfExtractor(ExtractorBase):
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"pymupdf_failed:{type(exc).__name__}")
         if not pages_pypdf and not pages_pymupdf:
-            return self._attach_abstract_markdown(
-                ExtractedDocument(
-                    content_kind="pdf",
-                    extractor_used="pdf:none",
-                    warnings=warnings or ["pdf extraction failed"],
-                )
+            return self._finalize_content(
+                doc=ExtractedDocument(
+                    trace=ExtractTrace(
+                        kind="pdf",
+                        engine="pdf:none",
+                        warnings=warnings or ["pdf extraction failed"],
+                    )
+                ),
+                content_options=content_options,
             )
 
         markdown, text_chars, pages_kept, pages_total, engine = (
@@ -128,29 +143,27 @@ class PdfExtractor(ExtractorBase):
         )
         warnings.extend(self._quality_warnings(text_chars))
         metadata = await self._extract_pdf_metadata(content)
-        return self._attach_abstract_markdown(
-            ExtractedDocument(
-                markdown=markdown,
-                title=metadata["title"],
-                published_date=metadata["published_date"],
-                author=metadata["author"],
-                content_kind="pdf",
-                extractor_used=f"pdf:{engine}",
-                warnings=warnings,
-                stats={
-                    "pages_total": pages_total,
-                    "pages_kept": pages_kept,
-                    "text_chars": text_chars,
-                    "engine": engine,
-                },
-            )
-        )
-
-    def _attach_abstract_markdown(self, doc: ExtractedDocument) -> ExtractedDocument:
-        return doc.model_copy(
-            update={
-                "md_for_abstract": markdown_to_abstract_text(str(doc.markdown or ""))
-            }
+        return self._finalize_content(
+            doc=ExtractedDocument(
+                content=ExtractContent(markdown=markdown),
+                meta=ExtractMeta(
+                    title=metadata["title"],
+                    published_date=metadata["published_date"],
+                    author=metadata["author"],
+                ),
+                trace=ExtractTrace(
+                    kind="pdf",
+                    engine=f"pdf:{engine}",
+                    warnings=warnings,
+                    stats={
+                        "pages_total": pages_total,
+                        "pages_kept": pages_kept,
+                        "text_chars": text_chars,
+                        "engine": engine,
+                    },
+                ),
+            ),
+            content_options=content_options,
         )
 
     async def _extract_pymupdf4llm(self, content: bytes) -> PdfExtractionResult:

@@ -9,10 +9,11 @@ from serpsage.models.app.request import (
 )
 from serpsage.models.app.response import (
     FetchResultItem,
+    SearchResponse,
 )
 from serpsage.models.base import MutableModel
 from serpsage.models.components.extract import (
-    ExtractedLink,
+    ExtractRef,
 )
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.settings.models import AppSettings
@@ -83,9 +84,10 @@ class SearchOutputState(MutableModel):
     results: list[FetchResultItem] = Field(default_factory=list)
 
 
-class SearchStepContext(BaseStepContext):
+class SearchStepContext(BaseStepContext[SearchRequest, SearchResponse]):
     settings: AppSettings
     request: SearchRequest
+    response: SearchResponse
     disable_internal_llm: bool = False
     provider_params: dict[str, str] = Field(default_factory=dict)
     deep: SearchDeepState = Field(default_factory=SearchDeepState)
@@ -97,10 +99,10 @@ class SearchStepContext(BaseStepContext):
 
 class SearchFetchedCandidate(MutableModel):
     result: FetchResultItem
-    links: list[ExtractedLink] = Field(default_factory=list)
-    subpage_links: list[list[ExtractedLink]] = Field(default_factory=list)
-    main_md_for_abstract: str = ""
-    subpages_md_for_abstract: list[str] = Field(default_factory=list)
+    links: list[ExtractRef] = Field(default_factory=list)
+    subpage_links: list[list[ExtractRef]] = Field(default_factory=list)
+    main_abstract_text: str = ""
+    subpage_abstract_texts: list[str] = Field(default_factory=list)
     main_overview_scores: list[float] = Field(default_factory=list)
     subpages_overview_scores: list[list[float]] = Field(default_factory=list)
 

@@ -11,8 +11,8 @@ from serpsage import (
     Engine,
     FetchAbstractsRequest,
     FetchOthersRequest,
-    FetchRequestBase,
     FetchSubpagesRequest,
+    SearchFetchRequest,
     SearchRequest,
     load_settings,
 )
@@ -30,7 +30,7 @@ async def main(
         query=query,
         mode=mode,
         max_results=max_results,
-        fetchs=FetchRequestBase(
+        fetchs=SearchFetchRequest(
             abstracts=FetchAbstractsRequest(max_chars=400),
             subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords=query),
             others=FetchOthersRequest(max_links=5, max_image_links=5),

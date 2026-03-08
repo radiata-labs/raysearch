@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.extract.utils import markdown_to_text
-from serpsage.models.components.extract import ExtractedLink
+from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 
@@ -21,12 +21,12 @@ class FetchExtractStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.fatal:
+        if ctx.error.failed:
             return ctx
-        if ctx.artifacts.fetch_result is None:
-            ctx.fatal = True
-            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
-            ctx.error_detail = "missing fetch result"
+        if ctx.page.raw is None:
+            ctx.error.failed = True
+            ctx.error.tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error.detail = "missing fetch result"
             await self.emit_tracking_event(
                 event_name="fetch.extract.error",
                 request_id=ctx.request_id,
@@ -37,35 +37,35 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": True,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "missing fetch result",
                 },
             )
             return ctx
         collect_links = bool(
-            ctx.enable_others_and_subpages
+            ctx.related.enabled
             and (
-                ctx.runtime.max_links is not None
-                or ctx.runtime.max_links_for_subpages is not None
+                ctx.related.link_limit is not None
+                or ctx.related.subpages.candidate_limit is not None
             )
         )
         collect_images = bool(
-            ctx.enable_others_and_subpages and ctx.runtime.max_image_links is not None
+            ctx.related.enabled and ctx.related.image_limit is not None
         )
         try:
-            assert ctx.artifacts.fetch_result is not None
+            assert ctx.page.raw is not None
             extracted = await self._extractor.extract(
-                url=ctx.artifacts.fetch_result.url,
-                content=ctx.artifacts.fetch_result.content,
-                content_type=ctx.artifacts.fetch_result.content_type,
-                content_options=ctx.resolved.content_options,
+                url=ctx.page.raw.url,
+                content=ctx.page.raw.content,
+                content_type=ctx.page.raw.content_type,
+                content_options=ctx.page.extract,
                 collect_links=collect_links,
                 collect_images=collect_images,
             )
         except Exception as exc:  # noqa: BLE001
-            ctx.fatal = True
-            ctx.error_tag = "CRAWL_UNKNOWN_ERROR"
-            ctx.error_detail = str(exc)
+            ctx.error.failed = True
+            ctx.error.tag = "CRAWL_UNKNOWN_ERROR"
+            ctx.error.detail = str(exc)
             await self.emit_tracking_event(
                 event_name="fetch.extract.error",
                 request_id=ctx.request_id,
@@ -77,42 +77,43 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": True,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": str(exc),
                 },
             )
             return ctx
-        ctx.artifacts.extracted = extracted
-        if ctx.enable_others_and_subpages:
-            ctx.output.others.links = _prepare_links(
+        ctx.page.doc = extracted
+        if ctx.related.enabled:
+            ctx.related.others.links = _prepare_urls(
                 values=[
                     str(item.url or "").strip().split("#")[0]
-                    for item in list(extracted.links or [])
+                    for item in list(extracted.refs.links or [])
                 ],
-                limit=ctx.runtime.max_links,
+                limit=ctx.related.link_limit,
             )
-            ctx.subpages.links = _prepare_subpage_links(
-                values=extracted.links,
+            ctx.related.subpages.candidates = _prepare_subpage_links(
+                values=list(extracted.refs.links or []),
                 exclude=[ctx.url],
-                limit=ctx.runtime.max_links_for_subpages,
+                limit=ctx.related.subpages.candidate_limit,
             )
-            ctx.output.others.image_links = _prepare_links(
+            ctx.related.others.image_links = _prepare_urls(
                 values=[
                     str(item.url or "").strip()
-                    for item in list(extracted.image_links or [])
+                    for item in list(extracted.refs.images or [])
                 ],
-                limit=ctx.runtime.max_image_links,
+                limit=ctx.related.image_limit,
             )
         else:
-            ctx.output.others.links = []
-            ctx.output.others.image_links = []
-        markdown = str(extracted.markdown or "")
+            ctx.related.others.links = []
+            ctx.related.others.image_links = []
+            ctx.related.subpages.candidates = []
+        markdown = str(extracted.content.markdown or "")
         text_chars = len(markdown_to_text(markdown))
         min_text_chars = int(self.settings.fetch.extract.min_text_chars)
         if not markdown.strip():
-            ctx.fatal = True
-            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
-            ctx.error_detail = "no content extracted"
+            ctx.error.failed = True
+            ctx.error.tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error.detail = "no content extracted"
             await self.emit_tracking_event(
                 event_name="fetch.extract.error",
                 request_id=ctx.request_id,
@@ -123,14 +124,14 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": True,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "no content extracted",
                 },
             )
         elif text_chars < min_text_chars:
-            ctx.fatal = True
-            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
-            ctx.error_detail = "extracted content below min_text_chars"
+            ctx.error.failed = True
+            ctx.error.tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error.detail = "extracted content below min_text_chars"
             await self.emit_tracking_event(
                 event_name="fetch.extract.error",
                 request_id=ctx.request_id,
@@ -141,7 +142,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": True,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "extracted content below min_text_chars",
                     "text_chars": int(text_chars),
                     "min_text_chars": int(min_text_chars),
@@ -150,7 +151,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         return ctx
 
 
-def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
+def _prepare_urls(*, values: list[str], limit: int | None) -> list[str]:
     if limit is None:
         return []
     out: list[str] = []
@@ -168,11 +169,11 @@ def _prepare_links(*, values: list[str], limit: int | None) -> list[str]:
 
 
 def _prepare_subpage_links(
-    *, values: list[ExtractedLink], exclude: list[str], limit: int | None
-) -> list[ExtractedLink]:
+    *, values: list[ExtractRef], exclude: list[str], limit: int | None
+) -> list[ExtractRef]:
     if limit is None:
         return []
-    out: list[ExtractedLink] = []
+    out: list[ExtractRef] = []
     seen: set[str] = set()
     max_items = max(1, int(limit))
     for item in values:
@@ -182,8 +183,7 @@ def _prepare_subpage_links(
         if url in exclude:
             continue
         seen.add(url)
-        new_item = ExtractedLink(**item.model_dump() | {"url": url})
-        out.append(new_item)
+        out.append(item.model_copy(update={"url": url}))
         if len(out) >= max_items:
             break
     return out

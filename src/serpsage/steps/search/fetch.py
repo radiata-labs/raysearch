@@ -4,14 +4,9 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.app.request import FetchRequest
-from serpsage.models.steps.fetch import (
-    FetchRuntimeConfig,
-    FetchStepContext,
-)
-from serpsage.models.steps.search import (
-    SearchFetchedCandidate,
-    SearchStepContext,
-)
+from serpsage.models.app.response import FetchResponse
+from serpsage.models.steps.fetch import FetchStepContext
+from serpsage.models.steps.search import SearchFetchedCandidate, SearchStepContext
 from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
@@ -49,34 +44,35 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                 if req.others is not None and req.others.max_links is not None
                 else None
             )
-            to_fetch.append(
-                FetchStepContext(
-                    settings=ctx.settings,
-                    request=req,
+            fetch_ctx = FetchStepContext(
+                settings=ctx.settings,
+                request=req,
+                request_id=ctx.request_id,
+                response=FetchResponse(
                     request_id=ctx.request_id,
-                    url=url,
-                    url_index=index,
-                    runtime=FetchRuntimeConfig(
-                        crawl_mode=req.crawl_mode,
-                        crawl_timeout_s=float(req.crawl_timeout or 0.0),
-                        max_links_for_subpages=_derive_subpage_links_limit(
-                            main_links_limit
-                        ),
-                        max_links=(
-                            req.others.max_links if req.others is not None else None
-                        ),
-                        max_image_links=(
-                            req.others.max_image_links
-                            if req.others is not None
-                            else None
-                        ),
-                    ),
-                )
+                    results=[],
+                    statuses=[],
+                ),
+                url=url,
+                url_index=index,
             )
+            fetch_ctx.related.enabled = True
+            fetch_ctx.page.crawl_mode = req.crawl_mode
+            fetch_ctx.page.crawl_timeout_s = float(req.crawl_timeout or 0.0)
+            fetch_ctx.related.link_limit = (
+                req.others.max_links if req.others is not None else None
+            )
+            fetch_ctx.related.image_limit = (
+                req.others.max_image_links if req.others is not None else None
+            )
+            fetch_ctx.related.subpages.candidate_limit = _derive_subpage_links_limit(
+                main_links_limit
+            )
+            to_fetch.append(fetch_ctx)
         out = await self._fetch_runner.run_batch(to_fetch)
         fetched_candidates: list[SearchFetchedCandidate] = []
         for item in out:
-            if item.output.result is None or item.fatal:
+            if item.result is None or item.error.failed:
                 await self.emit_tracking_event(
                     event_name="search.fetch.error",
                     request_id=ctx.request_id,
@@ -89,32 +85,38 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                     },
                 )
                 continue
-            main_md_for_abstract = (
-                str(item.artifacts.extracted.md_for_abstract or "")
-                if item.artifacts.extracted is not None
+            main_abstract_text = (
+                str(item.page.doc.content.abstract_text or "")
+                if item.page.doc is not None
                 else ""
             )
             main_overview_scores = [
                 float(scored.score)
-                for scored in list(item.artifacts.overview_scored_abstracts or [])
+                for scored in list(item.analysis.overview.ranked or [])
             ]
             fetched_candidates.append(
                 SearchFetchedCandidate(
-                    result=item.output.result,
+                    result=item.result,
                     links=(
-                        list(item.artifacts.extracted.links)
-                        if item.artifacts.extracted is not None
+                        list(item.page.doc.refs.links)
+                        if item.page.doc is not None
                         else []
                     ),
                     subpage_links=[
-                        list(links or []) for links in list(item.subpages.result_links)
+                        list(subpage.doc.refs.links)
+                        for subpage in list(item.related.subpages.items or [])
+                        if subpage.doc is not None
                     ],
-                    main_md_for_abstract=main_md_for_abstract,
-                    subpages_md_for_abstract=list(item.subpages.md_for_abstract or []),
+                    main_abstract_text=main_abstract_text,
+                    subpage_abstract_texts=[
+                        str(subpage.doc.content.abstract_text or "")
+                        for subpage in list(item.related.subpages.items or [])
+                        if subpage.doc is not None
+                    ],
                     main_overview_scores=main_overview_scores,
                     subpages_overview_scores=[
-                        [float(score) for score in list(subpage_scores or [])]
-                        for subpage_scores in list(item.subpages.overview_scores or [])
+                        [float(score) for score in list(subpage.overview_scores or [])]
+                        for subpage in list(item.related.subpages.items or [])
                     ],
                 )
             )

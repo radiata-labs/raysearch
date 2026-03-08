@@ -5,6 +5,7 @@ from typing_extensions import override
 
 import anyio
 
+from serpsage.models.app.response import ResearchResponse
 from serpsage.models.steps.research import (
     ResearchBudgetReservationState,
     ResearchBudgetState,
@@ -602,6 +603,11 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             settings=root.settings,
             request=request,
             request_id=f"{root.request_id}:track:{card.question_id}",
+            response=ResearchResponse(
+                request_id=f"{root.request_id}:track:{card.question_id}",
+                content="",
+                structured=None,
+            ),
         )
         track.runtime = ResearchRuntimeState(
             mode_depth=root.runtime.mode_depth.model_copy(deep=True),

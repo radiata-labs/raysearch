@@ -608,7 +608,7 @@ def _build_link_picker_messages(
         "Role: Link Selection Analyst.\n"
         "Mission: Select the highest-yield deep-explore links for one source page.\n"
         "Hard Constraints:\n"
-        "1) Use both anchor_text and URL when scoring relevance and authority.\n"
+        "1) Use both link text and URL when scoring relevance and authority.\n"
         "2) Prioritize official docs/specs, standards, papers/preprints, repositories, and technical references.\n"
         "3) De-prioritize navigation pages, login/signup, pricing, privacy/terms, marketing, and generic index pages.\n"
         "4) Keep selection strictly scoped to CORE_QUESTION.\n"
@@ -2203,7 +2203,7 @@ def render_link_candidates_markdown(
         sample_lines: list[str] = [
             (
                 "[main] "
-                f"{_normalize_scalar_text(link.anchor_text) or '(no anchor)'} -> "
+                f"{_normalize_scalar_text(link.text) or '(no text)'} -> "
                 f"{_normalize_scalar_text(link.url) or 'n/a'}"
             )
             for link in main_links[:link_limit]
@@ -2211,7 +2211,7 @@ def render_link_candidates_markdown(
         sample_lines.extend(
             (
                 "[subpage] "
-                f"{_normalize_scalar_text(link.anchor_text) or '(no anchor)'} -> "
+                f"{_normalize_scalar_text(link.text) or '(no text)'} -> "
                 f"{_normalize_scalar_text(link.url) or 'n/a'}"
             )
             for link in flat_subpage_links[:link_limit]

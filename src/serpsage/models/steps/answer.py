@@ -10,6 +10,7 @@ from serpsage.models.app.request import (
 )
 from serpsage.models.app.response import (
     AnswerCitation,
+    AnswerResponse,
     FetchResultItem,
 )
 from serpsage.models.base import MutableModel, UnvalidatedModel
@@ -84,9 +85,10 @@ class AnswerOutputState(MutableModel):
     citations: list[AnswerCitation] = Field(default_factory=list)
 
 
-class AnswerStepContext(BaseStepContext):
+class AnswerStepContext(BaseStepContext[AnswerRequest, AnswerResponse]):
     settings: AppSettings
     request: AnswerRequest
+    response: AnswerResponse
     plan: AnswerPlanState = Field(default_factory=AnswerPlanState)
     search: AnswerSearchState = Field(default_factory=AnswerSearchState)
     output: AnswerOutputState = Field(default_factory=AnswerOutputState)

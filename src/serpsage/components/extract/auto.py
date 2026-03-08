@@ -5,7 +5,7 @@ from typing_extensions import override
 
 from serpsage.components.extract.base import ExtractorBase
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.models.components.extract import ExtractContentOptions, ExtractedDocument
+from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
 if TYPE_CHECKING:
     from serpsage.components.extract.html import HtmlExtractor
@@ -33,7 +33,7 @@ class AutoExtractor(ExtractorBase):
         url: str,
         content: bytes,
         content_type: str | None,
-        content_options: ExtractContentOptions | None = None,
+        content_options: ExtractSpec | None = None,
         include_secondary_content: bool = False,
         collect_links: bool = False,
         collect_images: bool = False,

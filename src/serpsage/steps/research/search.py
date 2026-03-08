@@ -10,11 +10,11 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOthersRequest,
-    FetchRequestBase,
     FetchSubpagesRequest,
+    SearchFetchRequest,
     SearchRequest,
 )
-from serpsage.models.app.response import FetchResultItem
+from serpsage.models.app.response import FetchResultItem, SearchResponse
 from serpsage.models.steps.research import (
     ResearchCorpusUpsertResult,
     ResearchSearchJob,
@@ -185,6 +185,13 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                 SearchStepContext(
                     settings=ctx.settings,
                     request=req,
+                    response=SearchResponse(
+                        request_id=(
+                            f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}"
+                        ),
+                        search_mode=req.mode,
+                        results=[],
+                    ),
                     disable_internal_llm=True,
                     provider_params=dict(provider_params),
                     request_id=f"{ctx.request_id}:research:{ctx.current_round.round_index}:{idx}",
@@ -235,7 +242,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             exclude_domains=(list(query_job.exclude_domains) or None),
             include_text=(list(query_job.include_text) or None),
             exclude_text=(list(query_job.exclude_text) or None),
-            fetchs=FetchRequestBase(
+            fetchs=SearchFetchRequest(
                 crawl_mode="fallback",
                 crawl_timeout=30.0,
                 content=FetchContentRequest(

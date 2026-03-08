@@ -4,9 +4,8 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.app.request import FetchOthersRequest
-from serpsage.models.app.response import FetchSubpagesResult
-from serpsage.models.components.extract import ExtractedLink
-from serpsage.models.steps.fetch import FetchRuntimeConfig, FetchStepContext
+from serpsage.models.app.response import FetchResponse, FetchSubpagesResult
+from serpsage.models.steps.fetch import FetchStepContext, FetchSubpageState
 from serpsage.steps.base import RunnerBase, StepBase
 
 if TYPE_CHECKING:
@@ -30,20 +29,20 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.fatal:
+        if ctx.error.failed:
             return ctx
-        if not ctx.enable_others_and_subpages:
+        if not ctx.related.enabled:
             return ctx
-        if not ctx.subpages.enabled or ctx.subpages.max_count <= 0:
+        if not ctx.related.subpages.enabled or ctx.related.subpages.limit <= 0:
             return ctx
-        candidates = list(ctx.subpages.links or [])
+        candidates = list(ctx.related.subpages.candidates or [])
         if not candidates:
             return ctx
         try:
             scores = await self._ranker.score_texts(
-                texts=[f"[{item.anchor_text}]({item.url})" for item in candidates],
-                query=ctx.subpages.query,
-                query_tokens=ctx.subpages.keywords,
+                texts=[f"[{item.text}]({item.url})" for item in candidates],
+                query=ctx.related.subpages.query,
+                query_tokens=ctx.related.subpages.keywords,
             )
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
@@ -57,7 +56,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": False,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": str(exc),
                 },
             )
@@ -68,11 +67,11 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         )
         selected_urls = [
             candidates[idx].url
-            for idx in ranked_indexes[: max(1, int(ctx.subpages.max_count))]
+            for idx in ranked_indexes[: max(1, int(ctx.related.subpages.limit))]
         ]
         if not selected_urls:
             return ctx
-        child_link_limit = int(ctx.runtime.max_links_for_subpages or 0)
+        child_link_limit = int(ctx.related.subpages.candidate_limit or 0)
         if child_link_limit <= 0:
             child_link_limit = 8
         child_link_limit = min(
@@ -88,31 +87,30 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                     "others": FetchOthersRequest(max_links=child_link_limit),
                 }
             )
-            to_fetch.append(
-                FetchStepContext(
-                    settings=ctx.settings,
-                    request=child_request,
+            child_ctx = FetchStepContext(
+                settings=ctx.settings,
+                request=child_request,
+                request_id=ctx.request_id,
+                response=FetchResponse(
                     request_id=ctx.request_id,
-                    url=url,
-                    url_index=index,
-                    enable_others_and_subpages=True,
-                    runtime=FetchRuntimeConfig(
-                        crawl_mode=child_request.crawl_mode,
-                        crawl_timeout_s=float(child_request.crawl_timeout or 0.0),
-                        max_links_for_subpages=None,
-                        max_links=int(child_link_limit),
-                        max_image_links=None,
-                    ),
-                )
+                    results=[],
+                    statuses=[],
+                ),
+                url=url,
+                url_index=index,
             )
+            child_ctx.related.enabled = True
+            child_ctx.page.crawl_mode = child_request.crawl_mode
+            child_ctx.page.crawl_timeout_s = float(child_request.crawl_timeout or 0.0)
+            child_ctx.related.link_limit = int(child_link_limit)
+            child_ctx.related.image_limit = None
+            child_ctx.related.subpages.candidate_limit = None
+            to_fetch.append(child_ctx)
         child_results = await self._fetch_runner.run_batch(to_fetch)
-        out: list[FetchSubpagesResult | None] = [None] * len(selected_urls)
-        out_md_for_abstract: list[str | None] = [None] * len(selected_urls)
-        out_overview_scores: list[list[float] | None] = [None] * len(selected_urls)
-        out_result_links: list[list[ExtractedLink] | None] = [None] * len(selected_urls)
+        out_items: list[FetchSubpageState | None] = [None] * len(selected_urls)
         for index, child_context in enumerate(child_results):
             url = selected_urls[index]
-            if child_context.output.result is None:
+            if child_context.result is None or child_context.error.failed:
                 await self.emit_tracking_event(
                     event_name="fetch.subpages.error",
                     request_id=ctx.request_id,
@@ -124,45 +122,25 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                         "url_index": int(ctx.url_index),
                         "subpage_url": url,
                         "fatal": False,
-                        "crawl_mode": str(ctx.runtime.crawl_mode),
+                        "crawl_mode": str(ctx.page.crawl_mode),
                         "message": "subpage fetch failed",
                     },
                 )
                 continue
-            out[index] = _to_subpage_result(child_context.output.result)
-            out_md_for_abstract[index] = (
-                str(child_context.artifacts.extracted.md_for_abstract or "")
-                if child_context.artifacts.extracted is not None
-                else ""
+            out_items[index] = FetchSubpageState(
+                url=url,
+                result=_to_subpage_result(child_context.result),
+                doc=(
+                    child_context.page.doc.model_copy(deep=True)
+                    if child_context.page.doc is not None
+                    else None
+                ),
+                overview_scores=[
+                    float(item.score)
+                    for item in list(child_context.analysis.overview.ranked or [])
+                ],
             )
-            out_overview_scores[index] = [
-                float(item.score)
-                for item in list(
-                    child_context.artifacts.overview_scored_abstracts or []
-                )
-            ]
-            out_result_links[index] = list(
-                child_context.artifacts.extracted.links
-                if child_context.artifacts.extracted is not None
-                else []
-            )
-        paired = [
-            (item, md_text or "", overview_scores or [], result_links or [])
-            for item, md_text, overview_scores, result_links in zip(
-                out,
-                out_md_for_abstract,
-                out_overview_scores,
-                out_result_links,
-                strict=False,
-            )
-            if item is not None
-        ]
-        ctx.subpages.results = [item for item, _, _, _ in paired]
-        ctx.subpages.md_for_abstract = [md_text for _, md_text, _, _ in paired]
-        ctx.subpages.overview_scores = [
-            overview_scores for _, _, overview_scores, _ in paired
-        ]
-        ctx.subpages.result_links = [links for _, _, _, links in paired]
+        ctx.related.subpages.items = [item for item in out_items if item is not None]
         return ctx
 
 

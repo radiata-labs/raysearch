@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+from serpsage.models.app.base import BaseResponse
+
 FetchErrorTag = Literal[
     "CRAWL_NOT_FOUND",
     "CRAWL_TIMEOUT",
@@ -52,9 +54,7 @@ class FetchResultItem(FetchSubpagesResult):
         return payload
 
 
-class FetchResponse(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-    request_id: str
+class FetchResponse(BaseResponse):
     results: list[FetchResultItem] = Field(default_factory=list)
     statuses: list[FetchStatusItem]
 
@@ -72,9 +72,7 @@ class FetchStatusItem(BaseModel):
     error: FetchStatusError | None = None
 
 
-class SearchResponse(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-    request_id: str
+class SearchResponse(BaseResponse):
     search_mode: str
     results: list[FetchResultItem] = Field(default_factory=list)
 
@@ -94,16 +92,12 @@ class AnswerCitation(BaseModel):
         return payload
 
 
-class AnswerResponse(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-    request_id: str
+class AnswerResponse(BaseResponse):
     answer: str | object
     citations: list[AnswerCitation] = Field(default_factory=list)
 
 
-class ResearchResponse(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-    request_id: str
+class ResearchResponse(BaseResponse):
     content: str
     structured: object | None = None
 

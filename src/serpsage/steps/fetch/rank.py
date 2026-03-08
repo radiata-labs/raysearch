@@ -6,8 +6,8 @@ from typing_extensions import override
 
 from serpsage.models.steps.fetch import (
     FetchStepContext,
-    PreparedAbstract,
-    ScoredAbstract,
+    PreparedPassage,
+    ScoredPassage,
 )
 from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
@@ -26,13 +26,13 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.fatal:
+        if ctx.error.failed:
             return ctx
-        abstracts_req = ctx.resolved.abstracts_request
-        overview_req = ctx.resolved.overview_request
+        abstracts_req = ctx.analysis.abstracts.request
+        overview_req = ctx.analysis.overview.request
         if abstracts_req is None and overview_req is None:
             return ctx
-        candidates = list(ctx.artifacts.prepared_abstracts or [])
+        candidates = list(ctx.analysis.abstracts.prepared or [])
         if not candidates:
             await self.emit_tracking_event(
                 event_name="fetch.rank.error",
@@ -44,19 +44,17 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": False,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "no prepared abstracts",
                 },
             )
             return ctx
         abstracts_query = ""
-        raw_scored_abstracts = []
+        raw_scored = []
         if abstracts_req is not None:
             abstracts_query = _resolve_effective_query(
                 requested_query=abstracts_req.query,
-                title=(
-                    ctx.artifacts.extracted.title if ctx.artifacts.extracted else ""
-                ),
+                title=(ctx.page.doc.meta.title if ctx.page.doc else ""),
                 url=ctx.url,
             )
             abstract_budget = (
@@ -64,12 +62,12 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 if abstracts_req.max_chars is not None
                 else int(self.settings.fetch.abstract.max_abstract_chars)
             )
-            raw_scored_abstracts = await self._score_abstracts(
+            raw_scored = await self._score_passages(
                 query=abstracts_query,
                 candidates=candidates,
                 query_tokens=tokenize_for_query(abstracts_query),
             )
-            if not raw_scored_abstracts:
+            if not raw_scored:
                 await self.emit_tracking_event(
                     event_name="fetch.rank.error",
                     request_id=ctx.request_id,
@@ -80,46 +78,42 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                         "url": ctx.url,
                         "url_index": int(ctx.url_index),
                         "fatal": False,
-                        "crawl_mode": str(ctx.runtime.crawl_mode),
+                        "crawl_mode": str(ctx.page.crawl_mode),
                         "message": "no matching abstracts",
                     },
                 )
             else:
-                ctx.artifacts.scored_abstracts = [
-                    ScoredAbstract(
-                        abstract_id=f"S1:A{i + 1}",
+                ctx.analysis.abstracts.ranked = [
+                    ScoredPassage(
+                        passage_id=f"S1:A{i + 1}",
                         text=item.text,
                         score=float(score),
                     )
                     for i, (score, item) in enumerate(
-                        _fit_budget(
-                            ranked=raw_scored_abstracts, max_chars=abstract_budget
-                        )
+                        _fit_budget(ranked=raw_scored, max_chars=abstract_budget)
                     )
                 ]
         if overview_req is not None:
             overview_query = _resolve_effective_query(
                 requested_query=overview_req.query,
-                title=(
-                    ctx.artifacts.extracted.title if ctx.artifacts.extracted else ""
-                ),
+                title=(ctx.page.doc.meta.title if ctx.page.doc else ""),
                 url=ctx.url,
             )
             if (
                 abstracts_req is not None
-                and bool(ctx.artifacts.scored_abstracts)
+                and bool(ctx.analysis.abstracts.ranked)
                 and overview_query == abstracts_query
-                and raw_scored_abstracts
+                and raw_scored
             ):
-                ctx.artifacts.overview_scored_abstracts = [
-                    ScoredAbstract(
-                        abstract_id=f"S1:A{i + 1}",
+                ctx.analysis.overview.ranked = [
+                    ScoredPassage(
+                        passage_id=f"S1:A{i + 1}",
                         text=item.text,
                         score=float(score),
                     )
                     for i, (score, item) in enumerate(
                         _fit_budget(
-                            ranked=raw_scored_abstracts,
+                            ranked=raw_scored,
                             max_chars=int(
                                 self.settings.fetch.overview.max_abstract_chars
                             ),
@@ -127,20 +121,20 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     )
                 ]
             else:
-                raw_overview_scored_abstracts = await self._score_abstracts(
+                raw_overview = await self._score_passages(
                     query=overview_query,
                     candidates=candidates,
                     query_tokens=tokenize_for_query(overview_query),
                 )
-                ctx.artifacts.overview_scored_abstracts = [
-                    ScoredAbstract(
-                        abstract_id=f"S1:A{i + 1}",
+                ctx.analysis.overview.ranked = [
+                    ScoredPassage(
+                        passage_id=f"S1:A{i + 1}",
                         text=item.text,
                         score=float(score),
                     )
                     for i, (score, item) in enumerate(
                         _fit_budget(
-                            ranked=raw_overview_scored_abstracts,
+                            ranked=raw_overview,
                             max_chars=int(
                                 self.settings.fetch.overview.max_abstract_chars
                             ),
@@ -149,13 +143,13 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 ]
         return ctx
 
-    async def _score_abstracts(
+    async def _score_passages(
         self,
         *,
         query: str,
-        candidates: list[PreparedAbstract],
+        candidates: list[PreparedPassage],
         query_tokens: list[str],
-    ) -> list[tuple[float, PreparedAbstract]]:
+    ) -> list[tuple[float, PreparedPassage]]:
         if not candidates:
             return []
         headings: list[str] = []
@@ -181,7 +175,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
         cfg = self.settings.fetch.abstract
         alpha = float(cfg.title_boost_alpha)
         min_score = float(cfg.min_abstract_score)
-        scored: list[tuple[float, PreparedAbstract]] = []
+        scored: list[tuple[float, PreparedPassage]] = []
         for idx, candidate in enumerate(candidates):
             base = float(base_scores[idx]) if idx < len(base_scores) else 0.0
             title_score = float(heading_scores.get(candidate.heading, 0.0))
@@ -195,7 +189,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             scored.append((final_score, candidate))
         if not scored:
             return []
-        scored.sort(key=lambda item: (-item[0], int(item[1].position)))
+        scored.sort(key=lambda item: (-item[0], int(item[1].order)))
         return scored
 
 
@@ -228,12 +222,12 @@ def _apply_title_logit_boost(
 
 def _fit_budget(
     *,
-    ranked: list[tuple[float, PreparedAbstract]],
+    ranked: list[tuple[float, PreparedPassage]],
     max_chars: int | None,
-) -> list[tuple[float, PreparedAbstract]]:
+) -> list[tuple[float, PreparedPassage]]:
     if max_chars is None or max_chars <= 0:
         return list(ranked)
-    out: list[tuple[float, PreparedAbstract]] = []
+    out: list[tuple[float, PreparedPassage]] = []
     total_chars = 0
     for score, candidate in ranked:
         extra_newline = 1 if out else 0

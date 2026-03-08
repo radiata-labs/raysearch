@@ -10,56 +10,73 @@ ExtractContentDetail = Literal["concise", "standard", "full"]
 ExtractContentTag = Literal[
     "header", "navigation", "banner", "body", "sidebar", "footer", "metadata"
 ]
+ExtractRefZone = Literal["primary", "secondary"]
+ExtractContentKind = Literal["html", "pdf", "text", "binary"]
 
 
-class ExtractContentOptions(FrozenModel):
+class ExtractSpec(FrozenModel):
     detail: ExtractContentDetail = "concise"
-    include_html_tags: bool = False
-    include_tags: list[ExtractContentTag] = Field(default_factory=list)
-    exclude_tags: list[ExtractContentTag] = Field(default_factory=list)
+    keep_html: bool = False
+    sections: list[ExtractContentTag] = Field(default_factory=list)
+    emit_output: bool = True
+    keep_markdown_links: bool = False
+    output_max_chars: int | None = None
 
 
-class ExtractedLink(FrozenModel):
+class ExtractRef(FrozenModel):
     url: str = ""
-    anchor_text: str = ""
-    section: Literal["primary", "secondary"] = "primary"
-    is_internal: bool = False
+    text: str = ""
+    zone: ExtractRefZone = "primary"
+    internal: bool = False
     nofollow: bool = False
     same_page: bool = False
-    source_hint: str = ""
+    source: str = ""
     position: int = 0
 
 
-class ExtractedImageLink(FrozenModel):
-    url: str = ""
-    alt_text: str = ""
-    section: Literal["primary", "secondary"] = "primary"
-    is_internal: bool = False
-    source_hint: str = ""
-    position: int = 0
-
-
-class ExtractedDocument(FrozenModel):
+class ExtractContent(FrozenModel):
     markdown: str = ""
-    md_for_abstract: str = ""
+    output_markdown: str = ""
+    abstract_text: str = ""
+
+
+class ExtractMeta(FrozenModel):
     title: str = ""
     published_date: str = ""
     author: str = ""
     image: str = ""
     favicon: str = ""
-    content_kind: Literal["html", "pdf", "text", "binary"] = "binary"
-    extractor_used: str = ""
+
+
+class ExtractTrace(FrozenModel):
+    kind: ExtractContentKind = "binary"
+    engine: str = ""
     warnings: list[str] = Field(default_factory=list)
     stats: dict[str, int | float | str | bool] = Field(default_factory=dict)
-    links: list[ExtractedLink] = Field(default_factory=list)
-    image_links: list[ExtractedImageLink] = Field(default_factory=list)
+
+
+class ExtractRefs(FrozenModel):
+    links: list[ExtractRef] = Field(default_factory=list)
+    images: list[ExtractRef] = Field(default_factory=list)
+
+
+class ExtractedDocument(FrozenModel):
+    content: ExtractContent = Field(default_factory=ExtractContent)
+    meta: ExtractMeta = Field(default_factory=ExtractMeta)
+    refs: ExtractRefs = Field(default_factory=ExtractRefs)
+    trace: ExtractTrace = Field(default_factory=ExtractTrace)
 
 
 __all__ = [
+    "ExtractContent",
     "ExtractContentDetail",
-    "ExtractContentOptions",
+    "ExtractContentKind",
     "ExtractContentTag",
+    "ExtractMeta",
+    "ExtractRef",
+    "ExtractRefs",
+    "ExtractRefZone",
     "ExtractedDocument",
-    "ExtractedImageLink",
-    "ExtractedLink",
+    "ExtractSpec",
+    "ExtractTrace",
 ]

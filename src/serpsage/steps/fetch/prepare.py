@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 from urllib.parse import urlsplit
 
@@ -9,7 +9,7 @@ from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOverviewRequest,
 )
-from serpsage.models.components.extract import ExtractContentOptions
+from serpsage.models.components.extract import ExtractContentTag, ExtractSpec
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
@@ -26,9 +26,9 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         url = clean_whitespace(ctx.url or "")
         if not url:
-            ctx.fatal = True
-            ctx.error_tag = "SOURCE_NOT_AVAILABLE"
-            ctx.error_detail = "empty url"
+            ctx.error.failed = True
+            ctx.error.tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error.detail = "empty url"
             await self.emit_tracking_event(
                 event_name="fetch.prepare.error",
                 request_id=ctx.request_id,
@@ -39,16 +39,16 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": True,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "empty url",
                 },
             )
             return ctx
         parsed = urlsplit(url)
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-            ctx.fatal = True
-            ctx.error_tag = "UNSUPPORTED_URL"
-            ctx.error_detail = "unsupported url format"
+            ctx.error.failed = True
+            ctx.error.tag = "UNSUPPORTED_URL"
+            ctx.error.detail = "unsupported url format"
             await self.emit_tracking_event(
                 event_name="fetch.prepare.error",
                 request_id=ctx.request_id,
@@ -59,13 +59,12 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "fatal": True,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                     "message": "unsupported url format",
                 },
             )
             return ctx
         raw_abstracts = ctx.request.abstracts
-        abstracts_request: FetchAbstractsRequest | None
         if isinstance(raw_abstracts, bool):
             abstracts_request = FetchAbstractsRequest() if raw_abstracts else None
         else:
@@ -74,34 +73,51 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                 update={"query": query or None}
             )
         raw_overview = ctx.request.overview
-        overview_request: FetchOverviewRequest | None
         if isinstance(raw_overview, bool):
             overview_request = FetchOverviewRequest() if raw_overview else None
         else:
             query = clean_whitespace(raw_overview.query or "")
             overview_request = raw_overview.model_copy(update={"query": query or None})
         raw_content = ctx.request.content
-        content_request: FetchContentRequest
-        return_content: bool
         if isinstance(raw_content, bool):
             return_content = bool(raw_content)
             content_request = FetchContentRequest()
         else:
             return_content = True
             content_request = raw_content
-        content_options = ExtractContentOptions(
-            detail=content_request.detail,
-            include_html_tags=bool(content_request.include_html_tags),
-            include_tags=list(content_request.include_tags),
-            exclude_tags=list(content_request.exclude_tags),
-        )
         ctx.url = url
+        ctx.page.return_content = bool(return_content)
+        ctx.page.content_request = content_request
+        ctx.page.extract = ExtractSpec(
+            detail=content_request.detail,
+            keep_html=bool(content_request.include_html_tags),
+            sections=_resolve_sections(content_request),
+            emit_output=bool(return_content),
+            keep_markdown_links=bool(content_request.include_markdown_links),
+            output_max_chars=content_request.max_chars,
+        )
+        ctx.page.raw = None
+        ctx.page.doc = None
+        ctx.analysis.abstracts.request = abstracts_request
+        ctx.analysis.abstracts.prepared = []
+        ctx.analysis.abstracts.ranked = []
+        ctx.analysis.overview.request = overview_request
+        ctx.analysis.overview.ranked = []
+        ctx.analysis.overview.output = None
         subpages_enabled = False
-        subpages_max = 0
+        subpages_limit = 0
         subpages_keywords: list[str] = []
         subpages_query = ""
-        if ctx.enable_others_and_subpages:
+        if ctx.related.enabled:
             subpages_request = ctx.request.subpages
+            ctx.related.link_limit = (
+                ctx.request.others.max_links if ctx.request.others is not None else None
+            )
+            ctx.related.image_limit = (
+                ctx.request.others.max_image_links
+                if ctx.request.others is not None
+                else None
+            )
             if (
                 subpages_request is not None
                 and subpages_request.max_subpages is not None
@@ -109,41 +125,53 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                 subpages_keywords = _parse_subpage_keywords(
                     subpages_request.subpage_keywords
                 )
-                subpages_max = int(subpages_request.max_subpages)
-                subpages_enabled = bool(subpages_max > 0 and subpages_keywords)
+                subpages_limit = int(subpages_request.max_subpages)
+                subpages_enabled = bool(subpages_limit > 0 and subpages_keywords)
                 if subpages_enabled:
                     subpages_query = ", ".join(subpages_keywords)
             if subpages_enabled:
                 link_cap = int(self.settings.fetch.extract.link_max_count)
-                auto_links_limit = min(link_cap, max(20, int(subpages_max) * 5))
+                auto_limit = min(link_cap, max(20, int(subpages_limit) * 5))
                 preset_limit = (
-                    int(ctx.runtime.max_links_for_subpages)
-                    if ctx.runtime.max_links_for_subpages is not None
+                    int(ctx.related.subpages.candidate_limit)
+                    if ctx.related.subpages.candidate_limit is not None
                     else 0
                 )
-                if preset_limit > 0:
-                    ctx.runtime.max_links_for_subpages = int(
-                        min(link_cap, max(1, int(preset_limit)))
-                    )
-                else:
-                    ctx.runtime.max_links_for_subpages = int(auto_links_limit)
+                ctx.related.subpages.candidate_limit = (
+                    int(min(link_cap, max(1, preset_limit)))
+                    if preset_limit > 0
+                    else int(auto_limit)
+                )
         else:
-            ctx.runtime.max_links = None
-            ctx.runtime.max_image_links = None
-        ctx.resolved.return_content = bool(return_content)
-        ctx.resolved.content_request = content_request
-        ctx.resolved.content_options = content_options
-        ctx.resolved.abstracts_request = abstracts_request
-        ctx.resolved.overview_request = overview_request
-        ctx.subpages.enabled = bool(subpages_enabled)
-        ctx.subpages.max_count = int(subpages_max) if subpages_enabled else 0
-        ctx.subpages.keywords = list(subpages_keywords)
-        ctx.subpages.query = subpages_query if subpages_enabled else ""
-        ctx.subpages.results = []
-        ctx.subpages.result_links = []
-        ctx.subpages.md_for_abstract = []
-        ctx.subpages.overview_scores = []
+            ctx.related.link_limit = None
+            ctx.related.image_limit = None
+            ctx.related.others.links = []
+            ctx.related.others.image_links = []
+        ctx.related.subpages.enabled = bool(subpages_enabled)
+        ctx.related.subpages.limit = int(subpages_limit) if subpages_enabled else 0
+        ctx.related.subpages.query = subpages_query if subpages_enabled else ""
+        ctx.related.subpages.keywords = list(subpages_keywords)
+        ctx.related.subpages.candidates = []
+        ctx.related.subpages.items = []
         return ctx
+
+
+def _resolve_sections(content_request: FetchContentRequest) -> list[ExtractContentTag]:
+    selected: list[ExtractContentTag]
+    if content_request.include_tags:
+        selected = cast("list[ExtractContentTag]", list(content_request.include_tags))
+    else:
+        selected = cast(
+            "list[ExtractContentTag]",
+            ["body", "sidebar"] if content_request.detail == "full" else ["body"],
+        )
+    excluded = set(content_request.exclude_tags)
+    out: list[ExtractContentTag] = []
+    for item in selected:
+        if item in excluded:
+            continue
+        out.append(item)
+    return out
 
 
 def _parse_subpage_keywords(value: str | None) -> list[str]:

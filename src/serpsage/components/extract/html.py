@@ -22,17 +22,19 @@ from serpsage.components.extract.utils import (
     decode_best_effort,
     finalize_markdown,
     guess_apparent_encoding,
-    markdown_to_abstract_text,
     markdown_to_text,
 )
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.core.runtime import Runtime
 from serpsage.models.components.extract import (
-    ExtractContentOptions,
+    ExtractContent,
     ExtractContentTag,
     ExtractedDocument,
-    ExtractedImageLink,
-    ExtractedLink,
+    ExtractMeta,
+    ExtractRef,
+    ExtractRefs,
+    ExtractSpec,
+    ExtractTrace,
 )
 from serpsage.settings.models import AppSettings
 from serpsage.utils import clean_whitespace
@@ -181,7 +183,7 @@ class HtmlExtractor(ExtractorBase):
         url: str,
         content: bytes,
         content_type: str | None,
-        content_options: ExtractContentOptions | None = None,
+        content_options: ExtractSpec | None = None,
         include_secondary_content: bool = False,
         collect_links: bool = False,
         collect_images: bool = False,
@@ -202,19 +204,25 @@ class HtmlExtractor(ExtractorBase):
         )
         if kind == "unknown":
             kind = "html" if decoded_kind == "html" else "text"
-        options = content_options or ExtractContentOptions(
+        options = content_options or ExtractSpec(
             detail="full" if include_secondary_content else "concise"
         )
         if kind == "text":
-            return self._attach_abstract(self._extract_text(decoded))
+            return self._finalize_content(
+                doc=self._extract_text(decoded),
+                content_options=options,
+            )
         if kind != "html":
-            return self._attach_abstract(
-                ExtractedDocument(
-                    content_kind="binary",
-                    extractor_used="binary",
-                    warnings=["unsupported binary content"],
-                    stats={"primary_chars": 0, "secondary_chars": 0},
-                )
+            return self._finalize_content(
+                doc=ExtractedDocument(
+                    trace=ExtractTrace(
+                        kind="binary",
+                        engine="binary",
+                        warnings=["unsupported binary content"],
+                        stats={"primary_chars": 0, "secondary_chars": 0},
+                    )
+                ),
+                content_options=options,
             )
         raw_html = decoded[: self._profile.max_html_chars]
         snapshot = self._snapshot(raw_html=raw_html, base_url=url)
@@ -229,7 +237,7 @@ class HtmlExtractor(ExtractorBase):
             extracted=extracted,
             selected_tags=selected_tags,
             base_url=url,
-            preserve_html_tags=bool(options.include_html_tags),
+            preserve_html_tags=bool(options.keep_html),
         )
         markdown = finalize_markdown(
             markdown=rendered.markdown,
@@ -238,7 +246,7 @@ class HtmlExtractor(ExtractorBase):
         markdown = self._prepend_title(
             markdown=markdown,
             title=extracted.title,
-            include_html_tags=bool(options.include_html_tags),
+            include_html_tags=bool(options.keep_html),
         )
         self._assert_nonempty(markdown=markdown)
         include_secondary = "sidebar" in selected_tags
@@ -251,41 +259,48 @@ class HtmlExtractor(ExtractorBase):
             include_secondary=include_secondary,
             selected_tags=selected_tags,
         )
-        return self._attach_abstract(
-            ExtractedDocument(
-                markdown=markdown,
-                title=extracted.title,
-                published_date=extracted.published_date,
-                author=extracted.author,
-                image=extracted.image,
-                favicon=snapshot.favicon,
-                content_kind="html",
-                extractor_used=str(stats["engine_chain"]),
-                warnings=self._warnings(
-                    primary_chars=int(stats["primary_chars"]),
-                    text_chars=int(stats["text_chars"]),
-                    include_secondary=include_secondary,
+        return self._finalize_content(
+            doc=ExtractedDocument(
+                content=ExtractContent(markdown=markdown),
+                meta=ExtractMeta(
+                    title=extracted.title,
+                    published_date=extracted.published_date,
+                    author=extracted.author,
+                    image=extracted.image,
+                    favicon=snapshot.favicon,
                 ),
-                stats=stats,
-                links=(
-                    self._links(
-                        snapshot=snapshot,
-                        base_url=url,
+                refs=ExtractRefs(
+                    links=(
+                        self._links(
+                            snapshot=snapshot,
+                            base_url=url,
+                            include_secondary=include_secondary,
+                        )
+                        if collect_links
+                        else []
+                    ),
+                    images=(
+                        self._images(
+                            snapshot=snapshot,
+                            base_url=url,
+                            include_secondary=include_secondary,
+                        )
+                        if collect_images
+                        else []
+                    ),
+                ),
+                trace=ExtractTrace(
+                    kind="html",
+                    engine=str(stats["engine_chain"]),
+                    warnings=self._warnings(
+                        primary_chars=int(stats["primary_chars"]),
+                        text_chars=int(stats["text_chars"]),
                         include_secondary=include_secondary,
-                    )
-                    if collect_links
-                    else []
+                    ),
+                    stats=stats,
                 ),
-                image_links=(
-                    self._images(
-                        snapshot=snapshot,
-                        base_url=url,
-                        include_secondary=include_secondary,
-                    )
-                    if collect_images
-                    else []
-                ),
-            )
+            ),
+            content_options=options,
         )
 
     def _extract_text(self, text: str) -> ExtractedDocument:
@@ -299,20 +314,22 @@ class HtmlExtractor(ExtractorBase):
         )
         plain = markdown_to_text(markdown)
         return ExtractedDocument(
-            markdown=markdown,
-            content_kind="text",
-            extractor_used="text",
-            stats={
-                "primary_chars": len(plain),
-                "secondary_chars": 0,
-                "text_chars": len(plain),
-                "markdown_chars": len(markdown),
-                "engine_chain": "text",
-                "include_secondary_content": False,
-                "renderer_backend": "text",
-                "renderer_fallback_used": False,
-                "renderer_text_recall_ratio": 1.0,
-            },
+            content=ExtractContent(markdown=markdown),
+            trace=ExtractTrace(
+                kind="text",
+                engine="text",
+                stats={
+                    "primary_chars": len(plain),
+                    "secondary_chars": 0,
+                    "text_chars": len(plain),
+                    "markdown_chars": len(markdown),
+                    "engine_chain": "text",
+                    "include_secondary_content": False,
+                    "renderer_backend": "text",
+                    "renderer_fallback_used": False,
+                    "renderer_text_recall_ratio": 1.0,
+                },
+            ),
         )
 
     @classmethod
@@ -332,15 +349,10 @@ class HtmlExtractor(ExtractorBase):
         )
 
     @classmethod
-    def _resolve_tags(cls, options: ExtractContentOptions) -> set[ExtractContentTag]:
-        selected: set[ExtractContentTag] = (
-            cast("set[ExtractContentTag]", set(options.include_tags))
-            if options.include_tags
-            else {"body", "sidebar"}
-            if options.detail == "full"
-            else {"body"}
-        )
-        return selected - set(options.exclude_tags)
+    def _resolve_tags(cls, options: ExtractSpec) -> set[ExtractContentTag]:
+        if options.sections:
+            return cast("set[ExtractContentTag]", set(options.sections))
+        return {"body", "sidebar"} if options.detail == "full" else {"body"}
 
     @classmethod
     def _snapshot(cls, *, raw_html: str, base_url: str) -> Snapshot:
@@ -685,7 +697,7 @@ class HtmlExtractor(ExtractorBase):
 
     def _links(
         self, *, snapshot: Snapshot, base_url: str, include_secondary: bool
-    ) -> list[ExtractedLink]:
+    ) -> list[ExtractRef]:
         base_norm = (
             self._normalize_url(
                 url=base_url,
@@ -695,7 +707,7 @@ class HtmlExtractor(ExtractorBase):
             or base_url
         )
         base_netloc = urlparse(base_norm).netloc.lower()
-        items: list[ExtractedLink] = []
+        items: list[ExtractRef] = []
         seen: set[tuple[str, str, str]] = set()
         for position, anchor in enumerate(snapshot.tree.css("a"), start=1):
             href = str(anchor.attributes.get("href", "")).strip()
@@ -719,11 +731,11 @@ class HtmlExtractor(ExtractorBase):
             parsed = urlparse(normalized)
             rel = str(anchor.attributes.get("rel", "")).strip().lower()
             items.append(
-                ExtractedLink(
+                ExtractRef(
                     url=normalized,
-                    anchor_text=text,
-                    section=cast("Literal['primary', 'secondary']", section),
-                    is_internal=(parsed.netloc.lower() == base_netloc)
+                    text=text,
+                    zone=cast("Literal['primary', 'secondary']", section),
+                    internal=(parsed.netloc.lower() == base_netloc)
                     if parsed.netloc
                     else True,
                     nofollow=("nofollow" in rel.split()),
@@ -731,7 +743,7 @@ class HtmlExtractor(ExtractorBase):
                         self._strip_fragment(normalized)
                         == self._strip_fragment(base_norm)
                     ),
-                    source_hint=self._source_hint(anchor),
+                    source=self._source_hint(anchor),
                     position=position,
                 )
             )
@@ -741,7 +753,7 @@ class HtmlExtractor(ExtractorBase):
 
     def _images(
         self, *, snapshot: Snapshot, base_url: str, include_secondary: bool
-    ) -> list[ExtractedImageLink]:
+    ) -> list[ExtractRef]:
         base_norm = (
             self._normalize_url(
                 url=base_url,
@@ -751,7 +763,7 @@ class HtmlExtractor(ExtractorBase):
             or base_url
         )
         base_netloc = urlparse(base_norm).netloc.lower()
-        items: list[ExtractedImageLink] = []
+        items: list[ExtractRef] = []
         seen: set[tuple[str, str]] = set()
         for position, image in enumerate(snapshot.tree.css("img, source"), start=1):
             section = self._section(anchor=image, snapshot=snapshot)
@@ -772,14 +784,14 @@ class HtmlExtractor(ExtractorBase):
                 seen.add(key)
                 parsed = urlparse(normalized)
                 items.append(
-                    ExtractedImageLink(
+                    ExtractRef(
                         url=normalized,
-                        alt_text=alt_text,
-                        section=cast("Literal['primary', 'secondary']", section),
-                        is_internal=(parsed.netloc.lower() == base_netloc)
+                        text=alt_text,
+                        zone=cast("Literal['primary', 'secondary']", section),
+                        internal=(parsed.netloc.lower() == base_netloc)
                         if parsed.netloc
                         else True,
-                        source_hint=self._source_hint(image),
+                        source=self._source_hint(image),
                         position=position,
                     )
                 )
@@ -804,13 +816,6 @@ class HtmlExtractor(ExtractorBase):
         return finalize_markdown(
             markdown=f"{heading}\n\n{markdown.strip()}".strip(),
             max_chars=self._profile.max_markdown_chars,
-        )
-
-    def _attach_abstract(self, doc: ExtractedDocument) -> ExtractedDocument:
-        return doc.model_copy(
-            update={
-                "md_for_abstract": markdown_to_abstract_text(str(doc.markdown or ""))
-            }
         )
 
     def _assert_nonempty(self, *, markdown: str) -> None:

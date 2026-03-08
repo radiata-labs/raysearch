@@ -28,11 +28,7 @@ class FetchParallelEnrichStep(StepBase[FetchStepContext]):
         ranker: RankerBase,
     ) -> None:
         super().__init__(rt=rt)
-        self._overview_step = FetchOverviewStep(
-            rt=rt,
-            llm=llm,
-            cache=cache,
-        )
+        self._overview_step = FetchOverviewStep(rt=rt, llm=llm, cache=cache)
         self._subpages_step = FetchSubpageStep(
             rt=rt,
             fetch_runner=fetch_runner,
@@ -42,7 +38,7 @@ class FetchParallelEnrichStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.fatal:
+        if ctx.error.failed:
             return ctx
 
         async def _run_overview() -> None:

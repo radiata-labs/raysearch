@@ -16,7 +16,7 @@ from serpsage.models.app.response import (
 )
 from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.answer import AnswerStepContext
-from serpsage.models.steps.fetch import FetchRuntimeConfig, FetchStepContext
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.research import ResearchStepContext
 from serpsage.models.steps.search import SearchStepContext
 from serpsage.steps.base import RunnerBase
@@ -85,14 +85,17 @@ class Engine(WorkUnit):
             settings=self.settings,
             request=req,
             request_id=request_id,
+            response=SearchResponse(
+                request_id=request_id,
+                search_mode=req.mode,
+                results=[],
+            ),
         )
         try:
             ctx = await self._search_runner.run(ctx)
-            response = SearchResponse(
-                request_id=request_id,
-                search_mode=ctx.request.mode,
-                results=ctx.output.results,
-            )
+            ctx.response.search_mode = ctx.request.mode
+            ctx.response.results = list(ctx.output.results)
+            response = ctx.response
             await self._emit_safe(
                 event_name="request.end",
                 status="ok",
@@ -144,35 +147,36 @@ class Engine(WorkUnit):
             },
         )
         try:
-            contexts: list[FetchStepContext] = [
-                FetchStepContext(
+            contexts: list[FetchStepContext] = []
+            for idx, url in enumerate(req.urls):
+                fetch_ctx = FetchStepContext(
                     settings=self.settings,
                     request=req,
                     request_id=request_id,
+                    response=FetchResponse(
+                        request_id=request_id,
+                        results=[],
+                        statuses=[],
+                    ),
                     url=url,
                     url_index=idx,
-                    enable_others_and_subpages=True,
-                    runtime=FetchRuntimeConfig(
-                        crawl_mode=req.crawl_mode,
-                        crawl_timeout_s=float(req.crawl_timeout or 0.0),
-                        max_links=(
-                            req.others.max_links if req.others is not None else None
-                        ),
-                        max_image_links=(
-                            req.others.max_image_links
-                            if req.others is not None
-                            else None
-                        ),
-                    ),
                 )
-                for idx, url in enumerate(req.urls)
-            ]
+                fetch_ctx.related.enabled = True
+                fetch_ctx.page.crawl_mode = req.crawl_mode
+                fetch_ctx.page.crawl_timeout_s = float(req.crawl_timeout or 0.0)
+                fetch_ctx.related.link_limit = (
+                    req.others.max_links if req.others is not None else None
+                )
+                fetch_ctx.related.image_limit = (
+                    req.others.max_image_links if req.others is not None else None
+                )
+                contexts.append(fetch_ctx)
             if contexts:
                 contexts = await self._fetch_runner.run_batch(contexts)
             results = [
-                ctx.output.result
+                ctx.result
                 for ctx in contexts
-                if not ctx.fatal and ctx.output.result is not None
+                if not ctx.error.failed and ctx.result is not None
             ]
             statuses = [
                 FetchStatusItem(
@@ -190,7 +194,7 @@ class Engine(WorkUnit):
                 if idx < 0 or idx >= len(statuses):
                     continue
                 success = bool(
-                    ctx_item.output.result is not None and not ctx_item.fatal
+                    ctx_item.result is not None and not ctx_item.error.failed
                 )
                 statuses[idx] = FetchStatusItem(
                     url=str(ctx_item.url),
@@ -199,8 +203,8 @@ class Engine(WorkUnit):
                         None
                         if success
                         else FetchStatusError(
-                            tag=ctx_item.error_tag,
-                            detail=ctx_item.error_detail,
+                            tag=ctx_item.error.tag,
+                            detail=ctx_item.error.detail,
                         )
                     ),
                 )
@@ -265,6 +269,11 @@ class Engine(WorkUnit):
             settings=self.settings,
             request=req,
             request_id=request_id,
+            response=AnswerResponse(
+                request_id=request_id,
+                answer={},
+                citations=[],
+            ),
         )
         try:
             ctx = await self._answer_runner.run(ctx)
@@ -279,11 +288,9 @@ class Engine(WorkUnit):
                     if isinstance(ctx.output.answers, str)
                     else ""
                 )
-            response = AnswerResponse(
-                request_id=request_id,
-                answer=answer,
-                citations=ctx.output.citations,
-            )
+            ctx.response.answer = answer
+            ctx.response.citations = list(ctx.output.citations)
+            response = ctx.response
             await self._emit_safe(
                 event_name="request.end",
                 status="ok",
@@ -338,14 +345,17 @@ class Engine(WorkUnit):
             settings=self.settings,
             request=req,
             request_id=request_id,
+            response=ResearchResponse(
+                request_id=request_id,
+                content="",
+                structured=None,
+            ),
         )
         try:
             ctx = await self._research_runner.run(ctx)
-            response = ResearchResponse(
-                request_id=request_id,
-                content=ctx.output.content,
-                structured=ctx.output.structured,
-            )
+            ctx.response.content = ctx.output.content
+            ctx.response.structured = ctx.output.structured
+            response = ctx.response
             await self._emit_safe(
                 event_name="request.end",
                 status="ok",

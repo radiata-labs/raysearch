@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from serpsage.components.cache import CacheBase
     from serpsage.components.fetch import FetcherBase
     from serpsage.core.runtime import Runtime
+
 _CACHE_NAMESPACE = "fetch:v4"
 
 
@@ -35,7 +36,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.fatal:
+        if ctx.error.failed:
             return ctx
         url = (ctx.url or "").strip()
         if not url:
@@ -47,12 +48,12 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                 source=None,
             )
             return ctx
-        mode = str(ctx.runtime.crawl_mode or "fallback")
+        mode = str(ctx.page.crawl_mode or "fallback")
         cache_key = _cache_key(
             url=url,
             backend=str(self.settings.fetch.backend or "auto").lower(),
         )
-        timeout_s = float(ctx.runtime.crawl_timeout_s or 0.0) or float(
+        timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(
             self.settings.fetch.timeout_s
         )
         cache_fetch_ms = 0
@@ -264,7 +265,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                 source = "crawl"
         assert fetched is not None
         await self._emit_fetch_meter(ctx=ctx, source=str(source or "unknown"))
-        ctx.artifacts.fetch_result = fetched
+        ctx.page.raw = fetched
         return ctx
 
     async def _fail(
@@ -277,15 +278,15 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         source: str | None,
         tag: FetchErrorTag | None = None,
     ) -> None:
-        ctx.fatal = True
-        ctx.error_tag = tag or _resolve_error_tag(code=code, message=message)
-        ctx.error_detail = str(message or "").strip() or None
+        ctx.error.failed = True
+        ctx.error.tag = tag or _resolve_error_tag(code=code, message=message)
+        ctx.error.detail = str(message or "").strip() or None
         details: dict[str, Any] = {
             "url": ctx.url,
             "url_index": ctx.url_index,
             "stage": stage,
             "fatal": True,
-            "crawl_mode": ctx.runtime.crawl_mode,
+            "crawl_mode": ctx.page.crawl_mode,
         }
         if source:
             details["source"] = source
@@ -298,7 +299,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             attrs={
                 **details,
                 "message": message,
-                "error_tag": ctx.error_tag,
+                "error_tag": ctx.error.tag,
             },
         )
 
@@ -317,7 +318,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         payload = {
             "url": ctx.url,
             "url_index": int(ctx.url_index),
-            "crawl_mode": str(ctx.runtime.crawl_mode),
+            "crawl_mode": str(ctx.page.crawl_mode),
         }
         if attrs:
             payload.update(attrs)
@@ -348,7 +349,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
                     "source": source,
-                    "crawl_mode": str(ctx.runtime.crawl_mode),
+                    "crawl_mode": str(ctx.page.crawl_mode),
                 },
                 meter=MeterPayload(
                     meter_type="fetch_page",

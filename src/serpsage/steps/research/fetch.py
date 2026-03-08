@@ -12,9 +12,13 @@ from serpsage.models.app.request import (
     FetchOthersRequest,
     FetchRequest,
 )
-from serpsage.models.app.response import FetchResultItem, FetchSubpagesResult
-from serpsage.models.components.extract import ExtractedLink
-from serpsage.models.steps.fetch import FetchRuntimeConfig, FetchStepContext
+from serpsage.models.app.response import (
+    FetchResponse,
+    FetchResultItem,
+    FetchSubpagesResult,
+)
+from serpsage.models.components.extract import ExtractRef
+from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.research import (
     ResearchCorpusUpsertResult,
     ResearchLinkCandidate,
@@ -197,9 +201,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         per_round_fetch_calls = 0
         next_round_link_candidates: list[ResearchLinkCandidate] = []
         for item in fetched:
-            if item.fatal or item.output.result is None:
+            if item.error.failed or item.result is None:
                 continue
-            result = item.output.result
+            result = item.result
             per_round_fetch_calls += 1
             all_results.append(result)
             main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
@@ -439,9 +443,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         self,
         *,
         ctx: ResearchStepContext,
-        links: list[ExtractedLink],
+        links: list[ExtractRef],
         max_links: int,
-    ) -> list[ExtractedLink]:
+    ) -> list[ExtractRef]:
         if not links:
             return []
         cap = max(
@@ -461,7 +465,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         self,
         *,
         ctx: ResearchStepContext,
-        links: list[ExtractedLink],
+        links: list[ExtractRef],
     ) -> list[int]:
         if not links:
             return []
@@ -480,18 +484,16 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             key=lambda idx: (-_score_at(scores=scores, idx=idx), idx),
         )
 
-    def _render_rank_text(self, item: ExtractedLink) -> str:
-        return f"anchor_text={item.anchor_text or '(none)'}; url={item.url}"
+    def _render_rank_text(self, item: ExtractRef) -> str:
+        return f"text={item.text or '(none)'}; url={item.url}"
 
-    def _render_link_candidates_for_picker(self, links: list[ExtractedLink]) -> str:
+    def _render_link_candidates_for_picker(self, links: list[ExtractRef]) -> str:
         if not links:
             return "- (none)"
         lines: list[str] = []
         for index, item in enumerate(links, start=1):
             lines.append(
-                f"- id={index} | "
-                f"anchor_text={item.anchor_text or '(none)'} | "
-                f"url={item.url or 'n/a'}"
+                f"- id={index} | text={item.text or '(none)'} | url={item.url or 'n/a'}"
             )
         return "\n".join(lines).strip()
 
@@ -500,8 +502,8 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         *,
         ctx: ResearchStepContext | None = None,
         candidate: ResearchLinkCandidate,
-    ) -> list[ExtractedLink]:
-        merged: list[tuple[ExtractedLink, str]] = [
+    ) -> list[ExtractRef]:
+        merged: list[tuple[ExtractRef, str]] = [
             (item, candidate.url) for item in list(candidate.links or [])
         ]
         for index, links in enumerate(list(candidate.subpage_links or [])):
@@ -511,7 +513,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 else candidate.url
             )
             merged.extend((item, base_url) for item in list(links or []))
-        out: list[ExtractedLink] = []
+        out: list[ExtractRef] = []
         seen: set[str] = set()
         resolved_relative_links = 0
         for item, base_url in merged:
@@ -531,7 +533,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 item.model_copy(
                     update={
                         "url": url,
-                        "anchor_text": item.anchor_text.strip(),
+                        "text": item.text.strip(),
                     },
                     deep=True,
                 )
@@ -673,26 +675,29 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             else ctx.runtime.round_index
         )
         for index, url in enumerate(urls):
-            contexts.append(
-                FetchStepContext(
-                    settings=ctx.settings,
-                    request=request.model_copy(update={"urls": [url]}),
+            fetch_ctx = FetchStepContext(
+                settings=ctx.settings,
+                request=request.model_copy(update={"urls": [url]}),
+                response=FetchResponse(
                     request_id=(
                         f"{ctx.request_id}:research:explore:{round_index}:{index}"
                     ),
-                    url=url,
-                    url_index=index,
-                    runtime=FetchRuntimeConfig(
-                        crawl_mode=request.crawl_mode,
-                        crawl_timeout_s=float(request.crawl_timeout or 0.0),
-                        max_links_for_subpages=self._derive_subpage_links_limit(
-                            main_links_limit
-                        ),
-                        max_links=main_links_limit,
-                        max_image_links=None,
-                    ),
-                )
+                    results=[],
+                    statuses=[],
+                ),
+                request_id=(f"{ctx.request_id}:research:explore:{round_index}:{index}"),
+                url=url,
+                url_index=index,
             )
+            fetch_ctx.related.enabled = True
+            fetch_ctx.page.crawl_mode = request.crawl_mode
+            fetch_ctx.page.crawl_timeout_s = float(request.crawl_timeout or 0.0)
+            fetch_ctx.related.link_limit = main_links_limit
+            fetch_ctx.related.image_limit = None
+            fetch_ctx.related.subpages.candidate_limit = (
+                self._derive_subpage_links_limit(main_links_limit)
+            )
+            contexts.append(fetch_ctx)
         return contexts
 
     def _trim_candidate_to_fetch_budget(
@@ -808,7 +813,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         round_index: int,
     ) -> ResearchLinkCandidate:
         raw_links = [
-            ExtractedLink(url=clean_whitespace(url))
+            ExtractRef(url=clean_whitespace(url))
             for url in list((result.others.links if result.others else []) or [])
         ]
         candidate = ResearchLinkCandidate(

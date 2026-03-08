@@ -12,99 +12,114 @@ from serpsage.models.app.request import (
 from serpsage.models.app.response import (
     FetchErrorTag,
     FetchOthersResult,
+    FetchResponse,
     FetchResultItem,
     FetchSubpagesResult,
 )
 from serpsage.models.base import MutableModel
 from serpsage.models.components.extract import (
-    ExtractContentOptions,
     ExtractedDocument,
-    ExtractedLink,
+    ExtractRef,
+    ExtractSpec,
 )
 from serpsage.models.components.fetch import FetchResult
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.settings.models import AppSettings
 
 
-class ScoredAbstract(MutableModel):
-    abstract_id: str
+class PreparedPassage(MutableModel):
+    text: str
+    heading: str = ""
+    order: int = 0
+
+
+class ScoredPassage(MutableModel):
+    passage_id: str
     text: str
     score: float
 
 
-class PreparedAbstract(MutableModel):
-    text: str
-    heading: str = ""
-    position: int = 0
+class FetchErrorState(MutableModel):
+    failed: bool = False
+    tag: FetchErrorTag = "CRAWL_UNKNOWN_ERROR"
+    detail: str | None = None
 
 
-class FetchRuntimeConfig(MutableModel):
+class FetchPageState(MutableModel):
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout_s: float = 0.0
-    max_links_for_subpages: int | None = None
-    max_links: int | None = None
-    max_image_links: int | None = None
-
-
-class FetchResolvedState(MutableModel):
+    raw: FetchResult | None = None
     return_content: bool = True
     content_request: FetchContentRequest = Field(default_factory=FetchContentRequest)
-    content_options: ExtractContentOptions = Field(
-        default_factory=ExtractContentOptions
-    )
-    abstracts_request: FetchAbstractsRequest | None = None
-    overview_request: FetchOverviewRequest | None = None
+    extract: ExtractSpec = Field(default_factory=ExtractSpec)
+    doc: ExtractedDocument | None = None
 
 
-class FetchArtifactsState(MutableModel):
-    fetch_result: FetchResult | None = None
-    extracted: ExtractedDocument | None = None
-    prepared_abstracts: list[PreparedAbstract] = Field(default_factory=list)
-    scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
-    overview_scored_abstracts: list[ScoredAbstract] = Field(default_factory=list)
-    overview_output: str | object | None = None
+class FetchAbstractState(MutableModel):
+    request: FetchAbstractsRequest | None = None
+    prepared: list[PreparedPassage] = Field(default_factory=list)
+    ranked: list[ScoredPassage] = Field(default_factory=list)
 
 
-class FetchSubpagesState(MutableModel):
+class FetchOverviewState(MutableModel):
+    request: FetchOverviewRequest | None = None
+    ranked: list[ScoredPassage] = Field(default_factory=list)
+    output: str | object | None = None
+
+
+class FetchAnalysisState(MutableModel):
+    abstracts: FetchAbstractState = Field(default_factory=FetchAbstractState)
+    overview: FetchOverviewState = Field(default_factory=FetchOverviewState)
+
+
+class FetchSubpageState(MutableModel):
+    url: str = ""
+    result: FetchSubpagesResult | None = None
+    doc: ExtractedDocument | None = None
+    overview_scores: list[float] = Field(default_factory=list)
+
+
+class FetchSubpageGroupState(MutableModel):
     enabled: bool = False
-    links: list[ExtractedLink] = Field(default_factory=list)
-    max_count: int = 0
+    limit: int = 0
+    candidate_limit: int | None = None
     query: str = ""
     keywords: list[str] = Field(default_factory=list)
-    results: list[FetchSubpagesResult] = Field(default_factory=list)
-    result_links: list[list[ExtractedLink]] = Field(default_factory=list)
-    md_for_abstract: list[str] = Field(default_factory=list)
-    overview_scores: list[list[float]] = Field(default_factory=list)
+    candidates: list[ExtractRef] = Field(default_factory=list)
+    items: list[FetchSubpageState] = Field(default_factory=list)
 
 
-class FetchOutputState(MutableModel):
+class FetchRelatedState(MutableModel):
+    enabled: bool = True
+    link_limit: int | None = None
+    image_limit: int | None = None
     others: FetchOthersResult = Field(default_factory=FetchOthersResult)
-    result: FetchResultItem | None = None
+    subpages: FetchSubpageGroupState = Field(default_factory=FetchSubpageGroupState)
 
 
-class FetchStepContext(BaseStepContext):
+class FetchStepContext(BaseStepContext[FetchRequest, FetchResponse]):
     settings: AppSettings
     request: FetchRequest
+    response: FetchResponse
     url: str
     url_index: int
-    runtime: FetchRuntimeConfig
-    enable_others_and_subpages: bool = True
-    resolved: FetchResolvedState = Field(default_factory=FetchResolvedState)
-    artifacts: FetchArtifactsState = Field(default_factory=FetchArtifactsState)
-    subpages: FetchSubpagesState = Field(default_factory=FetchSubpagesState)
-    output: FetchOutputState = Field(default_factory=FetchOutputState)
-    fatal: bool = False
-    error_tag: FetchErrorTag = "CRAWL_UNKNOWN_ERROR"
-    error_detail: str | None = None
+    page: FetchPageState = Field(default_factory=FetchPageState)
+    analysis: FetchAnalysisState = Field(default_factory=FetchAnalysisState)
+    related: FetchRelatedState = Field(default_factory=FetchRelatedState)
+    result: FetchResultItem | None = None
+    error: FetchErrorState = Field(default_factory=FetchErrorState)
 
 
 __all__ = [
-    "FetchArtifactsState",
-    "FetchOutputState",
-    "FetchResolvedState",
+    "FetchAbstractState",
+    "FetchAnalysisState",
+    "FetchErrorState",
+    "FetchOverviewState",
+    "FetchPageState",
+    "FetchRelatedState",
     "FetchStepContext",
-    "FetchRuntimeConfig",
-    "FetchSubpagesState",
-    "PreparedAbstract",
-    "ScoredAbstract",
+    "FetchSubpageGroupState",
+    "FetchSubpageState",
+    "PreparedPassage",
+    "ScoredPassage",
 ]

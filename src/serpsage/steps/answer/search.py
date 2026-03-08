@@ -5,9 +5,10 @@ from typing_extensions import override
 
 from serpsage.models.app.request import (
     FetchAbstractsRequest,
-    FetchRequestBase,
+    SearchFetchRequest,
     SearchRequest,
 )
+from serpsage.models.app.response import SearchResponse
 from serpsage.models.steps.answer import (
     AnswerStepContext,
     AnswerSubQuestionPlan,
@@ -57,6 +58,11 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             SearchStepContext(
                 settings=ctx.settings,
                 request=req,
+                response=SearchResponse(
+                    request_id=ctx.request_id,
+                    search_mode=req.mode,
+                    results=[],
+                ),
                 disable_internal_llm=True,
                 request_id=ctx.request_id,
             )
@@ -140,7 +146,7 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             mode=_FIXED_SEARCH_MODE,
             max_results=_FIXED_MAX_RESULTS,
             additional_queries=None,
-            fetchs=FetchRequestBase(
+            fetchs=SearchFetchRequest(
                 content=bool(ctx.request.content),
                 abstracts=FetchAbstractsRequest(
                     query=query,

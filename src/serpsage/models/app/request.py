@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from serpsage.models.app.base import BaseRequest
 from serpsage.utils import clean_whitespace
 
 SearchMode = Literal["fast", "auto", "deep"]
@@ -175,7 +176,64 @@ class FetchSubpagesRequest(BaseModel):
         return out or None
 
 
-class FetchRequestBase(BaseModel):
+class FetchRequest(BaseRequest):
+    urls: list[str]
+    crawl_mode: CrawlMode = "fallback"
+    crawl_timeout: float | None = None
+    content: bool | FetchContentRequest = False
+    abstracts: bool | FetchAbstractsRequest = False
+    subpages: FetchSubpagesRequest | None = None
+    overview: bool | FetchOverviewRequest = False
+    others: FetchOthersRequest | None = None
+
+    @field_validator("crawl_timeout")
+    @classmethod
+    def _validate_crawl_timeout(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if value <= 0:
+            raise ValueError("crawl_timeout must be > 0")
+        return float(value)
+
+    @model_validator(mode="after")
+    def _validate_has_action(self) -> FetchRequest:
+        content_enabled = not isinstance(self.content, bool) or bool(self.content)
+        abstracts_enabled = not isinstance(self.abstracts, bool) or bool(self.abstracts)
+        overview_enabled = not isinstance(self.overview, bool) or bool(self.overview)
+        subpages_enabled = self.subpages is not None
+        others_enabled = self.others is not None and (
+            self.others.max_links is not None or self.others.max_image_links is not None
+        )
+        if not (
+            content_enabled
+            or abstracts_enabled
+            or overview_enabled
+            or subpages_enabled
+            or others_enabled
+        ):
+            raise ValueError(
+                "fetch request has nothing to do: enable at least one of "
+                "content/abstracts/overview/subpages/others"
+            )
+        return self
+
+    @field_validator("urls")
+    @classmethod
+    def _validate_urls(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for raw in value:
+            url = str(raw or "").strip()
+            if not url:
+                raise ValueError("urls must not contain empty value")
+            if not (url.startswith(("http://", "https://"))):
+                raise ValueError(f"unsupported url scheme: {url}")
+            out.append(url)
+        if not out:
+            raise ValueError("urls must not be empty")
+        return out
+
+
+class SearchFetchRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout: float | None = None
@@ -195,7 +253,7 @@ class FetchRequestBase(BaseModel):
         return float(value)
 
     @model_validator(mode="after")
-    def _validate_has_action(self) -> FetchRequestBase:
+    def _validate_has_action(self) -> SearchFetchRequest:
         content_enabled = not isinstance(self.content, bool) or bool(self.content)
         abstracts_enabled = not isinstance(self.abstracts, bool) or bool(self.abstracts)
         overview_enabled = not isinstance(self.overview, bool) or bool(self.overview)
@@ -217,27 +275,7 @@ class FetchRequestBase(BaseModel):
         return self
 
 
-class FetchRequest(FetchRequestBase):
-    urls: list[str]
-
-    @field_validator("urls")
-    @classmethod
-    def _validate_urls(cls, value: list[str]) -> list[str]:
-        out: list[str] = []
-        for raw in value:
-            url = str(raw or "").strip()
-            if not url:
-                raise ValueError("urls must not contain empty value")
-            if not (url.startswith(("http://", "https://"))):
-                raise ValueError(f"unsupported url scheme: {url}")
-            out.append(url)
-        if not out:
-            raise ValueError("urls must not be empty")
-        return out
-
-
-class SearchRequest(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
+class SearchRequest(BaseRequest):
     query: str
     additional_queries: list[str] | None = None
     mode: SearchMode = "auto"
@@ -246,7 +284,7 @@ class SearchRequest(BaseModel):
     exclude_domains: list[str] | None = None
     include_text: list[str] | None = None
     exclude_text: list[str] | None = None
-    fetchs: FetchRequestBase
+    fetchs: SearchFetchRequest
 
     @field_validator("query")
     @classmethod
@@ -312,8 +350,7 @@ class SearchRequest(BaseModel):
         return self
 
 
-class AnswerRequest(BaseModel):
-    model_config = ConfigDict(validate_assignment=True, extra="forbid")
+class AnswerRequest(BaseRequest):
     query: str
     json_schema: dict[str, Any] | None = None
     content: bool = False
@@ -332,7 +369,7 @@ class AnswerRequest(BaseModel):
         return _validate_json_schema(value)
 
 
-class ResearchRequest(BaseModel):
+class ResearchRequest(BaseRequest):
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
     search_mode: ResearchSearchMode = "research"
     themes: str
@@ -356,7 +393,7 @@ __all__ = [
     "CrawlMode",
     "FetchContentDetail",
     "FetchContentTag",
-    "FetchRequestBase",
+    "SearchFetchRequest",
     "FetchRequest",
     "FetchOthersRequest",
     "FetchContentRequest",

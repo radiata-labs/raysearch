@@ -125,8 +125,8 @@ class SearchRankStep(StepBase[SearchStepContext]):
         return [
             SearchFetchedCandidate(
                 result=item,
-                main_md_for_abstract=clean_whitespace(str(item.content or "")),
-                subpages_md_for_abstract=[
+                main_abstract_text=clean_whitespace(str(item.content or "")),
+                subpage_abstract_texts=[
                     clean_whitespace(str(sub.content or "")) for sub in item.subpages
                 ],
             )
@@ -145,7 +145,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
         ctx.deep.context_scores = {}
         ready: list[SearchCandidateForScoring] = []
         for idx, candidate in enumerate(candidates):
-            main_text = clean_whitespace(str(candidate.main_md_for_abstract or ""))
+            main_text = clean_whitespace(str(candidate.main_abstract_text or ""))
             if not self._passes_text_filters(
                 text=main_text,
                 include_text=options.include_text,
@@ -317,7 +317,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
     ) -> list[tuple[str, list[float], list[float]]]:
         subpage_count = max(
             len(candidate.result.subpages),
-            len(candidate.subpages_md_for_abstract),
+            len(candidate.subpage_abstract_texts),
             len(candidate.subpages_overview_scores),
         )
         out: list[tuple[str, list[float], list[float]]] = []
@@ -329,8 +329,8 @@ class SearchRankStep(StepBase[SearchStepContext]):
             )
             content_text = clean_whitespace(
                 str(
-                    candidate.subpages_md_for_abstract[sub_idx]
-                    if sub_idx < len(candidate.subpages_md_for_abstract)
+                    candidate.subpage_abstract_texts[sub_idx]
+                    if sub_idx < len(candidate.subpage_abstract_texts)
                     else ""
                 )
             )
