@@ -5,8 +5,12 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.rank.base import RankerBase
+from serpsage.components.rank.base import RankerBase, RankMode
 from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
+from serpsage.components.rank.cross_encoder import (
+    CROSS_ENCODER_AVAILABLE,
+    CrossEncoderRanker,
+)
 from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
@@ -23,7 +27,20 @@ class BlendRanker(RankerBase):
         self._heuristic = HeuristicRanker(rt=rt)
         self._tfidf = TfidfRanker(rt=rt)
         self._bm25: Bm25Ranker | None = Bm25Ranker(rt=rt) if BM25_AVAILABLE else None
-        self.bind_deps(self._heuristic, self._tfidf, self._bm25)
+        rerank_cross_encoder_weight = float(
+            self.settings.rank.blend.rerank.cross_encoder_weight
+        )
+        self._cross_encoder: CrossEncoderRanker | None = (
+            CrossEncoderRanker(rt=rt)
+            if rerank_cross_encoder_weight > 0 and CROSS_ENCODER_AVAILABLE
+            else None
+        )
+        self.bind_deps(
+            self._heuristic,
+            self._tfidf,
+            self._bm25,
+            self._cross_encoder,
+        )
 
     def _provider_weights(self) -> dict[str, float]:
         raw = {
@@ -40,11 +57,26 @@ class BlendRanker(RankerBase):
             return {"heuristic": 1.0}
         return {k: float(v) / total for k, v in raw.items()}
 
-    @override
-    async def score_texts(
+    def _rerank_weights(self) -> dict[str, float]:
+        cfg = self.settings.rank.blend.rerank
+        raw = {
+            "retrieve": float(cfg.retrieve_weight),
+            "cross_encoder": float(cfg.cross_encoder_weight),
+        }
+        if raw["cross_encoder"] > 0 and self._cross_encoder is None:
+            raw["cross_encoder"] = 0.0
+        filtered = {name: value for name, value in raw.items() if value > 0}
+        if not filtered:
+            return {"retrieve": 1.0}
+        total = sum(filtered.values())
+        if total <= 0:
+            return {"retrieve": 1.0}
+        return {name: value / total for name, value in filtered.items()}
+
+    async def _score_retrieve(
         self,
-        *,
         texts: list[str],
+        *,
         query: str,
         query_tokens: list[str],
     ) -> list[float]:
@@ -62,26 +94,29 @@ class BlendRanker(RankerBase):
         async def run_heuristic() -> None:
             nonlocal heur
             heur = await self._heuristic.score_texts(
-                texts=texts,
+                texts,
                 query=query,
                 query_tokens=query_tokens,
+                mode="retrieve",
             )
 
         async def run_bm25() -> None:
             nonlocal bm25_raw
             assert self._bm25 is not None
             bm25_raw = await self._bm25.score_texts(
-                texts=texts,
+                texts,
                 query=query,
                 query_tokens=query_tokens,
+                mode="retrieve",
             )
 
         async def run_tfidf() -> None:
             nonlocal tfidf
             tfidf = await self._tfidf.score_texts(
-                texts=texts,
+                texts,
                 query=query,
                 query_tokens=query_tokens,
+                mode="retrieve",
             )
 
         async with anyio.create_task_group() as tg:
@@ -111,6 +146,43 @@ class BlendRanker(RankerBase):
 
             transforms["bm25"] = _scale_bm25
         return blend_weighted(scores=score_map, weights=weights, transforms=transforms)
+
+    @override
+    async def score_texts(
+        self,
+        texts: list[str],
+        *,
+        query: str,
+        query_tokens: list[str],
+        mode: RankMode = "retrieve",
+    ) -> list[float]:
+        resolved_mode = self._resolve_mode(mode, supported=("retrieve", "rerank"))
+        retrieve_scores = await self._score_retrieve(
+            texts,
+            query=query,
+            query_tokens=query_tokens,
+        )
+        if resolved_mode == "retrieve":
+            return retrieve_scores
+        rerank_weights = self._rerank_weights()
+        cross_encoder_scores = [0.0 for _ in texts]
+        if (
+            float(rerank_weights.get("cross_encoder", 0.0)) > 0
+            and self._cross_encoder is not None
+        ):
+            cross_encoder_scores = await self._cross_encoder.score_texts(
+                texts,
+                query=query,
+                query_tokens=query_tokens,
+                mode="rerank",
+            )
+        return blend_weighted(
+            scores={
+                "retrieve": retrieve_scores,
+                "cross_encoder": cross_encoder_scores,
+            },
+            weights=rerank_weights,
+        )
 
 
 __all__ = ["BlendRanker", "blend_weighted"]

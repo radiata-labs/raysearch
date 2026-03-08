@@ -173,8 +173,8 @@ def build_engine(
             llm=llm,
             phase="post",
         ),
-        ResearchOverviewStep(rt=rt, llm=llm),
-        ResearchContentStep(rt=rt, llm=llm),
+        ResearchOverviewStep(rt=rt, llm=llm, ranker=ranker),
+        ResearchContentStep(rt=rt, llm=llm, ranker=ranker),
         ResearchDecideStep(rt=rt, llm=llm),
     ]
     research_round_runner = RunnerBase[ResearchStepContext](
@@ -189,7 +189,7 @@ def build_engine(
             rt=rt,
             llm=llm,
             round_runner=research_round_runner,
-            render_step=ResearchSubreportStep(rt=rt, llm=llm),
+            render_step=ResearchSubreportStep(rt=rt, llm=llm, ranker=ranker),
         ),
         ResearchRenderStep(rt=rt, llm=llm),
         ResearchFinalizeStep(rt=rt),

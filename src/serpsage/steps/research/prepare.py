@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.research import (
+    ResearchBudgetLedger,
+    ResearchBudgetTierState,
     ResearchKnowledge,
     ResearchLimits,
     ResearchResult,
@@ -93,16 +95,16 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 "global_fetch_budget": global_fetch_budget,
                 "global_search_used": 0,
                 "global_fetch_used": 0,
-                "budget_ledger": {
-                    "original_search_budget": global_search_budget,
-                    "original_fetch_budget": global_fetch_budget,
-                    "base_budget": {
-                        "search_total": global_search_budget,
-                        "fetch_total": global_fetch_budget,
-                    },
-                    "restored_budget": {"search_total": 0, "fetch_total": 0},
-                    "extension_budget": {"search_total": 0, "fetch_total": 0},
-                },
+                "budget_ledger": ResearchBudgetLedger(
+                    original_search_budget=global_search_budget,
+                    original_fetch_budget=global_fetch_budget,
+                    base_budget=ResearchBudgetTierState(
+                        search_total=global_search_budget,
+                        fetch_total=global_fetch_budget,
+                    ),
+                    restored_budget=ResearchBudgetTierState(),
+                    extension_budget=ResearchBudgetTierState(),
+                ),
                 "restored_budget_applied": False,
                 "extension_budget_applied": False,
                 "budget_events": [],

@@ -159,7 +159,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 headings.append(heading)
         combined_texts = [candidate.text for candidate in candidates] + headings
         combined_scores = await self._ranker.score_texts(
-            texts=combined_texts,
+            combined_texts,
             query=query,
             query_tokens=list(query_tokens or []),
         )

@@ -17,20 +17,29 @@ from serpsage.steps.research.prompt import (
     build_subreport_prompt_messages,
     build_subreport_update_prompt_messages,
 )
+from serpsage.steps.research.rank import rerank_research_sources
 from serpsage.steps.research.schema import build_subreport_update_schema
 from serpsage.steps.research.search import source_authority_score
 from serpsage.steps.research.utils import resolve_research_model
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
+    from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
 
 
 class ResearchSubreportStep(StepBase[ResearchStepContext]):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+    def __init__(
+        self,
+        *,
+        rt: Runtime,
+        llm: LLMClientBase,
+        ranker: RankerBase,
+    ) -> None:
         super().__init__(rt=rt)
         self._llm = llm
-        self.bind_deps(llm)
+        self._ranker = ranker
+        self.bind_deps(llm, ranker)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -61,6 +70,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             ctx.result.structured = None
             ctx.result.content = ""
             return
+        source_evidence = await rerank_research_sources(
+            ctx=ctx,
+            ranker=self._ranker,
+            sources=source_evidence,
+            query=ctx.task.question,
+        )
         chunk_size = max(1, ctx.run.limits.report_source_batch_size)
         chunk_chars = max(1, ctx.run.limits.report_source_batch_chars)
         chunks = [
@@ -114,6 +129,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 break
         remaining_sources = source_evidence[used_count:]
         if remaining_sources:
+            remaining_sources = await rerank_research_sources(
+                ctx=ctx,
+                ranker=self._ranker,
+                sources=remaining_sources,
+                query=ctx.task.question,
+            )
             final_notes = list(notes)
             final_overview = await self._build_remaining_overview(
                 ctx=ctx,

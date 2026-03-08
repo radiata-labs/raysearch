@@ -20,7 +20,6 @@ from serpsage.models.steps.research import (
     TaskComplexity,
     TaskIntent,
 )
-from serpsage.steps.research.language import describe_language
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -313,10 +312,8 @@ def research_mode_scope_lock_contract(
 
 
 def _resolve_language_label(language_code: str) -> str:
-    return describe_language(
-        language_code,
-        default=language_code or "the required language",
-    )
+    normalized = language_code.strip() if language_code else ""
+    return normalized or "the required language"
 
 
 def _build_language_lock_block(
@@ -2319,7 +2316,7 @@ def render_link_candidates_markdown(
 
 def build_overview_packet(*, sources: list[ResearchSource]) -> str:
     blocks: list[str] = []
-    for source in sorted(sources, key=lambda item: item.source_id):
+    for source in sources:
         source_title = source.title
         source_url = source.url
         source_host = _normalize_url_host(source_url)
@@ -2355,7 +2352,7 @@ def build_content_packet(
 ) -> str:
     wanted = set(source_ids)
     blocks: list[str] = []
-    for source in sorted(sources, key=lambda item: item.source_id):
+    for source in sources:
         if source.source_id not in wanted:
             continue
         content = normalize_block_text(source.content)

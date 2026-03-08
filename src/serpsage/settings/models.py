@@ -15,7 +15,7 @@ class Model(BaseModel):
 
 ProviderBackendKey = Literal["searxng"]
 FetchBackendKey = Literal["curl_cffi", "playwright", "auto"]
-RankBackendKey = Literal["blend", "heuristic", "tfidf", "bm25"]
+RankBackendKey = Literal["blend", "heuristic", "tfidf", "bm25", "cross_encoder"]
 RankBlendProviderKey = Literal["heuristic", "tfidf", "bm25"]
 CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
 CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
@@ -512,10 +512,40 @@ class RankTfidfSettings(Model):
     pass
 
 
+class RankCrossEncoderSettings(Model):
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    batch_size: int = Field(default=16, ge=1)
+    max_length: int = Field(default=512, ge=1)
+
+    @field_validator("model_name")
+    @classmethod
+    def _validate_model_name(cls, value: str) -> str:
+        model_name = str(value or "").strip()
+        if not model_name:
+            raise ValueError("rank.cross_encoder.model_name must be non-empty")
+        return model_name
+
+
+class RankBlendRerankSettings(Model):
+    retrieve_weight: float = 0.35
+    cross_encoder_weight: float = 0.65
+
+    @model_validator(mode="after")
+    def _validate_weights(self) -> RankBlendRerankSettings:
+        if float(self.retrieve_weight) < 0:
+            raise ValueError("rank.blend.rerank.retrieve_weight must be >= 0")
+        if float(self.cross_encoder_weight) < 0:
+            raise ValueError("rank.blend.rerank.cross_encoder_weight must be >= 0")
+        if float(self.retrieve_weight) + float(self.cross_encoder_weight) <= 0:
+            raise ValueError("rank.blend.rerank weights must sum to a positive value")
+        return self
+
+
 class RankBlendSettings(Model):
     providers: dict[RankBlendProviderKey, float] = Field(
         default_factory=_default_rank_blend_providers
     )
+    rerank: RankBlendRerankSettings = Field(default_factory=RankBlendRerankSettings)
 
 
 class RankSettings(Model):
@@ -524,6 +554,9 @@ class RankSettings(Model):
     heuristic: HeuristicRankSettings = Field(default_factory=HeuristicRankSettings)
     tfidf: RankTfidfSettings = Field(default_factory=RankTfidfSettings)
     bm25: RankBm25Settings = Field(default_factory=RankBm25Settings)
+    cross_encoder: RankCrossEncoderSettings = Field(
+        default_factory=RankCrossEncoderSettings
+    )
 
 
 class CacheSqliteSettings(Model):

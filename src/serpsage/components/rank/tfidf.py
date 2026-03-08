@@ -9,7 +9,7 @@ from sklearn.feature_extraction.text import (  # type: ignore[import-untyped]
 )
 from sklearn.metrics.pairwise import linear_kernel  # type: ignore[import-untyped]
 
-from serpsage.components.rank.base import RankerBase
+from serpsage.components.rank.base import RankerBase, RankMode
 from serpsage.tokenize import tokenize
 from serpsage.utils import normalize_text
 
@@ -66,11 +66,13 @@ class TfidfRanker(RankerBase):
     @override
     async def score_texts(
         self,
-        *,
         texts: list[str],
+        *,
         query: str,
         query_tokens: list[str],
+        mode: RankMode = "retrieve",
     ) -> list[float]:
+        _ = self._resolve_mode(mode, supported=("retrieve",))
         return await to_thread.run_sync(_score_texts_sync, texts, query, query_tokens)
 
 

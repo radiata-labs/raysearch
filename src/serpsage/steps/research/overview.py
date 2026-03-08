@@ -12,6 +12,7 @@ from serpsage.models.steps.research import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_overview_prompt_messages
+from serpsage.steps.research.rank import rerank_research_sources
 from serpsage.steps.research.schema import build_overview_schema
 from serpsage.steps.research.search import (
     pick_sources_by_ids,
@@ -21,6 +22,7 @@ from serpsage.steps.research.utils import resolve_research_model
 
 if TYPE_CHECKING:
     from serpsage.components.llm.base import LLMClientBase
+    from serpsage.components.rank.base import RankerBase
     from serpsage.core.runtime import Runtime
 
 
@@ -28,10 +30,17 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
     _CONTEXT_NEW_RESULT_TARGET_RATIO = 0.60
     _CONTEXT_MIN_HISTORY_SOURCES = 3
 
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+    def __init__(
+        self,
+        *,
+        rt: Runtime,
+        llm: LLMClientBase,
+        ranker: RankerBase,
+    ) -> None:
         super().__init__(rt=rt)
         self._llm = llm
-        self.bind_deps(llm)
+        self._ranker = ranker
+        self.bind_deps(llm, ranker)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -68,6 +77,13 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             ctx.run.current.overview_review = self._empty_review()
             ctx.run.current.need_content_source_ids = []
             return ctx
+        sources = await rerank_research_sources(
+            ctx=ctx,
+            ranker=self._ranker,
+            sources=sources,
+            query=ctx.task.question,
+        )
+        ctx.run.current.context_source_ids = [item.source_id for item in sources]
         model = resolve_research_model(
             ctx=ctx,
             stage="overview",

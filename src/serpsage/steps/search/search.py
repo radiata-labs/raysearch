@@ -93,7 +93,7 @@ class SearchStep(StepBase[SearchStepContext]):
         base_scores: list[float] = []
         if docs:
             base_scores = await self._ranker.score_texts(
-                texts=docs,
+                docs,
                 query=req.query,
                 query_tokens=query_tokens,
             )

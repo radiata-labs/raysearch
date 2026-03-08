@@ -12,7 +12,7 @@ try:
 except Exception:  # noqa: BLE001
     BM25Okapi = None
     BM25_AVAILABLE = False
-from serpsage.components.rank.base import RankerBase
+from serpsage.components.rank.base import RankerBase, RankMode
 from serpsage.tokenize import tokenize
 
 if TYPE_CHECKING:
@@ -26,11 +26,13 @@ class Bm25Ranker(RankerBase):
     @override
     async def score_texts(
         self,
-        *,
         texts: list[str],
+        *,
         query: str,
         query_tokens: list[str],
+        mode: RankMode = "retrieve",
     ) -> list[float]:
+        _ = self._resolve_mode(mode, supported=("retrieve",))
         if not texts:
             return []
         if not BM25_AVAILABLE or BM25Okapi is None:

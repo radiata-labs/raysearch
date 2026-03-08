@@ -40,7 +40,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
             return ctx
         try:
             scores = await self._ranker.score_texts(
-                texts=[f"[{item.text}]({item.url})" for item in candidates],
+                [f"[{item.text}]({item.url})" for item in candidates],
                 query=ctx.related.subpages.query,
                 query_tokens=ctx.related.subpages.keywords,
             )

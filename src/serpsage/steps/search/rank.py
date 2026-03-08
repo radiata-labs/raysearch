@@ -263,7 +263,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
         if not texts:
             return {}
         scores = await self._ranker.score_texts(
-            texts=texts,
+            texts,
             query=query,
             query_tokens=query_tokens,
         )
@@ -300,7 +300,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
         if not texts:
             return {}
         scores = await self._ranker.score_texts(
-            texts=texts,
+            texts,
             query=query,
             query_tokens=query_tokens,
         )

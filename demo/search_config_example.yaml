@@ -1,4 +1,4 @@
-﻿provider:
+provider:
   backend: searxng
   searxng:
     base_url: https://searxng.lycoreco.dpdns.org/search
@@ -6,6 +6,9 @@
     timeout_s: 20.0
     allow_redirects: false
     headers: {}
+    retry:
+      max_attempts: 3
+      delay_ms: 200
 
 http:
   proxy: http://127.0.0.1:7890
@@ -39,13 +42,14 @@ answer:
     use_model: gpt-4.1-mini
   generate:
     use_model: gpt-4.1-mini
-    max_abstract_chars: 2000
+    max_abstract_chars: 3000
 
 research:
   tool_max_attempts: 3
   llm_self_heal_retries: 2
   models:
     plan: kimi-k2.5
+    link_select: ""
     abstract_analyze: kimi-k2.5
     content_analyze: kimi-k2.5
     synthesize: kimi-k2.5
@@ -53,46 +57,55 @@ research:
   research_fast:
     max_rounds: 3
     max_search_calls: 6
-    max_fetch_calls: 12
+    max_fetch_calls: 48
     max_results_per_search: 5
     max_queries_per_round: 3
     stop_confidence: 0.72
     min_coverage_ratio: 0.70
     max_question_cards_effective: 2
     min_rounds_per_track: 1
-    source_topk: 10
-    content_chars: 6000
-    source_chars: 30000
+    round_search_budget: 2
+    round_fetch_budget: 4
+    review_source_window: 24
+    report_source_batch_size: 4
+    report_source_batch_chars: 24000
+    fetch_page_max_chars: 24000
     explore_target_pages_per_round: 2
     explore_links_per_page: 4
   research:
     max_rounds: 5
     max_search_calls: 12
-    max_fetch_calls: 24
+    max_fetch_calls: 72
     max_results_per_search: 8
     max_queries_per_round: 5
     stop_confidence: 0.80
     min_coverage_ratio: 0.80
     max_question_cards_effective: 4
     min_rounds_per_track: 2
-    source_topk: 20
-    content_chars: 10000
-    source_chars: 60000
+    round_search_budget: 3
+    round_fetch_budget: 8
+    review_source_window: 48
+    report_source_batch_size: 8
+    report_source_batch_chars: 48000
+    fetch_page_max_chars: 48000
     explore_target_pages_per_round: 4
     explore_links_per_page: 10
   research_pro:
     max_rounds: 8
     max_search_calls: 24
-    max_fetch_calls: 48
+    max_fetch_calls: 120
     max_results_per_search: 10
     max_queries_per_round: 6
     stop_confidence: 0.86
     min_coverage_ratio: 0.90
     max_question_cards_effective: 6
     min_rounds_per_track: 3
-    source_topk: 32
-    content_chars: 12000
-    source_chars: 110000
+    round_search_budget: 4
+    round_fetch_budget: 12
+    review_source_window: 72
+    report_source_batch_size: 12
+    report_source_batch_chars: 72000
+    fetch_page_max_chars: 72000
     explore_target_pages_per_round: 6
     explore_links_per_page: 16
 
@@ -104,20 +117,33 @@ runner:
 
 fetch:
   backend: auto # auto|curl_cffi|playwright
-  timeout_s: 20
+  inflight_enabled: true
+  inflight_timeout_s: 60.0
+  timeout_s: 2.0
   follow_redirects: true
   user_agent: serpsage-bot/4.0
   concurrency:
     global_limit: 24
     per_host: 4
     politeness_delay_ms: 0
+  auto:
+    scout_bytes: 48000
+    route_memory_size: 4096
+    direct_route_min_samples: 3
+    direct_playwright_cost_ratio: 0.78
+    direct_playwright_min_useful: 0.72
+    learning_rate: 0.22
   render:
-    js_concurrency: 4
-    nav_timeout_ms: 10000
+    js_concurrency: 12
+    nav_timeout_ms: 8000
     block_resources: true
+    readiness_poll_ms: 150
+    readiness_stable_rounds: 2
+    post_ready_wait_ms: 120
   quality:
-    min_text_chars: 220
+    min_text_chars: 100
     script_ratio_threshold: 0.35
+    quality_score_threshold: 0.15
     blocked_markers:
       - cloudflare
       - just a moment
@@ -137,7 +163,7 @@ fetch:
     link_keep_hash: false
   abstract:
     max_abstract_chars: 2000
-    min_abstract_score: 0.4
+    min_abstract_score: 0.2
     min_abstract_tokens: 4
     title_boost_alpha: 0.35
   overview:
@@ -151,8 +177,11 @@ rank:
   backend: blend
   blend:
     providers:
-      bm25: 0.7
-      heuristic: 0.3
+      heuristic: 0.7
+      tfidf: 0.3
+    rerank:
+      retrieve_weight: 0.35
+      cross_encoder_weight: 0.65
   heuristic:
     early_bonus: 1.15
     unique_hit_weight: 6.0
@@ -160,9 +189,15 @@ rank:
     intent_hit_weight: 5.0
     max_count_per_token: 5
     temperature: 1.0
-    min_items_for_sigmoid: 1
+    min_items_for_sigmoid: 5
     flat_spread_eps: 1e-9
     z_clip: 8.0
+  tfidf: {}
+  bm25: {}
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+    batch_size: 16
+    max_length: 512
 
 llm:
   models:
@@ -233,3 +268,13 @@ cache:
     url: sqlite+aiosqlite:///./.serpsage_cache.sqlite3
     table: cache
 
+telemetry:
+  enabled: true
+  queue_size: 2048
+  drop_noncritical_when_full: true
+  obs:
+    backend: jsonl
+    jsonl_path: .serpsage_events.jsonl
+  metering:
+    backend: "null"
+    sqlite_db_path: .serpsage_metering.jsonl

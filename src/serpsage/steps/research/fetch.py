@@ -507,7 +507,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         texts = [self._render_rank_text(item) for item in links]
         try:
             scores = await self._ranker.score_texts(
-                texts=texts,
+                texts,
                 query=query,
                 query_tokens=tokenize_for_query(query),
             )

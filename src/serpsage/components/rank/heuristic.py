@@ -9,7 +9,7 @@ from collections import Counter
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.components.rank.base import RankerBase
+from serpsage.components.rank.base import RankerBase, RankMode
 from serpsage.utils import normalize_text
 
 if TYPE_CHECKING:
@@ -29,11 +29,13 @@ class HeuristicRanker(RankerBase):
     @override
     async def score_texts(
         self,
-        *,
         texts: list[str],
+        *,
         query: str,
         query_tokens: list[str],
+        mode: RankMode = "retrieve",
     ) -> list[float]:
+        _ = self._resolve_mode(mode, supported=("retrieve",))
         cfg = self.settings.rank.heuristic
         normalized_query_tokens = self._normalize_query_tokens(query_tokens)
         if not normalized_query_tokens:
