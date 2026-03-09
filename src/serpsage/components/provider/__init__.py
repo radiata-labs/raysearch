@@ -1,13 +1,3 @@
-from __future__ import annotations
+from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 
-from typing import Any, cast
-
-from serpsage.components.provider.base import SearchProviderBase
-
-
-def build_provider(*, rt: Any, http: Any | None = None) -> SearchProviderBase:
-    _ = http
-    return cast("SearchProviderBase", rt.services.require(SearchProviderBase))
-
-
-__all__ = ["SearchProviderBase", "build_provider"]
+__all__ = ["ProviderConfigBase", "SearchProviderBase"]

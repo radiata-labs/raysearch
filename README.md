@@ -11,13 +11,18 @@ SerpSage is an async-only SERP, fetch, answer, and research engine. Public entry
 
 ## Component System
 
-The component layer is now registry and container driven.
+The component layer now loads through `serpsage.load` and is isolated per
+`Engine.from_settings(...)` call.
 
 - Each component owns its own `pydantic` config model.
 - `src/serpsage/settings/models.py` only defines generic component-family containers plus non-component business settings.
-- Builtin components self-register through metadata.
+- Builtin components self-register through metadata attached at import time.
+- Each `from_settings(...)` call builds a fresh registry and component catalog.
+- Raw user-declared instances are tracked separately from merged defaults.
 - Runtime assembly uses automatic dependency injection by `family + contract + default`.
 - `backend: Literal[...]` is removed from settings. Families now declare `default` and `instances`.
+- Components with `config_optional=True` may load from merged defaults even when
+  the instance was not explicitly written in the config file.
 
 Built-in component families:
 
@@ -132,5 +137,5 @@ async with Engine.from_settings(settings) as engine:
 
 - `search.mode`: `fast | auto | deep`
 - Fetch remains markdown-first.
-- Builtin discovery is local-repo only; there is no setuptools plugin loading in this version.
+- Runtime component loading lives under `serpsage.load`.
 - JS rendering still requires Playwright browsers to be installed.

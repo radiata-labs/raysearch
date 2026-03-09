@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 from serpsage.app.engine import Engine
@@ -19,12 +19,6 @@ from serpsage.app.tokens import (
     RESEARCH_SUBREPORT_STEP,
     SEARCH_RUNNER,
     SEARCH_STEPS,
-)
-from serpsage.components import (
-    BuiltinComponentDiscovery,
-    ComponentCatalog,
-    ComponentContainer,
-    get_component_registry,
 )
 from serpsage.components.base import (
     CACHE_FAMILY,
@@ -56,6 +50,12 @@ from serpsage.dependencies import (
     ServiceCollection,
     ServiceProvider,
     format_service_key,
+)
+from serpsage.load import (
+    ComponentCatalog,
+    ComponentContainer,
+    ComponentRegistry,
+    load_component_registry,
 )
 from serpsage.settings.models import AppSettings
 from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
@@ -95,6 +95,9 @@ from serpsage.steps.search import (
     SearchStep,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 class SystemClock(ClockBase):
     @override
@@ -117,20 +120,26 @@ def build_component_container(
     *,
     settings: AppSettings,
     overrides: Overrides | None = None,
+    component_loader: Callable[[ComponentRegistry], None] | None = None,
 ) -> tuple[Runtime, ComponentContainer]:
     ov = overrides or Overrides()
-    BuiltinComponentDiscovery.discover()
     rt = build_runtime(settings=settings, overrides=ov)
     catalog = ComponentCatalog(
         settings=settings,
-        registry=get_component_registry(),
+        registry=load_component_registry(
+            settings=settings,
+            component_loader=component_loader,
+        ),
         overrides=ov,
         env=rt.env,
     )
     rt.components = catalog
     provider = _build_services(rt=rt, catalog=catalog, overrides=ov)
     rt.services = provider
-    rt.telemetry = cast("TelemetryEmitterBase", provider.require(TelemetryEmitterBase))
+    rt.telemetry = cast(
+        "TelemetryEmitterBase[Any]",
+        provider.require(TelemetryEmitterBase),
+    )
     return rt, catalog
 
 
@@ -138,10 +147,15 @@ def build_engine(
     *,
     settings: AppSettings,
     overrides: Overrides | None = None,
+    component_loader: Callable[[ComponentRegistry], None] | None = None,
 ) -> Engine:
     ov = overrides or Overrides()
     _validate_override_workunits(ov)
-    rt, _catalog = build_component_container(settings=settings, overrides=ov)
+    rt, _catalog = build_component_container(
+        settings=settings,
+        overrides=ov,
+        component_loader=component_loader,
+    )
     services = rt.services
     if services is None:
         raise RuntimeError("runtime service provider is not attached")
@@ -166,7 +180,7 @@ def _build_services(
     _register_pipeline_services(services)
     services.bind_class(Engine, Engine, scope=BindingScope.SINGLETON)
 
-    provider = services.build_provider()
+    provider = services.build_provider(validate=False)
     provider.bind_instance(ServiceProvider, provider)
     return provider
 

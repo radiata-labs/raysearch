@@ -12,7 +12,7 @@ import anyio
 from serpsage.components.base import ComponentMeta
 from serpsage.components.fetch.base import FetchConfigBase, FetcherBase
 from serpsage.components.fetch.utils import analyze_content
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
@@ -81,6 +81,7 @@ _PLAYWRIGHT_FETCHER_META = ComponentMeta(
     summary="Playwright browser fetch backend.",
     provides=("fetch.playwright_engine",),
     config_model=PlaywrightFetcherConfig,
+    config_optional=True,
 )
 
 

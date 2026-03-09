@@ -6,7 +6,7 @@ import anyio
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 
 _MEMORY_CACHE_META = ComponentMeta(
     family="cache",

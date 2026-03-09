@@ -34,10 +34,15 @@ class ComponentFamilySettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     default: str = "default"
     instances: dict[str, ComponentInstanceSettings] = Field(default_factory=dict)
+    declared_instances: frozenset[str] = Field(
+        default_factory=frozenset,
+        exclude=True,
+        repr=False,
+    )
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_legacy_shape(cls, value: object) -> object:
+    def _normalize_component_family(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
         if "backend" in value:
@@ -45,7 +50,15 @@ class ComponentFamilySettings(Model):
                 "legacy component config format is no longer supported; "
                 "use `default` and `instances`"
             )
-        return value
+        payload = dict(value)
+        if "declared_instances" not in payload:
+            raw_instances = payload.get("instances")
+            payload["declared_instances"] = (
+                frozenset(str(key) for key in raw_instances)
+                if isinstance(raw_instances, dict)
+                else frozenset()
+            )
+        return payload
 
     @field_validator("default")
     @classmethod
@@ -71,6 +84,7 @@ def _family_settings(
             )
             for key, item in instances.items()
         },
+        declared_instances=frozenset(),
     )
 
 
@@ -506,6 +520,73 @@ class AppSettings(Model):
     research: ResearchSettings = Field(default_factory=ResearchSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
     runtime_env: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_component_family_defaults(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        for family_name, factory in _COMPONENT_FAMILY_DEFAULT_FACTORIES.items():
+            payload[family_name] = _merge_component_family_payload(
+                default_settings=factory(),
+                raw_value=payload.get(family_name),
+            )
+        return payload
+
+
+_COMPONENT_FAMILY_DEFAULT_FACTORIES = {
+    "http": _default_http_settings,
+    "provider": _default_provider_settings,
+    "fetch": _default_fetch_settings,
+    "extract": _default_extract_settings,
+    "rank": _default_rank_settings,
+    "llm": _default_llm_settings,
+    "cache": _default_cache_settings,
+    "telemetry": _default_telemetry_settings,
+    "rate_limit": _default_rate_limit_settings,
+}
+
+
+def _merge_component_family_payload(
+    *,
+    default_settings: ComponentFamilySettings,
+    raw_value: object,
+) -> object:
+    default_payload = default_settings.model_dump(
+        mode="python",
+        exclude={"declared_instances"},
+    )
+    default_instances = dict(default_payload.get("instances") or {})
+    if raw_value is None:
+        return {
+            **default_payload,
+            "declared_instances": frozenset(),
+        }
+    if isinstance(raw_value, ComponentFamilySettings):
+        raw_payload = raw_value.model_dump(
+            mode="python",
+            exclude={"declared_instances"},
+        )
+        declared_instances = frozenset(str(key) for key in raw_value.declared_instances)
+    elif isinstance(raw_value, dict):
+        raw_payload = dict(raw_value)
+        raw_instances = raw_payload.get("instances")
+        declared_instances = (
+            frozenset(str(key) for key in raw_instances)
+            if isinstance(raw_instances, dict)
+            else frozenset()
+        )
+    else:
+        return raw_value
+    merged_instances = dict(default_instances)
+    merged_instances.update(dict(raw_payload.get("instances") or {}))
+    return {
+        **default_payload,
+        **raw_payload,
+        "instances": merged_instances,
+        "declared_instances": declared_instances,
+    }
 
 
 __all__ = [

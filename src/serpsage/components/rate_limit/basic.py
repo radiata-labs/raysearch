@@ -6,7 +6,7 @@ import anyio
 
 from serpsage.components.base import ComponentConfigBase, ComponentMeta
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 
 
 class RateLimiterConfig(ComponentConfigBase):
@@ -22,11 +22,12 @@ _BASIC_RATE_LIMITER_META = ComponentMeta(
     summary="Basic semaphore-based host-aware rate limiter.",
     provides=("rate_limit.control",),
     config_model=RateLimiterConfig,
+    config_optional=True,
 )
 
 
 @register_component(meta=_BASIC_RATE_LIMITER_META)
-class BasicRateLimiter(RateLimiterBase):
+class BasicRateLimiter(RateLimiterBase[RateLimiterConfig]):
     meta = _BASIC_RATE_LIMITER_META
 
     def __init__(self) -> None:

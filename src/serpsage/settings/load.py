@@ -18,6 +18,10 @@ def load_settings(
     2) `SERPSAGE_CONFIG_PATH`
     3) `serpsage.yaml`
     4) defaults
+
+    Raw component instance declarations are preserved through validation so the
+    isolated component loader can distinguish explicit user config from
+    post-merge defaults.
     """
     env_map = dict(env) if env is not None else dict(os.environ)
     candidate = path or env_map.get("SERPSAGE_CONFIG_PATH") or "serpsage.yaml"

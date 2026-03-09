@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from serpsage.app.tokens import (
     ANSWER_RUNNER,
@@ -12,7 +12,7 @@ from serpsage.app.tokens import (
 )
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
-from serpsage.dependencies import Inject
+from serpsage.load import ComponentRegistry
 from serpsage.models.app.response import (
     AnswerResponse,
     FetchResponse,
@@ -29,6 +29,8 @@ from serpsage.models.steps.search import SearchStepContext
 from serpsage.steps.base import RunnerBase
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from serpsage.models.app.request import (
         AnswerRequest,
         FetchRequest,
@@ -41,22 +43,25 @@ if TYPE_CHECKING:
 class Engine(WorkUnit):
     """Async-only engine with search/fetch/answer/research paths."""
 
-    _search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER)
-    _fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER)
-    _answer_runner: RunnerBase[AnswerStepContext] = Inject(ANSWER_RUNNER)
-    _research_runner: RunnerBase[ResearchStepContext] = Inject(RESEARCH_RUNNER)
-
     def __init__(self) -> None:
         self.bind_deps(self.telemetry)
 
     @classmethod
     def from_settings(
-        cls, settings: AppSettings, *, overrides: Overrides | None = None
+        cls,
+        settings: AppSettings,
+        *,
+        overrides: Overrides | None = None,
+        component_loader: Callable[[ComponentRegistry], None] | None = None,
     ) -> Engine:
         """Build an engine through the component registry/container bootstrap."""
         from serpsage.app.bootstrap import build_engine  # noqa: PLC0415
 
-        return build_engine(settings=settings, overrides=overrides)
+        return build_engine(
+            settings=settings,
+            overrides=overrides,
+            component_loader=component_loader,
+        )
 
     async def search(self, req: SearchRequest) -> SearchResponse:
         request_id = uuid.uuid4().hex
@@ -81,7 +86,7 @@ class Engine(WorkUnit):
             ),
         )
         try:
-            ctx = await self._search_runner.run(ctx)
+            ctx = await self._search_runner().run(ctx)
             ctx.response.search_mode = ctx.request.mode
             ctx.response.results = list(ctx.output.results)
             response = ctx.response
@@ -161,7 +166,7 @@ class Engine(WorkUnit):
                 )
                 contexts.append(fetch_ctx)
             if contexts:
-                contexts = await self._fetch_runner.run_batch(contexts)
+                contexts = await self._fetch_runner().run_batch(contexts)
             results = [
                 ctx.result
                 for ctx in contexts
@@ -265,7 +270,7 @@ class Engine(WorkUnit):
             ),
         )
         try:
-            ctx = await self._answer_runner.run(ctx)
+            ctx = await self._answer_runner().run(ctx)
             answer: str | object
             if isinstance(req.json_schema, dict):
                 answer = (
@@ -341,9 +346,7 @@ class Engine(WorkUnit):
             ),
         )
         try:
-            research_runner = self._research_runner
-            if research_runner is None:
-                raise RuntimeError("research runner is not configured")
+            research_runner = self._research_runner()
             ctx = await research_runner.run(ctx)
             ctx.response.content = ctx.result.content
             ctx.response.structured = ctx.result.structured
@@ -430,6 +433,25 @@ class Engine(WorkUnit):
             return
         with suppress(Exception):
             telemetry.pop_request_context(token)
+
+    def _search_runner(self) -> RunnerBase[SearchStepContext]:
+        return cast(
+            "RunnerBase[SearchStepContext]", self.services.require(SEARCH_RUNNER)
+        )
+
+    def _fetch_runner(self) -> RunnerBase[FetchStepContext]:
+        return cast("RunnerBase[FetchStepContext]", self.services.require(FETCH_RUNNER))
+
+    def _answer_runner(self) -> RunnerBase[AnswerStepContext]:
+        return cast(
+            "RunnerBase[AnswerStepContext]", self.services.require(ANSWER_RUNNER)
+        )
+
+    def _research_runner(self) -> RunnerBase[ResearchStepContext]:
+        return cast(
+            "RunnerBase[ResearchStepContext]",
+            self.services.require(RESEARCH_RUNNER),
+        )
 
 
 __all__ = ["Engine"]

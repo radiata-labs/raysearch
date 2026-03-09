@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from pydantic import ConfigDict, Field
@@ -18,8 +18,8 @@ from serpsage.models.base import MutableModel
 from serpsage.settings.models import AppSettings
 
 if TYPE_CHECKING:
-    from serpsage.components.container import ComponentCatalog
     from serpsage.dependencies import ServiceProvider
+    from serpsage.load import ComponentCatalog
 
 
 class ClockBase(ABC):
@@ -36,7 +36,7 @@ class Runtime(MutableModel):
     )
     settings: AppSettings
     clock: ClockBase
-    telemetry: TelemetryEmitterBase | None = None
+    telemetry: TelemetryEmitterBase[Any] | None = None
     components: ComponentCatalog | None = None
     services: ServiceProvider | None = None
     env: dict[str, str] = Field(default_factory=dict)
@@ -51,13 +51,13 @@ class Overrides(MutableModel):
     http: httpx.AsyncClient | None = None
     clock: ClockBase | None = None
     cache: CacheBase | None = None
-    rate_limiter: RateLimiterBase | None = None
+    rate_limiter: RateLimiterBase[Any] | None = None
     provider: SearchProviderBase | None = None
     fetcher: FetcherBase | None = None
     extractor: ExtractorBase | None = None
     ranker: RankerBase | None = None
     llm: LLMClientBase | None = None
-    telemetry: TelemetryEmitterBase | None = None
+    telemetry: TelemetryEmitterBase[Any] | None = None
 
 
 __all__ = ["ClockBase", "Overrides", "Runtime"]

@@ -16,7 +16,7 @@ from serpsage.components.fetch.utils import (
     parse_retry_after_s,
 )
 from serpsage.components.http.base import HttpClientConfig
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
@@ -55,6 +55,7 @@ _CURL_FETCHER_META = ComponentMeta(
     summary="curl_cffi fetch backend.",
     provides=("fetch.curl_engine",),
     config_model=CurlCffiFetcherConfig,
+    config_optional=True,
 )
 
 
@@ -134,8 +135,11 @@ class CurlCffiFetcher(FetcherBase):
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
         cfg = self.config
-        http_cfg = self.components.resolve_default_config(
-            "http", expected_type=HttpClientConfig
+        http_cfg = cast(
+            "HttpClientConfig",
+            self.components.resolve_default_config(
+                "http", expected_type=HttpClientConfig
+            ),
         )
         req_timeout_s = timeout_s or cfg.timeout_s
         max_attempts = max(1, int(getattr(retry, "max_attempts", 0) or 2))

@@ -14,8 +14,8 @@ from serpsage.components.provider.base import (
     ProviderConfigBase,
     SearchProviderBase,
 )
-from serpsage.components.registry import register_component
 from serpsage.dependencies import Inject
+from serpsage.load import register_component
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,

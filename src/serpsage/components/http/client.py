@@ -6,28 +6,22 @@ import httpx
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase, HttpClientConfig
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 
-
-@register_component(
-    meta=ComponentMeta(
-        family="http",
-        name="httpx",
-        version="1.0.0",
-        summary="Shared httpx async client.",
-        provides=("http.client",),
-        config_model=HttpClientConfig,
-    )
+_HTTPX_META = ComponentMeta(
+    family="http",
+    name="httpx",
+    version="1.0.0",
+    summary="Shared httpx async client.",
+    provides=("http.client",),
+    config_model=HttpClientConfig,
+    config_optional=True,
 )
+
+
+@register_component(meta=_HTTPX_META)
 class HttpClient(HttpClientBase):
-    meta = ComponentMeta(
-        family="http",
-        name="httpx",
-        version="1.0.0",
-        summary="Shared httpx async client.",
-        provides=("http.client",),
-        config_model=HttpClientConfig,
-    )
+    meta = _HTTPX_META
 
     def __init__(
         self,

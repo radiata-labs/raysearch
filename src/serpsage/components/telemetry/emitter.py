@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from contextlib import suppress
 from contextvars import ContextVar, Token
+from typing import Any
 from typing_extensions import override
 
 import anyio
@@ -11,12 +12,12 @@ from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from serpsage.components.base import ComponentConfigBase, ComponentMeta
-from serpsage.components.registry import register_component
 from serpsage.components.telemetry.base import (
     EventSinkBase,
     TelemetryEmitterBase,
 )
 from serpsage.dependencies import Inject
+from serpsage.load import register_component
 from serpsage.models.components.telemetry import (
     EventAttributes,
     EventEnvelope,
@@ -38,6 +39,7 @@ _NULL_EMITTER_META = ComponentMeta(
     summary="No-op telemetry emitter.",
     provides=("telemetry.emitter",),
     config_model=ComponentConfigBase,
+    config_optional=True,
 )
 _ASYNC_EMITTER_META = ComponentMeta(
     family="telemetry",
@@ -75,7 +77,7 @@ class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
         self,
         *,
         config: TelemetryEmitterConfig,
-        sinks: tuple[EventSinkBase, ...] = Inject(),
+        sinks: tuple[EventSinkBase[Any], ...] = Inject(),
     ) -> None:
         self._sinks = list(sinks)
         self._queue_size = max(1, int(config.queue_size))

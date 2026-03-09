@@ -157,7 +157,7 @@ class ServiceCollection:
             )
         )
 
-    def build_provider(self) -> ServiceProvider:
+    def build_provider(self, *, validate: bool = True) -> ServiceProvider:
         provider = ServiceProvider(
             single_bindings=dict(self._single_bindings),
             multi_bindings={
@@ -165,7 +165,8 @@ class ServiceCollection:
                 for key, items in self._multi_bindings.items()
             },
         )
-        provider.validate()
+        if validate:
+            provider.validate()
         return provider
 
     def _ensure_single_free(self, key: ServiceKey[Any]) -> None:

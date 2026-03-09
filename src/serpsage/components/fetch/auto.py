@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Any
 from typing_extensions import override
 from urllib.parse import urlparse
 
@@ -17,8 +18,8 @@ from serpsage.components.fetch.utils import (
     normalize_route_key,
 )
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.components.registry import register_component
 from serpsage.dependencies import Inject
+from serpsage.load import register_component
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
 _MIN_BYTES = 32
@@ -72,7 +73,7 @@ _AUTO_FETCHER_META = ComponentMeta(
 class AutoFetcher(FetcherBase):
     meta = _AUTO_FETCHER_META
 
-    rate_limiter: RateLimiterBase = Inject()
+    rate_limiter: RateLimiterBase[Any] = Inject()
     curl: CurlCffiFetcher = Inject()
     playwright: PlaywrightFetcher = Inject()
 

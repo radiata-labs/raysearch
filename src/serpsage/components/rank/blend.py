@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
@@ -16,8 +16,8 @@ from serpsage.components.rank.cross_encoder import CrossEncoderRanker
 from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
-from serpsage.components.registry import register_component
 from serpsage.dependencies import Inject
+from serpsage.load import register_component
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -103,8 +103,7 @@ class BlendRanker(RankerBase[RankBlendSettings]):
 
         async def run_bm25() -> None:
             nonlocal bm25_raw
-            bm25 = cast("Bm25Ranker", self.bm25)
-            bm25_raw = await bm25.score_texts(
+            bm25_raw = await self.bm25.score_texts(
                 texts,
                 query=query,
                 query_tokens=query_tokens,

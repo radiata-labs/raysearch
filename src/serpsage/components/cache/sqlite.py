@@ -9,7 +9,7 @@ from pydantic import field_validator
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 
 AioSqliteModule: Any | None = None
 try:

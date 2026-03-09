@@ -10,7 +10,7 @@ from typing_extensions import override
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import HeuristicRankSettings, RankerBase, RankMode
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 from serpsage.utils import normalize_text
 
 _HEURISTIC_META = ComponentMeta(
@@ -20,6 +20,7 @@ _HEURISTIC_META = ComponentMeta(
     summary="Rule-based text ranker.",
     provides=("rank.heuristic_engine",),
     config_model=HeuristicRankSettings,
+    config_optional=True,
 )
 
 

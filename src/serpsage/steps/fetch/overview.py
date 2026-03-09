@@ -67,9 +67,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 "json_schema": schema,
             }
             cache_key = hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
-            cached = await self.cache.aget(
-                namespace="overview:fetch:v4", key=cache_key
-            )
+            cached = await self.cache.aget(namespace="overview:fetch:v4", key=cache_key)
             if cached:
                 try:
                     decoded = json.loads(cached.decode("utf-8"))

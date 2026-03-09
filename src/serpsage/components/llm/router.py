@@ -11,8 +11,8 @@ from serpsage.components.llm.base import (
     LLMClientBase,
     LLMModelConfig,
 )
-from serpsage.components.registry import register_component
 from serpsage.dependencies import Inject
+from serpsage.load import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,

@@ -26,7 +26,7 @@ from serpsage.components.extract.utils import (
     markdown_to_text,
 )
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 from serpsage.models.components.extract import (
     ExtractContent,
     ExtractContentTag,
@@ -46,6 +46,7 @@ _HTML_EXTRACTOR_META = ComponentMeta(
     summary="HTML and text content extractor.",
     provides=("extract.html_engine",),
     config_model=ExtractConfigBase,
+    config_optional=True,
 )
 
 

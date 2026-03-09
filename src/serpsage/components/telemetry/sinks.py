@@ -10,10 +10,10 @@ import anyio
 from pydantic import field_validator
 
 from serpsage.components.base import ComponentConfigBase, ComponentMeta
-from serpsage.components.registry import register_component
 from serpsage.components.telemetry.base import (
     EventSinkBase,
 )
+from serpsage.load import register_component
 from serpsage.models.components.telemetry import EventEnvelope
 
 AioSqliteModule: Any | None = None

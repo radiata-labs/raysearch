@@ -7,8 +7,8 @@ from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.html import HtmlExtractor
 from serpsage.components.extract.pdf import PdfExtractor
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.components.registry import register_component
 from serpsage.dependencies import Inject
+from serpsage.load import register_component
 from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
 _AUTO_EXTRACTOR_META = ComponentMeta(

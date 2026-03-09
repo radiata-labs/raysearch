@@ -105,6 +105,7 @@ class ComponentMeta:
     config_model: type[ComponentConfigBase] = ComponentConfigBase
     priority: int = 100
     enabled_by_default: bool = True
+    config_optional: bool = False
 
 
 class ComponentBase(WorkUnit, Generic[ConfigT]):

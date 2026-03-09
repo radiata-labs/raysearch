@@ -9,10 +9,10 @@ from serpsage.dependencies.contracts import Inject
 if TYPE_CHECKING:
     from types import TracebackType
 
-    from serpsage.components.container import ComponentCatalog
     from serpsage.components.telemetry import TelemetryEmitterBase
     from serpsage.core.runtime import ClockBase, Runtime
     from serpsage.dependencies import ServiceProvider
+    from serpsage.load import ComponentCatalog
     from serpsage.settings.models import AppSettings
 
 
@@ -42,8 +42,8 @@ class WorkUnit:
     _wu_closed: bool
     _wu_init_order: list[WorkUnit] | None
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
+    def __init_subclass__(cls, **_kwargs: Any) -> None:
+        super().__init_subclass__()
         forbidden = [name for name in ("ainit", "aclose") if name in cls.__dict__]
         if forbidden:
             names = ", ".join(forbidden)
@@ -67,7 +67,7 @@ class WorkUnit:
         return self.rt.clock
 
     @property
-    def telemetry(self) -> TelemetryEmitterBase | None:
+    def telemetry(self) -> TelemetryEmitterBase[Any] | None:
         return self.rt.telemetry
 
     @property

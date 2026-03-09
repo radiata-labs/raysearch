@@ -23,7 +23,7 @@ from serpsage.components.extract.utils import (
     markdown_to_text,
 )
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.components.registry import register_component
+from serpsage.load import register_component
 from serpsage.models.components.extract import (
     ExtractContent,
     ExtractedDocument,
@@ -44,6 +44,7 @@ _PDF_EXTRACTOR_META = ComponentMeta(
     summary="PDF content extractor.",
     provides=("extract.pdf_engine",),
     config_model=ExtractConfigBase,
+    config_optional=True,
 )
 
 
