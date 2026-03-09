@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -71,20 +72,53 @@ def load_settings(
     settings = AppSettings.model_validate(data)
     raw_llm_models = _raw_llm_models(data)
     # Env overrides (centralized; components must not read env).
-    base_url = env_map.get("SEARXNG_BASE_URL")
-    api_key = env_map.get("SEARCH_API_KEY")
+    provider_backend = str(settings.provider.backend).lower()
+    active_provider = settings.provider.resolve_active()
+    base_url = (
+        env_map.get("PROVIDER_BASE_URL")
+        or env_map.get("SEARCH_BASE_URL")
+        or (
+            env_map.get("GOOGLE_BASE_URL")
+            if provider_backend == "google"
+            else env_map.get("SEARXNG_BASE_URL")
+        )
+    )
+    api_key = env_map.get("PROVIDER_API_KEY") or env_map.get("SEARCH_API_KEY")
     if base_url:
-        settings.provider.searxng.base_url = base_url
+        active_provider.base_url = base_url
     if api_key:
-        settings.provider.searxng.api_key = api_key
-    # Optional Cloudflare Access headers for searxng (if user uses it).
+        active_provider.api_key = api_key
+    provider_user_agent = env_map.get("PROVIDER_USER_AGENT") or (
+        env_map.get("GOOGLE_USER_AGENT") if provider_backend == "google" else None
+    )
+    if provider_user_agent:
+        active_provider.user_agent = provider_user_agent
+    provider_country = env_map.get("PROVIDER_COUNTRY") or (
+        env_map.get("GOOGLE_COUNTRY") if provider_backend == "google" else None
+    )
+    if provider_country:
+        active_provider.country = provider_country
+    provider_safe = env_map.get("PROVIDER_SAFE") or (
+        env_map.get("GOOGLE_SAFE") if provider_backend == "google" else None
+    )
+    if provider_safe:
+        safe_value = str(provider_safe).strip().lower()
+        if safe_value == "off":
+            active_provider.safe = "off"
+        elif safe_value == "medium":
+            active_provider.safe = "medium"
+        elif safe_value == "high":
+            active_provider.safe = "high"
+    provider_results_per_page = env_map.get("PROVIDER_RESULTS_PER_PAGE")
+    if provider_results_per_page:
+        with suppress(Exception):
+            active_provider.results_per_page = int(provider_results_per_page)
+    # Optional Cloudflare Access headers for providers behind Cloudflare Access.
     cf_id = env_map.get("SEARXNG_CF_ACCESS_CLIENT_ID")
     cf_secret = env_map.get("SEARXNG_CF_ACCESS_CLIENT_SECRET")
     if cf_id and cf_secret:
-        settings.provider.searxng.headers.setdefault("CF-Access-Client-Id", cf_id)
-        settings.provider.searxng.headers.setdefault(
-            "CF-Access-Client-Secret", cf_secret
-        )
+        active_provider.headers.setdefault("CF-Access-Client-Id", cf_id)
+        active_provider.headers.setdefault("CF-Access-Client-Secret", cf_secret)
     # LLM per-backend env fallback.
     # YAML explicit non-empty values always win over env.
     for idx, model in enumerate(settings.llm.models):

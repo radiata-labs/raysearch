@@ -130,7 +130,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         if not jobs:
             return ctx
         main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
-        provider_params: dict[str, str] = {}
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
             max_subpages = max(0, ctx.run.limits.round_fetch_budget - 1)
@@ -160,7 +159,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                         results=[],
                     ),
                     disable_internal_llm=True,
-                    provider_params=dict(provider_params),
                     request_id=f"{ctx.request_id}:research:{ctx.run.current.round_index}:{idx}",
                 )
             )

@@ -5,6 +5,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _DEFAULT_SEARXNG_BASE_URL = "https://searx.be/search"
+_DEFAULT_GOOGLE_BASE_URL = "https://www.google.com/search"
+_DEFAULT_GOOGLE_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
 _FINAL_WEIGHT_SUM_TARGET = 1.0
 _WEIGHT_SUM_EPS = 1e-6
 
@@ -13,7 +19,7 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
 
-ProviderBackendKey = Literal["searxng"]
+ProviderBackendKey = Literal["searxng", "google"]
 FetchBackendKey = Literal["curl_cffi", "playwright", "auto"]
 RankBackendKey = Literal["blend", "heuristic", "tfidf", "bm25", "cross_encoder"]
 RankBlendProviderKey = Literal["heuristic", "tfidf", "bm25"]
@@ -30,25 +36,40 @@ class RetrySettings(Model):
     delay_ms: int = 200
 
 
-class SearxngSettings(Model):
-    base_url: str = _DEFAULT_SEARXNG_BASE_URL
+GoogleSafeSearchKey = Literal["off", "medium", "high"]
+
+
+class ProviderBackendSettings(Model):
+    base_url: str = ""
     api_key: str | None = None
     timeout_s: float = 20.0
     allow_redirects: bool = False
     headers: dict[str, str] = Field(default_factory=dict)
+    cookies: dict[str, str] = Field(default_factory=dict)
+    user_agent: str = ""
+    safe: GoogleSafeSearchKey = "off"
+    country: str = ""
+    results_per_page: int = 10
     retry: RetrySettings = Field(default_factory=RetrySettings)
 
-    @field_validator("base_url")
-    @classmethod
-    def _validate_base_url(cls, value: str) -> str:
-        url = str(value or "").strip()
-        if not url:
-            raise ValueError("provider.searxng.base_url must be non-empty")
-        if not (url.startswith(("http://", "https://"))):
+    @model_validator(mode="after")
+    def _validate_backend_settings(self) -> ProviderBackendSettings:
+        self.base_url = str(self.base_url or "").strip()
+        if self.base_url and not self.base_url.startswith(("http://", "https://")):
             raise ValueError(
-                "provider.searxng.base_url must start with http:// or https://"
+                "provider backend base_url must start with http:// or https://"
             )
-        return url
+        if float(self.timeout_s) <= 0:
+            raise ValueError("provider backend timeout_s must be > 0")
+        self.user_agent = str(self.user_agent or "").strip()
+        self.country = str(self.country or "").strip().upper()
+        if self.country and len(self.country) != 2:
+            raise ValueError("provider backend country must be a 2-letter region code")
+        if int(self.results_per_page) <= 0:
+            raise ValueError("provider backend results_per_page must be > 0")
+        if int(self.results_per_page) > 100:
+            raise ValueError("provider backend results_per_page must be <= 100")
+        return self
 
 
 class HttpSettings(Model):
@@ -61,7 +82,26 @@ class HttpSettings(Model):
 
 class ProviderSettings(Model):
     backend: ProviderBackendKey = "searxng"
-    searxng: SearxngSettings = Field(default_factory=SearxngSettings)
+    searxng: ProviderBackendSettings = Field(default_factory=ProviderBackendSettings)
+    google: ProviderBackendSettings = Field(default_factory=ProviderBackendSettings)
+
+    @model_validator(mode="after")
+    def _validate_provider(self) -> ProviderSettings:
+        if not self.searxng.base_url:
+            self.searxng.base_url = _DEFAULT_SEARXNG_BASE_URL
+        if not self.google.base_url:
+            self.google.base_url = _DEFAULT_GOOGLE_BASE_URL
+        if not self.google.user_agent:
+            self.google.user_agent = _DEFAULT_GOOGLE_USER_AGENT
+        if not self.google.country:
+            self.google.country = "US"
+        self.google.cookies.setdefault("CONSENT", "YES+")
+        return self
+
+    def resolve_active(self) -> ProviderBackendSettings:
+        if self.backend == "google":
+            return self.google
+        return self.searxng
 
 
 def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
@@ -777,6 +817,7 @@ __all__ = [
     "LLMSettings",
     "OverviewModelBackendKey",
     "LLMModelSettings",
+    "ProviderBackendSettings",
     "ProviderSettings",
     "ReportStyleKey",
     "ResearchModelsSettings",
@@ -788,7 +829,6 @@ __all__ = [
     "RankSettings",
     "RetrySettings",
     "SearchDeepSettings",
-    "SearxngSettings",
     "TelemetryMeteringSettings",
     "TelemetryObsSettings",
     "TelemetrySettings",

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from serpsage.core.workunit import WorkUnit
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from serpsage.models.components.provider import SearchProviderResponse
 
 
 class SearchProviderBase(WorkUnit, ABC):
     @abstractmethod
     async def asearch(
-        self, *, query: str, params: Mapping[str, object] | None = None
-    ) -> list[dict[str, Any]]:
+        self,
+        *,
+        query: str,
+        page: int = 1,
+        language: str = "",
+        **kwargs: Any,
+    ) -> SearchProviderResponse:
         raise NotImplementedError

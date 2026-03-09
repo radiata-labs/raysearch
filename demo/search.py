@@ -23,7 +23,7 @@ load_dotenv()
 async def main(
     query: str,
     mode: Literal["fast", "auto", "deep"] = "deep",
-    max_results: int = 5,
+    max_results: int = 10,
 ) -> dict[str, Any]:
     settings = load_settings("demo/search_config_example.yaml")
     req = SearchRequest(
@@ -31,7 +31,7 @@ async def main(
         mode=mode,
         max_results=max_results,
         fetchs=SearchFetchRequest(
-            abstracts=FetchAbstractsRequest(max_chars=400),
+            abstracts=FetchAbstractsRequest(query=query, max_chars=400),
             subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords=query),
             others=FetchOthersRequest(max_links=5, max_image_links=5),
         ),
@@ -50,5 +50,5 @@ async def main(
 if __name__ == "__main__":
     import time
 
-    out = anyio.run(main, "The details of kimi-k2.5", "fast", 5)
+    out = anyio.run(main, "The details of kimi-k2.5", "deep", 5)
     print(out["search_result"])

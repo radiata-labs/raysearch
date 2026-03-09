@@ -15,7 +15,13 @@ def build_provider(*, rt: Runtime, http: HttpClientBase) -> SearchProviderBase:
         from serpsage.components.provider.searxng import SearxngProvider
 
         return SearxngProvider(rt=rt, http=http)
-    raise ValueError(f"unsupported provider backend `{backend}`; expected searxng")
+    if backend == "google":
+        from serpsage.components.provider.google import GoogleProvider
+
+        return GoogleProvider(rt=rt, http=http)
+    raise ValueError(
+        f"unsupported provider backend `{backend}`; expected searxng or google"
+    )
 
 
 __all__ = [

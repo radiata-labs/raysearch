@@ -9,6 +9,10 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import anyio
 
+from serpsage.models.components.provider import (
+    SearchProviderResponse,
+    SearchProviderResult,
+)
 from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.search import (
     SearchCanonicalBucket,
@@ -61,21 +65,25 @@ class SearchStep(StepBase[SearchStepContext]):
         query_jobs = self._resolve_query_jobs(ctx=ctx, mode=mode)
         if not query_jobs:
             return ctx
-        raw_results: list[list[dict[str, Any]]] = [[] for _ in query_jobs]
+        provider_responses: list[SearchProviderResponse | None] = [
+            None for _ in query_jobs
+        ]
         async with anyio.create_task_group() as tg:
             for idx, job in enumerate(query_jobs):
-                tg.start_soon(self._run_query, idx, job.query, raw_results, ctx)
+                tg.start_soon(self._run_query, idx, job.query, provider_responses, ctx)
         query_tokens = tokenize_for_query(req.query)
         include_domains = list(req.include_domains or [])
         exclude_domains = list(req.exclude_domains or [])
-        normalized_by_job: list[list[SearchNormalizedResult]] = [
-            self._normalize_results(
-                raw_results[idx],
-                include_domains=include_domains,
-                exclude_domains=exclude_domains,
+        normalized_by_job: list[list[SearchNormalizedResult]] = []
+        for response in provider_responses:
+            provider_results = response.results if response is not None else []
+            normalized_by_job.append(
+                self._normalize_results(
+                    provider_results,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                )
             )
-            for idx in range(len(query_jobs))
-        ]
         scored_hits: list[SearchScoredHit] = []
         docs: list[str] = []
         next_order = 0
@@ -200,12 +208,16 @@ class SearchStep(StepBase[SearchStepContext]):
         self,
         idx: int,
         query: str,
-        out: list[list[dict[str, Any]]],
+        out: list[SearchProviderResponse | None],
         ctx: SearchStepContext,
     ) -> None:
         try:
-            params = dict(ctx.provider_params) if ctx.provider_params else None
-            out[idx] = await self._provider.asearch(query=query, params=params)
+            out[idx] = await self._provider.asearch(
+                query=query,
+                page=int(ctx.provider_page),
+                language=str(ctx.provider_language or ""),
+                **dict(ctx.provider_extra_kwargs),
+            )
             await self._emit_search_meter(
                 ctx=ctx,
                 query=query,
@@ -433,14 +445,14 @@ class SearchStep(StepBase[SearchStepContext]):
 
     def _normalize_results(
         self,
-        raw_results: list[dict[str, Any]],
+        raw_results: list[SearchProviderResult],
         *,
         include_domains: list[str],
         exclude_domains: list[str],
     ) -> list[SearchNormalizedResult]:
         out: list[SearchNormalizedResult] = []
         for raw in raw_results:
-            url = clean_whitespace(str(raw.get("url") or ""))
+            url = clean_whitespace(raw.url)
             if not url:
                 continue
             domain = self._extract_domain(url)
@@ -450,13 +462,8 @@ class SearchStep(StepBase[SearchStepContext]):
                 exclude_domains=exclude_domains,
             ):
                 continue
-            title = clean_whitespace(strip_html(str(raw.get("title") or "")))
-            snippet_raw = raw.get("snippet")
-            if snippet_raw is None:
-                snippet_raw = raw.get("content")
-            if snippet_raw is None:
-                snippet_raw = raw.get("description")
-            snippet = clean_whitespace(strip_html(str(snippet_raw or "")))
+            title = clean_whitespace(strip_html(raw.title))
+            snippet = clean_whitespace(strip_html(raw.snippet))
             canonical_url = self._canonicalize_url(url)
             out.append(
                 SearchNormalizedResult(

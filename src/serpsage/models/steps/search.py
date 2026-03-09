@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from serpsage.models.app.request import (
     SearchRequest,
@@ -17,6 +17,9 @@ from serpsage.models.components.extract import (
 )
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.settings.models import AppSettings
+from serpsage.utils import clean_whitespace
+
+_RESERVED_PROVIDER_KWARG_KEYS = {"query", "page", "language"}
 
 
 class SearchQueryJob(MutableModel):
@@ -89,12 +92,41 @@ class SearchStepContext(BaseStepContext[SearchRequest, SearchResponse]):
     request: SearchRequest
     response: SearchResponse
     disable_internal_llm: bool = False
-    provider_params: dict[str, str] = Field(default_factory=dict)
+    provider_page: int = 1
+    provider_language: str = ""
+    provider_extra_kwargs: dict[str, Any] = Field(default_factory=dict)
     deep: SearchDeepState = Field(default_factory=SearchDeepState)
     prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
     fetch: SearchFetchState = Field(default_factory=SearchFetchState)
     rank: SearchRankState = Field(default_factory=SearchRankState)
     output: SearchOutputState = Field(default_factory=SearchOutputState)
+
+    @field_validator("provider_page")
+    @classmethod
+    def _validate_provider_page(cls, value: int) -> int:
+        if int(value) <= 0:
+            raise ValueError("provider_page must be > 0")
+        return int(value)
+
+    @field_validator("provider_language")
+    @classmethod
+    def _validate_provider_language(cls, value: str) -> str:
+        return clean_whitespace(str(value or ""))
+
+    @field_validator("provider_extra_kwargs")
+    @classmethod
+    def _validate_provider_extra_kwargs(cls, value: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for raw_key, raw_value in dict(value or {}).items():
+            key = clean_whitespace(str(raw_key or ""))
+            if not key:
+                continue
+            if key.casefold() in _RESERVED_PROVIDER_KWARG_KEYS:
+                raise ValueError(
+                    f"provider_extra_kwargs must not override reserved key `{key}`"
+                )
+            out[key] = raw_value
+        return out
 
 
 class SearchFetchedCandidate(MutableModel):
