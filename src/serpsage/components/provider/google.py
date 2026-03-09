@@ -15,7 +15,6 @@ from serpsage.components.provider.base import (
     SearchProviderBase,
 )
 from serpsage.components.registry import register_component
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.components.provider import (
     SearchProviderResponse,
@@ -110,15 +109,7 @@ _GOOGLE_META = ComponentMeta(
 class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
     meta = _GOOGLE_META
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        config: GoogleProviderConfig = Inject(),
-        http: HttpClientBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._http = http.client
+    http: HttpClientBase = Inject()
 
     @override
     async def asearch(
@@ -144,7 +135,7 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
         headers.setdefault("User-Agent", str(cfg.user_agent))
         cookies = dict(cfg.cookies or {})
         cookies.setdefault("CONSENT", "YES+")
-        resp = await self._http.get(
+        resp = await self.http.client.get(
             str(cfg.base_url),
             params=request_params,
             headers=headers,

@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.search import SearchRankedCandidate, SearchStepContext
 from serpsage.steps.base import StepBase
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-
 
 class SearchFinalizeStep(StepBase[SearchStepContext]):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         """Finalize output list from precomputed rank candidates.

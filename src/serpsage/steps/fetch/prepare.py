@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from typing_extensions import override
 from urllib.parse import urlsplit
 
@@ -15,14 +15,8 @@ from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-
 
 class FetchPrepareStep(StepBase[FetchStepContext]):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         url = clean_whitespace(ctx.url or "")

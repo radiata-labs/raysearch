@@ -31,14 +31,6 @@ _BM25_META = ComponentMeta(
 class Bm25Ranker(RankerBase[RankBm25Settings]):
     meta = _BM25_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: RankBm25Settings,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-
     @override
     async def score_texts(
         self,

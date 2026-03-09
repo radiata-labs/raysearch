@@ -9,7 +9,6 @@ from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.components.registry import register_component
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.components.provider import (
     SearchProviderResponse,
@@ -63,15 +62,7 @@ _SEARXNG_META = ComponentMeta(
 class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
     meta = _SEARXNG_META
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        config: SearxngProviderConfig = Inject(),
-        http: HttpClientBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._http = http.client
+    http: HttpClientBase = Inject()
 
     @override
     async def asearch(
@@ -99,7 +90,7 @@ class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
             headers.setdefault("User-Agent", str(cfg.user_agent))
         if cfg.api_key:
             headers.setdefault("Authorization", f"Bearer {cfg.api_key}")
-        resp = await self._http.get(
+        resp = await self.http.client.get(
             cfg.base_url,
             params=payload,
             headers=headers,

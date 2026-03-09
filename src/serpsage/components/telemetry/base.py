@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any
-
-from pydantic import field_validator
+from typing import Any, Generic, TypeVar
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.telemetry import (
@@ -15,43 +13,19 @@ from serpsage.models.components.telemetry import (
     sanitize_attr_map,
 )
 
-
-class TelemetryEmitterConfig(ComponentConfigBase):
-    queue_size: int = 2048
-    drop_noncritical_when_full: bool = True
+EventSinkConfigT = TypeVar("EventSinkConfigT", bound=ComponentConfigBase)
+TelemetryEmitterConfigT = TypeVar("TelemetryEmitterConfigT", bound=ComponentConfigBase)
 
 
-class JsonlObsConfig(ComponentConfigBase):
-    jsonl_path: str = ".serpsage_events.jsonl"
-
-    @field_validator("jsonl_path")
-    @classmethod
-    def _validate_jsonl_path(cls, value: str) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("telemetry obs jsonl_path must be non-empty")
-        return token
-
-
-class SqliteMeteringConfig(ComponentConfigBase):
-    sqlite_db_path: str = ".serpsage_metering.sqlite3"
-
-    @field_validator("sqlite_db_path")
-    @classmethod
-    def _validate_sqlite_db_path(cls, value: str) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("telemetry metering sqlite_db_path must be non-empty")
-        return token
-
-
-class EventSinkBase(ComponentBase[ComponentConfigBase], ABC):
+class EventSinkBase(ComponentBase[EventSinkConfigT], ABC, Generic[EventSinkConfigT]):
     @abstractmethod
     async def emit(self, *, event: EventEnvelope) -> None:
         raise NotImplementedError
 
 
-class TelemetryEmitterBase(ComponentBase[ComponentConfigBase], ABC):
+class TelemetryEmitterBase(
+    ComponentBase[TelemetryEmitterConfigT], ABC, Generic[TelemetryEmitterConfigT]
+):
     @abstractmethod
     async def emit_event(self, *, event: EventEnvelope) -> None:
         raise NotImplementedError
@@ -103,8 +77,5 @@ class TelemetryEmitterBase(ComponentBase[ComponentConfigBase], ABC):
 
 __all__ = [
     "EventSinkBase",
-    "JsonlObsConfig",
-    "SqliteMeteringConfig",
     "TelemetryEmitterBase",
-    "TelemetryEmitterConfig",
 ]

@@ -8,7 +8,6 @@ from typing_extensions import override
 from serpsage.components.cache import CacheBase
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.llm import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchOverviewRequest
 from serpsage.models.steps.fetch import FetchStepContext
@@ -17,17 +16,8 @@ from serpsage.utils import clean_whitespace, stable_json
 
 
 class FetchOverviewStep(StepBase[FetchStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        llm: LLMClientBase = Inject(),
-        cache: CacheBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self._cache = cache
-        self.bind_deps(llm, cache)
+    llm: LLMClientBase = Inject()
+    cache: CacheBase = Inject()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
@@ -56,7 +46,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         profile = self.components.resolve_default_config(
             "fetch", expected_type=FetchConfigBase
         ).overview
-        model_cfg = self._llm.describe_model(profile.use_model)
+        model_cfg = self.llm.describe_model(profile.use_model)
         schema = dict(req.json_schema) if isinstance(req.json_schema, dict) else None
         mode = "json" if schema is not None else "text"
         messages = self._build_messages(
@@ -77,7 +67,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 "json_schema": schema,
             }
             cache_key = hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
-            cached = await self._cache.aget(
+            cached = await self.cache.aget(
                 namespace="overview:fetch:v4", key=cache_key
             )
             if cached:
@@ -93,7 +83,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         retry_on = (ValueError, TypeError, RuntimeError)
         try:
             if schema is None:
-                text_res = await self._llm.create(
+                text_res = await self.llm.create(
                     model=str(model_cfg.name),
                     messages=messages,
                     response_format=schema,
@@ -111,7 +101,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 attempts = max(1, retries + 1)
                 for attempt_index in range(attempts):
                     try:
-                        json_res = await self._llm.create(
+                        json_res = await self.llm.create(
                             model=str(model_cfg.name),
                             messages=attempt_messages,
                             response_format=schema,
@@ -142,7 +132,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 and cache_key
                 and ctx.analysis.overview.output is not None
             ):
-                await self._cache.aset(
+                await self.cache.aset(
                     namespace="overview:fetch:v4",
                     key=cache_key,
                     value=json.dumps(

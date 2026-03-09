@@ -9,17 +9,22 @@ from serpsage.dependencies.contracts import (
     format_service_key,
 )
 from serpsage.dependencies.resolver import (
+    ClassPlan,
     ConstructorPlan,
+    FieldPlan,
     ParameterPlan,
     ServiceCollection,
     ServiceProvider,
     ServiceResolutionError,
+    analyze_class,
     analyze_constructor,
 )
 
 __all__ = [
     "BindingScope",
+    "ClassPlan",
     "ConstructorPlan",
+    "FieldPlan",
     "Inject",
     "InjectRequest",
     "InjectToken",
@@ -30,6 +35,7 @@ __all__ = [
     "ServiceKey",
     "ServiceProvider",
     "ServiceResolutionError",
+    "analyze_class",
     "analyze_constructor",
     "format_service_key",
 ]

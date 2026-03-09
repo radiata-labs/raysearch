@@ -69,6 +69,7 @@ from serpsage.steps.fetch import (
     FetchOverviewStep,
     FetchParallelEnrichStep,
     FetchPrepareStep,
+    FetchSubpageStep,
 )
 from serpsage.steps.research import (
     ResearchContentStep,
@@ -179,11 +180,11 @@ def _register_component_services(
     family_defaults = _family_contracts()
     family_overrides = _workunit_overrides(overrides)
     collection_orders: dict[str, int] = {}
-    for family, override in family_overrides.items():
+    for family, override_instance in family_overrides.items():
         contract = family_defaults.get(family.name)
         if contract is not None:
-            services.bind_instance(contract, override)
-        services.bind_instance(type(override), override)
+            services.bind_instance(contract, override_instance)
+        services.bind_instance(type(override_instance), override_instance)
     for spec in catalog.iter_enabled_specs():
         if spec.family in family_overrides:
             continue
@@ -192,7 +193,7 @@ def _register_component_services(
             instance_key,
             spec.descriptor.cls,
             scope=BindingScope.SINGLETON,
-            init_kwargs={"rt": rt, "config": spec.config},
+            overrides={"config": spec.config},
         )
         services.bind_alias(spec.descriptor.cls, instance_key)
         contracts = list(spec.descriptor.meta.contracts)
@@ -215,6 +216,16 @@ def _register_component_services(
 
 
 def _register_pipeline_services(services: ServiceCollection) -> None:
+    services.bind_class(
+        FetchOverviewStep,
+        FetchOverviewStep,
+        scope=BindingScope.SINGLETON,
+    )
+    services.bind_class(
+        FetchSubpageStep,
+        FetchSubpageStep,
+        scope=BindingScope.SINGLETON,
+    )
     _bind_steps(
         services,
         CHILD_FETCH_STEPS,
@@ -292,7 +303,7 @@ def _register_pipeline_services(services: ServiceCollection) -> None:
         CHILD_FETCH_RUNNER,
         RunnerBase,
         scope=BindingScope.SINGLETON,
-        init_kwargs={
+        overrides={
             "rt": Inject(Runtime),
             "steps": Inject(CHILD_FETCH_STEPS),
             "kind": "child_fetch",
@@ -302,7 +313,7 @@ def _register_pipeline_services(services: ServiceCollection) -> None:
         FETCH_RUNNER,
         RunnerBase,
         scope=BindingScope.SINGLETON,
-        init_kwargs={
+        overrides={
             "rt": Inject(Runtime),
             "steps": Inject(FETCH_STEPS),
             "kind": "fetch",
@@ -312,7 +323,7 @@ def _register_pipeline_services(services: ServiceCollection) -> None:
         SEARCH_RUNNER,
         RunnerBase,
         scope=BindingScope.SINGLETON,
-        init_kwargs={
+        overrides={
             "rt": Inject(Runtime),
             "steps": Inject(SEARCH_STEPS),
             "kind": "search",
@@ -322,7 +333,7 @@ def _register_pipeline_services(services: ServiceCollection) -> None:
         ANSWER_RUNNER,
         RunnerBase,
         scope=BindingScope.SINGLETON,
-        init_kwargs={
+        overrides={
             "rt": Inject(Runtime),
             "steps": Inject(ANSWER_STEPS),
             "kind": "search",
@@ -332,7 +343,7 @@ def _register_pipeline_services(services: ServiceCollection) -> None:
         RESEARCH_ROUND_RUNNER,
         RunnerBase,
         scope=BindingScope.SINGLETON,
-        init_kwargs={
+        overrides={
             "rt": Inject(Runtime),
             "steps": Inject(RESEARCH_ROUND_STEPS),
             "kind": "search",
@@ -342,13 +353,13 @@ def _register_pipeline_services(services: ServiceCollection) -> None:
         RESEARCH_SUBREPORT_STEP,
         ResearchSubreportStep,
         scope=BindingScope.SINGLETON,
-        init_kwargs={"rt": Inject(Runtime)},
+        overrides={"rt": Inject(Runtime)},
     )
     services.bind_class(
         RESEARCH_RUNNER,
         RunnerBase,
         scope=BindingScope.SINGLETON,
-        init_kwargs={
+        overrides={
             "rt": Inject(Runtime),
             "steps": Inject(RESEARCH_STEPS),
             "kind": "search",
@@ -361,18 +372,18 @@ def _bind_steps(
     key: InjectToken[Any],
     steps: tuple[tuple[int, type[object], dict[str, object]], ...],
 ) -> None:
-    for order, cls, init_kwargs in steps:
+    for order, cls, overrides in steps:
         services.bind_many(
             key,
-            cast("type[object]", cls),
+            cls,
             order=order,
             scope=BindingScope.SINGLETON,
-            init_kwargs=init_kwargs,
+            overrides=overrides,
         )
 
 
 def _component_instance_key(
-    family: ComponentFamily[object],
+    family: ComponentFamily[Any],
     instance_id: str,
 ) -> InjectToken[object]:
     return InjectToken(f"component.{family.name}.{instance_id}")
@@ -394,7 +405,7 @@ def _family_contracts() -> dict[str, type[object]]:
 
 def _workunit_overrides(
     overrides: Overrides,
-) -> dict[ComponentFamily[object], WorkUnit]:
+) -> dict[ComponentFamily[Any], WorkUnit]:
     mapping = {
         PROVIDER_FAMILY: overrides.provider,
         FETCH_FAMILY: overrides.fetcher,
@@ -435,9 +446,7 @@ def _ensure_workunit_override(name: str, obj: object | None) -> None:
             f"override `{name}` must be a WorkUnit, got `{type(obj).__name__}`"
         )
     if not bool(getattr(obj, "_wu_bootstrapped", False)):
-        raise TypeError(
-            f"override `{name}` must call WorkUnit.__init__(rt=...) via super().__init__"
-        )
+        raise TypeError(f"override `{name}` must have a bootstrapped WorkUnit runtime")
 
 
 __all__ = ["Overrides", "build_component_container", "build_engine", "build_runtime"]

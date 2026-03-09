@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 
-
-class RateLimiterConfig(ComponentConfigBase):
-    global_limit: int = 24
-    per_host: int = 4
-    politeness_delay_ms: int = 0
+RateLimiterConfigT = TypeVar("RateLimiterConfigT", bound=ComponentConfigBase)
 
 
-class RateLimiterBase(ComponentBase[RateLimiterConfig], ABC):
+class RateLimiterBase(
+    ComponentBase[RateLimiterConfigT], ABC, Generic[RateLimiterConfigT]
+):
     @abstractmethod
     async def acquire(self, *, host: str) -> None:
         raise NotImplementedError
@@ -21,4 +20,4 @@ class RateLimiterBase(ComponentBase[RateLimiterConfig], ABC):
         raise NotImplementedError
 
 
-__all__ = ["RateLimiterBase", "RateLimiterConfig"]
+__all__ = ["RateLimiterBase"]

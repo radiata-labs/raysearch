@@ -60,12 +60,8 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
 
     def __init__(
         self,
-        *,
-        rt: object,
-        config: DashScopeModelConfig,
     ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._api_key = config.api_key
+        self._api_key = self.config.api_key
 
     @override
     def describe_model(self, name: str) -> DashScopeModelConfig:

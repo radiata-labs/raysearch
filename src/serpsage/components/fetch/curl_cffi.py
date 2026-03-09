@@ -19,17 +19,22 @@ from serpsage.components.http.base import HttpClientConfig
 from serpsage.components.registry import register_component
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
-CurlSessionFactory: type[Any] | None = None
-try:
-    from curl_cffi.requests import AsyncSession as _CurlAsyncSession
-
-    CurlSessionFactory = _CurlAsyncSession
-    CURL_CFFI_AVAILABLE = True
-except Exception:  # noqa: BLE001
-    CURL_CFFI_AVAILABLE = False
-
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from curl_cffi.requests import AsyncSession as CurlSessionFactory
+
+    CURL_CFFI_AVAILABLE = True
+
+else:
+    CurlSessionFactory: type[Any] | None = None
+    try:
+        from curl_cffi.requests import AsyncSession as _CurlAsyncSession
+
+        CurlSessionFactory = _CurlAsyncSession
+        CURL_CFFI_AVAILABLE = True
+    except Exception:  # noqa: BLE001
+        CURL_CFFI_AVAILABLE = False
 
 
 @dataclass(slots=True)
@@ -57,13 +62,7 @@ _CURL_FETCHER_META = ComponentMeta(
 class CurlCffiFetcher(FetcherBase):
     meta = _CURL_FETCHER_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: CurlCffiFetcherConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         if not CURL_CFFI_AVAILABLE:
             raise RuntimeError("curl_cffi is not available; install curl_cffi")
         self._session: Any | None = None

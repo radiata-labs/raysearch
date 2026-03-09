@@ -4,7 +4,6 @@ from typing import Literal
 from typing_extensions import override
 
 from serpsage.app.tokens import SEARCH_RUNNER
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import (
     FetchAbstractsRequest,
@@ -28,15 +27,7 @@ _FIXED_ABSTRACT_MAX_CHARS = 1000
 
 
 class AnswerSearchStep(StepBase[AnswerStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._search_runner = search_runner
-        self.bind_deps(search_runner)
+    search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER)
 
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
@@ -68,7 +59,7 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             for req in requests
         ]
         try:
-            search_contexts = await self._search_runner.run_batch(search_contexts)
+            search_contexts = await self.search_runner.run_batch(search_contexts)
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
                 event_name="answer.search.error",

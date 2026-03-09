@@ -6,7 +6,6 @@ from typing import Any, Literal
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.search import SearchOptimizedQuery, SearchStepContext
 from serpsage.steps.base import StepBase
@@ -14,12 +13,7 @@ from serpsage.utils import clean_whitespace
 
 
 class SearchOptimizeStep(StepBase[SearchStepContext]):
-    def __init__(
-        self, *, rt: Runtime = Inject(), llm: LLMClientBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self.bind_deps(llm)
+    llm: LLMClientBase = Inject()
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
@@ -88,7 +82,7 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
             },
         }
         messages = self._build_messages(query=query, now_utc=now_utc, mode=mode)
-        result = await self._llm.create(
+        result = await self.llm.create(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
             response_format=schema,

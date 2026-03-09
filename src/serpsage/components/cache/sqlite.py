@@ -47,17 +47,11 @@ _SQLITE_CACHE_META = ComponentMeta(
 class SqliteCache(CacheBase[SqliteCacheConfig]):
     meta = _SQLITE_CACHE_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: SqliteCacheConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         if AioSqliteModule is None:
             raise RuntimeError("aiosqlite is required for SqliteCache")
-        self._path = Path(config.db_path)
-        self._table = str(config.table)
+        self._path = Path(self.config.db_path)
+        self._table = str(self.config.table)
         self._con: Any | None = None
 
     @override

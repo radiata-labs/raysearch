@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.research import ResearchStepContext
 from serpsage.steps.base import StepBase
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-
 
 class ResearchFinalizeStep(StepBase[ResearchStepContext]):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         mode_depth = ctx.run.limits

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.fetch.base import FetchConfigBase
@@ -9,9 +8,6 @@ from serpsage.models.steps.fetch import FetchStepContext, PreparedPassage
 from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize
 from serpsage.utils import clean_whitespace
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
 
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$")
@@ -111,9 +107,6 @@ _LOWER_CONTINUATION_DOT_ABBR = {
 
 
 class FetchAbstractBuildStep(StepBase[FetchStepContext]):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.error.failed:

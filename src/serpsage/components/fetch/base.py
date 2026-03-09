@@ -3,8 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import wraps
-from typing import Any, cast
+from typing import Any
 from typing_extensions import override
 
 import anyio
@@ -131,54 +130,7 @@ class _InFlightEntry:
 
 
 class FetcherBase(ComponentBase[FetchConfigBase], ABC):
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        cls._wrap_lifecycle_hook("on_init", base_first=True)
-        cls._wrap_lifecycle_hook("on_close", base_first=False)
-
-    @classmethod
-    def _wrap_lifecycle_hook(cls, name: str, *, base_first: bool) -> None:
-        original = cls.__dict__.get(name)
-        if original is None:
-            return
-        if bool(getattr(original, "__fetcherbase_wrapped__", False)):
-            return
-        if name == "on_init":
-
-            @wraps(original)
-            async def wrapped(self: FetcherBase, *args: Any, **kwargs: Any) -> None:
-                if base_first:
-                    await FetcherBase.on_init(self)
-                    await original(self, *args, **kwargs)
-                else:
-                    await original(self, *args, **kwargs)
-                    await FetcherBase.on_init(self)
-        else:
-
-            @wraps(original)
-            async def wrapped(self: FetcherBase, *args: Any, **kwargs: Any) -> None:
-                if base_first:
-                    try:
-                        await FetcherBase.on_close(self)
-                    finally:
-                        await original(self, *args, **kwargs)
-                else:
-                    try:
-                        await original(self, *args, **kwargs)
-                    finally:
-                        await FetcherBase.on_close(self)
-
-        wrapped_with_attr = cast("Any", wrapped)
-        wrapped_with_attr.__fetcherbase_wrapped__ = True
-        setattr(cls, name, wrapped_with_attr)
-
-    def __init__(
-        self,
-        *,
-        rt: Any,
-        config: FetchConfigBase,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         self._inflight_lock = anyio.Lock()
         self._inflight_pool: dict[str, _InFlightEntry] = {}
         self._inflight_tg_cm: Any | None = None

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing_extensions import override
 
 from serpsage.app.tokens import FETCH_RUNNER
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchRequest
 from serpsage.models.app.response import FetchResponse
@@ -13,15 +12,7 @@ from serpsage.steps.base import RunnerBase, StepBase
 
 
 class SearchFetchStep(StepBase[SearchStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._fetch_runner = fetch_runner
-        self.bind_deps(fetch_runner)
+    fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER)
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
@@ -67,7 +58,7 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                 main_links_limit
             )
             to_fetch.append(fetch_ctx)
-        out = await self._fetch_runner.run_batch(to_fetch)
+        out = await self.fetch_runner.run_batch(to_fetch)
         fetched_candidates: list[SearchFetchedCandidate] = []
         for item in out:
             if item.result is None or item.error.failed:

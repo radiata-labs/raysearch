@@ -17,7 +17,6 @@ from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
 from serpsage.components.registry import register_component
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 
 if TYPE_CHECKING:
@@ -36,26 +35,11 @@ _BLEND_META = ComponentMeta(
 @register_component(meta=_BLEND_META)
 class BlendRanker(RankerBase[RankBlendSettings]):
     meta = _BLEND_META
-    _heuristic: HeuristicRanker
-    _tfidf: TfidfRanker
-    _bm25: Bm25Ranker | None
-    _cross_encoder: CrossEncoderRanker | None
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        config: RankBlendSettings = Inject(),
-        heuristic: HeuristicRanker = Inject(),
-        tfidf: TfidfRanker = Inject(),
-        bm25: Bm25Ranker | None = Inject(),
-        cross_encoder: CrossEncoderRanker | None = Inject(),
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._heuristic = heuristic
-        self._tfidf = tfidf
-        self._bm25 = bm25
-        self._cross_encoder = cross_encoder
+    heuristic: HeuristicRanker = Inject()
+    tfidf: TfidfRanker = Inject()
+    bm25: Bm25Ranker = Inject()
+    cross_encoder: CrossEncoderRanker = Inject()
 
     def _provider_weights(self) -> dict[str, float]:
         raw = {
@@ -63,7 +47,7 @@ class BlendRanker(RankerBase[RankBlendSettings]):
             for k, v in (self.config.providers or {}).items()
             if float(v) > 0
         }
-        if raw.get("bm25") and not isinstance(self._bm25, Bm25Ranker):
+        if raw.get("bm25") and not isinstance(self.bm25, Bm25Ranker):
             raw.pop("bm25", None)
         if not raw:
             return {"heuristic": 1.0}
@@ -79,7 +63,7 @@ class BlendRanker(RankerBase[RankBlendSettings]):
             "cross_encoder": float(cfg.cross_encoder_weight),
         }
         if raw["cross_encoder"] > 0 and not isinstance(
-            self._cross_encoder, CrossEncoderRanker
+            self.cross_encoder, CrossEncoderRanker
         ):
             raw["cross_encoder"] = 0.0
         filtered = {name: value for name, value in raw.items() if value > 0}
@@ -103,14 +87,14 @@ class BlendRanker(RankerBase[RankBlendSettings]):
         heur_w = float(weights.get("heuristic", 0.0))
         tfidf_w = float(weights.get("tfidf", 0.0))
         bm25_w = float(weights.get("bm25", 0.0))
-        need_bm25 = bm25_w > 0 and isinstance(self._bm25, Bm25Ranker)
+        need_bm25 = bm25_w > 0 and isinstance(self.bm25, Bm25Ranker)
         heur: list[float] | None = None
         tfidf: list[float] | None = None
         bm25_raw: list[float] | None = None
 
         async def run_heuristic() -> None:
             nonlocal heur
-            heur = await self._heuristic.score_texts(
+            heur = await self.heuristic.score_texts(
                 texts,
                 query=query,
                 query_tokens=query_tokens,
@@ -119,7 +103,7 @@ class BlendRanker(RankerBase[RankBlendSettings]):
 
         async def run_bm25() -> None:
             nonlocal bm25_raw
-            bm25 = cast("Bm25Ranker", self._bm25)
+            bm25 = cast("Bm25Ranker", self.bm25)
             bm25_raw = await bm25.score_texts(
                 texts,
                 query=query,
@@ -129,7 +113,7 @@ class BlendRanker(RankerBase[RankBlendSettings]):
 
         async def run_tfidf() -> None:
             nonlocal tfidf
-            tfidf = await self._tfidf.score_texts(
+            tfidf = await self.tfidf.score_texts(
                 texts,
                 query=query,
                 query_tokens=query_tokens,
@@ -183,8 +167,8 @@ class BlendRanker(RankerBase[RankBlendSettings]):
             return retrieve_scores
         rerank_weights = self._rerank_weights()
         cross_encoder_scores = [0.0 for _ in texts]
-        if float(rerank_weights.get("cross_encoder", 0.0)) > 0 and self._cross_encoder:
-            cross_encoder_scores = await self._cross_encoder.score_texts(
+        if float(rerank_weights.get("cross_encoder", 0.0)) > 0 and self.cross_encoder:
+            cross_encoder_scores = await self.cross_encoder.score_texts(
                 texts,
                 query=query,
                 query_tokens=query_tokens,

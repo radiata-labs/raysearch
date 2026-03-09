@@ -11,7 +11,6 @@ from serpsage.components.cache import CacheBase
 from serpsage.components.cache.base import CacheConfigBase
 from serpsage.components.fetch import FetcherBase
 from serpsage.components.fetch.base import FetchConfigBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.response import FetchErrorTag
 from serpsage.models.components.fetch import FetchResult
@@ -23,17 +22,8 @@ _CACHE_NAMESPACE = "fetch:v4"
 
 
 class FetchLoadStep(StepBase[FetchStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        fetcher: FetcherBase = Inject(),
-        cache: CacheBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._fetcher = fetcher
-        self._cache = cache
-        self.bind_deps(fetcher, cache)
+    fetcher: FetcherBase = Inject()
+    cache: CacheBase = Inject()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
@@ -67,7 +57,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         async def get_cached() -> FetchResult | None:
             nonlocal cache_fetch_ms
             t0 = time.monotonic()
-            payload = await self._cache.aget(namespace=_CACHE_NAMESPACE, key=cache_key)
+            payload = await self.cache.aget(namespace=_CACHE_NAMESPACE, key=cache_key)
             cache_fetch_ms = int((time.monotonic() - t0) * 1000)
             if not payload:
                 return None
@@ -79,7 +69,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         async def crawl_once() -> FetchResult:
             nonlocal crawl_fetch_ms
             t0 = time.monotonic()
-            result = await self._fetcher.afetch(
+            result = await self.fetcher.afetch(
                 url=url,
                 timeout_s=float(timeout_s),
             )
@@ -90,7 +80,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             ttl_s = int(cache_cfg.fetch_ttl_s)
             if ttl_s <= 0:
                 return
-            await self._cache.aset(
+            await self.cache.aset(
                 namespace=_CACHE_NAMESPACE,
                 key=cache_key,
                 value=_encode_fetch_cache(result),

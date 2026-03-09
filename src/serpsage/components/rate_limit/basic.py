@@ -4,9 +4,16 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import ComponentMeta
-from serpsage.components.rate_limit.base import RateLimiterBase, RateLimiterConfig
+from serpsage.components.base import ComponentConfigBase, ComponentMeta
+from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.components.registry import register_component
+
+
+class RateLimiterConfig(ComponentConfigBase):
+    global_limit: int = 24
+    per_host: int = 4
+    politeness_delay_ms: int = 0
+
 
 _BASIC_RATE_LIMITER_META = ComponentMeta(
     family="rate_limit",
@@ -22,16 +29,10 @@ _BASIC_RATE_LIMITER_META = ComponentMeta(
 class BasicRateLimiter(RateLimiterBase):
     meta = _BASIC_RATE_LIMITER_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: RateLimiterConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._global = anyio.Semaphore(max(1, int(config.global_limit)))
-        self._per_host_limit = max(1, int(config.per_host))
-        self._politeness_delay_ms = max(0, int(config.politeness_delay_ms))
+    def __init__(self) -> None:
+        self._global = anyio.Semaphore(max(1, int(self.config.global_limit)))
+        self._per_host_limit = max(1, int(self.config.per_host))
+        self._politeness_delay_ms = max(0, int(self.config.politeness_delay_ms))
         self._host_sems: dict[str, anyio.Semaphore] = {}
         self._host_lock = anyio.Lock()
         self._last_host_ms: dict[str, int] = {}

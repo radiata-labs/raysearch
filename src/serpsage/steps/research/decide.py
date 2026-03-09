@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.research import (
     ResearchDecideSignalPayload,
@@ -17,12 +16,7 @@ from serpsage.steps.research.utils import resolve_research_model
 class ResearchDecideStep(StepBase[ResearchStepContext]):
     _LOW_GAIN_THRESHOLD = 0.05
 
-    def __init__(
-        self, *, rt: Runtime = Inject(), llm: LLMClientBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self.bind_deps(llm)
+    llm: LLMClientBase = Inject()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -210,7 +204,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.plan.use_model,
         )
         try:
-            result = await self._llm.create(
+            result = await self.llm.create(
                 model=model,
                 messages=build_decide_prompt_messages(ctx=ctx),
                 response_format=ResearchDecideSignalPayload,

@@ -11,7 +11,6 @@ from serpsage.app.tokens import FETCH_RUNNER
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import (
     FetchContentRequest,
@@ -59,24 +58,19 @@ _LINK_PICKER_PRERANK_FLOOR = 16
 
 
 class ResearchFetchStep(StepBase[ResearchStepContext]):
+    fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER)
+    ranker: RankerBase = Inject()
+    llm: LLMClientBase = Inject()
+
     def __init__(
         self,
         *,
-        rt: Runtime = Inject(),
-        fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER),
-        ranker: RankerBase = Inject(),
-        llm: LLMClientBase = Inject(),
         phase: Literal["pre", "post"] = "post",
     ) -> None:
-        super().__init__(rt=rt)
-        self._fetch_runner = fetch_runner
-        self._ranker = ranker
-        self._llm = llm
         phase_key = phase.casefold()
         if phase_key not in {"pre", "post"}:
             phase_key = "post"
-        self._phase: Literal["pre", "post"] = "pre" if phase_key == "pre" else "post"
-        self.bind_deps(fetch_runner, ranker, llm)
+        self.phase: Literal["pre", "post"] = "pre" if phase_key == "pre" else "post"
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -85,7 +79,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         round_action = (ctx.run.current.round_action or "search").casefold()
         if ctx.run.current.round_index <= 1:
             round_action = "search"
-        if self._phase == "pre":
+        if self.phase == "pre":
             if round_action == "explore":
                 executed = await self._run_explore_fetch(ctx)
                 if executed:
@@ -210,7 +204,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             ctx=ctx,
             urls=selected_urls,
         )
-        fetched = await self._fetch_runner.run_batch(fetch_contexts)
+        fetched = await self.fetch_runner.run_batch(fetch_contexts)
         all_results: list[FetchResultItem] = []
         new_source_ids: list[int] = []
         per_round_fetch_calls = 0
@@ -421,7 +415,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         candidate_links_markdown = self._render_link_candidates_for_picker(links)
         selected_ids: list[int] = []
         try:
-            chat_result = await self._llm.create(
+            chat_result = await self.llm.create(
                 model=model,
                 messages=build_link_picker_prompt_messages(
                     core_question=ctx.task.question,
@@ -506,7 +500,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         query = ctx.task.question
         texts = [self._render_rank_text(item) for item in links]
         try:
-            scores = await self._ranker.score_texts(
+            scores = await self.ranker.score_texts(
                 texts,
                 query=query,
                 query_tokens=tokenize_for_query(query),

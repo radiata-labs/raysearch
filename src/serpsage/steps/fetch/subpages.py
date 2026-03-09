@@ -6,7 +6,6 @@ from typing_extensions import override
 from serpsage.app.tokens import CHILD_FETCH_RUNNER
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchOthersRequest
 from serpsage.models.app.response import FetchResponse, FetchSubpagesResult
@@ -18,17 +17,8 @@ if TYPE_CHECKING:
 
 
 class FetchSubpageStep(StepBase[FetchStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        fetch_runner: RunnerBase[FetchStepContext] = Inject(CHILD_FETCH_RUNNER),
-        ranker: RankerBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._fetch_runner = fetch_runner
-        self._ranker = ranker
-        self.bind_deps(fetch_runner, ranker)
+    fetch_runner: RunnerBase[FetchStepContext] = Inject(CHILD_FETCH_RUNNER)
+    ranker: RankerBase = Inject()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
@@ -42,7 +32,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         if not candidates:
             return ctx
         try:
-            scores = await self._ranker.score_texts(
+            scores = await self.ranker.score_texts(
                 [f"[{item.text}]({item.url})" for item in candidates],
                 query=ctx.related.subpages.query,
                 query_tokens=ctx.related.subpages.keywords,
@@ -112,7 +102,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
             child_ctx.related.image_limit = None
             child_ctx.related.subpages.candidate_limit = None
             to_fetch.append(child_ctx)
-        child_results = await self._fetch_runner.run_batch(to_fetch)
+        child_results = await self.fetch_runner.run_batch(to_fetch)
         out_items: list[FetchSubpageState | None] = [None] * len(selected_urls)
         for index, child_context in enumerate(child_results):
             url = selected_urls[index]

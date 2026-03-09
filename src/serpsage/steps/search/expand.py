@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.search import (
     SearchDeepState,
@@ -39,12 +38,7 @@ _EN_EVIDENCE_SUFFIX = "benchmark report source"
 
 
 class SearchExpandStep(StepBase[SearchStepContext]):
-    def __init__(
-        self, *, rt: Runtime = Inject(), llm: LLMClientBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self.bind_deps(llm)
+    llm: LLMClientBase = Inject()
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
@@ -208,7 +202,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
                 ),
             },
         ]
-        result = await self._llm.create(
+        result = await self.llm.create(
             model=model_name,
             messages=messages,
             response_format=schema,

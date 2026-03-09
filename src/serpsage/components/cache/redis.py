@@ -45,17 +45,11 @@ _REDIS_CACHE_META = ComponentMeta(
 class RedisCache(CacheBase[RedisCacheConfig]):
     meta = _REDIS_CACHE_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: RedisCacheConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         if AioredisModule is None:
             raise RuntimeError("aioredis is required for RedisCache")
-        self._url = str(config.url)
-        self._prefix = str(config.key_prefix)
+        self._url = str(self.config.url)
+        self._prefix = str(self.config.key_prefix)
         self._client: aioredis.Redis | None = None
 
     def _redis_key(self, *, namespace: str, key: str) -> str:

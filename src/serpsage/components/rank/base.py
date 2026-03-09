@@ -68,14 +68,7 @@ class RankBlendSettings(ComponentConfigBase):
 
 
 class RankerBase(ComponentBase[RankConfigT], ABC, Generic[RankConfigT]):
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: RankConfigT,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._warned_mode_fallbacks: set[tuple[str, str]] = set()
+    _warned_mode_fallbacks: set[tuple[str, str]] = set()
 
     def _resolve_mode(
         self,

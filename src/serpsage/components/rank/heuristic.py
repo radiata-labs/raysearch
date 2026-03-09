@@ -31,13 +31,7 @@ class HeuristicRanker(RankerBase[HeuristicRankSettings]):
     _DEFAULT_LOCAL_IDF_BOOST = 0.35
     _DECILE_SIGMA = 2.5631031310892007
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: HeuristicRankSettings,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         self._ascii_pattern_cache: dict[str, re.Pattern[str]] = {}
 
     @override

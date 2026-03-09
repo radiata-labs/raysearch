@@ -184,13 +184,7 @@ class HtmlExtractor(ExtractorBase):
         extract_structured_data=False,
     )
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: ExtractConfigBase,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         self._profile = self._build_profile()
 
     @override

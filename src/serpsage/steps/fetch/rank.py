@@ -5,7 +5,6 @@ from typing_extensions import override
 
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.fetch import (
     FetchStepContext,
@@ -18,12 +17,7 @@ from serpsage.utils import clean_whitespace
 
 
 class FetchAbstractRankStep(StepBase[FetchStepContext]):
-    def __init__(
-        self, *, rt: Runtime = Inject(), ranker: RankerBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._ranker = ranker
-        self.bind_deps(ranker)
+    ranker: RankerBase = Inject()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
@@ -158,7 +152,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             if heading and heading not in headings:
                 headings.append(heading)
         combined_texts = [candidate.text for candidate in candidates] + headings
-        combined_scores = await self._ranker.score_texts(
+        combined_scores = await self.ranker.score_texts(
             combined_texts,
             query=query,
             query_tokens=list(query_tokens or []),

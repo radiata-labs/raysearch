@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.research import (
     PlanOutputPayload,
@@ -21,12 +20,7 @@ from serpsage.steps.research.utils import resolve_research_model
 
 
 class ResearchPlanStep(StepBase[ResearchStepContext]):
-    def __init__(
-        self, *, rt: Runtime = Inject(), llm: LLMClientBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self.bind_deps(llm)
+    llm: LLMClientBase = Inject()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -75,7 +69,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             round_index=round_index,
         )
         try:
-            chat_result = await self._llm.create(
+            chat_result = await self.llm.create(
                 model=model,
                 messages=build_plan_prompt_messages(
                     ctx=ctx,

@@ -40,10 +40,6 @@ class LLMModelConfig(ComponentConfigBase):
     enable_structured: bool = True
 
 
-class LLMRouterConfig(ComponentConfigBase):
-    pass
-
-
 LLMConfigT = TypeVar(
     "LLMConfigT",
     bound=ComponentConfigBase,
@@ -66,6 +62,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
+
     @overload
     async def _create(
         self,
@@ -77,6 +74,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
+
     @overload
     async def _create(
         self,
@@ -299,6 +297,5 @@ Here is the output schema:
 __all__ = [
     "LLMClientBase",
     "LLMModelConfig",
-    "LLMRouterConfig",
     "RetryOn",
 ]

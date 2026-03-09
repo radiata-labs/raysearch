@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.research import (
     ResearchLimits,
@@ -38,12 +37,7 @@ _ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
 
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
-    def __init__(
-        self, *, rt: Runtime = Inject(), llm: LLMClientBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self.bind_deps(llm)
+    llm: LLMClientBase = Inject()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -55,7 +49,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         )
         card_cap = max(1, ctx.run.limits.max_question_cards_effective)
         try:
-            chat_result = await self._llm.create(
+            chat_result = await self.llm.create(
                 model=model,
                 messages=build_theme_prompt_messages(
                     ctx=ctx,

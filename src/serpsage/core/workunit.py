@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any, Self
 
 import anyio
 
+from serpsage.dependencies.contracts import Inject
+
 if TYPE_CHECKING:
     from types import TracebackType
 
@@ -14,7 +16,32 @@ if TYPE_CHECKING:
     from serpsage.settings.models import AppSettings
 
 
+def bootstrap_workunit(instance: WorkUnit, rt: Runtime | object) -> None:
+    if bool(getattr(instance, "_wu_bootstrapped", False)):
+        raise RuntimeError(f"{type(instance).__name__} is already bootstrapped")
+    instance.rt = rt  # type: ignore[assignment]
+    instance._wu_bootstrapped = True
+    instance._wu_deps = []
+    instance._wu_dep_ids = set()
+    instance._wu_op_lock = anyio.Lock()
+    instance._wu_node_lock = anyio.Lock()
+    instance._wu_initialized = False
+    instance._wu_closed = False
+    instance._wu_init_order = None
+
+
 class WorkUnit:
+    rt: Runtime = Inject()
+
+    _wu_bootstrapped: bool
+    _wu_deps: list[WorkUnit]
+    _wu_dep_ids: set[int]
+    _wu_op_lock: anyio.Lock
+    _wu_node_lock: anyio.Lock
+    _wu_initialized: bool
+    _wu_closed: bool
+    _wu_init_order: list[WorkUnit] | None
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         forbidden = [name for name in ("ainit", "aclose") if name in cls.__dict__]
@@ -25,16 +52,11 @@ class WorkUnit:
                 "override on_ainit/on_aclose instead"
             )
 
-    def __init__(self, *, rt: Runtime) -> None:
-        self.rt = rt
-        self._wu_bootstrapped = True
-        self._wu_deps: list[WorkUnit] = []
-        self._wu_dep_ids: set[int] = set()
-        self._wu_op_lock = anyio.Lock()
-        self._wu_node_lock = anyio.Lock()
-        self._wu_initialized = False
-        self._wu_closed = False
-        self._wu_init_order: list[WorkUnit] | None = None
+    def _require_bootstrapped(self) -> None:
+        if not bool(getattr(self, "_wu_bootstrapped", False)):
+            raise RuntimeError(
+                f"{type(self).__name__} is not bootstrapped; construct it through the service provider"
+            )
 
     @property
     def settings(self) -> AppSettings:
@@ -63,6 +85,8 @@ class WorkUnit:
         return services
 
     def bind_deps(self, *deps: WorkUnit | None) -> None:
+        self._require_bootstrapped()
+
         def _bind_dep_one(dep: WorkUnit | None) -> WorkUnit | None:
             if dep is None:
                 return None
@@ -84,6 +108,7 @@ class WorkUnit:
 
     @property
     def dependencies(self) -> tuple[WorkUnit, ...]:
+        self._require_bootstrapped()
         return tuple(self._wu_deps)
 
     async def on_init(self) -> None:
@@ -116,6 +141,7 @@ class WorkUnit:
         return ordered
 
     async def _wu_init_self(self) -> bool:
+        self._require_bootstrapped()
         async with self._wu_node_lock:
             if self._wu_closed:
                 raise RuntimeError(f"{type(self).__name__} is already closed")
@@ -126,6 +152,7 @@ class WorkUnit:
             return True
 
     async def _wu_close_self(self) -> bool:
+        self._require_bootstrapped()
         async with self._wu_node_lock:
             if self._wu_closed:
                 return False
@@ -138,6 +165,7 @@ class WorkUnit:
             return True
 
     async def ainit(self) -> None:
+        self._require_bootstrapped()
         async with self._wu_op_lock:
             if self._wu_closed:
                 raise RuntimeError(f"{type(self).__name__} is already closed")
@@ -173,6 +201,7 @@ class WorkUnit:
             self._wu_init_order = order
 
     async def aclose(self) -> None:
+        self._require_bootstrapped()
         async with self._wu_op_lock:
             if self._wu_closed:
                 return

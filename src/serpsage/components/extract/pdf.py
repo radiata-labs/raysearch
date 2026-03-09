@@ -63,14 +63,6 @@ class PdfExtractionResult:
 class PdfExtractor(ExtractorBase):
     meta = _PDF_EXTRACTOR_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: ExtractConfigBase,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-
     @override
     async def extract(
         self,

@@ -5,7 +5,6 @@ from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.research import (
     OverviewConflictPayload,
@@ -28,17 +27,8 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
     _CONTEXT_NEW_RESULT_TARGET_RATIO = 0.60
     _CONTEXT_MIN_HISTORY_SOURCES = 3
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        llm: LLMClientBase = Inject(),
-        ranker: RankerBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self._ranker = ranker
-        self.bind_deps(llm, ranker)
+    llm: LLMClientBase = Inject()
+    ranker: RankerBase = Inject()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -77,7 +67,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             return ctx
         sources = await rerank_research_sources(
             ctx=ctx,
-            ranker=self._ranker,
+            ranker=self.ranker,
             sources=sources,
             query=ctx.task.question,
         )
@@ -88,7 +78,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.generate.use_model,
         )
         try:
-            chat_result = await self._llm.create(
+            chat_result = await self.llm.create(
                 model=model,
                 messages=build_overview_prompt_messages(
                     ctx=ctx,

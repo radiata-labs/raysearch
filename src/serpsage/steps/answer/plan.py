@@ -5,7 +5,6 @@ from typing import Any
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.answer import (
     AnswerPlanPayload,
@@ -19,13 +18,7 @@ from serpsage.utils import clean_whitespace
 class AnswerPlanStep(StepBase[AnswerStepContext]):
     _MAX_SUB_QUESTIONS = 8
     _FIXED_MAX_RESULTS = 5
-
-    def __init__(
-        self, *, rt: Runtime = Inject(), llm: LLMClientBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self.bind_deps(llm)
+    _llm: LLMClientBase = Inject()
 
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:

@@ -92,16 +92,10 @@ _MYSQL_CACHE_META = ComponentMeta(
 class MySQLCache(CacheBase[MySQLCacheConfig]):
     meta = _MYSQL_CACHE_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: MySQLCacheConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._driver_pref: Final[str] = str(config.driver or "auto").lower()
+    def __init__(self) -> None:
+        self._driver_pref: Final[str] = str(self.config.driver or "auto").lower()
         self._pool: Any | None = None
-        self._table_ident: Final[str] = _ensure_identifier(str(config.table))
+        self._table_ident: Final[str] = _ensure_identifier(str(self.config.table))
         self._table_quoted: Final[str] = _quote_ident(self._table_ident)
         self._sql: _SQL | None = None
 

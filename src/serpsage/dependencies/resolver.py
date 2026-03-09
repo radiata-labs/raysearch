@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from dataclasses import dataclass
 from types import UnionType
-from typing import Any, Literal, Union, cast, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
-from serpsage.core.workunit import WorkUnit
+from serpsage.core.workunit import WorkUnit, bootstrap_workunit
 from serpsage.dependencies.contracts import (
     _MISSING,
     BindingScope,
@@ -26,6 +27,16 @@ class ServiceResolutionError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class FieldPlan:
+    name: str
+    owner: type[Any]
+    annotation: Any
+    request: InjectRequest[Any]
+    shape: ParameterShape = "single"
+    key: ServiceKey[Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ParameterPlan:
     name: str
     annotation: Any
@@ -38,6 +49,13 @@ class ParameterPlan:
 @dataclass(frozen=True, slots=True)
 class ConstructorPlan:
     cls: type[Any]
+    parameters: tuple[ParameterPlan, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ClassPlan:
+    cls: type[Any]
+    fields: tuple[FieldPlan, ...]
     parameters: tuple[ParameterPlan, ...]
 
 
@@ -62,6 +80,7 @@ class ServiceCollection:
         cls: type[Any],
         *,
         scope: BindingScope = BindingScope.SINGLETON,
+        overrides: dict[str, object] | None = None,
         init_kwargs: dict[str, object] | None = None,
     ) -> None:
         normalized = assert_service_key(key)
@@ -71,7 +90,7 @@ class ServiceCollection:
             key=normalized,
             provider_cls=cls,
             scope=scope,
-            init_kwargs=dict(init_kwargs or {}),
+            overrides=_merge_overrides(overrides=overrides, init_kwargs=init_kwargs),
         )
 
     def bind_alias(self, key: ServiceKey[Any], target_key: ServiceKey[Any]) -> None:
@@ -92,6 +111,7 @@ class ServiceCollection:
         *,
         order: int,
         scope: BindingScope = BindingScope.SINGLETON,
+        overrides: dict[str, object] | None = None,
         init_kwargs: dict[str, object] | None = None,
     ) -> None:
         normalized = assert_service_key(key)
@@ -101,6 +121,7 @@ class ServiceCollection:
                 f"duplicate multibinding order {int(order)} for `{format_service_key(normalized)}`"
             )
         binding_id = f"multi:{format_service_key(normalized)}:{int(order)}"
+        payload = _merge_overrides(overrides=overrides, init_kwargs=init_kwargs)
         if isinstance(provider, InjectToken):
             entries.append(
                 MultiBinding(
@@ -109,6 +130,7 @@ class ServiceCollection:
                     order=int(order),
                     alias_key=provider,
                     scope=scope,
+                    overrides=payload,
                 )
             )
             return
@@ -120,7 +142,7 @@ class ServiceCollection:
                     order=int(order),
                     provider_cls=provider,
                     scope=scope,
-                    init_kwargs=dict(init_kwargs or {}),
+                    overrides=payload,
                 )
             )
             return
@@ -131,7 +153,7 @@ class ServiceCollection:
                 order=int(order),
                 instance=provider,
                 scope=scope,
-                init_kwargs=dict(init_kwargs or {}),
+                overrides=payload,
             )
         )
 
@@ -162,7 +184,7 @@ class ServiceProvider:
     ) -> None:
         self._single_bindings = single_bindings
         self._multi_bindings = multi_bindings
-        self._plans: dict[type[Any], ConstructorPlan] = {}
+        self._plans: dict[type[Any], ClassPlan] = {}
         self._singletons: dict[str, object] = {}
 
     def require(self, key: ServiceKey[Any]) -> object:
@@ -204,11 +226,11 @@ class ServiceProvider:
         self._single_bindings[normalized] = binding
         self._singletons[binding.binding_id] = value
 
-    def plan_for(self, cls: type[Any]) -> ConstructorPlan:
+    def plan_for(self, cls: type[Any]) -> ClassPlan:
         cached = self._plans.get(cls)
         if cached is not None:
             return cached
-        plan = analyze_constructor(cls)
+        plan = analyze_class(cls)
         self._plans[cls] = plan
         return plan
 
@@ -305,7 +327,7 @@ class ServiceProvider:
             elif binding.provider_cls is not None:
                 value = self._instantiate_class(
                     cls=binding.provider_cls,
-                    init_kwargs=binding.init_kwargs,
+                    overrides=binding.overrides,
                     path=path,
                     current_binding_id=binding.binding_id,
                     resolving=resolving,
@@ -351,7 +373,7 @@ class ServiceProvider:
             elif binding.provider_cls is not None:
                 value = self._instantiate_class(
                     cls=binding.provider_cls,
-                    init_kwargs=binding.init_kwargs,
+                    overrides=binding.overrides,
                     path=path,
                     current_binding_id=binding.binding_id,
                     resolving=resolving,
@@ -371,106 +393,239 @@ class ServiceProvider:
         self,
         *,
         cls: type[Any],
-        init_kwargs: dict[str, object],
+        overrides: dict[str, object],
         path: list[str],
         current_binding_id: str,
         resolving: set[str],
     ) -> object:
         plan = self.plan_for(cls)
-        kwargs: dict[str, Any] = {}
+        self._validate_override_targets(plan=plan, overrides=overrides, path=path)
+        resolved_fields: dict[str, object] = {}
+        resolved_params: dict[str, object] = {}
         owned: list[WorkUnit] = []
+        instance = object.__new__(cls)
+
+        if isinstance(instance, WorkUnit):
+            runtime_value = self._resolve_workunit_runtime(
+                plan=plan,
+                overrides=overrides,
+                resolved_fields=resolved_fields,
+                resolved_params=resolved_params,
+                path=path,
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+            bootstrap_workunit(instance, runtime_value)
+
+        for field in plan.fields:
+            value = self._resolve_field_value(
+                field=field,
+                overrides=overrides,
+                resolved_fields=resolved_fields,
+                path=path + [f"{cls.__name__}.{field.name}"],
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+            setattr(instance, field.name, value)
+            self._collect_workunits(owned, value)
+
+        kwargs: dict[str, object] = {}
         for parameter in plan.parameters:
-            if parameter.name in init_kwargs:
-                value = self._resolve_explicit_value(
-                    init_kwargs[parameter.name],
-                    parameter=parameter,
-                    path=path + [f"{cls.__name__}.{parameter.name}"],
-                    current_binding_id=current_binding_id,
-                    resolving=resolving,
-                )
-            elif parameter.request is not None:
-                value = self._resolve_request(
-                    parameter=parameter,
-                    path=path + [f"{cls.__name__}.{parameter.name}"],
-                    current_binding_id=current_binding_id,
-                    resolving=resolving,
-                )
-            elif parameter.default is not inspect.Parameter.empty:
-                value = parameter.default
-            else:
-                raise self._resolution_error(
-                    f"missing constructor argument `{cls.__name__}.{parameter.name}`",
-                    path=path,
-                )
+            value = self._resolve_parameter_value(
+                parameter=parameter,
+                overrides=overrides,
+                resolved_params=resolved_params,
+                path=path + [f"{cls.__name__}.{parameter.name}"],
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
             kwargs[parameter.name] = value
             self._collect_workunits(owned, value)
-        instance = cls(**kwargs)
+
+        cls.__init__(instance, **kwargs)
         if isinstance(instance, WorkUnit) and owned:
             instance.bind_deps(*owned)
         return instance
 
-    def _resolve_explicit_value(
+    def _resolve_workunit_runtime(
         self,
-        value: object,
         *,
-        parameter: ParameterPlan,
+        plan: ClassPlan,
+        overrides: dict[str, object],
+        resolved_fields: dict[str, object],
+        resolved_params: dict[str, object],
         path: list[str],
         current_binding_id: str,
         resolving: set[str],
     ) -> object:
-        if isinstance(value, InjectRequest):
-            key = value.key or parameter.key
-            if key is None:
-                raise self._resolution_error(
-                    f"invalid dependency declaration for `{parameter.name}`",
-                    path=path,
-                )
-            origin = get_origin(parameter.annotation)
-            if origin in {tuple, list}:
-                items = self._resolve_many(
-                    key,
-                    path=path,
-                    current_binding_id=current_binding_id,
-                    resolving=resolving,
-                )
-                return list(items) if origin is list else items
-            target_type, optional = _unwrap_optional(parameter.annotation)
-            _ = target_type
-            if optional and key not in self._single_bindings:
-                return None
-            return self._resolve_single(
-                key,
-                path=path + [format_service_key(key)],
+        field = next((item for item in plan.fields if item.name == "rt"), None)
+        if field is not None:
+            return self._resolve_field_value(
+                field=field,
+                overrides=overrides,
+                resolved_fields=resolved_fields,
+                path=path + [f"{plan.cls.__name__}.rt"],
                 current_binding_id=current_binding_id,
                 resolving=resolving,
             )
+        parameter = next((item for item in plan.parameters if item.name == "rt"), None)
+        if parameter is not None:
+            return self._resolve_parameter_value(
+                parameter=parameter,
+                overrides=overrides,
+                resolved_params=resolved_params,
+                path=path + [f"{plan.cls.__name__}.rt"],
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+        raise self._resolution_error(
+            f"`{plan.cls.__name__}` is a WorkUnit but has no runtime dependency source",
+            path=path,
+        )
+
+    def _resolve_field_value(
+        self,
+        *,
+        field: FieldPlan,
+        overrides: dict[str, object],
+        resolved_fields: dict[str, object],
+        path: list[str],
+        current_binding_id: str,
+        resolving: set[str],
+    ) -> object:
+        cached = resolved_fields.get(field.name, _MISSING)
+        if cached is not _MISSING:
+            return cached
+        if field.name in overrides:
+            value = self._resolve_member_override(
+                overrides[field.name],
+                annotation=field.annotation,
+                key=field.key,
+                name=field.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+        else:
+            value = self._resolve_request(
+                shape=field.shape,
+                key=field.key,
+                name=field.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+        resolved_fields[field.name] = value
         return value
+
+    def _resolve_parameter_value(
+        self,
+        *,
+        parameter: ParameterPlan,
+        overrides: dict[str, object],
+        resolved_params: dict[str, object],
+        path: list[str],
+        current_binding_id: str,
+        resolving: set[str],
+    ) -> object:
+        cached = resolved_params.get(parameter.name, _MISSING)
+        if cached is not _MISSING:
+            return cached
+        if parameter.name in overrides:
+            value = self._resolve_member_override(
+                overrides[parameter.name],
+                annotation=parameter.annotation,
+                key=parameter.key,
+                name=parameter.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+        elif parameter.request is not None:
+            value = self._resolve_request(
+                shape=parameter.shape,
+                key=parameter.key,
+                name=parameter.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+        elif parameter.default is not inspect.Parameter.empty:
+            value = parameter.default
+        else:
+            raise self._resolution_error(
+                f"missing constructor argument `{parameter.name}`",
+                path=path,
+            )
+        resolved_params[parameter.name] = value
+        return value
+
+    def _resolve_member_override(
+        self,
+        value: object,
+        *,
+        annotation: Any,
+        key: ServiceKey[Any] | None,
+        name: str,
+        path: list[str],
+        current_binding_id: str,
+        resolving: set[str],
+    ) -> object:
+        if not isinstance(value, InjectRequest):
+            return value
+        target_key = value.key or key
+        if target_key is None:
+            raise self._resolution_error(
+                f"invalid dependency declaration for `{name}`",
+                path=path,
+            )
+        origin = get_origin(annotation)
+        if origin in {tuple, list}:
+            items = self._resolve_many(
+                target_key,
+                path=path,
+                current_binding_id=current_binding_id,
+                resolving=resolving,
+            )
+            return list(items) if origin is list else items
+        target_type, optional = _unwrap_optional(annotation)
+        _ = target_type
+        if optional and target_key not in self._single_bindings:
+            return None
+        return self._resolve_single(
+            target_key,
+            path=path + [format_service_key(target_key)],
+            current_binding_id=current_binding_id,
+            resolving=resolving,
+        )
 
     def _resolve_request(
         self,
         *,
-        parameter: ParameterPlan,
+        shape: ParameterShape,
+        key: ServiceKey[Any] | None,
+        name: str,
         path: list[str],
         current_binding_id: str,
         resolving: set[str],
     ) -> object:
-        if parameter.key is None:
+        if key is None:
             raise self._resolution_error(
-                f"invalid dependency declaration for `{parameter.name}`",
+                f"invalid dependency declaration for `{name}`",
                 path=path,
             )
-        if parameter.shape == "collection":
+        if shape == "collection":
             return self._resolve_many(
-                parameter.key,
+                key,
                 path=path,
                 current_binding_id=current_binding_id,
                 resolving=resolving,
             )
-        if parameter.shape == "optional" and parameter.key not in self._single_bindings:
+        if shape == "optional" and key not in self._single_bindings:
             return None
         return self._resolve_single(
-            parameter.key,
-            path=path + [format_service_key(parameter.key)],
+            key,
+            path=path + [format_service_key(key)],
             current_binding_id=current_binding_id,
             resolving=resolving,
         )
@@ -508,7 +663,7 @@ class ServiceProvider:
                 )
             self._validate_class_plan(
                 cls=binding.provider_cls,
-                init_kwargs=binding.init_kwargs,
+                overrides=binding.overrides,
                 path=path,
                 current_binding_id=binding.binding_id,
                 visiting=visiting,
@@ -549,7 +704,7 @@ class ServiceProvider:
                 )
             self._validate_class_plan(
                 cls=binding.provider_cls,
-                init_kwargs=binding.init_kwargs,
+                overrides=binding.overrides,
                 path=path,
                 current_binding_id=binding.binding_id,
                 visiting=visiting,
@@ -561,55 +716,161 @@ class ServiceProvider:
         self,
         *,
         cls: type[Any],
-        init_kwargs: dict[str, object],
+        overrides: dict[str, object],
         path: list[str],
         current_binding_id: str,
         visiting: set[str],
     ) -> None:
         plan = self.plan_for(cls)
+        self._validate_override_targets(plan=plan, overrides=overrides, path=path)
+        if issubclass(cls, WorkUnit):
+            self._validate_workunit_runtime_source(
+                plan=plan,
+                overrides=overrides,
+                path=path,
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
+        for field in plan.fields:
+            self._validate_field(
+                field=field,
+                overrides=overrides,
+                path=path + [f"{cls.__name__}.{field.name}"],
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
         for parameter in plan.parameters:
-            if parameter.name in init_kwargs:
-                self._validate_explicit_value(
-                    init_kwargs[parameter.name],
-                    parameter=parameter,
-                    path=path + [f"{cls.__name__}.{parameter.name}"],
-                    current_binding_id=current_binding_id,
-                    visiting=visiting,
-                )
-                continue
-            if parameter.request is not None:
-                self._validate_parameter_request(
-                    parameter=parameter,
-                    path=path + [f"{cls.__name__}.{parameter.name}"],
-                    current_binding_id=current_binding_id,
-                    visiting=visiting,
-                )
-                continue
-            if parameter.default is inspect.Parameter.empty:
-                raise self._resolution_error(
-                    f"missing constructor argument `{cls.__name__}.{parameter.name}`",
-                    path=path,
-                )
+            self._validate_parameter(
+                parameter=parameter,
+                overrides=overrides,
+                path=path + [f"{cls.__name__}.{parameter.name}"],
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
 
-    def _validate_explicit_value(
+    def _validate_field(
+        self,
+        *,
+        field: FieldPlan,
+        overrides: dict[str, object],
+        path: list[str],
+        current_binding_id: str,
+        visiting: set[str],
+    ) -> None:
+        if field.name in overrides:
+            self._validate_member_override(
+                overrides[field.name],
+                annotation=field.annotation,
+                key=field.key,
+                name=field.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
+            return
+        self._validate_request(
+            shape=field.shape,
+            key=field.key,
+            name=field.name,
+            path=path,
+            current_binding_id=current_binding_id,
+            visiting=visiting,
+        )
+
+    def _validate_parameter(
+        self,
+        *,
+        parameter: ParameterPlan,
+        overrides: dict[str, object],
+        path: list[str],
+        current_binding_id: str,
+        visiting: set[str],
+    ) -> None:
+        if parameter.name in overrides:
+            self._validate_member_override(
+                overrides[parameter.name],
+                annotation=parameter.annotation,
+                key=parameter.key,
+                name=parameter.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
+            return
+        if parameter.request is not None:
+            self._validate_request(
+                shape=parameter.shape,
+                key=parameter.key,
+                name=parameter.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
+            return
+        if parameter.default is inspect.Parameter.empty:
+            raise self._resolution_error(
+                f"missing constructor argument `{parameter.name}`",
+                path=path,
+            )
+
+    def _validate_member_override(
         self,
         value: object,
         *,
-        parameter: ParameterPlan,
+        annotation: Any,
+        key: ServiceKey[Any] | None,
+        name: str,
         path: list[str],
         current_binding_id: str,
         visiting: set[str],
     ) -> None:
         if not isinstance(value, InjectRequest):
             return
-        key = value.key or parameter.key
-        if key is None:
+        target_key = value.key or key
+        if target_key is None:
             raise self._resolution_error(
-                f"invalid dependency declaration for `{parameter.name}`",
+                f"invalid dependency declaration for `{name}`",
                 path=path,
             )
-        origin = get_origin(parameter.annotation)
+        origin = get_origin(annotation)
         if origin in {tuple, list}:
+            for binding in self._multi_bindings.get(target_key, ()):
+                if binding.binding_id == current_binding_id:
+                    continue
+                self._validate_multibinding(
+                    binding=binding,
+                    path=path + [f"{format_service_key(target_key)}[]"],
+                    current_binding_id=current_binding_id,
+                    visiting=visiting,
+                )
+            return
+        target_type, optional = _unwrap_optional(annotation)
+        _ = target_type
+        if optional and target_key not in self._single_bindings:
+            return
+        self._validate_single_key(
+            target_key,
+            path=path + [format_service_key(target_key)],
+            current_binding_id=current_binding_id,
+            visiting=visiting,
+        )
+
+    def _validate_request(
+        self,
+        *,
+        shape: ParameterShape,
+        key: ServiceKey[Any] | None,
+        name: str,
+        path: list[str],
+        current_binding_id: str,
+        visiting: set[str],
+    ) -> None:
+        if key is None:
+            raise self._resolution_error(
+                f"invalid dependency declaration for `{name}`",
+                path=path,
+            )
+        if shape == "collection":
             for binding in self._multi_bindings.get(key, ()):
                 if binding.binding_id == current_binding_id:
                     continue
@@ -620,46 +881,11 @@ class ServiceProvider:
                     visiting=visiting,
                 )
             return
-        target_type, optional = _unwrap_optional(parameter.annotation)
-        _ = target_type
-        if optional and key not in self._single_bindings:
+        if shape == "optional" and key not in self._single_bindings:
             return
         self._validate_single_key(
             key,
             path=path + [format_service_key(key)],
-            current_binding_id=current_binding_id,
-            visiting=visiting,
-        )
-
-    def _validate_parameter_request(
-        self,
-        *,
-        parameter: ParameterPlan,
-        path: list[str],
-        current_binding_id: str,
-        visiting: set[str],
-    ) -> None:
-        if parameter.key is None:
-            raise self._resolution_error(
-                f"invalid dependency declaration for `{parameter.name}`",
-                path=path,
-            )
-        if parameter.shape == "collection":
-            for binding in self._multi_bindings.get(parameter.key, ()):
-                if binding.binding_id == current_binding_id:
-                    continue
-                self._validate_multibinding(
-                    binding=binding,
-                    path=path + [f"{format_service_key(parameter.key)}[]"],
-                    current_binding_id=current_binding_id,
-                    visiting=visiting,
-                )
-            return
-        if parameter.shape == "optional" and parameter.key not in self._single_bindings:
-            return
-        self._validate_single_key(
-            parameter.key,
-            path=path + [format_service_key(parameter.key)],
             current_binding_id=current_binding_id,
             visiting=visiting,
         )
@@ -685,12 +911,63 @@ class ServiceProvider:
             visiting=visiting,
         )
 
+    def _validate_workunit_runtime_source(
+        self,
+        *,
+        plan: ClassPlan,
+        overrides: dict[str, object],
+        path: list[str],
+        current_binding_id: str,
+        visiting: set[str],
+    ) -> None:
+        field = next((item for item in plan.fields if item.name == "rt"), None)
+        if field is not None:
+            self._validate_field(
+                field=field,
+                overrides=overrides,
+                path=path + [f"{plan.cls.__name__}.rt"],
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
+            return
+        parameter = next((item for item in plan.parameters if item.name == "rt"), None)
+        if parameter is not None:
+            self._validate_parameter(
+                parameter=parameter,
+                overrides=overrides,
+                path=path + [f"{plan.cls.__name__}.rt"],
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
+            return
+        raise self._resolution_error(
+            f"`{plan.cls.__name__}` is a WorkUnit but has no runtime dependency source",
+            path=path,
+        )
+
+    @staticmethod
+    def _validate_override_targets(
+        *,
+        plan: ClassPlan,
+        overrides: dict[str, object],
+        path: list[str],
+    ) -> None:
+        valid_names = {item.name for item in plan.fields}
+        valid_names.update(item.name for item in plan.parameters)
+        unknown = sorted(name for name in overrides if name not in valid_names)
+        if unknown:
+            joined = ", ".join(f"`{name}`" for name in unknown)
+            raise ServiceResolutionError(
+                f"invalid override target(s) {joined} for `{plan.cls.__name__}` "
+                f"(path: {' -> '.join(path)})"
+            )
+
     @staticmethod
     def _collect_workunits(out: list[WorkUnit], value: object) -> None:
         queue: list[WorkUnit] = []
         if isinstance(value, WorkUnit):
             queue.append(value)
-        elif isinstance(value, tuple):
+        elif isinstance(value, (tuple, list)):
             queue.extend(item for item in value if isinstance(item, WorkUnit))
         existing = {id(item) for item in out}
         for item in queue:
@@ -707,25 +984,71 @@ class ServiceProvider:
         return ServiceResolutionError(message)
 
 
+def analyze_class(cls: type[Any]) -> ClassPlan:
+    parameters = _analyze_parameters(cls)
+    parameter_names = {item.name for item in parameters}
+    fields_by_name: dict[str, FieldPlan] = {}
+    for owner in reversed(cls.__mro__[:-1]):
+        annotations = _get_class_hints(owner)
+        for name, value in owner.__dict__.items():
+            if not isinstance(value, InjectRequest):
+                continue
+            if name in parameter_names and owner is not cls:
+                continue
+            if name in parameter_names and owner is cls:
+                raise TypeError(
+                    f"{cls.__name__}.{name} cannot be both an injected field and a constructor parameter"
+                )
+            annotation = annotations.get(name)
+            if annotation is None:
+                raise TypeError(
+                    f"{owner.__name__}.{name} must declare a type annotation for Inject()"
+                )
+            shape = _member_shape(annotation)
+            key = _member_key(annotation=annotation, request=value, shape=shape)
+            if key is None:
+                raise TypeError(
+                    f"{owner.__name__}.{name} has an unsupported Inject() annotation"
+                )
+            fields_by_name[name] = FieldPlan(
+                name=name,
+                owner=owner,
+                annotation=annotation,
+                request=value,
+                shape=shape,
+                key=key,
+            )
+    return ClassPlan(
+        cls=cls,
+        fields=tuple(fields_by_name.values()),
+        parameters=parameters,
+    )
+
+
 def analyze_constructor(cls: type[Any]) -> ConstructorPlan:
+    plan = analyze_class(cls)
+    return ConstructorPlan(cls=cls, parameters=plan.parameters)
+
+
+def _analyze_parameters(cls: type[Any]) -> tuple[ParameterPlan, ...]:
+    if _uses_inherited_compat_init(cls):
+        return ()
     signature = inspect.signature(cls.__init__)
-    hints = get_type_hints(cls.__init__)
+    hints = _get_function_hints(cls.__init__)
     parameters: list[ParameterPlan] = []
     for name, parameter in signature.parameters.items():
         if name == "self":
             continue
         annotation = hints.get(name)
         request = (
-            parameter.default
-            if isinstance(parameter.default, InjectRequest)
-            else None
+            parameter.default if isinstance(parameter.default, InjectRequest) else None
         )
-        shape = _parameter_shape(annotation)
-        key = _parameter_key(annotation=annotation, request=request, shape=shape)
         if request is not None and annotation is None:
             raise TypeError(
                 f"{cls.__name__}.{name} must declare a type annotation for Inject()"
             )
+        shape = _member_shape(annotation)
+        key = _member_key(annotation=annotation, request=request, shape=shape)
         if request is not None and key is None:
             raise TypeError(
                 f"{cls.__name__}.{name} has an unsupported Inject() annotation"
@@ -740,10 +1063,10 @@ def analyze_constructor(cls: type[Any]) -> ConstructorPlan:
                 key=key,
             )
         )
-    return ConstructorPlan(cls=cls, parameters=tuple(parameters))
+    return tuple(parameters)
 
 
-def _parameter_shape(annotation: Any) -> ParameterShape:
+def _member_shape(annotation: Any) -> ParameterShape:
     collection_key, is_collection = _unwrap_collection(annotation)
     if is_collection:
         _ = collection_key
@@ -753,7 +1076,7 @@ def _parameter_shape(annotation: Any) -> ParameterShape:
     return "optional" if optional else "single"
 
 
-def _parameter_key(
+def _member_key(
     *,
     annotation: Any,
     request: InjectRequest[Any] | None,
@@ -794,11 +1117,66 @@ def _unwrap_optional(annotation: Any) -> tuple[ServiceKey[Any] | None, bool]:
     return (item if isinstance(item, type) else None), True
 
 
+def _merge_overrides(
+    *,
+    overrides: dict[str, object] | None,
+    init_kwargs: dict[str, object] | None,
+) -> dict[str, object]:
+    if overrides and init_kwargs:
+        raise ValueError("pass either `overrides` or `init_kwargs`, not both")
+    return dict(overrides or init_kwargs or {})
+
+
+def _uses_inherited_compat_init(cls: type[Any]) -> bool:
+    if "__init__" in cls.__dict__:
+        return False
+    if cls.__init__ is object.__init__:
+        return True
+    if cls.__init__ is WorkUnit.__init__:
+        return True
+    try:
+        from serpsage.components.base import ComponentBase
+    except Exception:  # noqa: BLE001
+        return False
+    return cls.__init__ is ComponentBase.__init__
+
+
+def _get_function_hints(func: Any) -> dict[str, Any]:
+    return get_type_hints(func, globalns=_annotation_globals(func), localns={})
+
+
+def _get_class_hints(cls: type[Any]) -> dict[str, Any]:
+    return get_type_hints(
+        cls,
+        globalns=_annotation_globals(cls),
+        localns=dict(vars(cls)),
+    )
+
+
+def _annotation_globals(obj: Any) -> dict[str, Any]:
+    module = sys.modules.get(getattr(obj, "__module__", ""))
+    globalns = dict(vars(module)) if module is not None else {}
+    runtime_type: object | None = None
+    if "Runtime" not in globalns:
+        try:
+            from serpsage.core.runtime import Runtime
+        except Exception:  # noqa: BLE001
+            runtime_type = None
+        else:
+            runtime_type = Runtime
+        if runtime_type is not None:
+            globalns["Runtime"] = runtime_type
+    return globalns
+
+
 __all__ = [
+    "ClassPlan",
     "ConstructorPlan",
+    "FieldPlan",
     "ParameterPlan",
     "ServiceCollection",
     "ServiceProvider",
     "ServiceResolutionError",
+    "analyze_class",
     "analyze_constructor",
 ]

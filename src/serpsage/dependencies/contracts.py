@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Generic, TypeAlias, TypeVar, cast
+from typing_extensions import override
 
 T = TypeVar("T")
 
@@ -21,6 +22,7 @@ class InjectToken(Generic[T]):
     def debug_name(self) -> str:
         return self.name
 
+    @override
     def __str__(self) -> str:
         return self.name
 
@@ -50,7 +52,7 @@ class ServiceBinding:
     instance: object = field(default_factory=lambda: _MISSING)
     alias_key: ServiceKey[Any] | None = None
     scope: BindingScope = BindingScope.SINGLETON
-    init_kwargs: dict[str, object] = field(default_factory=dict)
+    overrides: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +64,7 @@ class MultiBinding:
     instance: object = field(default_factory=lambda: _MISSING)
     alias_key: ServiceKey[Any] | None = None
     scope: BindingScope = BindingScope.SINGLETON
-    init_kwargs: dict[str, object] = field(default_factory=dict)
+    overrides: dict[str, object] = field(default_factory=dict)
 
 
 def is_service_key(value: object) -> bool:
@@ -89,7 +91,7 @@ class _Missing:
     pass
 
 
-_MISSING = _Missing()
+_MISSING: object = _Missing()
 
 
 __all__ = [

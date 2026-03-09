@@ -3,28 +3,49 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from typing_extensions import override
 
 import anyio
+from pydantic import field_validator
 
 from serpsage.components.base import ComponentConfigBase, ComponentMeta
 from serpsage.components.registry import register_component
 from serpsage.components.telemetry.base import (
     EventSinkBase,
-    JsonlObsConfig,
-    SqliteMeteringConfig,
 )
 from serpsage.models.components.telemetry import EventEnvelope
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
 
 AioSqliteModule: Any | None = None
 try:
     AioSqliteModule = importlib.import_module("aiosqlite")
 except Exception:  # noqa: BLE001
     AioSqliteModule = None
+
+
+class JsonlObsConfig(ComponentConfigBase):
+    jsonl_path: str = ".serpsage_events.jsonl"
+
+    @field_validator("jsonl_path")
+    @classmethod
+    def _validate_jsonl_path(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("telemetry obs jsonl_path must be non-empty")
+        return token
+
+
+class SqliteMeteringConfig(ComponentConfigBase):
+    sqlite_db_path: str = ".serpsage_metering.sqlite3"
+
+    @field_validator("sqlite_db_path")
+    @classmethod
+    def _validate_sqlite_db_path(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("telemetry metering sqlite_db_path must be non-empty")
+        return token
+
 
 _NULL_SINK_META = ComponentMeta(
     family="telemetry",
@@ -55,16 +76,8 @@ _SQLITE_SINK_META = ComponentMeta(
 
 
 @register_component(meta=_NULL_SINK_META)
-class NullObsSink(EventSinkBase):
+class NullObsSink(EventSinkBase[ComponentConfigBase]):
     meta = _NULL_SINK_META
-
-    def __init__(
-        self,
-        *,
-        rt: Runtime,
-        config: ComponentConfigBase,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
 
     @override
     async def emit(self, *, event: EventEnvelope) -> None:
@@ -72,17 +85,11 @@ class NullObsSink(EventSinkBase):
 
 
 @register_component(meta=_JSONL_SINK_META)
-class JsonlObsSink(EventSinkBase):
+class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
     meta = _JSONL_SINK_META
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime,
-        config: JsonlObsConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._file_path = str(config.jsonl_path).strip()
+    def __init__(self) -> None:
+        self._file_path = str(self.config.jsonl_path).strip()
         self._file: Any | None = None
         self._lock = anyio.Lock()
 
@@ -118,17 +125,11 @@ class JsonlObsSink(EventSinkBase):
 
 
 @register_component(meta=_SQLITE_SINK_META)
-class SqliteMeterLedgerSink(EventSinkBase):
+class SqliteMeterLedgerSink(EventSinkBase[SqliteMeteringConfig]):
     meta = _SQLITE_SINK_META
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime,
-        config: SqliteMeteringConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._db_path = Path(str(config.sqlite_db_path).strip())
+    def __init__(self) -> None:
+        self._db_path = Path(str(self.config.sqlite_db_path).strip())
         self._con: Any | None = None
         self._lock = anyio.Lock()
 

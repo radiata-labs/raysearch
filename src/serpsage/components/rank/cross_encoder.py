@@ -68,34 +68,27 @@ _CROSS_ENCODER_META = ComponentMeta(
 class CrossEncoderRanker(RankerBase[RankCrossEncoderSettings]):
     meta = _CROSS_ENCODER_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: RankCrossEncoderSettings,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._model: object | None = None
+    model: object | None = None
 
     @override
     async def on_init(self) -> None:
         await self._ensure_model()
 
     async def _ensure_model(self) -> object:
-        if self._model is not None:
-            return self._model
+        if self.model is not None:
+            return self.model
         if not CROSS_ENCODER_AVAILABLE or _CROSS_ENCODER_CTOR is None:
             raise RuntimeError(
                 "cross-encoder ranker is unavailable: install sentence-transformers"
             )
         cross_encoder_ctor = cast("Any", _CROSS_ENCODER_CTOR)
-        self._model = await to_thread.run_sync(
+        self.model = await to_thread.run_sync(
             lambda: cross_encoder_ctor(
                 str(self.config.model_name or "").strip(),
                 max_length=max(1, int(self.config.max_length)),
             )
         )
-        return self._model
+        return self.model
 
     @override
     async def score_texts(

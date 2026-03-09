@@ -8,7 +8,6 @@ from serpsage.components.extract.html import HtmlExtractor
 from serpsage.components.extract.pdf import PdfExtractor
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.components.registry import register_component
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
@@ -26,17 +25,8 @@ _AUTO_EXTRACTOR_META = ComponentMeta(
 class AutoExtractor(ExtractorBase):
     meta = _AUTO_EXTRACTOR_META
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        config: ExtractConfigBase = Inject(),
-        html_extractor: HtmlExtractor = Inject(),
-        pdf_extractor: PdfExtractor = Inject(),
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._markdown_extractor = html_extractor
-        self._pdf_extractor = pdf_extractor
+    html_extractor: HtmlExtractor = Inject()
+    pdf_extractor: PdfExtractor = Inject()
 
     @override
     async def extract(
@@ -54,7 +44,7 @@ class AutoExtractor(ExtractorBase):
             content_type=content_type, url=url, content=content
         )
         if kind == "pdf":
-            return await self._pdf_extractor.extract(
+            return await self.pdf_extractor.extract(
                 url=url,
                 content=content,
                 content_type=content_type,
@@ -63,7 +53,7 @@ class AutoExtractor(ExtractorBase):
                 collect_links=collect_links,
                 collect_images=collect_images,
             )
-        return await self._markdown_extractor.extract(
+        return await self.html_extractor.extract(
             url=url,
             content=content,
             content_type=content_type,

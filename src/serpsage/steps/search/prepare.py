@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.search import (
@@ -11,14 +10,8 @@ from serpsage.models.steps.search import (
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-
 
 class SearchPrepareStep(StepBase[SearchStepContext]):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         query = clean_whitespace(ctx.request.query or "")

@@ -88,19 +88,13 @@ _PLAYWRIGHT_FETCHER_META = ComponentMeta(
 class PlaywrightFetcher(FetcherBase):
     meta = _PLAYWRIGHT_FETCHER_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: PlaywrightFetcherConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         if not PLAYWRIGHT_AVAILABLE or _pw_factory is None:
             raise RuntimeError("playwright is not available; install playwright")
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        self._sem = anyio.Semaphore(max(1, int(config.render.js_concurrency)))
+        self._sem = anyio.Semaphore(max(1, int(self.config.render.js_concurrency)))
 
     @override
     async def on_init(self) -> None:

@@ -29,7 +29,6 @@ from serpsage.models.steps.search import SearchStepContext
 from serpsage.steps.base import RunnerBase
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
     from serpsage.models.app.request import (
         AnswerRequest,
         FetchRequest,
@@ -42,23 +41,16 @@ if TYPE_CHECKING:
 class Engine(WorkUnit):
     """Async-only engine with search/fetch/answer/research paths."""
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER),
-        fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER),
-        answer_runner: RunnerBase[AnswerStepContext] = Inject(ANSWER_RUNNER),
-        research_runner: RunnerBase[ResearchStepContext] | None = Inject(
-            RESEARCH_RUNNER
-        ),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._search_runner = search_runner
-        self._fetch_runner = fetch_runner
-        self._answer_runner = answer_runner
-        self._research_runner = research_runner or RunnerBase[ResearchStepContext](
-            rt=rt,
+    _search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER)
+    _fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER)
+    _answer_runner: RunnerBase[AnswerStepContext] = Inject(ANSWER_RUNNER)
+    _research_runner: RunnerBase[ResearchStepContext] | None = Inject(RESEARCH_RUNNER)
+
+    def __init__(self) -> None:
+        self._research_runner = self._research_runner or RunnerBase[
+            ResearchStepContext
+        ](
+            rt=self.rt,
             steps=[],
             kind="search",
         )
@@ -356,7 +348,10 @@ class Engine(WorkUnit):
             ),
         )
         try:
-            ctx = await self._research_runner.run(ctx)
+            research_runner = self._research_runner
+            if research_runner is None:
+                raise RuntimeError("research runner is not configured")
+            ctx = await research_runner.run(ctx)
             ctx.response.content = ctx.result.content
             ctx.response.structured = ctx.result.structured
             response = ctx.response

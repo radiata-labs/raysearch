@@ -5,7 +5,6 @@ from typing_extensions import override
 
 from serpsage.app.tokens import RESEARCH_ROUND_RUNNER, RESEARCH_SUBREPORT_STEP
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.response import ResearchResponse
 from serpsage.models.steps.research import (
@@ -29,19 +28,9 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         "high": 0.6,
     }
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        llm: LLMClientBase = Inject(),
-        round_runner: RunnerBase[ResearchStepContext] = Inject(RESEARCH_ROUND_RUNNER),
-        render_step: StepBase[ResearchStepContext] = Inject(RESEARCH_SUBREPORT_STEP),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self._round_runner = round_runner
-        self._render_step = render_step
-        self.bind_deps(llm, round_runner, render_step)
+    llm: LLMClientBase = Inject()
+    round_runner: RunnerBase[ResearchStepContext] = Inject(RESEARCH_ROUND_RUNNER)
+    render_step: StepBase[ResearchStepContext] = Inject(RESEARCH_SUBREPORT_STEP)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -89,7 +78,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     track_ctx.run.current.stop = False
                     track_ctx.run.current.stop_reason = ""
                 try:
-                    track_ctx = await self._round_runner.run(track_ctx)
+                    track_ctx = await self.round_runner.run(track_ctx)
                 except Exception as exc:  # noqa: BLE001
                     await self.emit_tracking_event(
                         event_name="research.loop.error",
@@ -441,7 +430,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         track_ctx: ResearchStepContext,
         runtime: ResearchTrackRuntime,
     ) -> ResearchTrackResult:
-        rendered = await self._render_step.run(track_ctx)
+        rendered = await self.render_step.run(track_ctx)
         latest_round = self._latest_round(rendered)
         insight_card = (
             rendered.result.structured

@@ -1,20 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.app.response import FetchResultItem
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-
 
 class FetchFinalizeStep(StepBase[FetchStepContext]):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         if ctx.error.failed:

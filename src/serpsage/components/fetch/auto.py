@@ -18,7 +18,6 @@ from serpsage.components.fetch.utils import (
 )
 from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.components.registry import register_component
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
@@ -73,20 +72,14 @@ _AUTO_FETCHER_META = ComponentMeta(
 class AutoFetcher(FetcherBase):
     meta = _AUTO_FETCHER_META
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        config: AutoFetcherConfig = Inject(),
-        rate_limiter: RateLimiterBase = Inject(),
-        curl: CurlCffiFetcher = Inject(),
-        playwright: PlaywrightFetcher = Inject(),
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-        self._rl = rate_limiter
-        self._curl = curl
-        self._playwright = playwright
-        self._route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
+    rate_limiter: RateLimiterBase = Inject()
+    curl: CurlCffiFetcher = Inject()
+    playwright: PlaywrightFetcher = Inject()
+
+    route_memory: OrderedDict[str, _RouteMemory]
+
+    def __init__(self) -> None:
+        self.route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
 
     @override
     async def _afetch_inner(
@@ -104,11 +97,11 @@ class AutoFetcher(FetcherBase):
         timeout_s: float | None,
     ) -> FetchResult:
         host = urlparse(url).netloc.lower()
-        await self._rl.acquire(host=host)
+        await self.rate_limiter.acquire(host=host)
         try:
             attempt = await self._fetch_useful(url=url, timeout_s=timeout_s)
         finally:
-            await self._rl.release(host=host)
+            await self.rate_limiter.release(host=host)
         return FetchResult(
             url=attempt.url,
             status_code=int(attempt.status_code),
@@ -154,7 +147,7 @@ class AutoFetcher(FetcherBase):
                 return direct_attempt
         scout_bytes = int(self.config.auto.scout_bytes)
         curl_started = time.monotonic()
-        progressive = await self._curl.fetch_progressive_attempt(
+        progressive = await self.curl.fetch_progressive_attempt(
             url=url,
             timeout_s=self._remaining_timeout_s(deadline_ts),
             scout_bytes=scout_bytes,
@@ -309,14 +302,14 @@ class AutoFetcher(FetcherBase):
         return None
 
     def _get_route_memory(self, route_key: str) -> _RouteMemory:
-        memory = self._route_memory.pop(route_key, None)
+        memory = self.route_memory.pop(route_key, None)
         if memory is None:
             memory = _RouteMemory()
         memory.last_used_ts = time.monotonic()
-        self._route_memory[route_key] = memory
+        self.route_memory[route_key] = memory
         max_items = max(8, int(self.config.auto.route_memory_size))
-        while len(self._route_memory) > max_items:
-            self._route_memory.popitem(last=False)
+        while len(self.route_memory) > max_items:
+            self.route_memory.popitem(last=False)
         return memory
 
     def _record_route_result(
@@ -343,7 +336,7 @@ class AutoFetcher(FetcherBase):
 
     async def _run_curl(self, *, url: str, deadline_ts: float) -> FetchAttempt:
         timeout_s = self._remaining_timeout_s(deadline_ts)
-        return await self._curl.fetch_attempt(url=url, timeout_s=timeout_s)
+        return await self.curl.fetch_attempt(url=url, timeout_s=timeout_s)
 
     async def _run_playwright(
         self,
@@ -353,7 +346,7 @@ class AutoFetcher(FetcherBase):
         render_reason: str,
     ) -> FetchAttempt:
         timeout_s = self._remaining_timeout_s(deadline_ts)
-        return await self._playwright.fetch_attempt(
+        return await self.playwright.fetch_attempt(
             url=url,
             timeout_s=timeout_s,
             render_reason=render_reason,

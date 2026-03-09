@@ -11,7 +11,6 @@ import anyio
 
 from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.components.provider import (
     SearchProviderResponse,
@@ -40,17 +39,8 @@ _RE_CJK_TOKEN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]")
 
 
 class SearchStep(StepBase[SearchStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        provider: SearchProviderBase = Inject(),
-        ranker: RankerBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._provider = provider
-        self._ranker = ranker
-        self.bind_deps(provider, ranker)
+    provider: SearchProviderBase = Inject()
+    ranker: RankerBase = Inject()
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
@@ -100,7 +90,7 @@ class SearchStep(StepBase[SearchStepContext]):
                 next_order += 1
         base_scores: list[float] = []
         if docs:
-            base_scores = await self._ranker.score_texts(
+            base_scores = await self.ranker.score_texts(
                 docs,
                 query=req.query,
                 query_tokens=query_tokens,
@@ -212,7 +202,7 @@ class SearchStep(StepBase[SearchStepContext]):
         ctx: SearchStepContext,
     ) -> None:
         try:
-            out[idx] = await self._provider.asearch(
+            out[idx] = await self.provider.asearch(
                 query=query,
                 page=int(ctx.provider_page),
                 language=str(ctx.provider_language or ""),

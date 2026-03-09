@@ -5,7 +5,6 @@ from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.research import (
     OverviewOutputPayload,
@@ -27,17 +26,8 @@ from serpsage.steps.research.utils import resolve_research_model
 
 
 class ResearchSubreportStep(StepBase[ResearchStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        llm: LLMClientBase = Inject(),
-        ranker: RankerBase = Inject(),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._llm = llm
-        self._ranker = ranker
-        self.bind_deps(llm, ranker)
+    llm: LLMClientBase = Inject()
+    ranker: RankerBase = Inject()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -70,7 +60,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             return
         source_evidence = await rerank_research_sources(
             ctx=ctx,
-            ranker=self._ranker,
+            ranker=self.ranker,
             sources=source_evidence,
             query=ctx.task.question,
         )
@@ -81,7 +71,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             for index in range(0, len(source_evidence), chunk_size)
         ]
         try:
-            initial = await self._llm.create(
+            initial = await self.llm.create(
                 model=model,
                 messages=build_subreport_prompt_messages(
                     ctx=ctx,
@@ -129,7 +119,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         if remaining_sources:
             remaining_sources = await rerank_research_sources(
                 ctx=ctx,
-                ranker=self._ranker,
+                ranker=self.ranker,
                 sources=remaining_sources,
                 query=ctx.task.question,
             )
@@ -188,7 +178,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         if not chunk:
             return None
         try:
-            result = await self._llm.create(
+            result = await self.llm.create(
                 model=model,
                 messages=build_subreport_update_prompt_messages(
                     ctx=ctx,
@@ -227,7 +217,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         remaining_sources: list[ResearchSource],
     ) -> OverviewOutputPayload:
         return (
-            await self._llm.create(
+            await self.llm.create(
                 model=resolve_research_model(
                     ctx=ctx,
                     stage="overview",

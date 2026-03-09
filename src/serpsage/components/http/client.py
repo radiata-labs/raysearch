@@ -7,8 +7,6 @@ import httpx
 from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase, HttpClientConfig
 from serpsage.components.registry import register_component
-from serpsage.core.runtime import Runtime
-from serpsage.dependencies import Inject
 
 
 @register_component(
@@ -33,25 +31,21 @@ class HttpClient(HttpClientBase):
 
     def __init__(
         self,
-        *,
-        rt: Runtime = Inject(),
-        config: HttpClientConfig = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config)
-        components = getattr(rt, "components", None)
+        components = self.rt.components
         override_client = components.http_override() if components is not None else None
         if isinstance(override_client, httpx.AsyncClient):
             self._client = override_client
             self._owns_client = False
             return
         limits = httpx.Limits(
-            max_connections=int(config.max_connections),
-            max_keepalive_connections=int(config.max_keepalive_connections),
-            keepalive_expiry=float(config.keepalive_expiry_s),
+            max_connections=int(self.config.max_connections),
+            max_keepalive_connections=int(self.config.max_keepalive_connections),
+            keepalive_expiry=float(self.config.keepalive_expiry_s),
         )
         self._client = httpx.AsyncClient(
-            proxy=config.proxy,
-            trust_env=bool(config.trust_env),
+            proxy=self.config.proxy,
+            trust_env=bool(self.config.trust_env),
             limits=limits,
         )
         self._owns_client = True

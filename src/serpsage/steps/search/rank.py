@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.rank.base import RankerBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.steps.search import (
     SearchCandidateForScoring,
@@ -28,12 +27,7 @@ _MAIN_CONTENT_SUBPAGE_INDEX = -1  # Sentinel value for main content vs subpage i
 
 
 class SearchRankStep(StepBase[SearchStepContext]):
-    def __init__(
-        self, *, rt: Runtime = Inject(), ranker: RankerBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._ranker = ranker
-        self.bind_deps(ranker)
+    ranker: RankerBase = Inject()
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
@@ -265,7 +259,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
                 texts.append(content_text)
         if not texts:
             return {}
-        scores = await self._ranker.score_texts(
+        scores = await self.ranker.score_texts(
             texts,
             query=query,
             query_tokens=query_tokens,
@@ -302,7 +296,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
             spans[idx] = (start, len(texts))
         if not texts:
             return {}
-        scores = await self._ranker.score_texts(
+        scores = await self.ranker.score_texts(
             texts,
             query=query,
             query_tokens=query_tokens,

@@ -48,20 +48,14 @@ _SQLALCHEMY_CACHE_META = ComponentMeta(
 class SQLAlchemyCache(CacheBase[SQLAlchemyCacheConfig]):
     meta = _SQLALCHEMY_CACHE_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: SQLAlchemyCacheConfig,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
+    def __init__(self) -> None:
         try:
             import sqlalchemy as sa  # noqa: PLC0415
             from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
         except Exception as exc:
             raise RuntimeError("sqlalchemy is required for SQLAlchemyCache") from exc
-        self._url = str(config.url)
-        self._table_name = _ensure_identifier(str(config.table))
+        self._url = str(self.config.url)
+        self._table_name = _ensure_identifier(str(self.config.table))
         self._validate_async_url(self._url)
         self._sa = sa
         self._create_async_engine = create_async_engine

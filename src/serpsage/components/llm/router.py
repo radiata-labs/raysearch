@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import Any, TypeVar, cast, overload
+from typing import Any, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.base import ComponentMeta
+from serpsage.components.base import ComponentConfigBase, ComponentMeta
 from serpsage.components.llm.base import (
     LLMClientBase,
     LLMModelConfig,
-    LLMRouterConfig,
 )
 from serpsage.components.registry import register_component
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.components.llm import (
     ChatDictResult,
@@ -22,6 +20,11 @@ from serpsage.models.components.llm import (
     ChatTextResult,
 )
 from serpsage.models.components.telemetry import EventStatus, MeterPayload
+
+
+class LLMRouterConfig(ComponentConfigBase):
+    pass
+
 
 TModel = TypeVar("TModel", bound=BaseModel)
 _ROUTER_META = ComponentMeta(
@@ -41,26 +44,23 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
     def __init__(
         self,
         *,
-        rt: Runtime = Inject(),
-        config: LLMRouterConfig = Inject(),
-        routes: tuple[LLMClientBase[Any], ...] = Inject(),
+        routes: tuple[LLMClientBase[LLMModelConfig], ...] = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config)
         route_clients = routes
-        self._routes: dict[str, tuple[LLMClientBase[Any], str]] = {}
+        self.routes: dict[str, tuple[LLMClientBase[LLMModelConfig], str]] = {}
         for client in route_clients:
             model_cfg = client.describe_model(client.config.name)
             if not model_cfg.api_key:
                 continue
-            self._routes[model_cfg.name] = (client, model_cfg.model)
+            self.routes[model_cfg.name] = (client, model_cfg.model)
 
     @override
     def describe_model(self, name: str) -> LLMModelConfig:
-        route = self._routes.get(str(name))
+        route = self.routes.get(str(name))
         if route is None:
             super().describe_model(name)
             raise AssertionError("unreachable")
-        client, _provider_model = route
+        client, _ = route
         return client.describe_model(name)
 
     @overload
@@ -108,7 +108,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
         **kwargs: Any,
     ) -> ChatResultBase:
         route_key = str(model)
-        route = self._routes.get(route_key)
+        route = self.routes.get(route_key)
         if route is None:
             raise RuntimeError(f"llm model route `{model}` is not configured")
         client, provider_model = route

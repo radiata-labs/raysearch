@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
 
 from pydantic import ConfigDict
 
 from serpsage.core.workunit import WorkUnit
+from serpsage.dependencies.contracts import Inject
 from serpsage.settings.models import Model
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
 
 ConfigT = TypeVar("ConfigT", bound="ComponentConfigBase")
 WorkUnitT = TypeVar("WorkUnitT", bound=WorkUnit)
@@ -112,14 +110,10 @@ class ComponentMeta:
 class ComponentBase(WorkUnit, Generic[ConfigT]):
     meta: ClassVar[ComponentMeta]
 
-    def __init__(
-        self,
-        *,
-        rt: Runtime | object,
-        config: ConfigT,
-    ) -> None:
-        super().__init__(rt=cast("Runtime", rt))
-        self.config = config
+    if TYPE_CHECKING:
+        config: ConfigT
+    else:
+        config: ComponentConfigBase = Inject(ComponentConfigBase)
 
 
 __all__ = [

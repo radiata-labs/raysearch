@@ -16,7 +16,6 @@ from serpsage.models.steps.research import (
 from serpsage.steps.base import StepBase
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
     from serpsage.settings.models import ResearchModeSettings
 
 
@@ -27,9 +26,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         "research",
         "research-pro",
     }
-
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:

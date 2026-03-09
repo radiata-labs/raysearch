@@ -3,7 +3,6 @@ from __future__ import annotations
 import uuid
 from contextlib import suppress
 from contextvars import ContextVar, Token
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
@@ -16,7 +15,6 @@ from serpsage.components.registry import register_component
 from serpsage.components.telemetry.base import (
     EventSinkBase,
     TelemetryEmitterBase,
-    TelemetryEmitterConfig,
 )
 from serpsage.dependencies import Inject
 from serpsage.models.components.telemetry import (
@@ -25,10 +23,13 @@ from serpsage.models.components.telemetry import (
     is_critical_event,
 )
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-
 _REQUEST_ID_CTX: ContextVar[str] = ContextVar("telemetry_request_id", default="")
+
+
+class TelemetryEmitterConfig(ComponentConfigBase):
+    queue_size: int = 2048
+    drop_noncritical_when_full: bool = True
+
 
 _NULL_EMITTER_META = ComponentMeta(
     family="telemetry",
@@ -49,16 +50,8 @@ _ASYNC_EMITTER_META = ComponentMeta(
 
 
 @register_component(meta=_NULL_EMITTER_META)
-class NullTelemetryEmitter(TelemetryEmitterBase):
+class NullTelemetryEmitter(TelemetryEmitterBase[ComponentConfigBase]):
     meta = _NULL_EMITTER_META
-
-    def __init__(
-        self,
-        *,
-        rt: Runtime,
-        config: ComponentConfigBase,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
 
     @override
     async def emit_event(self, *, event: EventEnvelope) -> None:
@@ -75,17 +68,15 @@ class NullTelemetryEmitter(TelemetryEmitterBase):
 
 
 @register_component(meta=_ASYNC_EMITTER_META)
-class AsyncEventEmitter(TelemetryEmitterBase):
+class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
     meta = _ASYNC_EMITTER_META
 
     def __init__(
         self,
         *,
-        rt: Runtime = Inject(),
-        config: TelemetryEmitterConfig = Inject(),
+        config: TelemetryEmitterConfig,
         sinks: tuple[EventSinkBase, ...] = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config)
         self._sinks = list(sinks)
         self._queue_size = max(1, int(config.queue_size))
         self._drop_noncritical_when_full = bool(config.drop_noncritical_when_full)

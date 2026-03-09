@@ -36,6 +36,7 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |  |- rate_limit/
 |  |  |  |- telemetry/
 |  |  |- core/
+|  |  |- dependencies/
 |  |  |- models/
 |  |  |  |- app/
 |  |  |  |- components/
@@ -50,6 +51,9 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |  |- stopwords/
 |  |  |  |  |- files/
 |  |- serpsage.egg-info/
+|- tests/
+|  |- test_bootstrap_di.py
+|  |- test_dependencies_provider.py
 |- AGENTS.md
 |- LICENSE
 |- pyproject.toml

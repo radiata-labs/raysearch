@@ -66,14 +66,6 @@ _TFIDF_META = ComponentMeta(
 class TfidfRanker(RankerBase[RankTfidfSettings]):
     meta = _TFIDF_META
 
-    def __init__(
-        self,
-        *,
-        rt: object,
-        config: RankTfidfSettings,
-    ) -> None:
-        super().__init__(rt=rt, config=config)
-
     @override
     async def score_texts(
         self,

@@ -60,18 +60,14 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
 
     def __init__(
         self,
-        *,
-        rt: object,
-        config: GeminiModelConfig,
     ) -> None:
-        super().__init__(rt=rt, config=config)
-        timeout_ms = max(1, int(float(config.timeout_s) * 1000))
-        attempts = max(1, int(config.max_retries) + 1)
+        timeout_ms = max(1, int(float(self.config.timeout_s) * 1000))
+        attempts = max(1, int(self.config.max_retries) + 1)
         self.client = genai.Client(
-            api_key=config.api_key,
+            api_key=self.config.api_key,
             http_options=types.HttpOptions(
-                base_url=config.base_url,
-                headers=dict(config.headers or {}),
+                base_url=self.config.base_url,
+                headers=dict(self.config.headers or {}),
                 timeout=timeout_ms,
                 retry_options=types.HttpRetryOptions(attempts=attempts),
             ),

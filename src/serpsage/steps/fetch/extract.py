@@ -5,7 +5,6 @@ from typing_extensions import override
 from serpsage.components.extract import ExtractorBase
 from serpsage.components.extract.utils import markdown_to_text
 from serpsage.components.fetch.base import FetchConfigBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.fetch import FetchStepContext
@@ -13,12 +12,7 @@ from serpsage.steps.base import StepBase
 
 
 class FetchExtractStep(StepBase[FetchStepContext]):
-    def __init__(
-        self, *, rt: Runtime = Inject(), extractor: ExtractorBase = Inject()
-    ) -> None:
-        super().__init__(rt=rt)
-        self._extractor = extractor
-        self.bind_deps(extractor)
+    extractor: ExtractorBase = Inject()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
@@ -55,7 +49,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
         )
         try:
             assert ctx.page.raw is not None
-            extracted = await self._extractor.extract(
+            extracted = await self.extractor.extract(
                 url=ctx.page.raw.url,
                 content=ctx.page.raw.content,
                 content_type=ctx.page.raw.content_type,

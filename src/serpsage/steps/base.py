@@ -12,7 +12,6 @@ from anyio.abc import ObjectReceiveStream, ObjectSendStream, TaskGroup
 from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
     from serpsage.models.steps.base import BaseStepContext
 
     TContext = TypeVar("TContext", bound="BaseStepContext[Any, Any]")
@@ -138,11 +137,9 @@ class RunnerBase(WorkUnit, Generic[TContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
         steps: list[StepBase[TContext]],
         kind: RunnerKind = "fetch",
     ) -> None:
-        super().__init__(rt=rt)
         self._steps = list(steps)
         self._kind = kind
         self._seq = 0

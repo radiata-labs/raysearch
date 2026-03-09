@@ -8,7 +8,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from serpsage.app.tokens import SEARCH_RUNNER
 from serpsage.components.fetch.base import FetchConfigBase
-from serpsage.core.runtime import Runtime
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import (
     FetchContentRequest,
@@ -83,15 +82,7 @@ _HIGH_AUTHORITY_TITLE_HINTS = (
 
 
 class ResearchSearchStep(StepBase[ResearchStepContext]):
-    def __init__(
-        self,
-        *,
-        rt: Runtime = Inject(),
-        search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER),
-    ) -> None:
-        super().__init__(rt=rt)
-        self._search_runner = search_runner
-        self.bind_deps(search_runner)
+    search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -164,7 +155,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     request_id=f"{ctx.request_id}:research:{ctx.run.current.round_index}:{idx}",
                 )
             )
-        out = await self._search_runner.run_batch(contexts)
+        out = await self.search_runner.run_batch(contexts)
         prepared_candidates: list[SearchFetchedCandidate] = list(
             ctx.run.current.search_fetched_candidates
         )
