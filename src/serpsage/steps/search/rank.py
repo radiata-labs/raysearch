@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.rank.base import RankerBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.search import (
     SearchCandidateForScoring,
     SearchRankedCandidate,
@@ -16,8 +19,6 @@ from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
-    from serpsage.components.rank.base import RankerBase
-    from serpsage.core.runtime import Runtime
     from serpsage.models.steps.search import SearchFetchedCandidate
 _DEFAULT_MAX_CONTEXT_DOCS = 12
 _DEEP_MAX_CONTEXT_DOCS = 18
@@ -27,7 +28,7 @@ _MAIN_CONTENT_SUBPAGE_INDEX = -1  # Sentinel value for main content vs subpage i
 
 
 class SearchRankStep(StepBase[SearchStepContext]):
-    def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
+    def __init__(self, *, rt: Runtime, ranker: RankerBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
         self.bind_deps(ranker)

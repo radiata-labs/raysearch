@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, TypeAlias, TypeVar, cast, overload
+from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
 
 import anyio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from serpsage.core.workunit import WorkUnit
+from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -17,6 +17,7 @@ from serpsage.models.components.llm import (
 )
 
 TModel = TypeVar("TModel", bound=BaseModel)
+LLMConfigT = TypeVar("LLMConfigT", bound=ComponentConfigBase)
 RetryPredicate = Callable[[Exception], bool]
 RetryOn: TypeAlias = (
     type[Exception]
@@ -27,7 +28,26 @@ RetryOn: TypeAlias = (
 )
 
 
-class LLMClientBase(WorkUnit, ABC):
+class LLMModelConfig(ComponentConfigBase):
+    name: str = "gpt-4.1-mini"
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str = "gpt-4.1-mini"
+    timeout_s: float = 60.0
+    max_retries: int = 2
+    temperature: float = 0.0
+    headers: dict[str, str] = Field(default_factory=dict)
+    enable_structured: bool = True
+
+
+class LLMRouterConfig(ComponentConfigBase):
+    pass
+
+
+class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
+    def describe_model(self, name: str) -> LLMModelConfig:
+        raise ValueError(f"llm model `{name}` is not available")
+
     @overload
     async def _create(
         self,
@@ -50,7 +70,6 @@ class LLMClientBase(WorkUnit, ABC):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-    # `format_override` is only meaningful for BaseModel response_format.
     @overload
     async def _create(
         self,
@@ -73,11 +92,6 @@ class LLMClientBase(WorkUnit, ABC):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        """Provider chat implementation.
-        `format_override` is only valid when `response_format` is `type[BaseModel]`.
-        Providers must use this override schema for constrained output and still
-        parse the response into that BaseModel.
-        """
         raise NotImplementedError
 
     @overload
@@ -108,7 +122,6 @@ class LLMClientBase(WorkUnit, ABC):
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
-    # `format_override` can be used only when response_format is BaseModel type.
     @overload
     async def create(
         self,
@@ -136,12 +149,6 @@ class LLMClientBase(WorkUnit, ABC):
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        """Public chat entrypoint with retries.
-        `format_override` is only allowed when `response_format` is
-        `type[BaseModel]`. When provided, the override schema is used instead of
-        `BaseModel.model_json_schema()`, but output is still validated into the
-        same BaseModel type.
-        """
         self._validate_format_override(
             response_format=response_format,
             format_override=format_override,
@@ -263,19 +270,12 @@ class LLMClientBase(WorkUnit, ABC):
 
     @staticmethod
     def get_format_instructions(pydantic_object: type[BaseModel]) -> str:
-        """Return the format instructions for the JSON output.
-        Returns:
-            The format instructions for the JSON output.
-        """
-        # Copy schema to avoid altering original Pydantic schema.
         schema = dict(pydantic_object.model_json_schema().items())
-        # Remove extraneous fields.
         reduced_schema = schema
         if "title" in reduced_schema:
             del reduced_schema["title"]
         if "type" in reduced_schema:
             del reduced_schema["type"]
-        # Ensure json in context is well-formed with double quotes.
         schema_str = json.dumps(reduced_schema, ensure_ascii=False)
         return _PYDANTIC_FORMAT_INSTRUCTIONS.format(schema=schema_str)
 
@@ -287,3 +287,11 @@ Here is the output schema:
 ```
 {schema}
 ```"""
+
+
+__all__ = [
+    "LLMClientBase",
+    "LLMModelConfig",
+    "LLMRouterConfig",
+    "RetryOn",
+]

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.request import (
     FetchAbstractsRequest,
     SearchFetchRequest,
@@ -15,12 +17,8 @@ from serpsage.models.steps.answer import (
     AnswerSubSearchState,
 )
 from serpsage.models.steps.search import SearchStepContext
-from serpsage.steps.base import StepBase
+from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.utils import clean_whitespace
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-    from serpsage.steps.base import RunnerBase
 
 _MAX_SUB_QUESTIONS = 8
 _FIXED_SEARCH_MODE: Literal["auto"] = "auto"
@@ -33,7 +31,7 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         self,
         *,
         rt: Runtime,
-        search_runner: RunnerBase[SearchStepContext],
+        search_runner: RunnerBase[SearchStepContext] = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._search_runner = search_runner

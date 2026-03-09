@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 from typing_extensions import override
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import anyio
 
+from serpsage.components.base import Depends
+from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOthersRequest,
@@ -26,7 +31,7 @@ from serpsage.models.steps.research import (
     ResearchStepContext,
 )
 from serpsage.models.steps.search import SearchFetchedCandidate
-from serpsage.steps.base import StepBase
+from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.research.prompt import build_link_picker_prompt_messages
 from serpsage.steps.research.schema import build_link_picker_schema
 from serpsage.steps.research.search import (
@@ -38,12 +43,6 @@ from serpsage.steps.research.search import (
 from serpsage.steps.research.utils import resolve_research_model
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
-
-if TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.components.rank.base import RankerBase
-    from serpsage.core.runtime import Runtime
-    from serpsage.steps.base import RunnerBase
 
 _EXPLORE_ALLOWED_SCHEMES = {"http", "https"}
 _EXPLORE_LOW_VALUE_PATH_PREFIXES = (
@@ -63,9 +62,9 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         self,
         *,
         rt: Runtime,
-        fetch_runner: RunnerBase[FetchStepContext],
-        ranker: RankerBase,
-        llm: LLMClientBase,
+        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
+        ranker: RankerBase = Depends(),
+        llm: LLMClientBase = Depends(),
         phase: Literal["pre", "post"] = "post",
     ) -> None:
         super().__init__(rt=rt)
@@ -686,7 +685,10 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         urls: list[str],
     ) -> list[FetchStepContext]:
         max_chars = ctx.run.limits.fetch_page_max_chars
-        main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
+        fetch_cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        )
+        main_links_limit = max(1, int(fetch_cfg.extract.link_max_count))
         request = FetchRequest(
             urls=list(urls),
             crawl_mode="fallback",

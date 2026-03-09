@@ -1,16 +1,9 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-_DEFAULT_SEARXNG_BASE_URL = "https://searx.be/search"
-_DEFAULT_GOOGLE_BASE_URL = "https://www.google.com/search"
-_DEFAULT_GOOGLE_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36"
-)
 _FINAL_WEIGHT_SUM_TARGET = 1.0
 _WEIGHT_SUM_EPS = 1e-6
 
@@ -19,106 +12,213 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
 
-ProviderBackendKey = Literal["searxng", "google"]
-FetchBackendKey = Literal["curl_cffi", "playwright", "auto"]
-RankBackendKey = Literal["blend", "heuristic", "tfidf", "bm25", "cross_encoder"]
-RankBlendProviderKey = Literal["heuristic", "tfidf", "bm25"]
-CacheBackendKey = Literal["sqlite", "memory", "redis", "mysql", "sqlalchemy"]
-CacheMySQLDriverKey = Literal["auto", "asyncmy", "aiomysql"]
-OverviewModelBackendKey = Literal["openai", "gemini", "dashscope"]
-TelemetryObsBackendKey = Literal["null", "jsonl"]
-TelemetryMeteringBackendKey = Literal["null", "sqlite"]
 ReportStyleKey = Literal["decision", "explainer", "execution"]
 
 
-class RetrySettings(Model):
-    max_attempts: int = 3
-    delay_ms: int = 200
+class ComponentInstanceSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    component: str
+    enabled: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("component")
+    @classmethod
+    def _validate_component(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("component must be non-empty")
+        return token
 
 
-GoogleSafeSearchKey = Literal["off", "medium", "high"]
+class ComponentFamilySettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    default: str = "default"
+    instances: dict[str, ComponentInstanceSettings] = Field(default_factory=dict)
 
-
-class ProviderBackendSettings(Model):
-    base_url: str = ""
-    api_key: str | None = None
-    timeout_s: float = 20.0
-    allow_redirects: bool = False
-    headers: dict[str, str] = Field(default_factory=dict)
-    cookies: dict[str, str] = Field(default_factory=dict)
-    user_agent: str = ""
-    safe: GoogleSafeSearchKey = "off"
-    country: str = ""
-    results_per_page: int = 10
-    retry: RetrySettings = Field(default_factory=RetrySettings)
-
-    @model_validator(mode="after")
-    def _validate_backend_settings(self) -> ProviderBackendSettings:
-        self.base_url = str(self.base_url or "").strip()
-        if self.base_url and not self.base_url.startswith(("http://", "https://")):
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_shape(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        if "backend" in value:
             raise ValueError(
-                "provider backend base_url must start with http:// or https://"
+                "legacy component config format is no longer supported; "
+                "use `default` and `instances`"
             )
-        if float(self.timeout_s) <= 0:
-            raise ValueError("provider backend timeout_s must be > 0")
-        self.user_agent = str(self.user_agent or "").strip()
-        self.country = str(self.country or "").strip().upper()
-        if self.country and len(self.country) != 2:
-            raise ValueError("provider backend country must be a 2-letter region code")
-        if int(self.results_per_page) <= 0:
-            raise ValueError("provider backend results_per_page must be > 0")
-        if int(self.results_per_page) > 100:
-            raise ValueError("provider backend results_per_page must be <= 100")
-        return self
+        return value
+
+    @field_validator("default")
+    @classmethod
+    def _validate_default(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("default component instance id must be non-empty")
+        return token
 
 
-class HttpSettings(Model):
-    proxy: str | None = None
-    trust_env: bool = False
-    max_connections: int = 100
-    max_keepalive_connections: int = 20
-    keepalive_expiry_s: float = 5.0
+def _family_settings(
+    *,
+    default: str,
+    instances: dict[str, dict[str, Any]],
+) -> ComponentFamilySettings:
+    return ComponentFamilySettings(
+        default=default,
+        instances={
+            key: ComponentInstanceSettings(
+                component=str(item.get("component") or ""),
+                enabled=bool(item.get("enabled", True)),
+                config=dict(item.get("config") or {}),
+            )
+            for key, item in instances.items()
+        },
+    )
 
 
-class ProviderSettings(Model):
-    backend: ProviderBackendKey = "searxng"
-    searxng: ProviderBackendSettings = Field(default_factory=ProviderBackendSettings)
-    google: ProviderBackendSettings = Field(default_factory=ProviderBackendSettings)
-
-    @model_validator(mode="after")
-    def _validate_provider(self) -> ProviderSettings:
-        if not self.searxng.base_url:
-            self.searxng.base_url = _DEFAULT_SEARXNG_BASE_URL
-        if not self.google.base_url:
-            self.google.base_url = _DEFAULT_GOOGLE_BASE_URL
-        if not self.google.user_agent:
-            self.google.user_agent = _DEFAULT_GOOGLE_USER_AGENT
-        if not self.google.country:
-            self.google.country = "US"
-        self.google.cookies.setdefault("CONSENT", "YES+")
-        return self
-
-    def resolve_active(self) -> ProviderBackendSettings:
-        if self.backend == "google":
-            return self.google
-        return self.searxng
+def _default_http_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="shared",
+        instances={
+            "shared": {
+                "component": "httpx",
+                "config": {},
+            }
+        },
+    )
 
 
-def _default_rank_blend_providers() -> dict[RankBlendProviderKey, float]:
-    return {"heuristic": 0.7, "tfidf": 0.3}
+def _default_provider_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="searxng_main",
+        instances={
+            "searxng_main": {
+                "component": "searxng",
+                "config": {},
+            }
+        },
+    )
 
 
-class OverviewProfileBase(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    use_model: str = "gpt-4.1-mini"
-    max_abstract_chars: int = 900
-    cache_ttl_s: int = 0
-    self_heal_retries: int = 1
-    force_language: Literal["auto", "zh", "en"] = "auto"
+def _default_fetch_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="auto_main",
+        instances={
+            "auto_main": {
+                "component": "auto",
+                "config": {},
+            },
+            "curl_main": {
+                "component": "curl_cffi",
+                "config": {},
+            },
+            "playwright_main": {
+                "component": "playwright",
+                "config": {},
+            },
+        },
+    )
 
 
-class FetchOverviewSettings(OverviewProfileBase):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+def _default_extract_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="auto_main",
+        instances={
+            "auto_main": {
+                "component": "auto",
+                "config": {},
+            },
+            "html_main": {
+                "component": "html",
+                "config": {},
+            },
+            "pdf_main": {
+                "component": "pdf",
+                "config": {},
+            },
+        },
+    )
+
+
+def _default_rank_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="blend_main",
+        instances={
+            "blend_main": {
+                "component": "blend",
+                "config": {},
+            },
+            "heuristic_main": {
+                "component": "heuristic",
+                "config": {},
+            },
+            "tfidf_main": {
+                "component": "tfidf",
+                "config": {},
+            },
+            "bm25_main": {
+                "component": "bm25",
+                "config": {},
+            },
+            "cross_encoder_main": {
+                "component": "cross_encoder",
+                "config": {},
+            },
+        },
+    )
+
+
+def _default_cache_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="null_main",
+        instances={
+            "null_main": {
+                "component": "null",
+                "config": {},
+            }
+        },
+    )
+
+
+def _default_llm_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="router_main",
+        instances={
+            "router_main": {
+                "component": "router",
+                "config": {},
+            },
+            "default_model": {
+                "component": "openai",
+                "config": {
+                    "name": "gpt-4.1-mini",
+                    "model": "gpt-4.1-mini",
+                },
+            },
+        },
+    )
+
+
+def _default_telemetry_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="null_main",
+        instances={
+            "null_main": {
+                "component": "null_emitter",
+                "config": {},
+            }
+        },
+    )
+
+
+def _default_rate_limit_settings() -> ComponentFamilySettings:
+    return _family_settings(
+        default="basic_main",
+        instances={
+            "basic_main": {
+                "component": "basic",
+                "config": {},
+            }
+        },
+    )
 
 
 class SearchDeepSettings(Model):
@@ -376,154 +476,6 @@ class ResearchSettings(Model):
         return self
 
 
-def _default_blocked_markers() -> list[str]:
-    return [
-        "cloudflare",
-        "just a moment",
-        "verify you are human",
-        "access denied",
-        "please enable javascript",
-        "security check",
-        "checking your browser",
-    ]
-
-
-class FetchConcurrencySettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    global_limit: int = 24
-    per_host: int = 4
-    politeness_delay_ms: int = 0
-
-
-class FetchRenderSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    js_concurrency: int = 12
-    nav_timeout_ms: int = 8_000
-    block_resources: bool = True
-    readiness_poll_ms: int = 150
-    readiness_stable_rounds: int = 2
-    post_ready_wait_ms: int = 120
-
-    @field_validator("js_concurrency")
-    @classmethod
-    def _validate_js_concurrency(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("js_concurrency must be >= 1")
-        return value
-
-    @field_validator(
-        "readiness_poll_ms", "readiness_stable_rounds", "post_ready_wait_ms"
-    )
-    @classmethod
-    def _validate_render_timing(cls, value: int) -> int:
-        if value < 0:
-            raise ValueError("render timing settings must be >= 0")
-        return value
-
-
-class FetchAutoSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    scout_bytes: int = 48_000
-    route_memory_size: int = 4096
-    direct_route_min_samples: int = 3
-    direct_playwright_cost_ratio: float = 0.78
-    direct_playwright_min_useful: float = 0.72
-    learning_rate: float = 0.22
-
-    @field_validator("scout_bytes", "route_memory_size", "direct_route_min_samples")
-    @classmethod
-    def _validate_auto_ints(cls, value: int) -> int:
-        if value <= 0:
-            raise ValueError("fetch auto integer settings must be > 0")
-        return value
-
-    @field_validator(
-        "direct_playwright_cost_ratio",
-        "direct_playwright_min_useful",
-        "learning_rate",
-    )
-    @classmethod
-    def _validate_auto_floats(cls, value: float) -> float:
-        if not 0.0 < value <= 1.0:
-            raise ValueError("fetch auto float settings must be between 0 and 1")
-        return value
-
-
-class FetchQualitySettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    min_text_chars: int = 100
-    script_ratio_threshold: float = 0.35
-    quality_score_threshold: float = 0.15
-    blocked_markers: list[str] = Field(default_factory=_default_blocked_markers)
-
-    @field_validator("min_text_chars")
-    @classmethod
-    def _validate_min_text_chars(cls, value: int) -> int:
-        if value < 0:
-            raise ValueError("min_text_chars must be >= 0")
-        return value
-
-    @field_validator("script_ratio_threshold")
-    @classmethod
-    def _validate_script_ratio_threshold(cls, value: float) -> float:
-        if not 0.0 <= value <= 1.0:
-            raise ValueError("script_ratio_threshold must be between 0 and 1")
-        return value
-
-    @field_validator("quality_score_threshold")
-    @classmethod
-    def _validate_quality_score_threshold(cls, value: float) -> float:
-        if not 0.0 <= value <= 1.0:
-            raise ValueError("quality_score_threshold must be between 0 and 1")
-        return value
-
-
-class FetchExtractSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    max_markdown_chars: int = 160_000
-    min_text_chars: int = 220
-    min_primary_chars: int = 220
-    min_total_chars_with_secondary: int = 220
-    include_secondary_content_default: bool = False
-    collect_links_default: bool = False
-    link_max_count: int = 800
-    link_keep_hash: bool = False
-
-
-class FetchAbstractSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    max_abstract_chars: int = 2000
-    min_abstract_score: float = 0.20
-    min_abstract_tokens: int = 4
-    title_boost_alpha: float = 0.35
-
-
-class FetchSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    backend: FetchBackendKey = "auto"
-    inflight_enabled: bool = True
-    inflight_timeout_s: float = 60.0
-    timeout_s: float = 2.0
-    follow_redirects: bool = True
-    user_agent: str = "serpsage-bot/4.0"
-    concurrency: FetchConcurrencySettings = Field(
-        default_factory=FetchConcurrencySettings
-    )
-    auto: FetchAutoSettings = Field(default_factory=FetchAutoSettings)
-    render: FetchRenderSettings = Field(default_factory=FetchRenderSettings)
-    quality: FetchQualitySettings = Field(default_factory=FetchQualitySettings)
-    extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
-    abstract: FetchAbstractSettings = Field(default_factory=FetchAbstractSettings)
-    overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
-
-    @field_validator("inflight_timeout_s")
-    @classmethod
-    def _validate_inflight_timeout_s(cls, value: float) -> float:
-        if float(value) <= 0:
-            raise ValueError("inflight_timeout_s must be > 0")
-        return float(value)
-
-
 class RunnerSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     search_limit: int = Field(default=8, ge=1)
@@ -532,266 +484,28 @@ class RunnerSettings(Model):
     queue_size: int = Field(default=256, ge=1)
 
 
-class HeuristicRankSettings(Model):
-    early_bonus: float = 1.15
-    unique_hit_weight: float = 6.0
-    count_weight: float = 1.5
-    intent_hit_weight: float = 5.0
-    max_count_per_token: int = 5
-    temperature: float = 1.0
-    min_items_for_sigmoid: int = 5
-    flat_spread_eps: float = 1e-9
-    z_clip: float = 8.0
-
-
-class RankBm25Settings(Model):
-    pass
-
-
-class RankTfidfSettings(Model):
-    pass
-
-
-class RankCrossEncoderSettings(Model):
-    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    batch_size: int = Field(default=16, ge=1)
-    max_length: int = Field(default=512, ge=1)
-
-    @field_validator("model_name")
-    @classmethod
-    def _validate_model_name(cls, value: str) -> str:
-        model_name = str(value or "").strip()
-        if not model_name:
-            raise ValueError("rank.cross_encoder.model_name must be non-empty")
-        return model_name
-
-
-class RankBlendRerankSettings(Model):
-    retrieve_weight: float = 0.35
-    cross_encoder_weight: float = 0.65
-
-    @model_validator(mode="after")
-    def _validate_weights(self) -> RankBlendRerankSettings:
-        if float(self.retrieve_weight) < 0:
-            raise ValueError("rank.blend.rerank.retrieve_weight must be >= 0")
-        if float(self.cross_encoder_weight) < 0:
-            raise ValueError("rank.blend.rerank.cross_encoder_weight must be >= 0")
-        if float(self.retrieve_weight) + float(self.cross_encoder_weight) <= 0:
-            raise ValueError("rank.blend.rerank weights must sum to a positive value")
-        return self
-
-
-class RankBlendSettings(Model):
-    providers: dict[RankBlendProviderKey, float] = Field(
-        default_factory=_default_rank_blend_providers
-    )
-    rerank: RankBlendRerankSettings = Field(default_factory=RankBlendRerankSettings)
-
-
-class RankSettings(Model):
-    backend: RankBackendKey = "blend"
-    blend: RankBlendSettings = Field(default_factory=RankBlendSettings)
-    heuristic: HeuristicRankSettings = Field(default_factory=HeuristicRankSettings)
-    tfidf: RankTfidfSettings = Field(default_factory=RankTfidfSettings)
-    bm25: RankBm25Settings = Field(default_factory=RankBm25Settings)
-    cross_encoder: RankCrossEncoderSettings = Field(
-        default_factory=RankCrossEncoderSettings
-    )
-
-
-class CacheSqliteSettings(Model):
-    db_path: str = ".serpsage_cache.sqlite3"
-    table: str = "cache"
-
-
-class CacheRedisSettings(Model):
-    url: str = "redis://127.0.0.1:6379/0"
-    key_prefix: str = "serpsage"
-
-
-class CacheMySQLSettings(Model):
-    driver: CacheMySQLDriverKey = "auto"
-    host: str = "127.0.0.1"
-    port: int = 3306
-    user: str = "root"
-    password: str = ""
-    database: str = "serpsage"
-    table: str = "cache"
-    minsize: int = 1
-    maxsize: int = 10
-    connect_timeout: float = 10.0
-    charset: str = "utf8mb4"
-
-
-class CacheSQLAlchemySettings(Model):
-    url: str = "sqlite+aiosqlite:///./.serpsage_cache.sqlite3"
-    table: str = "cache"
-
-
-class CacheSettings(Model):
-    enabled: bool = False
-    backend: CacheBackendKey = "sqlite"
-    fetch_ttl_s: int = 86_400
-    sqlite: CacheSqliteSettings = Field(default_factory=CacheSqliteSettings)
-    redis: CacheRedisSettings = Field(default_factory=CacheRedisSettings)
-    mysql: CacheMySQLSettings = Field(default_factory=CacheMySQLSettings)
-    sqlalchemy: CacheSQLAlchemySettings = Field(default_factory=CacheSQLAlchemySettings)
-
-
-class LLMModelSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    name: str = "gpt-4.1-mini"
-    backend: OverviewModelBackendKey = "openai"
-    base_url: str | None = None
-    api_key: str | None = None
-    model: str = "gpt-4.1-mini"
-    timeout_s: float = 60.0
-    max_retries: int = 2
-    temperature: float = 0.0
-    headers: dict[str, str] = Field(default_factory=dict)
-    enable_structured: bool = True
-
-
-def _default_overview_models() -> list[LLMModelSettings]:
-    return [LLMModelSettings()]
-
-
-class LLMSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    models: list[LLMModelSettings] = Field(default_factory=_default_overview_models)
-
-    @model_validator(mode="after")
-    def _validate_models(self) -> LLMSettings:
-        if not self.models:
-            raise ValueError("llm.models must contain at least one model")
-        names: set[str] = set()
-        for idx, item in enumerate(self.models):
-            if not item.name:
-                raise ValueError(f"llm.models[{idx}].name must be non-empty")
-            if item.name in names:
-                raise ValueError(
-                    f"duplicate llm model name `{item.name}` in llm.models"
-                )
-            names.add(item.name)
-        return self
-
-    def resolve_model(self, name: str) -> LLMModelSettings:
-        for item in self.models:
-            if item.name == name:
-                return item
-        raise ValueError(f"llm model `{name}` does not exist in llm.models")
-
-
-class TelemetryObsSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    backend: TelemetryObsBackendKey = "null"
-    jsonl_path: str = ".serpsage_events.jsonl"
-
-    @field_validator("jsonl_path")
-    @classmethod
-    def _validate_jsonl_path(cls, value: str) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("telemetry.obs.jsonl_path must be non-empty")
-        return token
-
-
-class TelemetryMeteringSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    backend: TelemetryMeteringBackendKey = "null"
-    sqlite_db_path: str = ".serpsage_metering.sqlite3"
-
-    @field_validator("sqlite_db_path")
-    @classmethod
-    def _validate_sqlite_db_path(cls, value: str) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("telemetry.metering.sqlite_db_path must be non-empty")
-        return token
-
-
-class TelemetrySettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    enabled: bool = False
-    queue_size: int = 2048
-    drop_noncritical_when_full: bool = True
-    obs: TelemetryObsSettings = Field(default_factory=TelemetryObsSettings)
-    metering: TelemetryMeteringSettings = Field(
-        default_factory=TelemetryMeteringSettings
-    )
-
-    @model_validator(mode="after")
-    def _validate_telemetry(self) -> TelemetrySettings:
-        if int(self.queue_size) <= 0:
-            raise ValueError("telemetry.queue_size must be > 0")
-        return self
-
-
 class AppSettings(Model):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    http: HttpSettings = Field(default_factory=HttpSettings)
-    provider: ProviderSettings = Field(default_factory=ProviderSettings)
+    http: ComponentFamilySettings = Field(default_factory=_default_http_settings)
+    provider: ComponentFamilySettings = Field(
+        default_factory=_default_provider_settings
+    )
+    fetch: ComponentFamilySettings = Field(default_factory=_default_fetch_settings)
+    extract: ComponentFamilySettings = Field(default_factory=_default_extract_settings)
+    rank: ComponentFamilySettings = Field(default_factory=_default_rank_settings)
+    llm: ComponentFamilySettings = Field(default_factory=_default_llm_settings)
+    cache: ComponentFamilySettings = Field(default_factory=_default_cache_settings)
+    telemetry: ComponentFamilySettings = Field(
+        default_factory=_default_telemetry_settings
+    )
+    rate_limit: ComponentFamilySettings = Field(
+        default_factory=_default_rate_limit_settings
+    )
     search: SearchSettings = Field(default_factory=SearchSettings)
     answer: AnswerSettings = Field(default_factory=AnswerSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
-    fetch: FetchSettings = Field(default_factory=FetchSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
-    rank: RankSettings = Field(default_factory=RankSettings)
-    llm: LLMSettings = Field(default_factory=LLMSettings)
-    cache: CacheSettings = Field(default_factory=CacheSettings)
-    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
-
-    @model_validator(mode="after")
-    def _validate_model_links(self) -> AppSettings:
-        names = {m.name for m in self.llm.models}
-        if self.fetch.overview.use_model not in names:
-            raise ValueError(
-                "fetch.overview.use_model must match one of llm.models[].name"
-            )
-        if self.answer.plan.use_model not in names:
-            raise ValueError(
-                "answer.plan.use_model must match one of llm.models[].name"
-            )
-        if self.answer.generate.use_model not in names:
-            raise ValueError(
-                "answer.generate.use_model must match one of llm.models[].name"
-            )
-        _validate_optional_model_name(
-            model_name=self.research.models.plan,
-            names=names,
-            path="research.models.plan",
-        )
-        _validate_optional_model_name(
-            model_name=self.research.models.abstract_analyze,
-            names=names,
-            path="research.models.abstract_analyze",
-        )
-        _validate_optional_model_name(
-            model_name=self.research.models.content_analyze,
-            names=names,
-            path="research.models.content_analyze",
-        )
-        _validate_optional_model_name(
-            model_name=self.research.models.synthesize,
-            names=names,
-            path="research.models.synthesize",
-        )
-        _validate_optional_model_name(
-            model_name=self.research.models.markdown,
-            names=names,
-            path="research.models.markdown",
-        )
-        return self
-
-
-def _validate_optional_model_name(
-    *, model_name: str, names: set[str], path: str
-) -> None:
-    token = str(model_name or "").strip()
-    if not token:
-        return
-    if token not in names:
-        raise ValueError(f"{path} must match one of llm.models[].name")
+    runtime_env: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
 
 
 __all__ = [
@@ -799,37 +513,14 @@ __all__ = [
     "AnswerGenerateSettings",
     "AnswerSettings",
     "AnswerStageSettings",
-    "CacheMySQLSettings",
-    "CacheRedisSettings",
-    "CacheSQLAlchemySettings",
-    "CacheSettings",
-    "FetchBackendKey",
-    "FetchAbstractSettings",
-    "FetchAutoSettings",
-    "FetchConcurrencySettings",
-    "FetchExtractSettings",
-    "FetchOverviewSettings",
-    "FetchQualitySettings",
-    "FetchRenderSettings",
-    "FetchSettings",
-    "HttpSettings",
-    "HeuristicRankSettings",
-    "LLMSettings",
-    "OverviewModelBackendKey",
-    "LLMModelSettings",
-    "ProviderBackendSettings",
-    "ProviderSettings",
+    "ComponentFamilySettings",
+    "ComponentInstanceSettings",
+    "Model",
     "ReportStyleKey",
-    "ResearchModelsSettings",
     "ResearchModeSettings",
+    "ResearchModelsSettings",
     "ResearchSettings",
     "RunnerSettings",
-    "SearchSettings",
-    "RankBlendSettings",
-    "RankSettings",
-    "RetrySettings",
     "SearchDeepSettings",
-    "TelemetryMeteringSettings",
-    "TelemetryObsSettings",
-    "TelemetrySettings",
+    "SearchSettings",
 ]

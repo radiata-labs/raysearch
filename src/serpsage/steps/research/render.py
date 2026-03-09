@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from typing_extensions import override
 
 import anyio
 
+from serpsage.components.base import Depends
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.research import (
     RenderArchitectOutput,
     RenderArchitectSectionPlan,
@@ -21,10 +24,6 @@ from serpsage.steps.research.prompt import (
     build_render_writer_prompt_messages,
 )
 from serpsage.steps.research.utils import resolve_research_model
-
-if TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.core.runtime import Runtime
 
 
 class _WriterSectionError(RuntimeError):
@@ -48,7 +47,7 @@ class _WriterSectionError(RuntimeError):
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+    def __init__(self, *, rt: Runtime, llm: LLMClientBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._llm = llm
         self.bind_deps(llm)

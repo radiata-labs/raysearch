@@ -2,20 +2,19 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.search import SearchOptimizedQuery, SearchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
-if TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.core.runtime import Runtime
-
 
 class SearchOptimizeStep(StepBase[SearchStepContext]):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+    def __init__(self, *, rt: Runtime, llm: LLMClientBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._llm = llm
         self.bind_deps(llm)

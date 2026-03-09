@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from anyio import to_thread
-from sklearn.feature_extraction.text import (  # type: ignore[import-untyped]
-    TfidfVectorizer,
-)
-from sklearn.metrics.pairwise import linear_kernel  # type: ignore[import-untyped]
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import linear_kernel
 
-from serpsage.components.rank.base import RankerBase, RankMode
+from serpsage.components.base import ComponentMeta
+from serpsage.components.rank.base import RankerBase, RankMode, RankTfidfSettings
+from serpsage.components.registry import register_component
 from serpsage.tokenize import tokenize
 from serpsage.utils import normalize_text
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
 
 
 def _analyze_text(text: str) -> list[str]:
@@ -35,16 +31,13 @@ def _build_query_terms(query: str, query_tokens: list[str]) -> list[str]:
 
 
 def _score_texts_sync(
-    texts: list[str],
-    query: str,
-    query_tokens: list[str],
+    texts: list[str], query: str, query_tokens: list[str]
 ) -> list[float]:
     if not texts:
         return []
     query_terms = _build_query_terms(query, query_tokens)
     if not query_terms:
         return [0.0 for _ in texts]
-
     vectorizer = TfidfVectorizer(
         tokenizer=_analyze_text,
         vocabulary=query_terms,
@@ -59,9 +52,27 @@ def _score_texts_sync(
     return [float(min(1.0, max(0.0, score))) for score in scores]
 
 
-class TfidfRanker(RankerBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+_TFIDF_META = ComponentMeta(
+    family="rank",
+    name="tfidf",
+    version="1.0.0",
+    summary="TF-IDF based text ranker.",
+    provides=("rank.tfidf_engine",),
+    config_model=RankTfidfSettings,
+)
+
+
+@register_component(meta=_TFIDF_META)
+class TfidfRanker(RankerBase[RankTfidfSettings]):
+    meta = _TFIDF_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: RankTfidfSettings,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
 
     @override
     async def score_texts(

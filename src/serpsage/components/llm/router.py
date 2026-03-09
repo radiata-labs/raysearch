@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import Any, TypeVar, cast, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.llm.base import (
+    LLMClientBase,
+    LLMModelConfig,
+    LLMRouterConfig,
+)
+from serpsage.components.registry import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -15,21 +21,47 @@ from serpsage.models.components.llm import (
 )
 from serpsage.models.components.telemetry import EventStatus, MeterPayload
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
 TModel = TypeVar("TModel", bound=BaseModel)
+_ROUTER_META = ComponentMeta(
+    family="llm",
+    name="router",
+    version="1.0.0",
+    summary="Named model router over llm.route instances.",
+    provides=("llm.client",),
+    config_model=LLMRouterConfig,
+)
 
 
-class RoutedLLMClient(LLMClientBase):
+@register_component(meta=_ROUTER_META)
+class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
+    meta = _ROUTER_META
+
     def __init__(
         self,
         *,
-        rt: Runtime,
-        routes: dict[str, tuple[LLMClientBase, str]],
+        rt: object,
+        config: LLMRouterConfig,
+        routes: tuple[LLMClientBase, ...] = Depends(),
     ) -> None:
-        super().__init__(rt=rt)
-        self._routes = dict(routes)
-        self.bind_deps(*[unit for unit, _ in self._routes.values()])
+        super().__init__(rt=rt, config=config, bound_deps=routes)
+        route_clients = routes
+        self._routes: dict[str, tuple[LLMClientBase, str]] = {}
+        for client in route_clients:
+            model_cfg = cast(
+                "LLMModelConfig", client.describe_model(client.config.name)
+            )
+            if not model_cfg.api_key:
+                continue
+            self._routes[model_cfg.name] = (client, model_cfg.model)
+
+    @override
+    def describe_model(self, name: str) -> LLMModelConfig:
+        route = self._routes.get(str(name))
+        if route is None:
+            super().describe_model(name)
+            raise AssertionError("unreachable")
+        client, _provider_model = route
+        return client.describe_model(name)
 
     @overload
     async def _create(
@@ -78,7 +110,7 @@ class RoutedLLMClient(LLMClientBase):
         route_key = str(model)
         route = self._routes.get(route_key)
         if route is None:
-            raise ValueError(f"llm model route `{model}` is not configured")
+            raise RuntimeError(f"llm model route `{model}` is not configured")
         client, provider_model = route
         provider_client = type(client).__name__
         route_attrs = self._route_attrs(
@@ -95,7 +127,6 @@ class RoutedLLMClient(LLMClientBase):
             attrs={**route_attrs, "message_count": len(messages)},
         )
         try:
-            result: ChatResultBase
             if response_format is None:
                 result = await client.create(
                     model=provider_model,
@@ -143,9 +174,7 @@ class RoutedLLMClient(LLMClientBase):
                 status="ok",
                 component="llm_router",
                 stage="chat",
-                idempotency_key=(
-                    f"{route_key}:{provider_model}:{started_ms}:{usage.total_tokens}"
-                ),
+                idempotency_key=f"{route_key}:{provider_model}:{started_ms}:{usage.total_tokens}",
                 attrs=route_attrs,
                 meter=MeterPayload(
                     meter_type="llm_tokens",
@@ -159,7 +188,7 @@ class RoutedLLMClient(LLMClientBase):
                 ),
             )
             return result
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             await self._emit_safe(
                 event_name="llm.error",
                 status="error",

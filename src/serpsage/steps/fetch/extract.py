@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.extract import ExtractorBase
 from serpsage.components.extract.utils import markdown_to_text
+from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 
-if TYPE_CHECKING:
-    from serpsage.components.extract import ExtractorBase
-    from serpsage.core.runtime import Runtime
-
 
 class FetchExtractStep(StepBase[FetchStepContext]):
-    def __init__(self, *, rt: Runtime, extractor: ExtractorBase) -> None:
+    def __init__(self, *, rt: Runtime, extractor: ExtractorBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._extractor = extractor
         self.bind_deps(extractor)
@@ -107,9 +106,12 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             ctx.related.others.links = []
             ctx.related.others.image_links = []
             ctx.related.subpages.candidates = []
+        fetch_cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        )
         markdown = str(extracted.content.markdown or "")
         text_chars = len(markdown_to_text(markdown))
-        min_text_chars = int(self.settings.fetch.extract.min_text_chars)
+        min_text_chars = int(fetch_cfg.extract.min_text_chars)
         if not markdown.strip():
             ctx.error.failed = True
             ctx.error.tag = "SOURCE_NOT_AVAILABLE"

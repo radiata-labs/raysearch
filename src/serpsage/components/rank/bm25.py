@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from anyio import to_thread
@@ -12,16 +11,33 @@ try:
 except Exception:  # noqa: BLE001
     BM25Okapi = None
     BM25_AVAILABLE = False
-from serpsage.components.rank.base import RankerBase, RankMode
+
+from serpsage.components.base import ComponentMeta
+from serpsage.components.rank.base import RankBm25Settings, RankerBase, RankMode
+from serpsage.components.registry import register_component
 from serpsage.tokenize import tokenize
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
+_BM25_META = ComponentMeta(
+    family="rank",
+    name="bm25",
+    version="1.0.0",
+    summary="BM25 text ranker.",
+    provides=("rank.bm25_engine",),
+    config_model=RankBm25Settings,
+)
 
 
-class Bm25Ranker(RankerBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+@register_component(meta=_BM25_META)
+class Bm25Ranker(RankerBase[RankBm25Settings]):
+    meta = _BM25_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: RankBm25Settings,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
 
     @override
     async def score_texts(

@@ -3,17 +3,15 @@ from __future__ import annotations
 import importlib
 import re
 import zlib
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Final,
-)
+from typing import Any, Final
 from typing_extensions import override
 
-from serpsage.components.cache.base import CacheBase
+from pydantic import field_validator
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
+from serpsage.components.base import ComponentMeta
+from serpsage.components.cache.base import CacheBase, CacheConfigBase
+from serpsage.components.registry import register_component
+
 _SAFE_SQL_IDENT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -25,20 +23,14 @@ def _ensure_identifier(value: str) -> str:
 
 
 def _quote_ident(ident: str) -> str:
-    """
-    Quote a SQL identifier for MySQL with backticks.
-    Because _ensure_identifier() enforces a strict pattern (no backticks, spaces, dots, etc),
-    this is safe and prevents injection via identifier interpolation.
-    """
-    ident = _ensure_identifier(ident)
-    return f"`{ident}`"
+    return f"`{_ensure_identifier(ident)}`"
 
 
 def _module_available(module_name: str) -> bool:
     try:
         importlib.import_module(module_name)
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -67,14 +59,49 @@ class _SQL:
         self.cleanup_expired = cleanup_expired
 
 
-class MySQLCache(CacheBase):
-    def __init__(self, *, rt: Runtime, driver: str | None = None) -> None:
-        super().__init__(rt=rt)
-        cfg = self.settings.cache.mysql
-        self._driver_pref: Final[str] = str(driver or cfg.driver or "auto").lower()
+class MySQLCacheConfig(CacheConfigBase):
+    driver: str = "auto"
+    host: str = "127.0.0.1"
+    port: int = 3306
+    user: str = "root"
+    password: str = ""
+    database: str = "serpsage"
+    table: str = "cache"
+    minsize: int = 1
+    maxsize: int = 10
+    connect_timeout: float = 10.0
+    charset: str = "utf8mb4"
+
+    @field_validator("driver", "host", "user", "database", "table", "charset")
+    @classmethod
+    def _validate_strings(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
+_MYSQL_CACHE_META = ComponentMeta(
+    family="cache",
+    name="mysql",
+    version="1.0.0",
+    summary="MySQL-backed cache.",
+    provides=("cache.store",),
+    config_model=MySQLCacheConfig,
+)
+
+
+@register_component(meta=_MYSQL_CACHE_META)
+class MySQLCache(CacheBase[MySQLCacheConfig]):
+    meta = _MYSQL_CACHE_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: MySQLCacheConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
+        self._driver_pref: Final[str] = str(config.driver or "auto").lower()
         self._pool: Any | None = None
-        # identifier sanitization + quoting (prevents injection via table name)
-        self._table_ident: Final[str] = _ensure_identifier(str(cfg.table))
+        self._table_ident: Final[str] = _ensure_identifier(str(config.table))
         self._table_quoted: Final[str] = _quote_ident(self._table_ident)
         self._sql: _SQL | None = None
 
@@ -93,7 +120,6 @@ class MySQLCache(CacheBase):
         return importlib.import_module(pref)
 
     def _build_sql(self) -> _SQL:
-        # All statements constructed once; afterwards no string-based query construction at call sites.
         t = self._table_quoted
         return _SQL(
             create_table=(
@@ -108,23 +134,23 @@ class MySQLCache(CacheBase):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """.strip()
             ),
-            select_one=f"SELECT expires_at_ms, value FROM {t} WHERE namespace=%s AND `key`=%s",  # noqa: S608
-            delete_one=f"DELETE FROM {t} WHERE namespace=%s AND `key`=%s",  # noqa: S608
+            select_one=f"SELECT expires_at_ms, value FROM {t} WHERE namespace=%s AND `key`=%s",
+            delete_one=f"DELETE FROM {t} WHERE namespace=%s AND `key`=%s",
             upsert_one=(
-                f"INSERT INTO {t} (`namespace`, `key`, `expires_at_ms`, `value`) "  # noqa: S608
+                f"INSERT INTO {t} (`namespace`, `key`, `expires_at_ms`, `value`) "
                 "VALUES (%s, %s, %s, %s) "
                 "ON DUPLICATE KEY UPDATE "
                 "`expires_at_ms` = VALUES(`expires_at_ms`), "
                 "`value` = VALUES(`value`)"
             ),
-            cleanup_expired=f"DELETE FROM {t} WHERE expires_at_ms <= %s",  # noqa: S608
+            cleanup_expired=f"DELETE FROM {t} WHERE expires_at_ms <= %s",
         )
 
     @override
     async def on_init(self) -> None:
         if self._pool is not None:
             return
-        cfg = self.settings.cache.mysql
+        cfg = self.config
         mod = self._resolve_driver()
         pool: Any = await mod.create_pool(
             host=str(cfg.host),
@@ -153,8 +179,6 @@ class MySQLCache(CacheBase):
 
     @override
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
-        if self._pool is None:
-            raise RuntimeError("mysql cache is not initialized")
         pool, sql = self._require_ready()
         now = int(self.clock.now_ms())
         async with pool.acquire() as con, con.cursor() as cur:
@@ -167,23 +191,17 @@ class MySQLCache(CacheBase):
                 await cur.execute(sql.delete_one, (namespace, key))
                 await con.commit()
                 return None
-        # normalize blob
         if isinstance(blob, memoryview):
             blob = blob.tobytes()
-        data = bytes(blob)
         try:
-            return zlib.decompress(data)
+            return zlib.decompress(bytes(blob))
         except zlib.error:
-            # Corrupt data: treat as miss (or raise, depending on your preference)
-            # Here we choose miss to avoid crashing callers.
             return None
 
     @override
     async def aset(self, *, namespace: str, key: str, value: bytes, ttl_s: int) -> None:
         if ttl_s <= 0:
             return
-        if self._pool is None:
-            raise RuntimeError("mysql cache is not initialized")
         pool, sql = self._require_ready()
         now = int(self.clock.now_ms())
         exp_ms = now + int(ttl_s) * 1000
@@ -201,11 +219,10 @@ class MySQLCache(CacheBase):
             return
         try:
             pool.close()
-            # both asyncmy/aiomysql expose wait_closed()
             await pool.wait_closed()
         finally:
             self._pool = None
             self._sql = None
 
 
-__all__ = ["MySQLCache"]
+__all__ = ["MySQLCache", "MySQLCacheConfig"]

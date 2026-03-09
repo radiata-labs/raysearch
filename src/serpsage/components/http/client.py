@@ -1,41 +1,58 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import httpx
 
-from serpsage.components.http.base import HttpClientBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.http.base import HttpClientBase, HttpClientConfig
+from serpsage.components.registry import register_component
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Overrides, Runtime
 
-
+@register_component(
+    meta=ComponentMeta(
+        family="http",
+        name="httpx",
+        version="1.0.0",
+        summary="Shared httpx async client.",
+        provides=("http.client",),
+        config_model=HttpClientConfig,
+    )
+)
 class HttpClient(HttpClientBase):
+    meta = ComponentMeta(
+        family="http",
+        name="httpx",
+        version="1.0.0",
+        summary="Shared httpx async client.",
+        provides=("http.client",),
+        config_model=HttpClientConfig,
+    )
+
     def __init__(
         self,
         *,
-        rt: Runtime,
-        overrides: Overrides | None = None,
+        rt: object,
+        config: HttpClientConfig,
     ) -> None:
-        super().__init__(rt=rt)
-        ov = overrides
-        if ov is not None and ov.http is not None:
-            self._client = ov.http
+        super().__init__(rt=rt, config=config)
+        components = getattr(rt, "components", None)
+        override_client = components.http_override() if components is not None else None
+        if isinstance(override_client, httpx.AsyncClient):
+            self._client = override_client
             self._owns_client = False
-        else:
-            cfg = rt.settings.http
-            limits = httpx.Limits(
-                max_connections=int(cfg.max_connections),
-                max_keepalive_connections=int(cfg.max_keepalive_connections),
-                keepalive_expiry=float(cfg.keepalive_expiry_s),
-            )
-            self._client = httpx.AsyncClient(
-                proxy=cfg.proxy,
-                trust_env=bool(cfg.trust_env),
-                limits=limits,
-            )
-            self._owns_client = True
+            return
+        limits = httpx.Limits(
+            max_connections=int(config.max_connections),
+            max_keepalive_connections=int(config.max_keepalive_connections),
+            keepalive_expiry=float(config.keepalive_expiry_s),
+        )
+        self._client = httpx.AsyncClient(
+            proxy=config.proxy,
+            trust_env=bool(config.trust_env),
+            limits=limits,
+        )
+        self._owns_client = True
 
     @property
     @override

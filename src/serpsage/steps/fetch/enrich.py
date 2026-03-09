@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
 
+from serpsage.components.base import Depends
+from serpsage.components.cache.base import CacheBase
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.fetch.overview import FetchOverviewStep
 from serpsage.steps.fetch.subpages import FetchSubpageStep
-
-if TYPE_CHECKING:
-    from serpsage.components.cache.base import CacheBase
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.components.rank.base import RankerBase
-    from serpsage.core.runtime import Runtime
 
 
 class FetchParallelEnrichStep(StepBase[FetchStepContext]):
@@ -22,10 +20,10 @@ class FetchParallelEnrichStep(StepBase[FetchStepContext]):
         self,
         *,
         rt: Runtime,
-        llm: LLMClientBase,
-        cache: CacheBase,
-        fetch_runner: RunnerBase[FetchStepContext],
-        ranker: RankerBase,
+        llm: LLMClientBase = Depends(),
+        cache: CacheBase = Depends(),
+        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
+        ranker: RankerBase = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._overview_step = FetchOverviewStep(rt=rt, llm=llm, cache=cache)

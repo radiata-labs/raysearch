@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+from serpsage.components.base import (
+    ComponentBase,
+    ComponentConfigBase,
+    ComponentMeta,
+    DependencyRequest,
+    DependencySpec,
+    Depends,
+    InjectedParams,
+)
 from serpsage.components.cache import build_cache
+from serpsage.components.container import (
+    ComponentContainer,
+    ComponentResolutionError,
+    ResolvedComponentSpec,
+)
+from serpsage.components.discovery import BuiltinComponentDiscovery
 from serpsage.components.extract import build_extractor
 from serpsage.components.fetch import build_fetcher
 from serpsage.components.http import build_http_client
@@ -8,9 +23,26 @@ from serpsage.components.llm import build_overview_client
 from serpsage.components.provider import build_provider
 from serpsage.components.rank import build_ranker
 from serpsage.components.rate_limit import build_rate_limiter
+from serpsage.components.registry import (
+    ComponentRegistry,
+    get_component_registry,
+    register_component,
+)
 from serpsage.components.telemetry import build_telemetry
 
 __all__ = [
+    "BuiltinComponentDiscovery",
+    "ComponentBase",
+    "ComponentConfigBase",
+    "ComponentContainer",
+    "ComponentMeta",
+    "ComponentRegistry",
+    "ComponentResolutionError",
+    "DependencyRequest",
+    "DependencySpec",
+    "Depends",
+    "InjectedParams",
+    "ResolvedComponentSpec",
     "build_cache",
     "build_extractor",
     "build_fetcher",
@@ -20,4 +52,6 @@ __all__ = [
     "build_ranker",
     "build_rate_limiter",
     "build_telemetry",
+    "get_component_registry",
+    "register_component",
 ]

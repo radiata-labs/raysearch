@@ -4,9 +4,13 @@ import zlib
 from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
-from serpsage.components.cache.base import CacheBase
+from pydantic import field_validator
 
-AioredisModule: type[aioredis.Redis] | None = None
+from serpsage.components.base import ComponentMeta
+from serpsage.components.cache.base import CacheBase, CacheConfigBase
+from serpsage.components.registry import register_component
+
+AioredisModule: Any | None = None
 try:
     import aioredis as _aioredis
 
@@ -16,16 +20,42 @@ except Exception:  # noqa: BLE001
 if TYPE_CHECKING:
     import aioredis
 
-    from serpsage.core.runtime import Runtime
+
+class RedisCacheConfig(CacheConfigBase):
+    url: str = "redis://127.0.0.1:6379/0"
+    key_prefix: str = "serpsage"
+
+    @field_validator("url", "key_prefix")
+    @classmethod
+    def _validate_strings(cls, value: str) -> str:
+        return str(value or "").strip()
 
 
-class RedisCache(CacheBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+_REDIS_CACHE_META = ComponentMeta(
+    family="cache",
+    name="redis",
+    version="1.0.0",
+    summary="Redis-backed cache.",
+    provides=("cache.store",),
+    config_model=RedisCacheConfig,
+)
+
+
+@register_component(meta=_REDIS_CACHE_META)
+class RedisCache(CacheBase[RedisCacheConfig]):
+    meta = _REDIS_CACHE_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: RedisCacheConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
         if AioredisModule is None:
             raise RuntimeError("aioredis is required for RedisCache")
-        self._url = str(self.settings.cache.redis.url)
-        self._prefix = str(self.settings.cache.redis.key_prefix)
+        self._url = str(config.url)
+        self._prefix = str(config.key_prefix)
         self._client: aioredis.Redis | None = None
 
     def _redis_key(self, *, namespace: str, key: str) -> str:
@@ -79,4 +109,4 @@ class RedisCache(CacheBase):
             self._client = None
 
 
-__all__ = ["RedisCache"]
+__all__ = ["RedisCache", "RedisCacheConfig"]

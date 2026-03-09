@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from typing_extensions import override
 from urllib.parse import urlsplit, urlunsplit
 
+from serpsage.components.base import Depends
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.response import AnswerCitation, FetchResultItem
 from serpsage.models.steps.answer import (
     AnswerStepContext,
@@ -18,10 +21,6 @@ from serpsage.models.steps.answer import (
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
-if TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.core.runtime import Runtime
-
 _CITATION_RE = re.compile(r"\[\s*citation\s*:\s*(\d+)\s*\]", re.IGNORECASE)
 _CITATION_GROUP_RE = re.compile(
     r"\[\s*citation\s*:\s*([^\]]+?)\s*\]",
@@ -31,7 +30,7 @@ _FIXED_ABSTRACT_MAX_CHARS = 1000
 
 
 class AnswerGenerateStep(StepBase[AnswerStepContext]):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+    def __init__(self, *, rt: Runtime, llm: LLMClientBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._llm = llm
         self.bind_deps(llm)

@@ -3,14 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.request import FetchOthersRequest
 from serpsage.models.app.response import FetchResponse, FetchSubpagesResult
 from serpsage.models.steps.fetch import FetchStepContext, FetchSubpageState
 from serpsage.steps.base import RunnerBase, StepBase
 
 if TYPE_CHECKING:
-    from serpsage.components.rank.base import RankerBase
-    from serpsage.core.runtime import Runtime
     from serpsage.models.app.response import FetchResultItem
 
 
@@ -19,8 +21,8 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         self,
         *,
         rt: Runtime,
-        fetch_runner: RunnerBase[FetchStepContext],
-        ranker: RankerBase,
+        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
+        ranker: RankerBase = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._fetch_runner = fetch_runner
@@ -74,8 +76,11 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         child_link_limit = int(ctx.related.subpages.candidate_limit or 0)
         if child_link_limit <= 0:
             child_link_limit = 8
+        fetch_cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        )
         child_link_limit = min(
-            int(self.settings.fetch.extract.link_max_count),
+            int(fetch_cfg.extract.link_max_count),
             max(1, int(child_link_limit)),
         )
         to_fetch: list[FetchStepContext] = []

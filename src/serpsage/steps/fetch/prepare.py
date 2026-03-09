@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 from urllib.parse import urlsplit
 
+from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.models.app.request import (
     FetchAbstractsRequest,
     FetchContentRequest,
@@ -104,6 +105,9 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
         ctx.analysis.overview.request = overview_request
         ctx.analysis.overview.ranked = []
         ctx.analysis.overview.output = None
+        fetch_cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        )
         subpages_enabled = False
         subpages_limit = 0
         subpages_keywords: list[str] = []
@@ -130,7 +134,7 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                 if subpages_enabled:
                     subpages_query = ", ".join(subpages_keywords)
             if subpages_enabled:
-                link_cap = int(self.settings.fetch.extract.link_max_count)
+                link_cap = int(fetch_cfg.extract.link_max_count)
                 auto_limit = min(link_cap, max(20, int(subpages_limit) * 5))
                 preset_limit = (
                     int(ctx.related.subpages.candidate_limit)

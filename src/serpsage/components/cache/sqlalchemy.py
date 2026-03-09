@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import re
 import zlib
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from typing_extensions import override
 
-from serpsage.components.cache.base import CacheBase
+from pydantic import field_validator
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
+from serpsage.components.base import ComponentMeta
+from serpsage.components.cache.base import CacheBase, CacheConfigBase
+from serpsage.components.registry import register_component
+
 _SAFE_SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -19,19 +21,47 @@ def _ensure_identifier(value: str) -> str:
     return name
 
 
-class SQLAlchemyCache(CacheBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+class SQLAlchemyCacheConfig(CacheConfigBase):
+    url: str = "sqlite+aiosqlite:///./.serpsage_cache.sqlite3"
+    table: str = "cache"
+
+    @field_validator("url", "table")
+    @classmethod
+    def _validate_strings(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("sqlalchemy cache settings must be non-empty")
+        return token
+
+
+_SQLALCHEMY_CACHE_META = ComponentMeta(
+    family="cache",
+    name="sqlalchemy",
+    version="1.0.0",
+    summary="SQLAlchemy async cache backend.",
+    provides=("cache.store",),
+    config_model=SQLAlchemyCacheConfig,
+)
+
+
+@register_component(meta=_SQLALCHEMY_CACHE_META)
+class SQLAlchemyCache(CacheBase[SQLAlchemyCacheConfig]):
+    meta = _SQLALCHEMY_CACHE_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: SQLAlchemyCacheConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
         try:
             import sqlalchemy as sa  # noqa: PLC0415
-            from sqlalchemy.ext.asyncio import (  # noqa: PLC0415
-                create_async_engine,
-            )
-        except Exception as exc:  # noqa: BLE001
+            from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
+        except Exception as exc:
             raise RuntimeError("sqlalchemy is required for SQLAlchemyCache") from exc
-        cfg = self.settings.cache.sqlalchemy
-        self._url = str(cfg.url)
-        self._table_name = _ensure_identifier(str(cfg.table))
+        self._url = str(config.url)
+        self._table_name = _ensure_identifier(str(config.table))
         self._validate_async_url(self._url)
         self._sa = sa
         self._create_async_engine = create_async_engine
@@ -135,4 +165,4 @@ class SQLAlchemyCache(CacheBase):
             self._engine = None
 
 
-__all__ = ["SQLAlchemyCache"]
+__all__ = ["SQLAlchemyCache", "SQLAlchemyCacheConfig"]

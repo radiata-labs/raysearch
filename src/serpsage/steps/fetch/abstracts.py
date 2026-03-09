@@ -4,6 +4,7 @@ import re
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.models.steps.fetch import FetchStepContext, PreparedPassage
 from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize
@@ -139,7 +140,9 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         markdown = str(
             ctx.page.doc.content.abstract_text or ctx.page.doc.content.markdown or ""
         )
-        cfg = self.settings.fetch.abstract
+        cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        ).abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
             min_abstract_tokens=int(cfg.min_abstract_tokens),

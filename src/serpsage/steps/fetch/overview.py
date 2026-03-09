@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.cache import CacheBase
+from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.components.llm import LLMClientBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.request import FetchOverviewRequest
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace, stable_json
-
-if TYPE_CHECKING:
-    from serpsage.components.cache import CacheBase
-    from serpsage.components.llm import LLMClientBase
-    from serpsage.core.runtime import Runtime
 
 
 class FetchOverviewStep(StepBase[FetchStepContext]):
@@ -21,8 +21,8 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         self,
         *,
         rt: Runtime,
-        llm: LLMClientBase,
-        cache: CacheBase,
+        llm: LLMClientBase = Depends(),
+        cache: CacheBase = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._llm = llm
@@ -53,8 +53,10 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-        profile = self.settings.fetch.overview
-        model_cfg = self.settings.llm.resolve_model(profile.use_model)
+        profile = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        ).overview
+        model_cfg = self._llm.describe_model(profile.use_model)
         schema = dict(req.json_schema) if isinstance(req.json_schema, dict) else None
         mode = "json" if schema is not None else "text"
         messages = self._build_messages(

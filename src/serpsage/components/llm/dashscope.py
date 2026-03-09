@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
+from typing import Any, TypeVar, cast, overload
 from typing_extensions import override
 
 from dashscope.aigc.generation import AioGeneration  # type: ignore[import-untyped]
@@ -12,7 +12,9 @@ from dashscope.api_entities.dashscope_response import (  # type: ignore[import-u
 )
 from pydantic import BaseModel
 
-from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
+from serpsage.components.registry import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -21,19 +23,56 @@ from serpsage.models.components.llm import (
     LLMUsage,
 )
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import LLMModelSettings
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
-class DashScopeClient(LLMClientBase):
+class DashScopeModelConfig(LLMModelConfig):
+    @classmethod
+    @override
+    def inject_env(
+        cls,
+        raw: dict[str, Any],
+        *,
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        payload = dict(raw)
+        if not payload.get("api_key") and env.get("DASHSCOPE_API_KEY"):
+            payload["api_key"] = env["DASHSCOPE_API_KEY"]
+        if not payload.get("base_url") and env.get("DASHSCOPE_BASE_URL"):
+            payload["base_url"] = env["DASHSCOPE_BASE_URL"]
+        return payload
+
+
+_DASHSCOPE_META = ComponentMeta(
+    family="llm",
+    name="dashscope",
+    version="1.0.0",
+    summary="DashScope route client.",
+    provides=("llm.route",),
+    config_model=DashScopeModelConfig,
+)
+
+
+@register_component(meta=_DASHSCOPE_META)
+class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
+    meta = _DASHSCOPE_META
     _SCHEMA_NAME = "SerpSageOverview"
 
-    def __init__(self, *, rt: Runtime, model_cfg: LLMModelSettings) -> None:
-        super().__init__(rt=rt)
-        self._model_cfg = model_cfg
-        self._api_key = model_cfg.api_key
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: DashScopeModelConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
+        self._api_key = config.api_key
+
+    @override
+    def describe_model(self, name: str) -> DashScopeModelConfig:
+        if str(name) != str(self.config.name):
+            super().describe_model(name)
+            raise AssertionError("unreachable")
+        return self.config
 
     @overload
     async def _create(
@@ -79,7 +118,7 @@ class DashScopeClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        llm = self._model_cfg
+        llm = self.config
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
         response_schema, response_model = self.resolve_response_format(
@@ -113,9 +152,7 @@ class DashScopeClient(LLMClientBase):
         data = self._parse_json_object(text)
         if response_model is not None:
             return ChatModelResult(
-                text=text,
-                data=response_model.model_validate(data),
-                usage=usage,
+                text=text, data=response_model.model_validate(data), usage=usage
             )
         return ChatDictResult(text=text, data=data, usage=usage)
 
@@ -229,9 +266,8 @@ class DashScopeClient(LLMClientBase):
 
     @staticmethod
     def _parse_json_object(content: str) -> dict[str, object]:
-        payload: object
         try:
-            payload = json.loads(content)
+            payload: object = json.loads(content)
         except json.JSONDecodeError:
             start = content.find("{")
             end = content.rfind("}")
@@ -244,4 +280,4 @@ class DashScopeClient(LLMClientBase):
         return {str(k): v for k, v in payload.items()}
 
 
-__all__ = ["DashScopeClient"]
+__all__ = ["DashScopeClient", "DashScopeModelConfig"]

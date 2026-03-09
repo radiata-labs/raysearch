@@ -1,174 +1,136 @@
 # SerpSage
 
-SerpSage is an async-only SERP + page intelligence engine with four first-class paths:
+SerpSage is an async-only SERP, fetch, answer, and research engine. Public entry points remain:
 
-- `Engine.search(req)`: query search pipeline (`prepare -> optimize(optional) -> expand(deep) -> search(prefetch) -> fetch -> rank -> finalize`)
-- `Engine.fetch(req)`: multi-URL pipeline (`prepare -> load(cache/crawl) -> extract -> optional abstract rank -> optional overview -> optional subpages -> finalize`)
-- `Engine.answer(req)`: answer pipeline (`plan search params -> search -> generate answer`)
-- `Engine.research(req)`: research pipeline (`multi-round search -> fetch -> abstract/content analysis -> markdown + structured`)
+- `load_settings()`
+- `Engine.from_settings(settings)`
+- `Engine.search(req)`
+- `Engine.fetch(req)`
+- `Engine.answer(req)`
+- `Engine.research(req)`
 
-The `fetch` path is Markdown-first: output is centered on clean main-content markdown (`response.results[].content`).
+## Component System
 
-## Public API
+The component layer is now registry and container driven.
 
-- `Engine`
-- `SearchRequest` / `SearchResponse`
-- `FetchRequest` / `FetchResponse`
-- `AnswerRequest` / `AnswerResponse`
-- `ResearchRequest` / `ResearchResponse`
-- `load_settings`
+- Each component owns its own `pydantic` config model.
+- `src/serpsage/settings/models.py` only defines generic component-family containers plus non-component business settings.
+- Builtin components self-register through metadata.
+- Runtime assembly uses automatic dependency injection by `family + contract + default`.
+- `backend: Literal[...]` is removed from settings. Families now declare `default` and `instances`.
 
-## Configuration
+Built-in component families:
 
-Top-level settings:
-
-- `provider`
 - `http`
-- `search`
-- `answer`
-- `research`
+- `provider`
 - `fetch`
+- `extract`
 - `rank`
 - `llm`
 - `cache`
+- `telemetry`
+- `rate_limit`
 
-Reference file: `demo/search_config_example.yaml`.
+## Configuration Shape
 
-Env overrides:
+Every component family uses the same structure:
 
+```yaml
+provider:
+  default: google_main
+  instances:
+    google_main:
+      component: google
+      enabled: true
+      config:
+        country: US
+```
+
+Example:
+
+```yaml
+llm:
+  default: router_main
+  instances:
+    router_main:
+      component: router
+      enabled: true
+      config: {}
+    gpt41_mini:
+      component: openai
+      enabled: true
+      config:
+        name: gpt-4.1-mini
+        model: gpt-4.1-mini
+        api_key: null
+```
+
+Reference config: `demo/search_config_example.yaml`.
+
+## Environment Injection
+
+`load_settings()` only loads the top-level file and preserves runtime env. Component-specific env overrides are implemented by each component config model.
+
+Examples:
+
+- `openai` route instances can read `OPENAI_API_KEY` and `OPENAI_BASE_URL`
+- `gemini` route instances can read `GEMINI_API_KEY` and `GEMINI_BASE_URL`
+- `google` and `searxng` providers can read provider/search env overrides
+
+Global loader behavior:
+
+- explicit `path`
 - `SERPSAGE_CONFIG_PATH`
-- `SEARXNG_BASE_URL`
-- `SEARCH_API_KEY`
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `GEMINI_API_KEY`
-- `GEMINI_BASE_URL`
+- `serpsage.yaml`
+- defaults
 
-Runtime prerequisites:
+## Telemetry
 
-- JS rendering uses Playwright. Install browsers with `playwright install`.
-- Overview uses optional dependencies (`serpsage[overview]`) plus API keys.
-- HTML->Markdown conversion uses an internal renderer (compat backend name remains `markdownify`).
+Telemetry is also a component family.
 
-Telemetry and metering (core component mode):
+Built-in telemetry components:
 
-- This repo exposes pluggable telemetry/metering foundations for host-system integration.
-- V2 is a breaking cut: legacy `response.errors` diagnostics are removed.
-- Telemetry emits request/step/LLM/fetch events; metering emits usage events (`meter.*`).
-- Metering ledger is optional and defaults to disabled (`null` backend).
+- emitters: `null_emitter`, `async_emitter`
+- sinks: `null_sink`, `jsonl_sink`, `sqlite_metering_sink`
 
-Settings:
+Example:
 
-- `telemetry.enabled`: enable async event emission.
-- `telemetry.queue_size`: bounded in-memory queue size.
-- `telemetry.drop_noncritical_when_full`: drop low-priority events when queue is full.
-- `telemetry.obs.backend`: `null|jsonl`.
-- `telemetry.obs.jsonl_path`: JSONL output path when obs backend is `jsonl`.
-- `telemetry.metering.backend`: `null|sqlite`.
-- `telemetry.metering.sqlite_db_path`: SQLite ledger path for metering sink.
-
-When `telemetry.metering.backend=sqlite`, an append-only table `metering_ledger` is created
-with dedupe constraints on `event_id` and `idempotency_key`.
+```yaml
+telemetry:
+  default: async_main
+  instances:
+    async_main:
+      component: async_emitter
+      enabled: true
+      config:
+        queue_size: 2048
+    jsonl_main:
+      component: jsonl_sink
+      enabled: true
+      config:
+        jsonl_path: .serpsage_events.jsonl
+```
 
 ## Usage
 
 ```python
-from serpsage import (
-    AnswerRequest,
-    Engine,
-    FetchAbstractsRequest,
-    FetchContentRequest,
-    FetchOthersRequest,
-    FetchOverviewRequest,
-    FetchRequest,
-    FetchSubpagesRequest,
-    ResearchRequest,
-    SearchRequest,
-    load_settings,
-)
+from serpsage import Engine, SearchRequest, load_settings
 
-settings = load_settings()
+settings = load_settings("demo/search_config_example.yaml")
 
 async with Engine.from_settings(settings) as engine:
-    search_resp = await engine.search(
+    response = await engine.search(
         SearchRequest(
             query="latest ai papers",
             mode="deep",
             max_results=8,
-            fetchs={"content": True},
-        )
-    )
-    fetch_resp = await engine.fetch(
-        FetchRequest(
-            urls=["https://example.com/article"],
-            crawl_mode="fallback",
-            crawl_timeout=2.5,
-            content=FetchContentRequest(detail="standard"),
-            abstracts=FetchAbstractsRequest(query="benchmark results", max_chars=2400),
-            subpages=FetchSubpagesRequest(
-                max_subpages=2,
-                subpage_keywords="benchmark, evaluation",
-            ),
-            overview=FetchOverviewRequest(query="benchmark results"),
-            others=FetchOthersRequest(max_links=20, max_image_links=10),
-        )
-    )
-    answer_resp = await engine.answer(
-        AnswerRequest(
-            query="What are the latest benchmark results for model X?",
-            content=True,
-        )
-    )
-    research_resp = await engine.research(
-        ResearchRequest(
-            search_mode="research-pro",
-            themes="Latest open-source coding LLM benchmark landscape",
-            json_schema=None,
         )
     )
 ```
 
-## Behavior notes
+## Notes
 
-- `search.mode`: `fast|auto|deep`
-- `search.mode=fast` keeps old `auto` behavior (no LLM query optimization, single-query retrieval path)
-- `search.mode in {auto, deep}` enables a dedicated LLM query optimization step with explicit freshness handling
-- `search.mode=deep` additionally enables mixed query expansion (manual/rule/LLM) and context-aware composite reranking
-- deep search tuning is configured by `search.deep.*` (expansion limits, weights, prefetch budget, LLM model/timeout)
-- `answer` planner is LLM-driven and receives current UTC time for recency-sensitive questions
-- `answer` generation consumes budgeted abstracts (`answer.generate.max_abstract_chars`, default `3000`)
-- `answer` uses `[citation:x]` markers in `answers`; only referenced pages appear in `citations`
-- `research` request is simplified to `search_mode/themes/json_schema`
-- `research` supports three modes: `research-fast|research|research-pro`
-- `research` always returns standardized markdown (`content`) and optional structured output (`structured`)
-- `research` model output uses `[citation:x]`, then post-processing rewrites to `[citation:url]`
-- `answer.citations[]` is page-level unique (`url`, `title`, optional `content`), not abstract-level
-- `AnswerRequest.content=true` enables page markdown output in search/fetch and citation `content` payload
-- `fetch`: no depth tiers, single strategy
-- `fetch.backend`: `auto|curl_cffi|playwright` (`httpx` backend removed)
-- migration: old search profile/overview settings are removed
-- `FetchRequest` V4 fields:
-  - `urls`: list of URLs, processed concurrently with stable output order
-  - `crawl_mode`: `never|fallback|preferred|always`
-  - `crawl_timeout`: per-URL crawler timeout in seconds
-  - `content`: `bool | FetchContentRequest`, default `false` (`false` hides output markdown only; internal extraction still runs)
-  - `FetchContentRequest.detail`: `concise|standard|full` (mapped internally to original extraction depth behavior)
-  - `abstracts`: `bool | FetchAbstractsRequest`, default `false` (`true` means enabled with default config)
-  - `subpages`: `FetchSubpagesRequest | None`
-  - `subpages.max_subpages`: required to enable subpages; `None` means disabled
-  - `subpages.subpage_keywords`: one string or comma-separated keywords for ranking links
-  - `overview`: `bool | FetchOverviewRequest`, default `false` (`true` means enabled with default config)
-  - `FetchAbstractsRequest.query` / `FetchOverviewRequest.query` may be `None`; ranking query falls back to `title`, then `url`
-  - when `overview.query` is `None`, the LLM query is fixed as `总结`
-  - `others.max_links` / `others.max_image_links`: optional link collection caps; omitted means no links output
-  - if `subpages` is enabled but `others.max_links` is omitted, fetch internally collects links for subpage ranking and may hide those links in final `others.links`
-  - old fetch fields (`url/params/query/include_chunks/top_k_chunks/include_secondary_content/runtime`) are removed
-- `search` does not include overview generation; overview remains fetch-only
-- when deep query expansion fails, search aborts with error code `search_query_expansion_failed`
-- `search` response shape: `search_mode/results`
-- `answer`/`research` response payloads no longer include `errors`
-- `fetch` response adds `statuses[]` (one item per input URL, ordered by input URL order, `success|error`)
-- `fetch.statuses[].error`: present on `error` items, shape `{tag, detail}` where `tag` is one of
-  `CRAWL_NOT_FOUND|CRAWL_TIMEOUT|CRAWL_LIVECRAWL_TIMEOUT|SOURCE_NOT_AVAILABLE|UNSUPPORTED_URL|CRAWL_UNKNOWN_ERROR`
-- fetch/extract pipeline supports JS-rendered pages, PDF text extraction, and noisy layouts with boilerplate filtering
-- `fetch.extract` uses an internal markdown renderer pipeline; no renderer backend toggle is exposed.
+- `search.mode`: `fast | auto | deep`
+- Fetch remains markdown-first.
+- Builtin discovery is local-repo only; there is no setuptools plugin loading in this version.
+- JS rendering still requires Playwright browsers to be installed.

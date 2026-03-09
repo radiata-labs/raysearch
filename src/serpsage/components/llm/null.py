@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, overload
+from typing import Any, NoReturn, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.llm.base import LLMClientBase, LLMRouterConfig
+from serpsage.components.registry import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -13,16 +15,29 @@ from serpsage.models.components.llm import (
     ChatTextResult,
 )
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
 TModel = TypeVar("TModel", bound=BaseModel)
+_NULL_LLM_META = ComponentMeta(
+    family="llm",
+    name="null",
+    version="1.0.0",
+    summary="Null LLM client.",
+    provides=("llm.client",),
+    config_model=LLMRouterConfig,
+)
 
 
-class NullLLMClient(LLMClientBase):
+@register_component(meta=_NULL_LLM_META)
+class NullLLMClient(LLMClientBase[LLMRouterConfig]):
+    meta = _NULL_LLM_META
     _NOT_CONFIGURED_MESSAGE = "LLM is not configured (missing api_key or disabled)."
 
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: LLMRouterConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
 
     @overload
     async def _create(

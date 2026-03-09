@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from serpsage.app.engine import Engine
+    from serpsage.core.runtime import Overrides
+from serpsage.core.runtime import Overrides
 from serpsage.models.app.request import (
     AnswerRequest,
     CrawlMode,
@@ -35,7 +37,11 @@ from serpsage.models.app.response import (
     SearchResponse,
 )
 from serpsage.settings.load import load_settings
-from serpsage.settings.models import AppSettings
+from serpsage.settings.models import (
+    AppSettings,
+    ComponentFamilySettings,
+    ComponentInstanceSettings,
+)
 
 
 def __getattr__(name: str) -> object:
@@ -48,6 +54,8 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "AppSettings",
+    "ComponentFamilySettings",
+    "ComponentInstanceSettings",
     "AnswerRequest",
     "AnswerCitation",
     "AnswerResponse",
@@ -68,5 +76,6 @@ __all__ = [
     "ResearchSearchMode",
     "ResearchRequest",
     "ResearchResponse",
+    "Overrides",
     "load_settings",
 ]

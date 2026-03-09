@@ -3,12 +3,16 @@ from __future__ import annotations
 import math
 import re
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import anyio
 
+from serpsage.components.base import Depends
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -26,10 +30,6 @@ from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace, strip_html
 
-if TYPE_CHECKING:
-    from serpsage.components.provider.base import SearchProviderBase
-    from serpsage.components.rank.base import RankerBase
-    from serpsage.core.runtime import Runtime
 _TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
 _TRACKING_QUERY_PREFIXES = ("utm_",)
 _AUTO_RULE_QUERY_WEIGHT = 0.35
@@ -44,8 +44,8 @@ class SearchStep(StepBase[SearchStepContext]):
         self,
         *,
         rt: Runtime,
-        provider: SearchProviderBase,
-        ranker: RankerBase,
+        provider: SearchProviderBase = Depends(),
+        ranker: RankerBase = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._provider = provider
@@ -257,6 +257,7 @@ class SearchStep(StepBase[SearchStepContext]):
         telemetry = self.telemetry
         if telemetry is None:
             return
+        provider_name = self.components.family_name("provider")
         with suppress(Exception):
             await telemetry.emit(
                 event_name="meter.usage.search_call",
@@ -271,13 +272,13 @@ class SearchStep(StepBase[SearchStepContext]):
                 attrs={
                     "query": query,
                     "mode": str(ctx.request.mode),
-                    "provider_backend": str(self.settings.provider.backend),
+                    "provider_backend": provider_name,
                 },
                 meter=MeterPayload(
                     meter_type="search_call",
                     unit="call",
                     quantity=1.0,
-                    provider=str(self.settings.provider.backend),
+                    provider=provider_name,
                 ),
             )
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from typing_extensions import override
 
 from anyio import to_thread
@@ -15,11 +15,14 @@ except Exception:  # noqa: BLE001
     _CROSS_ENCODER_CTOR = None
     CROSS_ENCODER_AVAILABLE = False
 
-from serpsage.components.rank.base import RankerBase, RankMode
+from serpsage.components.base import ComponentMeta
+from serpsage.components.rank.base import (
+    RankCrossEncoderSettings,
+    RankerBase,
+    RankMode,
+)
+from serpsage.components.registry import register_component
 from serpsage.utils import clean_whitespace
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
 
 
 def _sigmoid(value: float) -> float:
@@ -39,7 +42,7 @@ def _coerce_prediction_value(value: object) -> float:
         return _coerce_prediction_value(value[0])
     try:
         return _sigmoid(float(cast("Any", value)))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return 0.0
 
 
@@ -51,9 +54,27 @@ def _normalize_predictions(raw: object) -> list[float]:
     return [_coerce_prediction_value(raw)]
 
 
-class CrossEncoderRanker(RankerBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+_CROSS_ENCODER_META = ComponentMeta(
+    family="rank",
+    name="cross_encoder",
+    version="1.0.0",
+    summary="Cross-encoder ranker.",
+    provides=("rank.cross_encoder_engine",),
+    config_model=RankCrossEncoderSettings,
+)
+
+
+@register_component(meta=_CROSS_ENCODER_META)
+class CrossEncoderRanker(RankerBase[RankCrossEncoderSettings]):
+    meta = _CROSS_ENCODER_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: RankCrossEncoderSettings,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
         self._model: object | None = None
 
     @override
@@ -67,13 +88,12 @@ class CrossEncoderRanker(RankerBase):
             raise RuntimeError(
                 "cross-encoder ranker is unavailable: install sentence-transformers"
             )
-        assert _CROSS_ENCODER_CTOR is not None
-        cfg = self.settings.rank.cross_encoder
-        model_name = str(cfg.model_name or "").strip()
-        max_length = max(1, int(cfg.max_length))
         cross_encoder_ctor = cast("Any", _CROSS_ENCODER_CTOR)
         self._model = await to_thread.run_sync(
-            lambda: cross_encoder_ctor(model_name, max_length=max_length)
+            lambda: cross_encoder_ctor(
+                str(self.config.model_name or "").strip(),
+                max_length=max(1, int(self.config.max_length)),
+            )
         )
         return self._model
 
@@ -93,7 +113,7 @@ class CrossEncoderRanker(RankerBase):
         if not effective_query:
             return [0.0 for _ in texts]
         model = await self._ensure_model()
-        batch_size = max(1, int(self.settings.rank.cross_encoder.batch_size))
+        batch_size = max(1, int(self.config.batch_size))
         pairs = [(effective_query, text) for text in texts]
         predictions = await to_thread.run_sync(
             lambda: cast("Any", model).predict(

@@ -6,7 +6,8 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.fetch.base import FetcherBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.fetch.base import FetchConfigBase, FetcherBase, RetrySettings
 from serpsage.components.fetch.utils import (
     analyze_content,
     browser_headers,
@@ -14,6 +15,8 @@ from serpsage.components.fetch.utils import (
     get_delay_s,
     parse_retry_after_s,
 )
+from serpsage.components.http.base import HttpClientConfig
+from serpsage.components.registry import register_component
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
 CurlSessionFactory: type[Any] | None = None
@@ -28,9 +31,6 @@ except Exception:  # noqa: BLE001
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import RetrySettings
-
 
 @dataclass(slots=True)
 class CurlProgressiveResult:
@@ -39,9 +39,31 @@ class CurlProgressiveResult:
     bytes_read: int
 
 
+class CurlCffiFetcherConfig(FetchConfigBase):
+    pass
+
+
+_CURL_FETCHER_META = ComponentMeta(
+    family="fetch",
+    name="curl_cffi",
+    version="1.0.0",
+    summary="curl_cffi fetch backend.",
+    provides=("fetch.curl_engine",),
+    config_model=CurlCffiFetcherConfig,
+)
+
+
+@register_component(meta=_CURL_FETCHER_META)
 class CurlCffiFetcher(FetcherBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+    meta = _CURL_FETCHER_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: CurlCffiFetcherConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
         if not CURL_CFFI_AVAILABLE:
             raise RuntimeError("curl_cffi is not available; install curl_cffi")
         self._session: Any | None = None
@@ -82,8 +104,6 @@ class CurlCffiFetcher(FetcherBase):
             return
         try:
             await self._session.close()
-        except Exception:
-            return
         finally:
             self._session = None
 
@@ -114,9 +134,11 @@ class CurlCffiFetcher(FetcherBase):
     ) -> CurlProgressiveResult:
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
-        fetch_cfg = self.settings.fetch
-        proxy = self.settings.http.proxy
-        req_timeout_s = timeout_s or fetch_cfg.timeout_s
+        cfg = self.config
+        http_cfg = self.components.resolve_default_config(
+            "http", expected_type=HttpClientConfig
+        )
+        req_timeout_s = timeout_s or cfg.timeout_s
         max_attempts = max(1, int(getattr(retry, "max_attempts", 0) or 2))
         delay_ms = int(getattr(retry, "delay_ms", 0) or 90)
         last_result: CurlProgressiveResult | None = None
@@ -125,7 +147,7 @@ class CurlCffiFetcher(FetcherBase):
                 result = await self._stream_attempt_once(
                     url=url,
                     timeout_s=req_timeout_s,
-                    proxy=proxy,
+                    proxy=http_cfg.proxy,
                     scout_bytes=scout_bytes,
                     continue_predicate=continue_predicate,
                 )
@@ -173,10 +195,10 @@ class CurlCffiFetcher(FetcherBase):
         scout_bytes: int | None,
         continue_predicate: Callable[[FetchAttempt], bool] | None,
     ) -> CurlProgressiveResult:
-        fetch_cfg = self.settings.fetch
+        cfg = self.config
         headers = browser_headers(
             profile="browser",
-            user_agent=str(fetch_cfg.user_agent),
+            user_agent=str(cfg.user_agent),
             randomize=True,
         )
         session = cast("Any", self._session)
@@ -185,7 +207,7 @@ class CurlCffiFetcher(FetcherBase):
             url,
             headers=headers,
             timeout=timeout_s,
-            allow_redirects=bool(fetch_cfg.follow_redirects),
+            allow_redirects=bool(cfg.follow_redirects),
             proxy=proxy,
             impersonate=cast("Any", "chrome124"),
             http_version="v2",
@@ -194,8 +216,7 @@ class CurlCffiFetcher(FetcherBase):
             status_code = int(getattr(resp, "status_code", 0) or 0)
             final_url = str(getattr(resp, "url", url) or url)
             response_headers = cast(
-                "dict[str, str] | None",
-                getattr(resp, "headers", None),
+                "dict[str, str] | None", getattr(resp, "headers", None)
             )
             if not isinstance(response_headers, dict):
                 response_headers = {}
@@ -271,7 +292,7 @@ class CurlCffiFetcher(FetcherBase):
             content=content,
             content_type=content_type,
             url=url,
-            markers=tuple(self.settings.fetch.quality.blocked_markers),
+            markers=tuple(self.config.quality.blocked_markers),
         )
         attempt_chain = ["curl_cffi"]
         if not finished:
@@ -310,4 +331,9 @@ class CurlCffiFetcher(FetcherBase):
         return 1_800_000
 
 
-__all__ = ["CURL_CFFI_AVAILABLE", "CurlCffiFetcher", "CurlProgressiveResult"]
+__all__ = [
+    "CURL_CFFI_AVAILABLE",
+    "CurlCffiFetcher",
+    "CurlCffiFetcherConfig",
+    "CurlProgressiveResult",
+]

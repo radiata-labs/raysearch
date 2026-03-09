@@ -5,6 +5,9 @@ import re
 from typing import TYPE_CHECKING, Any, Literal
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.search import (
     SearchDeepState,
     SearchQueryCandidate,
@@ -17,9 +20,6 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.core.runtime import Runtime
 _JACCARD_SIMILARITY_THRESHOLD = 0.92
 _MANUAL_SOURCE_CAP = 8
 _RULE_SOURCE_CAP = 8
@@ -39,7 +39,7 @@ _EN_EVIDENCE_SUFFIX = "benchmark report source"
 
 
 class SearchExpandStep(StepBase[SearchStepContext]):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+    def __init__(self, *, rt: Runtime, llm: LLMClientBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._llm = llm
         self.bind_deps(llm)

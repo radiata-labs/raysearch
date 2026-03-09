@@ -1,28 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any
 
 from serpsage.components.extract.base import ExtractorBase
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
+
+def build_extractor(*, rt: Any) -> ExtractorBase:
+    return rt.components.resolve_default("extract", expected_type=ExtractorBase)
 
 
-def build_extractor(*, rt: Runtime) -> ExtractorBase:
-    from serpsage.components.extract.auto import AutoExtractor
-    from serpsage.components.extract.html import HtmlExtractor
-    from serpsage.components.extract.pdf import PdfExtractor
-
-    markdown_extractor = HtmlExtractor(rt=rt)
-    pdf_extractor = PdfExtractor(rt=rt)
-    return AutoExtractor(
-        rt=rt,
-        markdown_extractor=markdown_extractor,
-        pdf_extractor=pdf_extractor,
-    )
-
-
-__all__ = [
-    "ExtractorBase",
-    "build_extractor",
-]
+__all__ = ["ExtractorBase", "build_extractor"]

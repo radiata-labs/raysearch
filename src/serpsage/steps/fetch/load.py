@@ -4,19 +4,20 @@ import hashlib
 import json
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.cache import CacheBase
+from serpsage.components.cache.base import CacheConfigBase
+from serpsage.components.fetch import FetcherBase
+from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.response import FetchErrorTag
 from serpsage.models.components.fetch import FetchResult
 from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
-
-if TYPE_CHECKING:
-    from serpsage.components.cache import CacheBase
-    from serpsage.components.fetch import FetcherBase
-    from serpsage.core.runtime import Runtime
 
 _CACHE_NAMESPACE = "fetch:v4"
 
@@ -26,8 +27,8 @@ class FetchLoadStep(StepBase[FetchStepContext]):
         self,
         *,
         rt: Runtime,
-        fetcher: FetcherBase,
-        cache: CacheBase,
+        fetcher: FetcherBase = Depends(),
+        cache: CacheBase = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._fetcher = fetcher
@@ -49,13 +50,17 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             )
             return ctx
         mode = str(ctx.page.crawl_mode or "fallback")
+        fetch_cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        )
+        cache_cfg = self.components.resolve_default_config(
+            "cache", expected_type=CacheConfigBase
+        )
         cache_key = _cache_key(
             url=url,
-            backend=str(self.settings.fetch.backend or "auto").lower(),
+            backend=self.components.family_name("fetch"),
         )
-        timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(
-            self.settings.fetch.timeout_s
-        )
+        timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(fetch_cfg.timeout_s)
         cache_fetch_ms = 0
         crawl_fetch_ms = 0
 
@@ -82,7 +87,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             return result
 
         async def write_cache(result: FetchResult) -> None:
-            ttl_s = int(self.settings.cache.fetch_ttl_s)
+            ttl_s = int(cache_cfg.fetch_ttl_s)
             if ttl_s <= 0:
                 return
             await self._cache.aset(

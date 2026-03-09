@@ -16,13 +16,14 @@ from anyio import to_thread
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError, PdfStreamError
 
-from serpsage.components.extract.base import ExtractorBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.utils import (
     finalize_markdown,
     markdown_to_text,
 )
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.core.runtime import Runtime
+from serpsage.components.registry import register_component
 from serpsage.models.components.extract import (
     ExtractContent,
     ExtractedDocument,
@@ -34,6 +35,16 @@ from serpsage.utils import clean_whitespace
 
 _LINE_SPLIT_RE = re.compile(r"\r?\n+")
 _PAGE_SEPARATOR = "\n\n---\n\n"
+
+
+_PDF_EXTRACTOR_META = ComponentMeta(
+    family="extract",
+    name="pdf",
+    version="1.0.0",
+    summary="PDF content extractor.",
+    provides=("extract.pdf_engine",),
+    config_model=ExtractConfigBase,
+)
 
 
 @dataclass(slots=True)
@@ -48,9 +59,17 @@ class PdfExtractionResult:
     stats: dict[str, int | float | str | bool]
 
 
+@register_component(meta=_PDF_EXTRACTOR_META)
 class PdfExtractor(ExtractorBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+    meta = _PDF_EXTRACTOR_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: ExtractConfigBase,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
 
     @override
     async def extract(
@@ -178,7 +197,7 @@ class PdfExtractor(ExtractorBase):
             kept_chunks = [text for text in page_texts if text]
             markdown = finalize_markdown(
                 markdown=_PAGE_SEPARATOR.join(kept_chunks).strip(),
-                max_chars=max(8_000, self.settings.fetch.extract.max_markdown_chars),
+                max_chars=max(8_000, self.config.max_markdown_chars),
             )
             text_chars = len(markdown_to_text(markdown))
             pages_total = len(page_chunks)

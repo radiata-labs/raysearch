@@ -1,54 +1,64 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import cast
 from typing_extensions import override
 
 import anyio
 
-from serpsage.components.rank.base import RankerBase, RankMode
-from serpsage.components.rank.bm25 import BM25_AVAILABLE, Bm25Ranker
-from serpsage.components.rank.cross_encoder import (
-    CROSS_ENCODER_AVAILABLE,
-    CrossEncoderRanker,
+from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.rank.base import (
+    RankBlendSettings,
+    RankerBase,
+    RankMode,
 )
+from serpsage.components.rank.bm25 import Bm25Ranker
+from serpsage.components.rank.cross_encoder import CrossEncoderRanker
 from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
+from serpsage.components.registry import register_component
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+_BLEND_META = ComponentMeta(
+    family="rank",
+    name="blend",
+    version="1.0.0",
+    summary="Weighted composite ranker.",
+    provides=("ranker.text",),
+    config_model=RankBlendSettings,
+)
 
-    from serpsage.core.runtime import Runtime
 
+@register_component(meta=_BLEND_META)
+class BlendRanker(RankerBase[RankBlendSettings]):
+    meta = _BLEND_META
 
-class BlendRanker(RankerBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-        self._heuristic = HeuristicRanker(rt=rt)
-        self._tfidf = TfidfRanker(rt=rt)
-        self._bm25: Bm25Ranker | None = Bm25Ranker(rt=rt) if BM25_AVAILABLE else None
-        rerank_cross_encoder_weight = float(
-            self.settings.rank.blend.rerank.cross_encoder_weight
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: RankBlendSettings,
+        heuristic: HeuristicRanker = Depends(),
+        tfidf: TfidfRanker = Depends(),
+        bm25: Bm25Ranker | None = Depends(optional=True),
+        cross_encoder: CrossEncoderRanker | None = Depends(optional=True),
+    ) -> None:
+        deps = tuple(
+            item for item in (heuristic, tfidf, bm25, cross_encoder) if item is not None
         )
-        self._cross_encoder: CrossEncoderRanker | None = (
-            CrossEncoderRanker(rt=rt)
-            if rerank_cross_encoder_weight > 0 and CROSS_ENCODER_AVAILABLE
-            else None
-        )
-        self.bind_deps(
-            self._heuristic,
-            self._tfidf,
-            self._bm25,
-            self._cross_encoder,
-        )
+        super().__init__(rt=rt, config=config, bound_deps=deps)
+        self._heuristic = heuristic
+        self._tfidf = tfidf
+        self._bm25 = bm25
+        self._cross_encoder = cross_encoder
 
     def _provider_weights(self) -> dict[str, float]:
         raw = {
             k: float(v)
-            for k, v in (self.settings.rank.blend.providers or {}).items()
+            for k, v in (self.config.providers or {}).items()
             if float(v) > 0
         }
-        if raw.get("bm25") and self._bm25 is None:
+        if raw.get("bm25") and not isinstance(self._bm25, Bm25Ranker):
             raw.pop("bm25", None)
         if not raw:
             return {"heuristic": 1.0}
@@ -58,12 +68,14 @@ class BlendRanker(RankerBase):
         return {k: float(v) / total for k, v in raw.items()}
 
     def _rerank_weights(self) -> dict[str, float]:
-        cfg = self.settings.rank.blend.rerank
+        cfg = self.config.rerank
         raw = {
             "retrieve": float(cfg.retrieve_weight),
             "cross_encoder": float(cfg.cross_encoder_weight),
         }
-        if raw["cross_encoder"] > 0 and self._cross_encoder is None:
+        if raw["cross_encoder"] > 0 and not isinstance(
+            self._cross_encoder, CrossEncoderRanker
+        ):
             raw["cross_encoder"] = 0.0
         filtered = {name: value for name, value in raw.items() if value > 0}
         if not filtered:
@@ -86,7 +98,7 @@ class BlendRanker(RankerBase):
         heur_w = float(weights.get("heuristic", 0.0))
         tfidf_w = float(weights.get("tfidf", 0.0))
         bm25_w = float(weights.get("bm25", 0.0))
-        need_bm25 = bm25_w > 0 and self._bm25 is not None
+        need_bm25 = bm25_w > 0 and isinstance(self._bm25, Bm25Ranker)
         heur: list[float] | None = None
         tfidf: list[float] | None = None
         bm25_raw: list[float] | None = None
@@ -102,8 +114,8 @@ class BlendRanker(RankerBase):
 
         async def run_bm25() -> None:
             nonlocal bm25_raw
-            assert self._bm25 is not None
-            bm25_raw = await self._bm25.score_texts(
+            bm25 = cast("Bm25Ranker", self._bm25)
+            bm25_raw = await bm25.score_texts(
                 texts,
                 query=query,
                 query_tokens=query_tokens,
@@ -166,11 +178,11 @@ class BlendRanker(RankerBase):
             return retrieve_scores
         rerank_weights = self._rerank_weights()
         cross_encoder_scores = [0.0 for _ in texts]
-        if (
-            float(rerank_weights.get("cross_encoder", 0.0)) > 0
-            and self._cross_encoder is not None
+        if float(rerank_weights.get("cross_encoder", 0.0)) > 0 and isinstance(
+            self._cross_encoder, CrossEncoderRanker
         ):
-            cross_encoder_scores = await self._cross_encoder.score_texts(
+            cross_encoder = cast("CrossEncoderRanker", self._cross_encoder)
+            cross_encoder_scores = await cross_encoder.score_texts(
                 texts,
                 query=query,
                 query_tokens=query_tokens,

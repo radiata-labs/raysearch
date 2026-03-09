@@ -7,6 +7,7 @@ import anyio
 if TYPE_CHECKING:
     from types import TracebackType
 
+    from serpsage.components.container import ComponentContainer
     from serpsage.components.telemetry import TelemetryEmitterBase
     from serpsage.core.runtime import ClockBase, Runtime
     from serpsage.settings.models import AppSettings
@@ -45,6 +46,13 @@ class WorkUnit:
     @property
     def telemetry(self) -> TelemetryEmitterBase | None:
         return self.rt.telemetry
+
+    @property
+    def components(self) -> ComponentContainer:
+        container = self.rt.components
+        if container is None:
+            raise RuntimeError("component container is not attached to the runtime")
+        return container
 
     def bind_deps(self, *deps: WorkUnit | None) -> None:
         def _bind_dep_one(dep: WorkUnit | None) -> WorkUnit | None:

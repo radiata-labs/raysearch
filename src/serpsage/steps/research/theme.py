@@ -4,6 +4,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.research import (
     ResearchLimits,
     ResearchQuestionCard,
@@ -18,8 +21,6 @@ from serpsage.steps.research.schema import build_theme_schema
 from serpsage.steps.research.utils import resolve_research_model
 
 if TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.core.runtime import Runtime
     from serpsage.settings.models import ResearchModeSettings
 
 _ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
@@ -37,7 +38,7 @@ _ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
 
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase) -> None:
+    def __init__(self, *, rt: Runtime, llm: LLMClientBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._llm = llm
         self.bind_deps(llm)

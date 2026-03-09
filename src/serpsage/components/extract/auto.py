@@ -1,30 +1,44 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.components.extract.base import ExtractorBase
+from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
+from serpsage.components.extract.html import HtmlExtractor
+from serpsage.components.extract.pdf import PdfExtractor
 from serpsage.components.fetch.utils import classify_content_kind
+from serpsage.components.registry import register_component
 from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
-if TYPE_CHECKING:
-    from serpsage.components.extract.html import HtmlExtractor
-    from serpsage.components.extract.pdf import PdfExtractor
-    from serpsage.core.runtime import Runtime
+_AUTO_EXTRACTOR_META = ComponentMeta(
+    family="extract",
+    name="auto",
+    version="1.0.0",
+    summary="Automatic extractor dispatching between HTML and PDF handlers.",
+    provides=("extractor.document",),
+    config_model=ExtractConfigBase,
+)
 
 
+@register_component(meta=_AUTO_EXTRACTOR_META)
 class AutoExtractor(ExtractorBase):
+    meta = _AUTO_EXTRACTOR_META
+
     def __init__(
         self,
         *,
-        rt: Runtime,
-        markdown_extractor: HtmlExtractor,
-        pdf_extractor: PdfExtractor,
+        rt: object,
+        config: ExtractConfigBase,
+        html_extractor: HtmlExtractor = Depends(),
+        pdf_extractor: PdfExtractor = Depends(),
     ) -> None:
-        super().__init__(rt=rt)
-        self._markdown_extractor = markdown_extractor
+        super().__init__(
+            rt=rt,
+            config=config,
+            bound_deps=(html_extractor, pdf_extractor),
+        )
+        self._markdown_extractor = html_extractor
         self._pdf_extractor = pdf_extractor
-        self.bind_deps(markdown_extractor, pdf_extractor)
 
     @override
     async def extract(
@@ -39,9 +53,7 @@ class AutoExtractor(ExtractorBase):
         collect_images: bool = False,
     ) -> ExtractedDocument:
         kind = classify_content_kind(
-            content_type=content_type,
-            url=url,
-            content=content,
+            content_type=content_type, url=url, content=content
         )
         if kind == "pdf":
             return await self._pdf_extractor.extract(

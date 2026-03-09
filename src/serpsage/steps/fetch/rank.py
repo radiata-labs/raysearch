@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.fetch import (
     FetchStepContext,
     PreparedPassage,
@@ -13,13 +16,9 @@ from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
 
-if TYPE_CHECKING:
-    from serpsage.components.rank.base import RankerBase
-    from serpsage.core.runtime import Runtime
-
 
 class FetchAbstractRankStep(StepBase[FetchStepContext]):
-    def __init__(self, *, rt: Runtime, ranker: RankerBase) -> None:
+    def __init__(self, *, rt: Runtime, ranker: RankerBase = Depends()) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
         self.bind_deps(ranker)
@@ -51,6 +50,9 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             return ctx
         abstracts_query = ""
         raw_scored = []
+        fetch_cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        )
         if abstracts_req is not None:
             abstracts_query = _resolve_effective_query(
                 requested_query=abstracts_req.query,
@@ -60,7 +62,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             abstract_budget = (
                 int(abstracts_req.max_chars)
                 if abstracts_req.max_chars is not None
-                else int(self.settings.fetch.abstract.max_abstract_chars)
+                else int(fetch_cfg.abstract.max_abstract_chars)
             )
             raw_scored = await self._score_passages(
                 query=abstracts_query,
@@ -114,9 +116,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     for i, (score, item) in enumerate(
                         _fit_budget(
                             ranked=raw_scored,
-                            max_chars=int(
-                                self.settings.fetch.overview.max_abstract_chars
-                            ),
+                            max_chars=int(fetch_cfg.overview.max_abstract_chars),
                         )
                     )
                 ]
@@ -135,9 +135,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                     for i, (score, item) in enumerate(
                         _fit_budget(
                             ranked=raw_overview,
-                            max_chars=int(
-                                self.settings.fetch.overview.max_abstract_chars
-                            ),
+                            max_chars=int(fetch_cfg.overview.max_abstract_chars),
                         )
                     )
                 ]
@@ -172,7 +170,9 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             )
             for idx, heading in enumerate(headings)
         }
-        cfg = self.settings.fetch.abstract
+        cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        ).abstract
         alpha = float(cfg.title_boost_alpha)
         min_score = float(cfg.min_abstract_score)
         scored: list[tuple[float, PreparedPassage]] = []

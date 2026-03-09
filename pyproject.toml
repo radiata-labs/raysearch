@@ -139,6 +139,7 @@ ignore = [
     "A002",
     "PLR0915",
     "S311",
+    "B008",
 ]
 allowed-confusables = ["，", "：", "！", "（", "）"]
 
@@ -162,7 +163,7 @@ pythonVersion = "3.11"
 pythonPlatform = "All"
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
-reportCallInDefaultInitializer = true
+reportCallInDefaultInitializer = false
 reportImplicitOverride = true
 reportPropertyTypeMismatch = true
 reportInvalidTypeVarUse = false
@@ -174,6 +175,7 @@ reportUnknownArgumentType = false
 reportUnknownParameterType = false
 reportUnknownLambdaType = false
 reportMissingTypeStubs = false
+reportMissingTypeArgument = false
 reportConstantRedefinition = false
 reportUnusedVariable = false
 reportUnnecessaryComparison = false
@@ -201,5 +203,7 @@ module = [
     "pymupdf4llm.*",
     "selectolax",
     "selectolax.*",
+    "sklearn",
+    "sklearn.*",
 ]
 ignore_missing_imports = true

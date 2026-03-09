@@ -1,41 +1,254 @@
-provider:
-  backend: google # searxng|google
-  searxng:
-    base_url: https://searxng.lycoreco.dpdns.org/search
-    api_key: null
-    timeout_s: 20.0
-    allow_redirects: false
-    user_agent: ""
-    safe: "off"
-    country: ""
-    results_per_page: 10
-    headers: {}
-    cookies: {}
-    retry:
-      max_attempts: 3
-      delay_ms: 200
-  google:
-    base_url: https://www.google.com/search
-    api_key: null
-    timeout_s: 20.0
-    allow_redirects: false
-    user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36
-    safe: "off"
-    country: US
-    results_per_page: 10
-    headers: {}
-    cookies:
-      CONSENT: "YES+"
-    retry:
-      max_attempts: 3
-      delay_ms: 200
-
 http:
-  proxy: http://127.0.0.1:7890
-  trust_env: true
-  max_connections: 100
-  max_keepalive_connections: 20
-  keepalive_expiry_s: 5.0
+  default: shared
+  instances:
+    shared:
+      component: httpx
+      enabled: true
+      config:
+        proxy: http://127.0.0.1:7890
+        trust_env: true
+        max_connections: 100
+        max_keepalive_connections: 20
+        keepalive_expiry_s: 5.0
+
+provider:
+  default: google_main
+  instances:
+    google_main:
+      component: google
+      enabled: true
+      config:
+        base_url: https://www.google.com/search
+        allow_redirects: false
+        country: US
+        safe: off
+        results_per_page: 10
+        cookies:
+          CONSENT: "YES+"
+    searxng_main:
+      component: searxng
+      enabled: true
+      config:
+        base_url: https://searx.be/search
+        allow_redirects: false
+        results_per_page: 10
+
+fetch:
+  default: auto_main
+  instances:
+    auto_main:
+      component: auto
+      enabled: true
+      config:
+        timeout_s: 2.0
+        inflight_enabled: true
+        inflight_timeout_s: 60.0
+        follow_redirects: true
+        user_agent: serpsage-bot/4.0
+        auto:
+          scout_bytes: 48000
+          route_memory_size: 4096
+          direct_route_min_samples: 3
+          direct_playwright_cost_ratio: 0.78
+          direct_playwright_min_useful: 0.72
+          learning_rate: 0.22
+        render:
+          js_concurrency: 12
+          nav_timeout_ms: 8000
+          block_resources: true
+          readiness_poll_ms: 150
+          readiness_stable_rounds: 2
+          post_ready_wait_ms: 120
+        quality:
+          min_text_chars: 100
+          script_ratio_threshold: 0.35
+          quality_score_threshold: 0.15
+          blocked_markers:
+            - cloudflare
+            - just a moment
+            - verify you are human
+            - access denied
+            - please enable javascript
+            - security check
+            - checking your browser
+        extract:
+          max_markdown_chars: 160000
+          min_text_chars: 220
+          min_primary_chars: 220
+          min_total_chars_with_secondary: 220
+          include_secondary_content_default: false
+          collect_links_default: false
+          link_max_count: 800
+          link_keep_hash: false
+        abstract:
+          max_abstract_chars: 2000
+          min_abstract_score: 0.2
+          min_abstract_tokens: 4
+          title_boost_alpha: 0.35
+        overview:
+          use_model: gpt-4.1-mini
+          max_abstract_chars: 900
+          cache_ttl_s: 0
+          self_heal_retries: 1
+          force_language: auto
+    curl_main:
+      component: curl_cffi
+      enabled: true
+      config:
+        timeout_s: 2.0
+    playwright_main:
+      component: playwright
+      enabled: true
+      config:
+        timeout_s: 8.0
+
+extract:
+  default: auto_main
+  instances:
+    auto_main:
+      component: auto
+      enabled: true
+      config: {}
+    html_main:
+      component: html
+      enabled: true
+      config: {}
+    pdf_main:
+      component: pdf
+      enabled: true
+      config: {}
+
+rank:
+  default: blend_main
+  instances:
+    blend_main:
+      component: blend
+      enabled: true
+      config:
+        providers:
+          heuristic: 0.7
+          tfidf: 0.3
+        rerank:
+          retrieve_weight: 0.35
+          cross_encoder_weight: 0.65
+    heuristic_main:
+      component: heuristic
+      enabled: true
+      config:
+        early_bonus: 1.15
+        unique_hit_weight: 6.0
+        count_weight: 1.5
+        intent_hit_weight: 5.0
+        max_count_per_token: 5
+        temperature: 1.0
+        min_items_for_sigmoid: 5
+        flat_spread_eps: 1.0e-9
+        z_clip: 8.0
+    tfidf_main:
+      component: tfidf
+      enabled: true
+      config: {}
+    bm25_main:
+      component: bm25
+      enabled: true
+      config: {}
+    cross_encoder_main:
+      component: cross_encoder
+      enabled: true
+      config:
+        model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+        batch_size: 16
+        max_length: 512
+
+cache:
+  default: null_main
+  instances:
+    null_main:
+      component: null
+      enabled: true
+      config:
+        fetch_ttl_s: 86400
+    sqlite_main:
+      component: sqlite
+      enabled: false
+      config:
+        fetch_ttl_s: 86400
+        db_path: ./.cache/serpsage_cache.sqlite3
+        table: cache
+
+llm:
+  default: router_main
+  instances:
+    router_main:
+      component: router
+      enabled: true
+      config: {}
+    gpt41_mini:
+      component: openai
+      enabled: true
+      config:
+        name: gpt-4.1-mini
+        base_url: https://api.chatanywhere.tech/v1
+        api_key: null
+        model: gpt-4.1-mini
+        timeout_s: 60.0
+        max_retries: 2
+        temperature: 0.0
+        headers: {}
+        enable_structured: true
+    gemini_flash:
+      component: gemini
+      enabled: true
+      config:
+        name: gemini-3-flash
+        base_url: null
+        api_key: null
+        model: gemini-3-flash-preview
+        timeout_s: 60.0
+        max_retries: 2
+        temperature: 0.0
+        headers: {}
+        enable_structured: true
+    kimi_k25:
+      component: openai
+      enabled: true
+      config:
+        name: kimi-k2.5
+        base_url: https://coding.dashscope.aliyuncs.com/v1
+        api_key: null
+        model: kimi-k2.5
+        timeout_s: 600.0
+        max_retries: 2
+        temperature: 0.0
+        headers: {}
+        enable_structured: true
+
+telemetry:
+  default: async_main
+  instances:
+    async_main:
+      component: async_emitter
+      enabled: true
+      config:
+        queue_size: 2048
+        drop_noncritical_when_full: true
+    jsonl_main:
+      component: jsonl_sink
+      enabled: true
+      config:
+        jsonl_path: .serpsage_events.jsonl
+    meter_null:
+      component: null_sink
+      enabled: true
+      config: {}
+
+rate_limit:
+  default: basic_main
+  instances:
+    basic_main:
+      component: basic
+      enabled: true
+      config: {}
 
 search:
   max_results: 16
@@ -134,167 +347,3 @@ runner:
   fetch_limit: 24
   child_fetch_limit: 24
   queue_size: 256
-
-fetch:
-  backend: auto # auto|curl_cffi|playwright
-  inflight_enabled: true
-  inflight_timeout_s: 60.0
-  timeout_s: 2.0
-  follow_redirects: true
-  user_agent: serpsage-bot/4.0
-  concurrency:
-    global_limit: 24
-    per_host: 4
-    politeness_delay_ms: 0
-  auto:
-    scout_bytes: 48000
-    route_memory_size: 4096
-    direct_route_min_samples: 3
-    direct_playwright_cost_ratio: 0.78
-    direct_playwright_min_useful: 0.72
-    learning_rate: 0.22
-  render:
-    js_concurrency: 12
-    nav_timeout_ms: 8000
-    block_resources: true
-    readiness_poll_ms: 150
-    readiness_stable_rounds: 2
-    post_ready_wait_ms: 120
-  quality:
-    min_text_chars: 100
-    script_ratio_threshold: 0.35
-    quality_score_threshold: 0.15
-    blocked_markers:
-      - cloudflare
-      - just a moment
-      - verify you are human
-      - access denied
-      - please enable javascript
-      - security check
-      - checking your browser
-  extract:
-    max_markdown_chars: 160000
-    min_text_chars: 220
-    min_primary_chars: 220
-    min_total_chars_with_secondary: 220
-    include_secondary_content_default: false
-    collect_links_default: false
-    link_max_count: 800
-    link_keep_hash: false
-  abstract:
-    max_abstract_chars: 2000
-    min_abstract_score: 0.2
-    min_abstract_tokens: 4
-    title_boost_alpha: 0.35
-  overview:
-    use_model: gpt-4.1-mini
-    max_abstract_chars: 900
-    cache_ttl_s: 0
-    self_heal_retries: 1
-    force_language: auto
-
-rank:
-  backend: blend
-  blend:
-    providers:
-      heuristic: 0.7
-      tfidf: 0.3
-    rerank:
-      retrieve_weight: 0.35
-      cross_encoder_weight: 0.65
-  heuristic:
-    early_bonus: 1.15
-    unique_hit_weight: 6.0
-    count_weight: 1.5
-    intent_hit_weight: 5.0
-    max_count_per_token: 5
-    temperature: 1.0
-    min_items_for_sigmoid: 5
-    flat_spread_eps: 1e-9
-    z_clip: 8.0
-  tfidf: {}
-  bm25: {}
-  cross_encoder:
-    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
-    batch_size: 16
-    max_length: 512
-
-llm:
-  models:
-    - name: gpt-4.1-mini
-      backend: openai
-      base_url: https://api.chatanywhere.tech/v1
-      api_key: null
-      model: gpt-4.1-mini
-      timeout_s: 60.0
-      max_retries: 2
-      temperature: 0.0
-      headers: {}
-      enable_structured: true
-    - name: gemini-3-flash
-      backend: gemini
-      base_url: null
-      api_key: null
-      model: gemini-3-flash-preview
-      timeout_s: 60.0
-      max_retries: 2
-      temperature: 0.0
-      headers: {}
-      enable_structured: true
-    - name: kimi-k2-0905-preview
-      backend: openai
-      base_url: https://api.moonshot.cn/v1
-      api_key: sk-FomXjBE7WWcub7wMCh3rTfPcu3OCsvf7g8TVMCFJLKzLvnNC
-      model: kimi-k2-0905-preview
-      timeout_s: 60.0
-      max_retries: 2
-      temperature: 0.0
-      headers: {}
-      enable_structured: true
-    - name: kimi-k2.5
-      backend: openai
-      base_url: https://coding.dashscope.aliyuncs.com/v1
-      api_key: sk-sp-896f874fbb1e432f84733214e0c38297
-      model: kimi-k2.5
-      timeout_s: 600.0
-      max_retries: 2
-      temperature: 0.0
-      headers: {}
-      enable_structured: true
-
-cache:
-  enabled: false
-  backend: sqlite # sqlite|memory|redis|mysql|sqlalchemy
-  fetch_ttl_s: 86400
-  sqlite:
-    db_path: ./.cache/serpsage_cache.sqlite3
-    table: cache
-  redis:
-    url: redis://127.0.0.1:6379/0
-    key_prefix: serpsage
-  mysql:
-    driver: auto # auto|asyncmy|aiomysql
-    host: 127.0.0.1
-    port: 3306
-    user: root
-    password: ""
-    database: serpsage
-    table: cache
-    minsize: 1
-    maxsize: 10
-    connect_timeout: 10.0
-    charset: utf8mb4
-  sqlalchemy:
-    url: sqlite+aiosqlite:///./.serpsage_cache.sqlite3
-    table: cache
-
-telemetry:
-  enabled: true
-  queue_size: 2048
-  drop_noncritical_when_full: true
-  obs:
-    backend: jsonl
-    jsonl_path: .serpsage_events.jsonl
-  metering:
-    backend: "null"
-    sqlite_db_path: .serpsage_metering.jsonl

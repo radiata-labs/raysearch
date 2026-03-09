@@ -11,7 +11,13 @@ from anyio import WouldBlock
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from serpsage.components.telemetry.base import EventSinkBase, TelemetryEmitterBase
+from serpsage.components.base import ComponentConfigBase, ComponentMeta, Depends
+from serpsage.components.registry import register_component
+from serpsage.components.telemetry.base import (
+    EventSinkBase,
+    TelemetryEmitterBase,
+    TelemetryEmitterConfig,
+)
 from serpsage.models.components.telemetry import (
     EventAttributes,
     EventEnvelope,
@@ -20,10 +26,39 @@ from serpsage.models.components.telemetry import (
 
 if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
+
 _REQUEST_ID_CTX: ContextVar[str] = ContextVar("telemetry_request_id", default="")
 
+_NULL_EMITTER_META = ComponentMeta(
+    family="telemetry",
+    name="null_emitter",
+    version="1.0.0",
+    summary="No-op telemetry emitter.",
+    provides=("telemetry.emitter",),
+    config_model=ComponentConfigBase,
+)
+_ASYNC_EMITTER_META = ComponentMeta(
+    family="telemetry",
+    name="async_emitter",
+    version="1.0.0",
+    summary="Async telemetry emitter with sink fan-out.",
+    provides=("telemetry.emitter",),
+    config_model=TelemetryEmitterConfig,
+)
 
+
+@register_component(meta=_NULL_EMITTER_META)
 class NullTelemetryEmitter(TelemetryEmitterBase):
+    meta = _NULL_EMITTER_META
+
+    def __init__(
+        self,
+        *,
+        rt: Runtime,
+        config: ComponentConfigBase,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
+
     @override
     async def emit_event(self, *, event: EventEnvelope) -> None:
         _ = event
@@ -38,25 +73,26 @@ class NullTelemetryEmitter(TelemetryEmitterBase):
         _ = token
 
 
+@register_component(meta=_ASYNC_EMITTER_META)
 class AsyncEventEmitter(TelemetryEmitterBase):
+    meta = _ASYNC_EMITTER_META
+
     def __init__(
         self,
         *,
         rt: Runtime,
-        sinks: list[EventSinkBase],
-        queue_size: int,
-        drop_noncritical_when_full: bool,
+        config: TelemetryEmitterConfig,
+        sinks: tuple[EventSinkBase, ...] = Depends(),
     ) -> None:
-        super().__init__(rt=rt)
+        super().__init__(rt=rt, config=config, bound_deps=sinks)
         self._sinks = list(sinks)
-        self._queue_size = max(1, int(queue_size))
-        self._drop_noncritical_when_full = bool(drop_noncritical_when_full)
+        self._queue_size = max(1, int(config.queue_size))
+        self._drop_noncritical_when_full = bool(config.drop_noncritical_when_full)
         self._send: MemoryObjectSendStream[EventEnvelope] | None = None
         self._recv: MemoryObjectReceiveStream[EventEnvelope] | None = None
         self._tg_cm: TaskGroup | None = None
         self._tg: TaskGroup | None = None
         self._dropped_noncritical = 0
-        self.bind_deps(*self._sinks)
 
     @override
     async def on_init(self) -> None:
@@ -104,14 +140,9 @@ class AsyncEventEmitter(TelemetryEmitterBase):
         if send is None:
             return
         out = self._fill_request_context(event)
-        critical = is_critical_event(
-            event_name=str(out.event_name),
-            status=out.status,
-        )
+        critical = is_critical_event(event_name=str(out.event_name), status=out.status)
         await self._flush_drop_notice_if_any(
-            send=send,
-            for_event=out,
-            force=not critical,
+            send=send, for_event=out, force=not critical
         )
         if critical:
             try:
@@ -182,11 +213,7 @@ class AsyncEventEmitter(TelemetryEmitterBase):
             request_id=str(for_event.request_id or ""),
             component="telemetry",
             stage="emitter",
-            attrs=EventAttributes(
-                values={
-                    "dropped_noncritical_events": dropped,
-                }
-            ),
+            attrs=EventAttributes(values={"dropped_noncritical_events": dropped}),
         )
         if force:
             await send.send(notice)

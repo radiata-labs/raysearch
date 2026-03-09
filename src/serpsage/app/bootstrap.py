@@ -6,15 +6,10 @@ from typing_extensions import override
 
 from serpsage.app.engine import Engine
 from serpsage.components import (
-    build_cache,
-    build_extractor,
-    build_fetcher,
-    build_http_client,
-    build_overview_client,
-    build_provider,
-    build_ranker,
-    build_rate_limiter,
+    BuiltinComponentDiscovery,
+    ComponentContainer,
     build_telemetry,
+    get_component_registry,
 )
 from serpsage.core.runtime import ClockBase, Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
@@ -59,13 +54,6 @@ from serpsage.steps.search import (
 )
 
 if TYPE_CHECKING:
-    from serpsage.components.cache import CacheBase
-    from serpsage.components.extract import ExtractorBase
-    from serpsage.components.fetch import FetcherBase
-    from serpsage.components.llm import LLMClientBase
-    from serpsage.components.provider import SearchProviderBase
-    from serpsage.components.rank import RankerBase
-    from serpsage.components.rate_limit import RateLimiterBase
     from serpsage.settings.models import AppSettings
 
 
@@ -80,119 +68,132 @@ def build_runtime(
 ) -> Runtime:
     ov = overrides or Overrides()
     clock = ov.clock or SystemClock()
-    return Runtime(settings=settings, clock=clock, telemetry=None)
+    env = dict(settings.runtime_env or {})
+    return Runtime(
+        settings=settings, clock=clock, telemetry=None, components=None, env=env
+    )
+
+
+def build_component_container(
+    *,
+    settings: AppSettings,
+    overrides: Overrides | None = None,
+) -> tuple[Runtime, ComponentContainer]:
+    BuiltinComponentDiscovery.discover()
+    rt = build_runtime(settings=settings, overrides=overrides)
+    container = ComponentContainer(
+        settings=settings,
+        registry=get_component_registry(),
+        overrides=overrides,
+        env=rt.env,
+    )
+    rt = rt.model_copy(update={"components": container})
+    container.attach_runtime(rt)
+    telemetry = build_telemetry(rt=rt, overrides=overrides)
+    rt = rt.model_copy(update={"telemetry": telemetry})
+    container.attach_runtime(rt)
+    return rt, container
 
 
 def build_engine(
     *, settings: AppSettings, overrides: Overrides | None = None
 ) -> Engine:
     ov = overrides or Overrides()
-    rt = build_runtime(settings=settings, overrides=ov)
     _validate_override_workunits(ov)
-    telemetry = build_telemetry(rt=rt, overrides=ov)
-    rt = rt.model_copy(update={"telemetry": telemetry})
-    shared_http_unit = build_http_client(rt=rt, overrides=ov)
-    cache: CacheBase = ov.cache or build_cache(rt=rt)
-    rate_limiter: RateLimiterBase = ov.rate_limiter or build_rate_limiter(rt=rt)
-    provider: SearchProviderBase = ov.provider or build_provider(
-        rt=rt, http=shared_http_unit
-    )
-    extractor: ExtractorBase = ov.extractor or build_extractor(rt=rt)
-    fetcher: FetcherBase = ov.fetcher or build_fetcher(
-        rt=rt,
-        rate_limiter=rate_limiter,
-        http=shared_http_unit,
-    )
-    ranker: RankerBase = ov.ranker or build_ranker(rt=rt)
-    llm: LLMClientBase = ov.llm or build_overview_client(rt=rt, http=shared_http_unit)
+    rt, container = build_component_container(settings=settings, overrides=ov)
     child_fetch_steps: list[StepBase[FetchStepContext]] = [
-        FetchPrepareStep(rt=rt),
-        FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
-        FetchExtractStep(rt=rt, extractor=extractor),
-        FetchAbstractBuildStep(rt=rt),
-        FetchAbstractRankStep(rt=rt, ranker=ranker),
-        FetchOverviewStep(rt=rt, llm=llm, cache=cache),
-        FetchFinalizeStep(rt=rt),
+        container.instantiate_class(FetchPrepareStep),
+        container.instantiate_class(FetchLoadStep),
+        container.instantiate_class(FetchExtractStep),
+        container.instantiate_class(FetchAbstractBuildStep),
+        container.instantiate_class(FetchAbstractRankStep),
+        container.instantiate_class(FetchOverviewStep),
+        container.instantiate_class(FetchFinalizeStep),
     ]
     child_fetch_runner = RunnerBase[FetchStepContext](
         rt=rt, steps=child_fetch_steps, kind="child_fetch"
     )
     fetch_steps: list[StepBase[FetchStepContext]] = [
-        FetchPrepareStep(rt=rt),
-        FetchLoadStep(rt=rt, fetcher=fetcher, cache=cache),
-        FetchExtractStep(rt=rt, extractor=extractor),
-        FetchAbstractBuildStep(rt=rt),
-        FetchAbstractRankStep(rt=rt, ranker=ranker),
-        FetchParallelEnrichStep(
-            rt=rt,
-            llm=llm,
-            cache=cache,
-            fetch_runner=child_fetch_runner,
-            ranker=ranker,
+        container.instantiate_class(FetchPrepareStep),
+        container.instantiate_class(FetchLoadStep),
+        container.instantiate_class(FetchExtractStep),
+        container.instantiate_class(FetchAbstractBuildStep),
+        container.instantiate_class(FetchAbstractRankStep),
+        container.instantiate_class(
+            FetchParallelEnrichStep,
+            explicit_kwargs={"fetch_runner": child_fetch_runner},
         ),
-        FetchFinalizeStep(rt=rt),
+        container.instantiate_class(FetchFinalizeStep),
     ]
     fetch_runner = RunnerBase[FetchStepContext](rt=rt, steps=fetch_steps, kind="fetch")
     search_steps: list[StepBase[SearchStepContext]] = [
-        SearchPrepareStep(rt=rt),
-        SearchOptimizeStep(rt=rt, llm=llm),
-        SearchExpandStep(rt=rt, llm=llm),
-        SearchStep(rt=rt, provider=provider, ranker=ranker),
-        SearchFetchStep(rt=rt, fetch_runner=fetch_runner),
-        SearchRankStep(rt=rt, ranker=ranker),
-        SearchFinalizeStep(rt=rt),
+        container.instantiate_class(SearchPrepareStep),
+        container.instantiate_class(SearchOptimizeStep),
+        container.instantiate_class(SearchExpandStep),
+        container.instantiate_class(SearchStep),
+        container.instantiate_class(
+            SearchFetchStep,
+            explicit_kwargs={"fetch_runner": fetch_runner},
+        ),
+        container.instantiate_class(SearchRankStep),
+        container.instantiate_class(SearchFinalizeStep),
     ]
     search_runner = RunnerBase[SearchStepContext](
         rt=rt, steps=search_steps, kind="search"
     )
     answer_steps: list[StepBase[AnswerStepContext]] = [
-        AnswerPlanStep(rt=rt, llm=llm),
-        AnswerSearchStep(rt=rt, search_runner=search_runner),
-        AnswerGenerateStep(rt=rt, llm=llm),
+        container.instantiate_class(AnswerPlanStep),
+        container.instantiate_class(
+            AnswerSearchStep,
+            explicit_kwargs={"search_runner": search_runner},
+        ),
+        container.instantiate_class(AnswerGenerateStep),
     ]
     answer_runner = RunnerBase[AnswerStepContext](
         rt=rt, steps=answer_steps, kind="search"
     )
     research_round_steps: list[StepBase[ResearchStepContext]] = [
-        ResearchPlanStep(rt=rt, llm=llm),
-        ResearchFetchStep(
-            rt=rt,
-            fetch_runner=fetch_runner,
-            ranker=ranker,
-            llm=llm,
-            phase="pre",
+        container.instantiate_class(ResearchPlanStep),
+        container.instantiate_class(
+            ResearchFetchStep,
+            explicit_kwargs={
+                "fetch_runner": fetch_runner,
+                "phase": "pre",
+            },
         ),
-        ResearchSearchStep(
-            rt=rt,
-            search_runner=search_runner,
+        container.instantiate_class(
+            ResearchSearchStep,
+            explicit_kwargs={"search_runner": search_runner},
         ),
-        ResearchFetchStep(
-            rt=rt,
-            fetch_runner=fetch_runner,
-            ranker=ranker,
-            llm=llm,
-            phase="post",
+        container.instantiate_class(
+            ResearchFetchStep,
+            explicit_kwargs={
+                "fetch_runner": fetch_runner,
+                "phase": "post",
+            },
         ),
-        ResearchOverviewStep(rt=rt, llm=llm, ranker=ranker),
-        ResearchContentStep(rt=rt, llm=llm, ranker=ranker),
-        ResearchDecideStep(rt=rt, llm=llm),
+        container.instantiate_class(ResearchOverviewStep),
+        container.instantiate_class(ResearchContentStep),
+        container.instantiate_class(ResearchDecideStep),
     ]
     research_round_runner = RunnerBase[ResearchStepContext](
         rt=rt,
         steps=research_round_steps,
         kind="search",
     )
+    subreport_step = container.instantiate_class(ResearchSubreportStep)
     research_steps: list[StepBase[ResearchStepContext]] = [
-        ResearchPrepareStep(rt=rt),
-        ResearchThemeStep(rt=rt, llm=llm),
-        ResearchLoopStep(
-            rt=rt,
-            llm=llm,
-            round_runner=research_round_runner,
-            render_step=ResearchSubreportStep(rt=rt, llm=llm, ranker=ranker),
+        container.instantiate_class(ResearchPrepareStep),
+        container.instantiate_class(ResearchThemeStep),
+        container.instantiate_class(
+            ResearchLoopStep,
+            explicit_kwargs={
+                "round_runner": research_round_runner,
+                "render_step": subreport_step,
+            },
         ),
-        ResearchRenderStep(rt=rt, llm=llm),
-        ResearchFinalizeStep(rt=rt),
+        container.instantiate_class(ResearchRenderStep),
+        container.instantiate_class(ResearchFinalizeStep),
     ]
     research_runner = RunnerBase[ResearchStepContext](
         rt=rt, steps=research_steps, kind="search"
@@ -230,4 +231,4 @@ def _ensure_workunit_override(name: str, obj: object | None) -> None:
         )
 
 
-__all__ = ["Overrides", "build_engine", "build_runtime"]
+__all__ = ["Overrides", "build_component_container", "build_engine", "build_runtime"]

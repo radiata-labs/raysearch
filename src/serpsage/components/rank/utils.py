@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from serpsage.settings.models import HeuristicRankSettings
+    from serpsage.components.rank.base import HeuristicRankSettings
 
 
 def safe_float(x: float) -> float:

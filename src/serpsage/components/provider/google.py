@@ -7,7 +7,14 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.http.base import HttpClientBase
+from serpsage.components.provider.base import (
+    GoogleSafeSearchKey,
+    ProviderConfigBase,
+    SearchProviderBase,
+)
+from serpsage.components.registry import register_component
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -16,9 +23,6 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-    from serpsage.components.http.base import HttpClientBase
-    from serpsage.core.runtime import Runtime
 
 _GOOGLE_TIME_RANGE_MAP = {
     "day": "qdr:d",
@@ -41,17 +45,77 @@ _GOOGLE_SNIPPET_SELECTORS = (
     "span.aCOpRe",
     "div.s3v9rd",
 )
+_DEFAULT_GOOGLE_BASE_URL = "https://www.google.com/search"
+_DEFAULT_GOOGLE_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
 
 
-class GoogleProvider(SearchProviderBase):
+class GoogleProviderConfig(ProviderConfigBase):
+    safe: GoogleSafeSearchKey = "off"
+    country: str = "US"
+
+    @classmethod
+    @override
+    def inject_env(
+        cls,
+        raw: dict[str, Any],
+        *,
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        payload = dict(raw)
+        payload.setdefault("base_url", _DEFAULT_GOOGLE_BASE_URL)
+        payload.setdefault("user_agent", _DEFAULT_GOOGLE_USER_AGENT)
+        payload.setdefault("country", "US")
+        payload.setdefault("cookies", {}).setdefault("CONSENT", "YES+")
+        if env.get("PROVIDER_BASE_URL"):
+            payload["base_url"] = env["PROVIDER_BASE_URL"]
+        elif env.get("SEARCH_BASE_URL"):
+            payload["base_url"] = env["SEARCH_BASE_URL"]
+        elif env.get("GOOGLE_BASE_URL"):
+            payload["base_url"] = env["GOOGLE_BASE_URL"]
+        api_key = env.get("PROVIDER_API_KEY") or env.get("SEARCH_API_KEY")
+        if api_key:
+            payload["api_key"] = api_key
+        user_agent = env.get("PROVIDER_USER_AGENT") or env.get("GOOGLE_USER_AGENT")
+        if user_agent:
+            payload["user_agent"] = user_agent
+        country = env.get("PROVIDER_COUNTRY") or env.get("GOOGLE_COUNTRY")
+        if country:
+            payload["country"] = country
+        safe = env.get("PROVIDER_SAFE") or env.get("GOOGLE_SAFE")
+        if safe:
+            payload["safe"] = str(safe).strip().lower()
+        results_per_page = env.get("PROVIDER_RESULTS_PER_PAGE")
+        if results_per_page:
+            payload["results_per_page"] = results_per_page
+        return payload
+
+
+_GOOGLE_META = ComponentMeta(
+    family="provider",
+    name="google",
+    version="1.0.0",
+    summary="Google HTML search provider.",
+    provides=("provider.search",),
+    config_model=GoogleProviderConfig,
+)
+
+
+@register_component(meta=_GOOGLE_META)
+class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
+    meta = _GOOGLE_META
+
     def __init__(
         self,
         *,
-        rt: Runtime,
-        http: HttpClientBase,
+        rt: object,
+        config: GoogleProviderConfig,
+        http: HttpClientBase = Depends(),
     ) -> None:
-        super().__init__(rt=rt)
-        self.bind_deps(http)
+        super().__init__(rt=rt, config=config, bound_deps=(http,))
         self._http = http.client
 
     @override
@@ -63,7 +127,7 @@ class GoogleProvider(SearchProviderBase):
         language: str = "",
         **kwargs: Any,
     ) -> SearchProviderResponse:
-        cfg = self.settings.provider.google
+        cfg = self.config
         normalized_query = clean_whitespace(query)
         if not normalized_query:
             raise ValueError("query must not be empty")
@@ -112,7 +176,7 @@ class GoogleProvider(SearchProviderBase):
         language: str,
         kwargs: dict[str, Any],
     ) -> dict[str, str]:
-        cfg = self.settings.provider.google
+        cfg = self.config
         extra = dict(kwargs)
         per_page = self._coerce_positive_int(extra.pop("num", cfg.results_per_page))
         safe = clean_whitespace(str(extra.pop("safe", cfg.safe) or "")).casefold()
@@ -310,4 +374,4 @@ class GoogleProvider(SearchProviderBase):
         )
 
 
-__all__ = ["GoogleProvider"]
+__all__ = ["GoogleProvider", "GoogleProviderConfig"]

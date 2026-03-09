@@ -1,19 +1,34 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
 
-from serpsage.components.cache.base import CacheBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.cache.base import CacheBase, CacheConfigBase
+from serpsage.components.registry import register_component
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
+_MEMORY_CACHE_META = ComponentMeta(
+    family="cache",
+    name="memory",
+    version="1.0.0",
+    summary="In-memory TTL cache.",
+    provides=("cache.store",),
+    config_model=CacheConfigBase,
+)
 
 
-class MemoryCache(CacheBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+@register_component(meta=_MEMORY_CACHE_META)
+class MemoryCache(CacheBase[CacheConfigBase]):
+    meta = _MEMORY_CACHE_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: CacheConfigBase,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
         self._store: dict[tuple[str, str], tuple[int, bytes]] = {}
         self._lock = anyio.Lock()
 

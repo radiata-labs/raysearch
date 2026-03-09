@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 import json
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Protocol,
-    TypeVar,
-    overload,
-    runtime_checkable,
-)
+from typing import Any, Protocol, TypeVar, overload, runtime_checkable
 from typing_extensions import override
 
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
+from serpsage.components.registry import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -24,9 +19,6 @@ from serpsage.models.components.llm import (
     LLMUsage,
 )
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import LLMModelSettings
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
@@ -35,22 +27,62 @@ class _ModelDumpable(Protocol):
     def model_dump(self) -> object: ...
 
 
-class GeminiClient(LLMClientBase):
-    def __init__(self, *, rt: Runtime, model_cfg: LLMModelSettings) -> None:
-        super().__init__(rt=rt)
-        self._model_cfg = model_cfg
-        llm = self._model_cfg
-        timeout_ms = max(1, int(float(llm.timeout_s) * 1000))
-        attempts = max(1, int(llm.max_retries) + 1)
+class GeminiModelConfig(LLMModelConfig):
+    @classmethod
+    @override
+    def inject_env(
+        cls,
+        raw: dict[str, Any],
+        *,
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        payload = dict(raw)
+        if not payload.get("api_key") and env.get("GEMINI_API_KEY"):
+            payload["api_key"] = env["GEMINI_API_KEY"]
+        if not payload.get("base_url") and env.get("GEMINI_BASE_URL"):
+            payload["base_url"] = env["GEMINI_BASE_URL"]
+        return payload
+
+
+_GEMINI_META = ComponentMeta(
+    family="llm",
+    name="gemini",
+    version="1.0.0",
+    summary="Gemini route client.",
+    provides=("llm.route",),
+    config_model=GeminiModelConfig,
+)
+
+
+@register_component(meta=_GEMINI_META)
+class GeminiClient(LLMClientBase[GeminiModelConfig]):
+    meta = _GEMINI_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: GeminiModelConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
+        timeout_ms = max(1, int(float(config.timeout_s) * 1000))
+        attempts = max(1, int(config.max_retries) + 1)
         self.client = genai.Client(
-            api_key=llm.api_key,
+            api_key=config.api_key,
             http_options=types.HttpOptions(
-                base_url=llm.base_url,
-                headers=dict(llm.headers or {}),
+                base_url=config.base_url,
+                headers=dict(config.headers or {}),
                 timeout=timeout_ms,
                 retry_options=types.HttpRetryOptions(attempts=attempts),
             ),
         )
+
+    @override
+    def describe_model(self, name: str) -> GeminiModelConfig:
+        if str(name) != str(self.config.name):
+            super().describe_model(name)
+            raise AssertionError("unreachable")
+        return self.config
 
     @overload
     async def _create(
@@ -96,7 +128,7 @@ class GeminiClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        llm = self._model_cfg
+        llm = self.config
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
         response_schema, response_model = self.resolve_response_format(
@@ -127,9 +159,7 @@ class GeminiClient(LLMClientBase):
         data = self._extract_json_object(resp=response, fallback_text=text)
         if response_model is not None:
             return ChatModelResult(
-                text=text,
-                data=response_model.model_validate(data),
-                usage=usage,
+                text=text, data=response_model.model_validate(data), usage=usage
             )
         return ChatDictResult(text=text, data=data, usage=usage)
 
@@ -200,17 +230,11 @@ class GeminiClient(LLMClientBase):
                 continue
             gem_role = "model" if role == "assistant" else "user"
             contents.append(
-                types.Content(
-                    role=gem_role,
-                    parts=[types.Part.from_text(text=text)],
-                )
+                types.Content(role=gem_role, parts=[types.Part.from_text(text=text)])
             )
         if not contents:
             contents.append(
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text="")],
-                )
+                types.Content(role="user", parts=[types.Part.from_text(text="")])
             )
         if not system_parts:
             return None, contents
@@ -260,4 +284,4 @@ class GeminiClient(LLMClientBase):
         )
 
 
-__all__ = ["GeminiClient"]
+__all__ = ["GeminiClient", "GeminiModelConfig"]

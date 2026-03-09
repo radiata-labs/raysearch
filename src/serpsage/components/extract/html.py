@@ -17,7 +17,8 @@ from html_to_markdown import (
 )
 from selectolax.parser import HTMLParser, Node
 
-from serpsage.components.extract.base import ExtractorBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.utils import (
     decode_best_effort,
     finalize_markdown,
@@ -25,7 +26,7 @@ from serpsage.components.extract.utils import (
     markdown_to_text,
 )
 from serpsage.components.fetch.utils import classify_content_kind
-from serpsage.core.runtime import Runtime
+from serpsage.components.registry import register_component
 from serpsage.models.components.extract import (
     ExtractContent,
     ExtractContentTag,
@@ -36,11 +37,22 @@ from serpsage.models.components.extract import (
     ExtractSpec,
     ExtractTrace,
 )
-from serpsage.settings.models import AppSettings
 from serpsage.utils import clean_whitespace
 
+_HTML_EXTRACTOR_META = ComponentMeta(
+    family="extract",
+    name="html",
+    version="1.0.0",
+    summary="HTML and text content extractor.",
+    provides=("extract.html_engine",),
+    config_model=ExtractConfigBase,
+)
 
+
+@register_component(meta=_HTML_EXTRACTOR_META)
 class HtmlExtractor(ExtractorBase):
+    meta = _HTML_EXTRACTOR_META
+
     @dataclass(slots=True)
     class Profile:
         max_markdown_chars: int
@@ -172,9 +184,14 @@ class HtmlExtractor(ExtractorBase):
         extract_structured_data=False,
     )
 
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-        self._profile = self._build_profile(settings=self.settings)
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: ExtractConfigBase,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
+        self._profile = self._build_profile()
 
     @override
     async def extract(
@@ -332,13 +349,12 @@ class HtmlExtractor(ExtractorBase):
             ),
         )
 
-    @classmethod
-    def _build_profile(cls, *, settings: AppSettings) -> Profile:
-        cfg = settings.fetch.extract
+    def _build_profile(self) -> Profile:
+        cfg = self.config
         max_markdown = int(max(8_000, cfg.max_markdown_chars))
-        return cls.Profile(
+        return self.Profile(
             max_markdown_chars=max_markdown,
-            max_html_chars=max(max_markdown * 3, cls._MIN_HTML_CAPTURE_CHARS),
+            max_html_chars=max(max_markdown * 3, self._MIN_HTML_CAPTURE_CHARS),
             min_text_chars=max(120, int(cfg.min_text_chars)),
             min_primary_chars=max(120, int(cfg.min_primary_chars)),
             min_total_chars_with_secondary=max(

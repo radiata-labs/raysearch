@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 class Engine(WorkUnit):
-    """Async-only engine with search/fetch/answer paths."""
+    """Async-only engine with search/fetch/answer/research paths."""
 
     def __init__(
         self,
@@ -65,6 +65,7 @@ class Engine(WorkUnit):
     def from_settings(
         cls, settings: AppSettings, *, overrides: Overrides | None = None
     ) -> Engine:
+        """Build an engine through the component registry/container bootstrap."""
         from serpsage.app.bootstrap import build_engine  # noqa: PLC0415
 
         return build_engine(settings=settings, overrides=overrides)

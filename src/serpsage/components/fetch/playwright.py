@@ -9,20 +9,14 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.fetch.base import FetcherBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.fetch.base import FetchConfigBase, FetcherBase
 from serpsage.components.fetch.utils import analyze_content
+from serpsage.components.registry import register_component
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
 if TYPE_CHECKING:
-    from playwright.async_api import (
-        Browser,
-        BrowserContext,
-        Page,
-        Playwright,
-        Route,
-    )
-
-    from serpsage.core.runtime import Runtime
+    from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route
 
 _original_call_exception_handler = getattr(
     asyncio.BaseEventLoop, "call_exception_handler", None
@@ -76,17 +70,37 @@ Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
 """
 
 
+class PlaywrightFetcherConfig(FetchConfigBase):
+    pass
+
+
+_PLAYWRIGHT_FETCHER_META = ComponentMeta(
+    family="fetch",
+    name="playwright",
+    version="1.0.0",
+    summary="Playwright browser fetch backend.",
+    provides=("fetch.playwright_engine",),
+    config_model=PlaywrightFetcherConfig,
+)
+
+
+@register_component(meta=_PLAYWRIGHT_FETCHER_META)
 class PlaywrightFetcher(FetcherBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
+    meta = _PLAYWRIGHT_FETCHER_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: PlaywrightFetcherConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
         if not PLAYWRIGHT_AVAILABLE or _pw_factory is None:
             raise RuntimeError("playwright is not available; install playwright")
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        self._sem = anyio.Semaphore(
-            max(1, int(self.settings.fetch.render.js_concurrency))
-        )
+        self._sem = anyio.Semaphore(max(1, int(config.render.js_concurrency)))
 
     @override
     async def on_init(self) -> None:
@@ -107,7 +121,7 @@ class PlaywrightFetcher(FetcherBase):
             ],
         )
         self._context = await self._browser.new_context(
-            user_agent=str(self.settings.fetch.user_agent),
+            user_agent=str(self.config.user_agent),
             ignore_https_errors=True,
             locale="en-US",
             timezone_id="America/New_York",
@@ -137,10 +151,7 @@ class PlaywrightFetcher(FetcherBase):
         url: str,
         timeout_s: float | None = None,
     ) -> FetchResult:
-        attempt = await self.fetch_attempt(
-            url=url,
-            timeout_s=timeout_s,
-        )
+        attempt = await self.fetch_attempt(url=url, timeout_s=timeout_s)
         if int(attempt.status_code or 0) <= 0:
             raise RuntimeError("playwright fetch failed")
         return FetchResult(
@@ -164,7 +175,7 @@ class PlaywrightFetcher(FetcherBase):
     ) -> FetchAttempt:
         if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
-        timeout_ms = int(self.settings.fetch.render.nav_timeout_ms)
+        timeout_ms = int(self.config.render.nav_timeout_ms)
         if timeout_s is not None:
             timeout_ms = min(timeout_ms, int(timeout_s * 1000))
         page = None
@@ -192,7 +203,7 @@ class PlaywrightFetcher(FetcherBase):
             content=body,
             content_type=content_type,
             url=final_url,
-            markers=tuple(self.settings.fetch.quality.blocked_markers),
+            markers=tuple(self.config.quality.blocked_markers),
         )
         return FetchAttempt(
             url=final_url,
@@ -216,7 +227,7 @@ class PlaywrightFetcher(FetcherBase):
 
     async def _prepare_context(self, context: BrowserContext) -> None:
         await context.add_init_script(_STEALTH_INIT_SCRIPT)
-        if not bool(self.settings.fetch.render.block_resources):
+        if not bool(self.config.render.block_resources):
             return
 
         async def route_handler(route: Route) -> None:
@@ -246,9 +257,7 @@ class PlaywrightFetcher(FetcherBase):
         resp = None
         try:
             resp = await page.goto(
-                url,
-                timeout=timeout_ms,
-                wait_until="domcontentloaded",
+                url, timeout=timeout_ms, wait_until="domcontentloaded"
             )
         except TimeoutError:
             pass
@@ -266,11 +275,11 @@ class PlaywrightFetcher(FetcherBase):
         return status, final_url, headers
 
     async def _await_render_ready(self, *, page: Page, timeout_ms: int) -> None:
-        cfg = self.settings.fetch.render
+        cfg = self.config.render
         deadline = time.monotonic() + (float(timeout_ms) / 1000.0)
         stable_rounds_needed = max(1, int(cfg.readiness_stable_rounds))
         poll_s = max(0.05, float(cfg.readiness_poll_ms) / 1000.0)
-        min_text_chars = int(self.settings.fetch.quality.min_text_chars)
+        min_text_chars = int(self.config.quality.min_text_chars)
         stable_rounds = 0
         last_signature: tuple[int, int, str] | None = None
         while time.monotonic() < deadline:
@@ -354,4 +363,4 @@ class PlaywrightFetcher(FetcherBase):
         return 0
 
 
-__all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightFetcher"]
+__all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightFetcher", "PlaywrightFetcherConfig"]

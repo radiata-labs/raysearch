@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.steps.research import (
     OverviewOutputPayload,
     ResearchSource,
@@ -22,19 +25,14 @@ from serpsage.steps.research.schema import build_subreport_update_schema
 from serpsage.steps.research.search import source_authority_score
 from serpsage.steps.research.utils import resolve_research_model
 
-if TYPE_CHECKING:
-    from serpsage.components.llm.base import LLMClientBase
-    from serpsage.components.rank.base import RankerBase
-    from serpsage.core.runtime import Runtime
-
 
 class ResearchSubreportStep(StepBase[ResearchStepContext]):
     def __init__(
         self,
         *,
         rt: Runtime,
-        llm: LLMClientBase,
-        ranker: RankerBase,
+        llm: LLMClientBase = Depends(),
+        ranker: RankerBase = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._llm = llm

@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
+from serpsage.components.base import Depends
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.request import FetchRequest
 from serpsage.models.app.response import FetchResponse
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.search import SearchFetchedCandidate, SearchStepContext
-from serpsage.steps.base import StepBase
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-    from serpsage.steps.base import RunnerBase
+from serpsage.steps.base import RunnerBase, StepBase
 
 
 class SearchFetchStep(StepBase[SearchStepContext]):
@@ -19,7 +16,7 @@ class SearchFetchStep(StepBase[SearchStepContext]):
         self,
         *,
         rt: Runtime,
-        fetch_runner: RunnerBase[FetchStepContext],
+        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._fetch_runner = fetch_runner

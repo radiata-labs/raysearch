@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from typing import TYPE_CHECKING
 from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from serpsage.components.base import Depends
+from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.core.runtime import Runtime
 from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOthersRequest,
@@ -25,12 +27,8 @@ from serpsage.models.steps.search import (
     SearchFetchedCandidate,
     SearchStepContext,
 )
-from serpsage.steps.base import StepBase
+from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.utils import clean_whitespace
-
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
-    from serpsage.steps.base import RunnerBase
 
 _TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
 _TRACKING_QUERY_PREFIXES = ("utm_",)
@@ -88,7 +86,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         self,
         *,
         rt: Runtime,
-        search_runner: RunnerBase[SearchStepContext],
+        search_runner: RunnerBase[SearchStepContext] = Depends(),
     ) -> None:
         super().__init__(rt=rt)
         self._search_runner = search_runner
@@ -129,7 +127,10 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         jobs = jobs[:executable_jobs]
         if not jobs:
             return ctx
-        main_links_limit = max(1, self.settings.fetch.extract.link_max_count)
+        fetch_cfg = self.components.resolve_default_config(
+            "fetch", expected_type=FetchConfigBase
+        )
+        main_links_limit = max(1, int(fetch_cfg.extract.link_max_count))
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
             max_subpages = max(0, ctx.run.limits.round_fetch_budget - 1)

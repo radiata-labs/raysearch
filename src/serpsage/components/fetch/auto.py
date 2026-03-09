@@ -3,25 +3,22 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 from typing_extensions import override
 from urllib.parse import urlparse
 
-from serpsage.components.fetch.base import FetcherBase
+from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.fetch.base import FetchConfigBase, FetcherBase
+from serpsage.components.fetch.curl_cffi import CurlCffiFetcher
+from serpsage.components.fetch.playwright import PlaywrightFetcher
 from serpsage.components.fetch.utils import (
     blocked_marker_hit,
     has_nextjs_signals,
     has_spa_signals,
     normalize_route_key,
 )
+from serpsage.components.rate_limit.base import RateLimiterBase
+from serpsage.components.registry import register_component
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
-
-if TYPE_CHECKING:
-    from serpsage.components.fetch.curl_cffi import CurlCffiFetcher
-    from serpsage.components.fetch.playwright import PlaywrightFetcher
-    from serpsage.components.http import HttpClientBase
-    from serpsage.components.rate_limit import RateLimiterBase
-    from serpsage.core.runtime import Runtime
 
 _MIN_BYTES = 32
 _BLOCK_STATUSES = {401, 403, 429}
@@ -56,27 +53,42 @@ class _RouteMemory:
     last_used_ts: float = 0.0
 
 
+class AutoFetcherConfig(FetchConfigBase):
+    pass
+
+
+_AUTO_FETCHER_META = ComponentMeta(
+    family="fetch",
+    name="auto",
+    version="1.0.0",
+    summary="Adaptive fetcher choosing curl_cffi or Playwright.",
+    provides=("fetcher.page",),
+    config_model=AutoFetcherConfig,
+)
+
+
+@register_component(meta=_AUTO_FETCHER_META)
 class AutoFetcher(FetcherBase):
+    meta = _AUTO_FETCHER_META
+
     def __init__(
         self,
         *,
-        rt: Runtime,
-        rate_limiter: RateLimiterBase,
-        http: HttpClientBase,
-        curl_fetcher: CurlCffiFetcher,
-        playwright_fetcher: PlaywrightFetcher,
+        rt: object,
+        config: AutoFetcherConfig,
+        rate_limiter: RateLimiterBase = Depends(),
+        curl: CurlCffiFetcher = Depends(),
+        playwright: PlaywrightFetcher = Depends(),
     ) -> None:
-        super().__init__(rt=rt)
-        self._rl = rate_limiter
-        self._curl = curl_fetcher
-        self._playwright = playwright_fetcher
-        self._route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
-        self.bind_deps(
-            rate_limiter,
-            http,
-            curl_fetcher,
-            playwright_fetcher,
+        super().__init__(
+            rt=rt,
+            config=config,
+            bound_deps=(rate_limiter, curl, playwright),
         )
+        self._rl = rate_limiter
+        self._curl = curl
+        self._playwright = playwright
+        self._route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
 
     @override
     async def _afetch_inner(
@@ -96,11 +108,7 @@ class AutoFetcher(FetcherBase):
         host = urlparse(url).netloc.lower()
         await self._rl.acquire(host=host)
         try:
-            attempt = await self._fetch_useful(
-                url=url,
-                strategy=str(self.settings.fetch.backend or "auto").lower(),
-                timeout_s=timeout_s,
-            )
+            attempt = await self._fetch_useful(url=url, timeout_s=timeout_s)
         finally:
             await self._rl.release(host=host)
         return FetchResult(
@@ -119,39 +127,10 @@ class AutoFetcher(FetcherBase):
         self,
         *,
         url: str,
-        strategy: str,
         timeout_s: float | None,
     ) -> FetchAttempt:
         deadline_ts = time.monotonic() + self._resolve_timeout_s(timeout_s)
-        quality_cfg = self.settings.fetch.quality
-        if strategy == "curl_cffi":
-            attempt = await self._run_curl(
-                url=url,
-                deadline_ts=deadline_ts,
-            )
-            score, _ = self._content_quality_score(attempt)
-            if score >= float(quality_cfg.quality_score_threshold):
-                return attempt
-            raise RuntimeError(f"fetch_unusable:curl_cffi:{int(attempt.status_code)}")
-        if strategy == "playwright":
-            attempt = await self._run_playwright(
-                url=url,
-                deadline_ts=deadline_ts,
-                render_reason="backend_playwright",
-            )
-            score, _ = self._content_quality_score(attempt)
-            if score >= float(quality_cfg.quality_score_threshold):
-                return attempt
-            raise RuntimeError(f"fetch_unusable:playwright:{int(attempt.status_code)}")
-        if strategy != "auto":
-            raise ValueError(
-                "unsupported fetch backend "
-                f"`{strategy}`; expected curl_cffi|playwright|auto"
-            )
-        return await self._fetch_auto(
-            url=url,
-            deadline_ts=deadline_ts,
-        )
+        return await self._fetch_auto(url=url, deadline_ts=deadline_ts)
 
     async def _fetch_auto(
         self,
@@ -175,7 +154,7 @@ class AutoFetcher(FetcherBase):
                 direct_attempt = None
             if direct_attempt is not None:
                 return direct_attempt
-        scout_bytes = int(self.settings.fetch.auto.scout_bytes)
+        scout_bytes = int(self.config.auto.scout_bytes)
         curl_started = time.monotonic()
         progressive = await self._curl.fetch_progressive_attempt(
             url=url,
@@ -229,7 +208,7 @@ class AutoFetcher(FetcherBase):
         )
 
     def _choose_direct_backend(self, route_memory: _RouteMemory) -> str | None:
-        auto_cfg = self.settings.fetch.auto
+        auto_cfg = self.config.auto
         if route_memory.playwright.samples < int(auto_cfg.direct_route_min_samples):
             return None
         if route_memory.playwright.useful_ema < float(
@@ -252,7 +231,7 @@ class AutoFetcher(FetcherBase):
             return False
         if attempt.content_kind != "html":
             return True
-        quality = self.settings.fetch.quality
+        quality = self.config.quality
         low_text = int(attempt.text_chars or 0) < int(quality.min_text_chars)
         js_heavy = float(attempt.script_ratio or 0.0) >= float(
             quality.script_ratio_threshold
@@ -262,7 +241,7 @@ class AutoFetcher(FetcherBase):
         curl_score, _ = self._content_quality_score(attempt)
         route_prefers_playwright = bool(
             route_memory.playwright.samples
-            >= int(self.settings.fetch.auto.direct_route_min_samples)
+            >= int(self.config.auto.direct_route_min_samples)
             and route_memory.playwright.score() < route_memory.curl.score()
         )
         if spa and (low_text or js_heavy):
@@ -279,7 +258,7 @@ class AutoFetcher(FetcherBase):
         if attempt.content_kind != "html":
             return False
         return int(attempt.text_chars or 0) >= (
-            int(self.settings.fetch.quality.min_text_chars) * 6
+            int(self.config.quality.min_text_chars) * 6
         )
 
     def _playwright_reason(self, attempt: FetchAttempt) -> str:
@@ -290,9 +269,7 @@ class AutoFetcher(FetcherBase):
                 return "spa"
             if has_nextjs_signals(bytes(attempt.content or b"")):
                 return "nextjs_low_text"
-            if int(attempt.text_chars or 0) < int(
-                self.settings.fetch.quality.min_text_chars
-            ):
+            if int(attempt.text_chars or 0) < int(self.config.quality.min_text_chars):
                 return "low_text"
         return "curl_nonperfect_fallback"
 
@@ -330,10 +307,7 @@ class AutoFetcher(FetcherBase):
             latency_ms=latency_ms,
         )
         if self._is_useful(attempt):
-            return self._attach_attempt_chain(
-                winner=attempt,
-                chain_prefix=chain_prefix,
-            )
+            return self._attach_attempt_chain(winner=attempt, chain_prefix=chain_prefix)
         return None
 
     def _get_route_memory(self, route_key: str) -> _RouteMemory:
@@ -342,7 +316,7 @@ class AutoFetcher(FetcherBase):
             memory = _RouteMemory()
         memory.last_used_ts = time.monotonic()
         self._route_memory[route_key] = memory
-        max_items = max(8, int(self.settings.fetch.auto.route_memory_size))
+        max_items = max(8, int(self.config.auto.route_memory_size))
         while len(self._route_memory) > max_items:
             self._route_memory.popitem(last=False)
         return memory
@@ -357,7 +331,7 @@ class AutoFetcher(FetcherBase):
     ) -> None:
         memory = self._get_route_memory(route_key)
         stats = memory.playwright if backend == "playwright" else memory.curl
-        alpha = float(self.settings.fetch.auto.learning_rate)
+        alpha = float(self.config.auto.learning_rate)
         success = (
             1.0 if attempt is not None and int(attempt.status_code or 0) >= 200 else 0.0
         )
@@ -369,17 +343,9 @@ class AutoFetcher(FetcherBase):
             alpha * float(max(1, latency_ms))
         )
 
-    async def _run_curl(
-        self,
-        *,
-        url: str,
-        deadline_ts: float,
-    ) -> FetchAttempt:
+    async def _run_curl(self, *, url: str, deadline_ts: float) -> FetchAttempt:
         timeout_s = self._remaining_timeout_s(deadline_ts)
-        return await self._curl.fetch_attempt(
-            url=url,
-            timeout_s=timeout_s,
-        )
+        return await self._curl.fetch_attempt(url=url, timeout_s=timeout_s)
 
     async def _run_playwright(
         self,
@@ -398,7 +364,7 @@ class AutoFetcher(FetcherBase):
     def _resolve_timeout_s(self, timeout_s: float | None) -> float:
         resolved = float(timeout_s or 0.0)
         if resolved <= 0.0:
-            resolved = float(self.settings.fetch.timeout_s)
+            resolved = float(self.config.timeout_s)
         return max(0.05, resolved)
 
     def _remaining_timeout_s(self, deadline_ts: float) -> float:
@@ -413,17 +379,17 @@ class AutoFetcher(FetcherBase):
             return True
         if blocked_marker_hit(
             res.content,
-            markers=tuple(self.settings.fetch.quality.blocked_markers or []),
+            markers=tuple(self.config.quality.blocked_markers or []),
         ):
             return True
         return bool(res.blocked)
 
     def _is_useful(self, res: FetchAttempt) -> bool:
         score, _ = self._content_quality_score(res)
-        return score >= float(self.settings.fetch.quality.quality_score_threshold)
+        return score >= float(self.config.quality.quality_score_threshold)
 
     def _content_quality_score(self, res: FetchAttempt) -> tuple[float, list[str]]:
-        quality = self.settings.fetch.quality
+        quality = self.config.quality
         reasons: list[str] = []
         status = int(res.status_code or 0)
         content_len = len(res.content or b"")
@@ -477,4 +443,4 @@ class AutoFetcher(FetcherBase):
         return winner.model_copy(update={"attempt_chain": out})
 
 
-__all__ = ["AutoFetcher"]
+__all__ = ["AutoFetcher", "AutoFetcherConfig"]

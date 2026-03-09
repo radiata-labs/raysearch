@@ -7,7 +7,10 @@ from typing_extensions import override
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.http.base import HttpClientBase
+from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
+from serpsage.components.registry import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -30,30 +33,64 @@ if TYPE_CHECKING:
         ResponseFormatJSONSchema,
     )
 
-    from serpsage.components.http.base import HttpClientBase
-    from serpsage.core.runtime import Runtime
-    from serpsage.settings.models import LLMModelSettings
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
-class OpenAIClient(LLMClientBase):
+class OpenAIModelConfig(LLMModelConfig):
+    @classmethod
+    @override
+    def inject_env(
+        cls,
+        raw: dict[str, Any],
+        *,
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        payload = dict(raw)
+        if not payload.get("api_key") and env.get("OPENAI_API_KEY"):
+            payload["api_key"] = env["OPENAI_API_KEY"]
+        if not payload.get("base_url") and env.get("OPENAI_BASE_URL"):
+            payload["base_url"] = env["OPENAI_BASE_URL"]
+        return payload
+
+
+_OPENAI_ROUTE_META = ComponentMeta(
+    family="llm",
+    name="openai",
+    version="1.0.0",
+    summary="OpenAI-compatible route client.",
+    provides=("llm.route",),
+    config_model=OpenAIModelConfig,
+)
+
+
+@register_component(meta=_OPENAI_ROUTE_META)
+class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
+    meta = _OPENAI_ROUTE_META
     _SCHEMA_NAME = "SerpSageOverview"
 
     def __init__(
-        self, *, rt: Runtime, http: HttpClientBase, model_cfg: LLMModelSettings
+        self,
+        *,
+        rt: object,
+        config: OpenAIModelConfig,
+        http: HttpClientBase = Depends(),
     ) -> None:
-        super().__init__(rt=rt)
-        self.bind_deps(http)
-        self._model_cfg = model_cfg
-        llm = self._model_cfg
+        super().__init__(rt=rt, config=config, bound_deps=(http,))
         self.client = AsyncOpenAI(
-            api_key=llm.api_key,
-            base_url=llm.base_url,
-            timeout=float(llm.timeout_s),
-            max_retries=int(llm.max_retries),
-            default_headers=dict(llm.headers or {}),
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=float(config.timeout_s),
+            max_retries=int(config.max_retries),
+            default_headers=dict(config.headers or {}),
             http_client=http.client,
         )
+
+    @override
+    def describe_model(self, name: str) -> OpenAIModelConfig:
+        if str(name) != str(self.config.name):
+            super().describe_model(name)
+            raise AssertionError("unreachable")
+        return self.config
 
     @overload
     async def _create(
@@ -99,7 +136,7 @@ class OpenAIClient(LLMClientBase):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        llm = self._model_cfg
+        llm = self.config
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
         response_schema, response_model = self.resolve_response_format(
@@ -124,11 +161,7 @@ class OpenAIClient(LLMClientBase):
             usage = self._to_usage(getattr(pydantic_completion, "usage", None))
             if parsed is None:
                 parsed = response_model.model_validate_json(text)
-            return ChatModelResult(
-                text=text,
-                data=parsed,
-                usage=usage,
-            )
+            return ChatModelResult(text=text, data=parsed, usage=usage)
         completion = await self._create_completion(
             model=model,
             messages=self._to_openai_messages(
@@ -148,9 +181,7 @@ class OpenAIClient(LLMClientBase):
             return ChatTextResult(text=text, usage=usage)
         if response_model is not None:
             return ChatModelResult(
-                text=text,
-                data=response_model.model_validate_json(text),
-                usage=usage,
+                text=text, data=response_model.model_validate_json(text), usage=usage
             )
         data = self._parse_json_object(text)
         return ChatDictResult(text=text, data=data, usage=usage)
@@ -185,23 +216,21 @@ class OpenAIClient(LLMClientBase):
         **kwargs: Any,
     ) -> ChatCompletion:
         if response_format is None:
-            completion: ChatCompletion = await self.client.chat.completions.create(
+            return await self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 timeout=timeout,
                 **kwargs,
             )
-        else:
-            completion = await self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                timeout=timeout,
-                response_format=response_format,
-                **kwargs,
-            )
-        return completion
+        return await self.client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            timeout=timeout,
+            response_format=response_format,
+            **kwargs,
+        )
 
     @classmethod
     def _build_response_format_payload(
@@ -239,11 +268,10 @@ class OpenAIClient(LLMClientBase):
             content = str(msg.get("content") or "")
             if role == "system":
                 out.append({"role": "system", "content": content})
-                continue
-            if role == "assistant":
+            elif role == "assistant":
                 out.append({"role": "assistant", "content": content})
-                continue
-            out.append({"role": "user", "content": content})
+            else:
+                out.append({"role": "user", "content": content})
         if not out:
             out.append({"role": "user", "content": ""})
         return out
@@ -279,9 +307,8 @@ class OpenAIClient(LLMClientBase):
 
     @staticmethod
     def _parse_json_object(content: str) -> dict[str, object]:
-        payload: object
         try:
-            payload = json.loads(content)
+            payload: object = json.loads(content)
         except json.JSONDecodeError:
             start = content.find("{")
             end = content.rfind("}")
@@ -294,4 +321,4 @@ class OpenAIClient(LLMClientBase):
         return {str(k): v for k, v in payload.items()}
 
 
-__all__ = ["OpenAIClient"]
+__all__ = ["OpenAIClient", "OpenAIModelConfig"]

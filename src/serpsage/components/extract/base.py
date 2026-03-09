@@ -3,12 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.components.extract.utils import (
     finalize_markdown,
     markdown_to_abstract_text,
     strip_markdown_links,
 )
-from serpsage.core.workunit import WorkUnit
 
 if TYPE_CHECKING:
     from serpsage.models.components.extract import (
@@ -18,7 +18,18 @@ if TYPE_CHECKING:
     )
 
 
-class ExtractorBase(WorkUnit, ABC):
+class ExtractConfigBase(ComponentConfigBase):
+    max_markdown_chars: int = 160_000
+    min_text_chars: int = 220
+    min_primary_chars: int = 220
+    min_total_chars_with_secondary: int = 220
+    include_secondary_content_default: bool = False
+    collect_links_default: bool = False
+    link_max_count: int = 800
+    link_keep_hash: bool = False
+
+
+class ExtractorBase(ComponentBase[ExtractConfigBase], ABC):
     def _finalize_content(
         self,
         *,
@@ -79,3 +90,6 @@ class ExtractorBase(WorkUnit, ABC):
         collect_images: bool = False,
     ) -> ExtractedDocument:
         raise NotImplementedError
+
+
+__all__ = ["ExtractConfigBase", "ExtractorBase"]

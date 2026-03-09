@@ -1,31 +1,74 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from typing_extensions import override
 
 import httpx
 
-from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.http.base import HttpClientBase
+from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.registry import register_component
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
 )
 from serpsage.utils import clean_whitespace
 
-if TYPE_CHECKING:
-    from serpsage.components.http.base import HttpClientBase
-    from serpsage.core.runtime import Runtime
+_DEFAULT_SEARXNG_BASE_URL = "https://searx.be/search"
 
 
-class SearxngProvider(SearchProviderBase):
+class SearxngProviderConfig(ProviderConfigBase):
+    @classmethod
+    @override
+    def inject_env(
+        cls,
+        raw: dict[str, Any],
+        *,
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        payload = dict(raw)
+        payload.setdefault("base_url", _DEFAULT_SEARXNG_BASE_URL)
+        if env.get("PROVIDER_BASE_URL"):
+            payload["base_url"] = env["PROVIDER_BASE_URL"]
+        elif env.get("SEARCH_BASE_URL"):
+            payload["base_url"] = env["SEARCH_BASE_URL"]
+        elif env.get("SEARXNG_BASE_URL"):
+            payload["base_url"] = env["SEARXNG_BASE_URL"]
+        api_key = env.get("PROVIDER_API_KEY") or env.get("SEARCH_API_KEY")
+        if api_key:
+            payload["api_key"] = api_key
+        cf_id = env.get("SEARXNG_CF_ACCESS_CLIENT_ID")
+        cf_secret = env.get("SEARXNG_CF_ACCESS_CLIENT_SECRET")
+        if cf_id and cf_secret:
+            payload.setdefault("headers", {})
+            payload["headers"].setdefault("CF-Access-Client-Id", cf_id)
+            payload["headers"].setdefault("CF-Access-Client-Secret", cf_secret)
+        return payload
+
+
+_SEARXNG_META = ComponentMeta(
+    family="provider",
+    name="searxng",
+    version="1.0.0",
+    summary="SearxNG JSON search provider.",
+    provides=("provider.search",),
+    config_model=SearxngProviderConfig,
+)
+
+
+@register_component(meta=_SEARXNG_META)
+class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
+    meta = _SEARXNG_META
+
     def __init__(
         self,
         *,
-        rt: Runtime,
-        http: HttpClientBase,
+        rt: object,
+        config: SearxngProviderConfig,
+        http: HttpClientBase = Depends(),
     ) -> None:
-        super().__init__(rt=rt)
-        self.bind_deps(http)
+        super().__init__(rt=rt, config=config, bound_deps=(http,))
         self._http = http.client
 
     @override
@@ -37,10 +80,9 @@ class SearxngProvider(SearchProviderBase):
         language: str = "",
         **kwargs: Any,
     ) -> SearchProviderResponse:
-        provider = self.settings.provider.searxng
+        cfg = self.config
         if not query or not str(query).strip():
             raise ValueError("query must not be empty")
-        # In 3.0 we treat api_key as optional; some instances might not require it.
         payload: dict[str, str] = {"q": str(query), "format": "json"}
         if page > 1:
             payload["pageno"] = str(int(page))
@@ -50,19 +92,17 @@ class SearxngProvider(SearchProviderBase):
             if value is None:
                 continue
             payload[str(key)] = str(value)
-        headers = dict(provider.headers or {})
-        headers.setdefault(
-            "User-Agent",
-            str(provider.user_agent or self.settings.fetch.user_agent),
-        )
-        if provider.api_key:
-            headers.setdefault("Authorization", f"Bearer {provider.api_key}")
+        headers = dict(cfg.headers or {})
+        if cfg.user_agent:
+            headers.setdefault("User-Agent", str(cfg.user_agent))
+        if cfg.api_key:
+            headers.setdefault("Authorization", f"Bearer {cfg.api_key}")
         resp = await self._http.get(
-            provider.base_url,
+            cfg.base_url,
             params=payload,
             headers=headers,
-            timeout=httpx.Timeout(provider.timeout_s),
-            follow_redirects=bool(provider.allow_redirects),
+            timeout=httpx.Timeout(cfg.timeout_s),
+            follow_redirects=bool(cfg.allow_redirects),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -117,4 +157,4 @@ class SearxngProvider(SearchProviderBase):
         )
 
 
-__all__ = ["SearxngProvider"]
+__all__ = ["SearxngProvider", "SearxngProviderConfig"]

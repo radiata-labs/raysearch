@@ -1,23 +1,37 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
 
-from serpsage.components.rate_limit.base import RateLimiterBase
+from serpsage.components.base import ComponentMeta
+from serpsage.components.rate_limit.base import RateLimiterBase, RateLimiterConfig
+from serpsage.components.registry import register_component
 
-if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
+_BASIC_RATE_LIMITER_META = ComponentMeta(
+    family="rate_limit",
+    name="basic",
+    version="1.0.0",
+    summary="Basic semaphore-based host-aware rate limiter.",
+    provides=("rate_limit.control",),
+    config_model=RateLimiterConfig,
+)
 
 
+@register_component(meta=_BASIC_RATE_LIMITER_META)
 class BasicRateLimiter(RateLimiterBase):
-    def __init__(self, *, rt: Runtime) -> None:
-        super().__init__(rt=rt)
-        cfg = self.settings.fetch.concurrency
-        self._global = anyio.Semaphore(max(1, int(cfg.global_limit)))
-        self._per_host_limit = max(1, int(cfg.per_host))
-        self._politeness_delay_ms = max(0, int(cfg.politeness_delay_ms))
+    meta = _BASIC_RATE_LIMITER_META
+
+    def __init__(
+        self,
+        *,
+        rt: object,
+        config: RateLimiterConfig,
+    ) -> None:
+        super().__init__(rt=rt, config=config)
+        self._global = anyio.Semaphore(max(1, int(config.global_limit)))
+        self._per_host_limit = max(1, int(config.per_host))
+        self._politeness_delay_ms = max(0, int(config.politeness_delay_ms))
         self._host_sems: dict[str, anyio.Semaphore] = {}
         self._host_lock = anyio.Lock()
         self._last_host_ms: dict[str, int] = {}
@@ -44,7 +58,6 @@ class BasicRateLimiter(RateLimiterBase):
 
     async def _get_host_sem(self, host: str) -> anyio.Semaphore:
         if not host:
-            # Put empty host under a shared semaphore.
             host = "<unknown>"
         async with self._host_lock:
             sem = self._host_sems.get(host)
