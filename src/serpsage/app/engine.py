@@ -44,16 +44,9 @@ class Engine(WorkUnit):
     _search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER)
     _fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER)
     _answer_runner: RunnerBase[AnswerStepContext] = Inject(ANSWER_RUNNER)
-    _research_runner: RunnerBase[ResearchStepContext] | None = Inject(RESEARCH_RUNNER)
+    _research_runner: RunnerBase[ResearchStepContext] = Inject(RESEARCH_RUNNER)
 
     def __init__(self) -> None:
-        self._research_runner = self._research_runner or RunnerBase[
-            ResearchStepContext
-        ](
-            rt=self.rt,
-            steps=[],
-            kind="search",
-        )
         self.bind_deps(self.telemetry)
 
     @classmethod
