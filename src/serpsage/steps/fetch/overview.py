@@ -5,11 +5,11 @@ import json
 from typing import Any
 from typing_extensions import override
 
-from serpsage.components.base import Depends
 from serpsage.components.cache import CacheBase
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.llm import LLMClientBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchOverviewRequest
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
@@ -20,9 +20,9 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        llm: LLMClientBase = Depends(),
-        cache: CacheBase = Depends(),
+        rt: Runtime = Inject(),
+        llm: LLMClientBase = Inject(),
+        cache: CacheBase = Inject(),
     ) -> None:
         super().__init__(rt=rt)
         self._llm = llm

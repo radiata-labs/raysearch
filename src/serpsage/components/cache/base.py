@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import Generic
+from typing_extensions import TypeVar
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
-
-CacheConfigT = TypeVar("CacheConfigT", bound="CacheConfigBase")
 
 
 class CacheConfigBase(ComponentConfigBase):
     fetch_ttl_s: int = 86_400
+
+
+CacheConfigT = TypeVar(
+    "CacheConfigT",
+    bound=CacheConfigBase,
+    default=CacheConfigBase,
+)
 
 
 class CacheBase(ComponentBase[CacheConfigT], ABC, Generic[CacheConfigT]):

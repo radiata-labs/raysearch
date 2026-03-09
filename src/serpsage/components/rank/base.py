@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Generic, Literal, TypeVar
+from typing import Generic, Literal
+from typing_extensions import TypeVar
 
 from pydantic import Field, model_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
-from serpsage.core.workunit import WorkUnit
 
 RankMode = Literal["retrieve", "rerank"]
-RankConfigT = TypeVar("RankConfigT", bound=ComponentConfigBase)
+RankConfigT = TypeVar(
+    "RankConfigT",
+    bound=ComponentConfigBase,
+    default=ComponentConfigBase,
+)
 
 
 class HeuristicRankSettings(ComponentConfigBase):
@@ -70,9 +73,8 @@ class RankerBase(ComponentBase[RankConfigT], ABC, Generic[RankConfigT]):
         *,
         rt: object,
         config: RankConfigT,
-        bound_deps: Sequence[WorkUnit] | None = None,
     ) -> None:
-        super().__init__(rt=rt, config=config, bound_deps=bound_deps)
+        super().__init__(rt=rt, config=config)
         self._warned_mode_fallbacks: set[tuple[str, str]] = set()
 
     def _resolve_mode(

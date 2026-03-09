@@ -4,11 +4,12 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import Depends
+from serpsage.app.tokens import CHILD_FETCH_RUNNER
 from serpsage.components.cache.base import CacheBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.fetch.overview import FetchOverviewStep
@@ -19,11 +20,11 @@ class FetchParallelEnrichStep(StepBase[FetchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        llm: LLMClientBase = Depends(),
-        cache: CacheBase = Depends(),
-        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
-        ranker: RankerBase = Depends(),
+        rt: Runtime = Inject(),
+        llm: LLMClientBase = Inject(),
+        cache: CacheBase = Inject(),
+        fetch_runner: RunnerBase[FetchStepContext] = Inject(CHILD_FETCH_RUNNER),
+        ranker: RankerBase = Inject(),
     ) -> None:
         super().__init__(rt=rt)
         self._overview_step = FetchOverviewStep(rt=rt, llm=llm, cache=cache)

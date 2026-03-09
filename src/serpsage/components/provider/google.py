@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import (
     GoogleSafeSearchKey,
@@ -15,6 +15,8 @@ from serpsage.components.provider.base import (
     SearchProviderBase,
 )
 from serpsage.components.registry import register_component
+from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -111,11 +113,11 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
     def __init__(
         self,
         *,
-        rt: object,
-        config: GoogleProviderConfig,
-        http: HttpClientBase = Depends(),
+        rt: Runtime = Inject(),
+        config: GoogleProviderConfig = Inject(),
+        http: HttpClientBase = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config, bound_deps=(http,))
+        super().__init__(rt=rt, config=config)
         self._http = http.client
 
     @override

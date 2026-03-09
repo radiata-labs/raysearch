@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, cast, overload
+from typing_extensions import TypeVar
 from typing_extensions import override
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
 from serpsage.components.registry import register_component
+from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -71,11 +74,11 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
     def __init__(
         self,
         *,
-        rt: object,
-        config: OpenAIModelConfig,
-        http: HttpClientBase = Depends(),
+        rt: Runtime = Inject(),
+        config: OpenAIModelConfig = Inject(),
+        http: HttpClientBase = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config, bound_deps=(http,))
+        super().__init__(rt=rt, config=config)
         self.client = AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.base_url,
@@ -196,7 +199,7 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
         response_format: type[TModel],
         **kwargs: Any,
     ) -> ParsedChatCompletion[TModel]:
-        return await self.client.chat.completions.parse(
+        response = await self.client.chat.completions.parse(
             model=model,
             messages=messages,
             temperature=temperature,
@@ -204,6 +207,7 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
             response_format=response_format,
             **kwargs,
         )
+        return cast("ParsedChatCompletion[TModel]", response)
 
     async def _create_completion(
         self,
@@ -216,14 +220,15 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
         **kwargs: Any,
     ) -> ChatCompletion:
         if response_format is None:
-            return await self.client.chat.completions.create(
+            response = await self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 timeout=timeout,
                 **kwargs,
             )
-        return await self.client.chat.completions.create(
+            return cast("ChatCompletion", response)
+        response = await self.client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
@@ -231,6 +236,7 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
             response_format=response_format,
             **kwargs,
         )
+        return cast("ChatCompletion", response)
 
     @classmethod
     def _build_response_format_payload(

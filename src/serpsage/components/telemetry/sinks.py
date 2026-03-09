@@ -32,6 +32,7 @@ _NULL_SINK_META = ComponentMeta(
     version="1.0.0",
     summary="No-op telemetry sink.",
     provides=("telemetry.sink",),
+    contracts=(EventSinkBase,),
 )
 _JSONL_SINK_META = ComponentMeta(
     family="telemetry",
@@ -39,6 +40,7 @@ _JSONL_SINK_META = ComponentMeta(
     version="1.0.0",
     summary="Append telemetry events to a JSONL file.",
     provides=("telemetry.sink",),
+    contracts=(EventSinkBase,),
     config_model=JsonlObsConfig,
 )
 _SQLITE_SINK_META = ComponentMeta(
@@ -47,6 +49,7 @@ _SQLITE_SINK_META = ComponentMeta(
     version="1.0.0",
     summary="Write metering events into sqlite.",
     provides=("telemetry.sink",),
+    contracts=(EventSinkBase,),
     config_model=SqliteMeteringConfig,
 )
 

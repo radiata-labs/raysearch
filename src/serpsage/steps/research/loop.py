@@ -3,9 +3,10 @@ from __future__ import annotations
 import math
 from typing_extensions import override
 
-from serpsage.components.base import Depends
+from serpsage.app.tokens import RESEARCH_ROUND_RUNNER, RESEARCH_SUBREPORT_STEP
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.app.response import ResearchResponse
 from serpsage.models.steps.research import (
     ResearchBudgetTier,
@@ -31,10 +32,10 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        llm: LLMClientBase = Depends(),
-        round_runner: RunnerBase[ResearchStepContext] = Depends(),
-        render_step: StepBase[ResearchStepContext] = Depends(),
+        rt: Runtime = Inject(),
+        llm: LLMClientBase = Inject(),
+        round_runner: RunnerBase[ResearchStepContext] = Inject(RESEARCH_ROUND_RUNNER),
+        render_step: StepBase[ResearchStepContext] = Inject(RESEARCH_SUBREPORT_STEP),
     ) -> None:
         super().__init__(rt=rt)
         self._llm = llm

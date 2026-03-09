@@ -3,10 +3,10 @@ from __future__ import annotations
 import math
 from typing_extensions import override
 
-from serpsage.components.base import Depends
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.steps.fetch import (
     FetchStepContext,
     PreparedPassage,
@@ -18,7 +18,9 @@ from serpsage.utils import clean_whitespace
 
 
 class FetchAbstractRankStep(StepBase[FetchStepContext]):
-    def __init__(self, *, rt: Runtime, ranker: RankerBase = Depends()) -> None:
+    def __init__(
+        self, *, rt: Runtime = Inject(), ranker: RankerBase = Inject()
+    ) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
         self.bind_deps(ranker)

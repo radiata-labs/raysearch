@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing_extensions import override
 from urllib.parse import urlparse
 
-from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.base import ComponentMeta
 from serpsage.components.fetch.base import FetchConfigBase, FetcherBase
 from serpsage.components.fetch.curl_cffi import CurlCffiFetcher
 from serpsage.components.fetch.playwright import PlaywrightFetcher
@@ -18,6 +18,8 @@ from serpsage.components.fetch.utils import (
 )
 from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.components.registry import register_component
+from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.components.fetch import FetchAttempt, FetchResult
 
 _MIN_BYTES = 32
@@ -74,17 +76,13 @@ class AutoFetcher(FetcherBase):
     def __init__(
         self,
         *,
-        rt: object,
-        config: AutoFetcherConfig,
-        rate_limiter: RateLimiterBase = Depends(),
-        curl: CurlCffiFetcher = Depends(),
-        playwright: PlaywrightFetcher = Depends(),
+        rt: Runtime = Inject(),
+        config: AutoFetcherConfig = Inject(),
+        rate_limiter: RateLimiterBase = Inject(),
+        curl: CurlCffiFetcher = Inject(),
+        playwright: PlaywrightFetcher = Inject(),
     ) -> None:
-        super().__init__(
-            rt=rt,
-            config=config,
-            bound_deps=(rate_limiter, curl, playwright),
-        )
+        super().__init__(rt=rt, config=config)
         self._rl = rate_limiter
         self._curl = curl
         self._playwright = playwright

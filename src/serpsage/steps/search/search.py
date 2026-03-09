@@ -9,10 +9,10 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import anyio
 
-from serpsage.components.base import Depends
 from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -43,9 +43,9 @@ class SearchStep(StepBase[SearchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        provider: SearchProviderBase = Depends(),
-        ranker: RankerBase = Depends(),
+        rt: Runtime = Inject(),
+        provider: SearchProviderBase = Inject(),
+        ranker: RankerBase = Inject(),
     ) -> None:
         super().__init__(rt=rt)
         self._provider = provider

@@ -14,11 +14,12 @@ from serpsage.components.provider import SearchProviderBase
 from serpsage.components.rank import RankerBase
 from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.components.telemetry import TelemetryEmitterBase
-from serpsage.models.base import FrozenModel, MutableModel
+from serpsage.models.base import MutableModel
 from serpsage.settings.models import AppSettings
 
 if TYPE_CHECKING:
-    from serpsage.components.container import ComponentContainer
+    from serpsage.components.container import ComponentCatalog
+    from serpsage.dependencies import ServiceProvider
 
 
 class ClockBase(ABC):
@@ -27,16 +28,17 @@ class ClockBase(ABC):
         raise NotImplementedError
 
 
-class Runtime(FrozenModel):
+class Runtime(MutableModel):
     model_config = ConfigDict(
         extra="forbid",
-        frozen=True,
+        validate_assignment=True,
         arbitrary_types_allowed=True,
     )
     settings: AppSettings
     clock: ClockBase
     telemetry: TelemetryEmitterBase | None = None
-    components: ComponentContainer | None = None
+    components: ComponentCatalog | None = None
+    services: ServiceProvider | None = None
     env: dict[str, str] = Field(default_factory=dict)
 
 

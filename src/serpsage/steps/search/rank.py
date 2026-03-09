@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.components.base import Depends
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.steps.search import (
     SearchCandidateForScoring,
     SearchRankedCandidate,
@@ -28,7 +28,9 @@ _MAIN_CONTENT_SUBPAGE_INDEX = -1  # Sentinel value for main content vs subpage i
 
 
 class SearchRankStep(StepBase[SearchStepContext]):
-    def __init__(self, *, rt: Runtime, ranker: RankerBase = Depends()) -> None:
+    def __init__(
+        self, *, rt: Runtime = Inject(), ranker: RankerBase = Inject()
+    ) -> None:
         super().__init__(rt=rt)
         self._ranker = ranker
         self.bind_deps(ranker)

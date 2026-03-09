@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from serpsage.components.telemetry.base import EventSinkBase, TelemetryEmitterBase
 
@@ -11,9 +11,7 @@ def build_telemetry(
     overrides: Any | None = None,
 ) -> TelemetryEmitterBase:
     _ = overrides
-    return rt.components.resolve_default(
-        "telemetry", expected_type=TelemetryEmitterBase
-    )
+    return cast("TelemetryEmitterBase", rt.services.require(TelemetryEmitterBase))
 
 
 __all__ = ["EventSinkBase", "TelemetryEmitterBase", "build_telemetry"]

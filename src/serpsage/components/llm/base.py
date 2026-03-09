@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
+from typing import Any, Generic, TypeAlias, cast, overload
+from typing_extensions import TypeVar
 
 import anyio
 from pydantic import BaseModel, Field
@@ -17,7 +18,6 @@ from serpsage.models.components.llm import (
 )
 
 TModel = TypeVar("TModel", bound=BaseModel)
-LLMConfigT = TypeVar("LLMConfigT", bound=ComponentConfigBase)
 RetryPredicate = Callable[[Exception], bool]
 RetryOn: TypeAlias = (
     type[Exception]
@@ -42,6 +42,13 @@ class LLMModelConfig(ComponentConfigBase):
 
 class LLMRouterConfig(ComponentConfigBase):
     pass
+
+
+LLMConfigT = TypeVar(
+    "LLMConfigT",
+    bound=ComponentConfigBase,
+    default=ComponentConfigBase,
+)
 
 
 class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):

@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing_extensions import override
 
-from serpsage.components.base import Depends
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.steps.research import (
     ContentConflictPayload,
     ContentOutputPayload,
@@ -24,9 +24,9 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        llm: LLMClientBase = Depends(),
-        ranker: RankerBase = Depends(),
+        rt: Runtime = Inject(),
+        llm: LLMClientBase = Inject(),
+        ranker: RankerBase = Inject(),
     ) -> None:
         super().__init__(rt=rt)
         self._llm = llm

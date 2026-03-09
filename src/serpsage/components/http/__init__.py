@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from serpsage.components.http.base import HttpClientBase
 
@@ -11,7 +11,7 @@ def build_http_client(
     overrides: Any | None = None,
 ) -> HttpClientBase:
     _ = overrides
-    return rt.components.resolve_default("http", expected_type=HttpClientBase)
+    return cast("HttpClientBase", rt.services.require(HttpClientBase))
 
 
 __all__ = ["HttpClientBase", "build_http_client"]

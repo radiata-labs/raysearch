@@ -7,9 +7,9 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import Depends
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.steps.research import (
     RenderArchitectOutput,
     RenderArchitectSectionPlan,
@@ -47,7 +47,9 @@ class _WriterSectionError(RuntimeError):
 
 
 class ResearchRenderStep(StepBase[ResearchStepContext]):
-    def __init__(self, *, rt: Runtime, llm: LLMClientBase = Depends()) -> None:
+    def __init__(
+        self, *, rt: Runtime = Inject(), llm: LLMClientBase = Inject()
+    ) -> None:
         super().__init__(rt=rt)
         self._llm = llm
         self.bind_deps(llm)

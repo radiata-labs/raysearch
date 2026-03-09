@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing_extensions import override
 
-from serpsage.components.base import Depends
+from serpsage.app.tokens import FETCH_RUNNER
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchRequest
 from serpsage.models.app.response import FetchResponse
 from serpsage.models.steps.fetch import FetchStepContext
@@ -15,8 +16,8 @@ class SearchFetchStep(StepBase[SearchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
+        rt: Runtime = Inject(),
+        fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER),
     ) -> None:
         super().__init__(rt=rt)
         self._fetch_runner = fetch_runner

@@ -4,8 +4,15 @@ import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
+from serpsage.app.tokens import (
+    ANSWER_RUNNER,
+    FETCH_RUNNER,
+    RESEARCH_RUNNER,
+    SEARCH_RUNNER,
+)
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
+from serpsage.dependencies import Inject
 from serpsage.models.app.response import (
     AnswerResponse,
     FetchResponse,
@@ -38,11 +45,13 @@ class Engine(WorkUnit):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        search_runner: RunnerBase[SearchStepContext],
-        fetch_runner: RunnerBase[FetchStepContext],
-        answer_runner: RunnerBase[AnswerStepContext],
-        research_runner: RunnerBase[ResearchStepContext] | None = None,
+        rt: Runtime = Inject(),
+        search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER),
+        fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER),
+        answer_runner: RunnerBase[AnswerStepContext] = Inject(ANSWER_RUNNER),
+        research_runner: RunnerBase[ResearchStepContext] | None = Inject(
+            RESEARCH_RUNNER
+        ),
     ) -> None:
         super().__init__(rt=rt)
         self._search_runner = search_runner
@@ -53,13 +62,7 @@ class Engine(WorkUnit):
             steps=[],
             kind="search",
         )
-        self.bind_deps(
-            search_runner,
-            fetch_runner,
-            answer_runner,
-            self._research_runner,
-            self.telemetry,
-        )
+        self.bind_deps(self.telemetry)
 
     @classmethod
     def from_settings(

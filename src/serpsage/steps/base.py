@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 from typing_extensions import override
 
 import anyio
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from serpsage.core.runtime import Runtime
     from serpsage.models.steps.base import BaseStepContext
 
-    TContext = TypeVar("TContext", bound=BaseStepContext)
+    TContext = TypeVar("TContext", bound="BaseStepContext[Any, Any]")
 else:
     TContext = TypeVar("TContext")
 

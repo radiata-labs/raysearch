@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing_extensions import override
 
-from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.base import ComponentMeta
 from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.html import HtmlExtractor
 from serpsage.components.extract.pdf import PdfExtractor
 from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.components.registry import register_component
+from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
 _AUTO_EXTRACTOR_META = ComponentMeta(
@@ -27,16 +29,12 @@ class AutoExtractor(ExtractorBase):
     def __init__(
         self,
         *,
-        rt: object,
-        config: ExtractConfigBase,
-        html_extractor: HtmlExtractor = Depends(),
-        pdf_extractor: PdfExtractor = Depends(),
+        rt: Runtime = Inject(),
+        config: ExtractConfigBase = Inject(),
+        html_extractor: HtmlExtractor = Inject(),
+        pdf_extractor: PdfExtractor = Inject(),
     ) -> None:
-        super().__init__(
-            rt=rt,
-            config=config,
-            bound_deps=(html_extractor, pdf_extractor),
-        )
+        super().__init__(rt=rt, config=config)
         self._markdown_extractor = html_extractor
         self._pdf_extractor = pdf_extractor
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal
+from typing_extensions import TypeVar
 
 from pydantic import Field, model_validator
 
@@ -9,7 +10,6 @@ from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.provider import SearchProviderResponse
 
 GoogleSafeSearchKey = Literal["off", "medium", "high"]
-ProviderConfigT = TypeVar("ProviderConfigT", bound="ProviderConfigBase")
 
 
 class RetrySettings(ComponentConfigBase):
@@ -41,6 +41,13 @@ class ProviderConfigBase(ComponentConfigBase):
         if int(self.results_per_page) > 100:
             raise ValueError("provider results_per_page must be <= 100")
         return self
+
+
+ProviderConfigT = TypeVar(
+    "ProviderConfigT",
+    bound=ProviderConfigBase,
+    default=ProviderConfigBase,
+)
 
 
 class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderConfigT]):

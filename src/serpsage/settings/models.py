@@ -76,9 +76,9 @@ def _family_settings(
 
 def _default_http_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="shared",
+        default="httpx",
         instances={
-            "shared": {
+            "httpx": {
                 "component": "httpx",
                 "config": {},
             }
@@ -88,9 +88,9 @@ def _default_http_settings() -> ComponentFamilySettings:
 
 def _default_provider_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="searxng_main",
+        default="searxng",
         instances={
-            "searxng_main": {
+            "searxng": {
                 "component": "searxng",
                 "config": {},
             }
@@ -100,17 +100,17 @@ def _default_provider_settings() -> ComponentFamilySettings:
 
 def _default_fetch_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="auto_main",
+        default="auto",
         instances={
-            "auto_main": {
+            "auto": {
                 "component": "auto",
                 "config": {},
             },
-            "curl_main": {
+            "curl_cffi": {
                 "component": "curl_cffi",
                 "config": {},
             },
-            "playwright_main": {
+            "playwright": {
                 "component": "playwright",
                 "config": {},
             },
@@ -120,17 +120,17 @@ def _default_fetch_settings() -> ComponentFamilySettings:
 
 def _default_extract_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="auto_main",
+        default="auto",
         instances={
-            "auto_main": {
+            "auto": {
                 "component": "auto",
                 "config": {},
             },
-            "html_main": {
+            "html": {
                 "component": "html",
                 "config": {},
             },
-            "pdf_main": {
+            "pdf": {
                 "component": "pdf",
                 "config": {},
             },
@@ -140,25 +140,25 @@ def _default_extract_settings() -> ComponentFamilySettings:
 
 def _default_rank_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="blend_main",
+        default="blend",
         instances={
-            "blend_main": {
+            "blend": {
                 "component": "blend",
                 "config": {},
             },
-            "heuristic_main": {
+            "heuristic": {
                 "component": "heuristic",
                 "config": {},
             },
-            "tfidf_main": {
+            "tfidf": {
                 "component": "tfidf",
                 "config": {},
             },
-            "bm25_main": {
+            "bm25": {
                 "component": "bm25",
                 "config": {},
             },
-            "cross_encoder_main": {
+            "cross_encoder": {
                 "component": "cross_encoder",
                 "config": {},
             },
@@ -168,9 +168,9 @@ def _default_rank_settings() -> ComponentFamilySettings:
 
 def _default_cache_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="null_main",
+        default="null",
         instances={
-            "null_main": {
+            "null": {
                 "component": "null",
                 "config": {},
             }
@@ -180,9 +180,9 @@ def _default_cache_settings() -> ComponentFamilySettings:
 
 def _default_llm_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="router_main",
+        default="router",
         instances={
-            "router_main": {
+            "router": {
                 "component": "router",
                 "config": {},
             },
@@ -199,9 +199,9 @@ def _default_llm_settings() -> ComponentFamilySettings:
 
 def _default_telemetry_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="null_main",
+        default="null",
         instances={
-            "null_main": {
+            "null": {
                 "component": "null_emitter",
                 "config": {},
             }
@@ -211,9 +211,9 @@ def _default_telemetry_settings() -> ComponentFamilySettings:
 
 def _default_rate_limit_settings() -> ComponentFamilySettings:
     return _family_settings(
-        default="basic_main",
+        default="basic",
         instances={
-            "basic_main": {
+            "basic": {
                 "component": "basic",
                 "config": {},
             }

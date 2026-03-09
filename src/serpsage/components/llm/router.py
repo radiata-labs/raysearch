@@ -6,13 +6,15 @@ from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.base import ComponentMeta
 from serpsage.components.llm.base import (
     LLMClientBase,
     LLMModelConfig,
     LLMRouterConfig,
 )
 from serpsage.components.registry import register_component
+from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -39,17 +41,15 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
     def __init__(
         self,
         *,
-        rt: object,
-        config: LLMRouterConfig,
-        routes: tuple[LLMClientBase, ...] = Depends(),
+        rt: Runtime = Inject(),
+        config: LLMRouterConfig = Inject(),
+        routes: tuple[LLMClientBase[Any], ...] = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config, bound_deps=routes)
+        super().__init__(rt=rt, config=config)
         route_clients = routes
-        self._routes: dict[str, tuple[LLMClientBase, str]] = {}
+        self._routes: dict[str, tuple[LLMClientBase[Any], str]] = {}
         for client in route_clients:
-            model_cfg = cast(
-                "LLMModelConfig", client.describe_model(client.config.name)
-            )
+            model_cfg = client.describe_model(client.config.name)
             if not model_cfg.api_key:
                 continue
             self._routes[model_cfg.name] = (client, model_cfg.model)
@@ -127,6 +127,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
             attrs={**route_attrs, "message_count": len(messages)},
         )
         try:
+            result: ChatResultBase
             if response_format is None:
                 result = await client.create(
                     model=provider_model,

@@ -7,12 +7,12 @@ from contextlib import suppress
 from typing import Any
 from typing_extensions import override
 
-from serpsage.components.base import Depends
 from serpsage.components.cache import CacheBase
 from serpsage.components.cache.base import CacheConfigBase
 from serpsage.components.fetch import FetcherBase
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.app.response import FetchErrorTag
 from serpsage.models.components.fetch import FetchResult
 from serpsage.models.components.telemetry import MeterPayload
@@ -26,9 +26,9 @@ class FetchLoadStep(StepBase[FetchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        fetcher: FetcherBase = Depends(),
-        cache: CacheBase = Depends(),
+        rt: Runtime = Inject(),
+        fetcher: FetcherBase = Inject(),
+        cache: CacheBase = Inject(),
     ) -> None:
         super().__init__(rt=rt)
         self._fetcher = fetcher

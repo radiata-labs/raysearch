@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Literal
 from typing_extensions import override
 
-from serpsage.components.base import Depends
+from serpsage.app.tokens import SEARCH_RUNNER
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.app.request import (
     FetchAbstractsRequest,
     SearchFetchRequest,
@@ -30,8 +31,8 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        search_runner: RunnerBase[SearchStepContext] = Depends(),
+        rt: Runtime = Inject(),
+        search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER),
     ) -> None:
         super().__init__(rt=rt)
         self._search_runner = search_runner

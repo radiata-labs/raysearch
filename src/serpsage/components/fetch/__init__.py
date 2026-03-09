@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from serpsage.components.fetch.base import FetcherBase
 
@@ -13,7 +13,7 @@ def build_fetcher(
 ) -> FetcherBase:
     _ = rate_limiter
     _ = http
-    return rt.components.resolve_default("fetch", expected_type=FetcherBase)
+    return cast("FetcherBase", rt.services.require(FetcherBase))
 
 
 __all__ = ["FetcherBase", "build_fetcher"]

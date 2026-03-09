@@ -7,6 +7,8 @@ import httpx
 from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase, HttpClientConfig
 from serpsage.components.registry import register_component
+from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 
 
 @register_component(
@@ -32,8 +34,8 @@ class HttpClient(HttpClientBase):
     def __init__(
         self,
         *,
-        rt: object,
-        config: HttpClientConfig,
+        rt: Runtime = Inject(),
+        config: HttpClientConfig = Inject(),
     ) -> None:
         super().__init__(rt=rt, config=config)
         components = getattr(rt, "components", None)

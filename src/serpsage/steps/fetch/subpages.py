@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.components.base import Depends
+from serpsage.app.tokens import CHILD_FETCH_RUNNER
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchOthersRequest
 from serpsage.models.app.response import FetchResponse, FetchSubpagesResult
 from serpsage.models.steps.fetch import FetchStepContext, FetchSubpageState
@@ -20,9 +21,9 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
-        ranker: RankerBase = Depends(),
+        rt: Runtime = Inject(),
+        fetch_runner: RunnerBase[FetchStepContext] = Inject(CHILD_FETCH_RUNNER),
+        ranker: RankerBase = Inject(),
     ) -> None:
         super().__init__(rt=rt)
         self._fetch_runner = fetch_runner

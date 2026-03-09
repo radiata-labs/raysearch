@@ -7,11 +7,12 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import anyio
 
-from serpsage.components.base import Depends
+from serpsage.app.tokens import FETCH_RUNNER
 from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOthersRequest,
@@ -61,10 +62,10 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        fetch_runner: RunnerBase[FetchStepContext] = Depends(),
-        ranker: RankerBase = Depends(),
-        llm: LLMClientBase = Depends(),
+        rt: Runtime = Inject(),
+        fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER),
+        ranker: RankerBase = Inject(),
+        llm: LLMClientBase = Inject(),
         phase: Literal["pre", "post"] = "post",
     ) -> None:
         super().__init__(rt=rt)

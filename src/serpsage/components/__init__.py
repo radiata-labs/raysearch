@@ -3,14 +3,12 @@ from __future__ import annotations
 from serpsage.components.base import (
     ComponentBase,
     ComponentConfigBase,
+    ComponentFamily,
     ComponentMeta,
-    DependencyRequest,
-    DependencySpec,
-    Depends,
-    InjectedParams,
 )
 from serpsage.components.cache import build_cache
 from serpsage.components.container import (
+    ComponentCatalog,
     ComponentContainer,
     ComponentResolutionError,
     ResolvedComponentSpec,
@@ -33,15 +31,13 @@ from serpsage.components.telemetry import build_telemetry
 __all__ = [
     "BuiltinComponentDiscovery",
     "ComponentBase",
+    "ComponentCatalog",
     "ComponentConfigBase",
     "ComponentContainer",
+    "ComponentFamily",
     "ComponentMeta",
     "ComponentRegistry",
     "ComponentResolutionError",
-    "DependencyRequest",
-    "DependencySpec",
-    "Depends",
-    "InjectedParams",
     "ResolvedComponentSpec",
     "build_cache",
     "build_extractor",

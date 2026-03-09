@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from typing_extensions import override
 
 import anyio
 from pydantic import Field, field_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
-from serpsage.core.workunit import WorkUnit
-
-if TYPE_CHECKING:
-    from serpsage.models.components.fetch import FetchResult
+from serpsage.models.components.fetch import FetchResult
 
 _NESTED_INFLIGHT_BYPASS: ContextVar[bool] = ContextVar(
     "fetcher_inflight_nested_bypass", default=False
@@ -181,9 +177,8 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
         *,
         rt: Any,
         config: FetchConfigBase,
-        bound_deps: Sequence[WorkUnit] | None = None,
     ) -> None:
-        super().__init__(rt=rt, config=config, bound_deps=bound_deps)
+        super().__init__(rt=rt, config=config)
         self._inflight_lock = anyio.Lock()
         self._inflight_pool: dict[str, _InFlightEntry] = {}
         self._inflight_tg_cm: Any | None = None

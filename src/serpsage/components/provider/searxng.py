@@ -5,10 +5,12 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.components.base import ComponentMeta, Depends
+from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.components.registry import register_component
+from serpsage.core.runtime import Runtime
+from serpsage.dependencies import Inject
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -64,11 +66,11 @@ class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
     def __init__(
         self,
         *,
-        rt: object,
-        config: SearxngProviderConfig,
-        http: HttpClientBase = Depends(),
+        rt: Runtime = Inject(),
+        config: SearxngProviderConfig = Inject(),
+        http: HttpClientBase = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config, bound_deps=(http,))
+        super().__init__(rt=rt, config=config)
         self._http = http.client
 
     @override

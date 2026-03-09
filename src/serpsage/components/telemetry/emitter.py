@@ -11,13 +11,14 @@ from anyio import WouldBlock
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from serpsage.components.base import ComponentConfigBase, ComponentMeta, Depends
+from serpsage.components.base import ComponentConfigBase, ComponentMeta
 from serpsage.components.registry import register_component
 from serpsage.components.telemetry.base import (
     EventSinkBase,
     TelemetryEmitterBase,
     TelemetryEmitterConfig,
 )
+from serpsage.dependencies import Inject
 from serpsage.models.components.telemetry import (
     EventAttributes,
     EventEnvelope,
@@ -80,11 +81,11 @@ class AsyncEventEmitter(TelemetryEmitterBase):
     def __init__(
         self,
         *,
-        rt: Runtime,
-        config: TelemetryEmitterConfig,
-        sinks: tuple[EventSinkBase, ...] = Depends(),
+        rt: Runtime = Inject(),
+        config: TelemetryEmitterConfig = Inject(),
+        sinks: tuple[EventSinkBase, ...] = Inject(),
     ) -> None:
-        super().__init__(rt=rt, config=config, bound_deps=sinks)
+        super().__init__(rt=rt, config=config)
         self._sinks = list(sinks)
         self._queue_size = max(1, int(config.queue_size))
         self._drop_noncritical_when_full = bool(config.drop_noncritical_when_full)
