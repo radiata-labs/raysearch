@@ -112,7 +112,7 @@ def _default_provider_settings() -> ComponentFamilySettings:
     )
 
 
-def _default_fetch_settings() -> ComponentFamilySettings:
+def _default_crawl_settings() -> ComponentFamilySettings:
     return _family_settings(
         default="auto",
         instances={
@@ -233,6 +233,42 @@ def _default_rate_limit_settings() -> ComponentFamilySettings:
             }
         },
     )
+
+
+class FetchExtractSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    max_markdown_chars: int = 160_000
+    min_text_chars: int = 220
+    min_primary_chars: int = 220
+    min_total_chars_with_secondary: int = 220
+    include_secondary_content_default: bool = False
+    collect_links_default: bool = False
+    link_max_count: int = 800
+    link_keep_hash: bool = False
+
+
+class FetchAbstractSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    max_abstract_chars: int = 2000
+    min_abstract_score: float = 0.20
+    min_abstract_tokens: int = 4
+    title_boost_alpha: float = 0.35
+
+
+class FetchOverviewSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    use_model: str = "gpt-4.1-mini"
+    max_abstract_chars: int = 900
+    cache_ttl_s: int = 0
+    self_heal_retries: int = 1
+    force_language: str = "auto"
+
+
+class FetchSettings(Model):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
+    abstract: FetchAbstractSettings = Field(default_factory=FetchAbstractSettings)
+    overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
 
 
 class SearchDeepSettings(Model):
@@ -504,7 +540,7 @@ class AppSettings(Model):
     provider: ComponentFamilySettings = Field(
         default_factory=_default_provider_settings
     )
-    fetch: ComponentFamilySettings = Field(default_factory=_default_fetch_settings)
+    crawl: ComponentFamilySettings = Field(default_factory=_default_crawl_settings)
     extract: ComponentFamilySettings = Field(default_factory=_default_extract_settings)
     rank: ComponentFamilySettings = Field(default_factory=_default_rank_settings)
     llm: ComponentFamilySettings = Field(default_factory=_default_llm_settings)
@@ -516,6 +552,7 @@ class AppSettings(Model):
         default_factory=_default_rate_limit_settings
     )
     search: SearchSettings = Field(default_factory=SearchSettings)
+    fetch: FetchSettings = Field(default_factory=FetchSettings)
     answer: AnswerSettings = Field(default_factory=AnswerSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
@@ -538,7 +575,7 @@ class AppSettings(Model):
 _COMPONENT_FAMILY_DEFAULT_FACTORIES = {
     "http": _default_http_settings,
     "provider": _default_provider_settings,
-    "fetch": _default_fetch_settings,
+    "crawl": _default_crawl_settings,
     "extract": _default_extract_settings,
     "rank": _default_rank_settings,
     "llm": _default_llm_settings,
@@ -591,6 +628,10 @@ def _merge_component_family_payload(
 
 __all__ = [
     "AppSettings",
+    "FetchAbstractSettings",
+    "FetchExtractSettings",
+    "FetchOverviewSettings",
+    "FetchSettings",
     "AnswerGenerateSettings",
     "AnswerSettings",
     "AnswerStageSettings",

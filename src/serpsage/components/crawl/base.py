@@ -10,45 +10,19 @@ import anyio
 from pydantic import Field, field_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
-from serpsage.models.components.fetch import FetchResult
+from serpsage.models.components.crawl import CrawlResult
 
 _NESTED_INFLIGHT_BYPASS: ContextVar[bool] = ContextVar(
-    "fetcher_inflight_nested_bypass", default=False
+    "crawler_inflight_nested_bypass", default=False
 )
 
 
-class FetchExtractSettings(ComponentConfigBase):
-    max_markdown_chars: int = 160_000
-    min_text_chars: int = 220
-    min_primary_chars: int = 220
-    min_total_chars_with_secondary: int = 220
-    include_secondary_content_default: bool = False
-    collect_links_default: bool = False
-    link_max_count: int = 800
-    link_keep_hash: bool = False
-
-
-class RetrySettings(ComponentConfigBase):
+class CrawlRetrySettings(ComponentConfigBase):
     max_attempts: int = 3
     delay_ms: int = 200
 
 
-class FetchAbstractSettings(ComponentConfigBase):
-    max_abstract_chars: int = 2000
-    min_abstract_score: float = 0.20
-    min_abstract_tokens: int = 4
-    title_boost_alpha: float = 0.35
-
-
-class FetchOverviewSettings(ComponentConfigBase):
-    use_model: str = "gpt-4.1-mini"
-    max_abstract_chars: int = 900
-    cache_ttl_s: int = 0
-    self_heal_retries: int = 1
-    force_language: str = "auto"
-
-
-class FetchRenderSettings(ComponentConfigBase):
+class CrawlRenderSettings(ComponentConfigBase):
     js_concurrency: int = 12
     nav_timeout_ms: int = 8_000
     block_resources: bool = True
@@ -85,14 +59,14 @@ def _default_blocked_markers() -> list[str]:
     ]
 
 
-class FetchQualitySettings(ComponentConfigBase):
+class CrawlQualitySettings(ComponentConfigBase):
     min_text_chars: int = 100
     script_ratio_threshold: float = 0.35
     quality_score_threshold: float = 0.15
     blocked_markers: list[str] = Field(default_factory=_default_blocked_markers)
 
 
-class FetchAutoSettings(ComponentConfigBase):
+class CrawlAutoSettings(ComponentConfigBase):
     scout_bytes: int = 48_000
     route_memory_size: int = 4096
     direct_route_min_samples: int = 3
@@ -101,18 +75,15 @@ class FetchAutoSettings(ComponentConfigBase):
     learning_rate: float = 0.22
 
 
-class FetchConfigBase(ComponentConfigBase):
+class CrawlConfigBase(ComponentConfigBase):
     inflight_enabled: bool = True
     inflight_timeout_s: float = 60.0
     timeout_s: float = 2.0
     follow_redirects: bool = True
     user_agent: str = "serpsage-bot/4.0"
-    auto: FetchAutoSettings = Field(default_factory=FetchAutoSettings)
-    render: FetchRenderSettings = Field(default_factory=FetchRenderSettings)
-    quality: FetchQualitySettings = Field(default_factory=FetchQualitySettings)
-    extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
-    abstract: FetchAbstractSettings = Field(default_factory=FetchAbstractSettings)
-    overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
+    auto: CrawlAutoSettings = Field(default_factory=CrawlAutoSettings)
+    render: CrawlRenderSettings = Field(default_factory=CrawlRenderSettings)
+    quality: CrawlQualitySettings = Field(default_factory=CrawlQualitySettings)
 
     @field_validator("inflight_timeout_s")
     @classmethod
@@ -125,11 +96,11 @@ class FetchConfigBase(ComponentConfigBase):
 @dataclass(slots=True)
 class _InFlightEntry:
     done: anyio.Event
-    result: FetchResult | None = None
+    result: CrawlResult | None = None
     error: BaseException | None = None
 
 
-class FetcherBase(ComponentBase[FetchConfigBase], ABC):
+class CrawlerBase(ComponentBase[CrawlConfigBase], ABC):
     def __init__(self) -> None:
         self._inflight_lock = anyio.Lock()
         self._inflight_pool: dict[str, _InFlightEntry] = {}
@@ -152,7 +123,7 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
             self._inflight_pool.clear()
         for entry in entries:
             if entry.result is None and entry.error is None:
-                entry.error = RuntimeError("fetcher closed while waiting for result")
+                entry.error = RuntimeError("crawler closed while waiting for result")
             entry.done.set()
         tg = self._inflight_tg
         tg_cm = self._inflight_tg_cm
@@ -163,19 +134,19 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
         if tg_cm is not None:
             await tg_cm.__aexit__(None, None, None)
 
-    async def afetch(
+    async def acrawl(
         self,
         *,
         url: str,
         timeout_s: float | None = None,
-    ) -> FetchResult:
+    ) -> CrawlResult:
         if not bool(self.config.inflight_enabled) or _NESTED_INFLIGHT_BYPASS.get():
             return await self._run_inner_once(url=url, timeout_s=timeout_s)
         entry, created = await self._get_inflight_entry(url=url)
         if created:
             tg = self._inflight_tg
             if tg is None:
-                raise RuntimeError("fetcher task group is not initialized")
+                raise RuntimeError("crawler task group is not initialized")
             tg.start_soon(self._run_inflight_worker, url, entry)
         return await self._await_inflight_entry(entry=entry, timeout_s=timeout_s)
 
@@ -193,7 +164,7 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
         *,
         entry: _InFlightEntry,
         timeout_s: float | None,
-    ) -> FetchResult:
+    ) -> CrawlResult:
         if timeout_s is None:
             await entry.done.wait()
         else:
@@ -202,7 +173,7 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
         if entry.result is not None:
             return entry.result
         if entry.error is None:
-            raise RuntimeError("in-flight fetch completed without result or error")
+            raise RuntimeError("in-flight crawl completed without result or error")
         raise entry.error
 
     async def _run_inflight_worker(self, url: str, entry: _InFlightEntry) -> None:
@@ -220,7 +191,7 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
                 if current is entry:
                     self._inflight_pool.pop(url, None)
 
-    async def _run_inflight_with_retry(self, *, url: str) -> FetchResult:
+    async def _run_inflight_with_retry(self, *, url: str) -> CrawlResult:
         try:
             return await self._run_inflight_once(url=url)
         except TimeoutError:
@@ -228,12 +199,12 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
         except BaseException:  # noqa: BLE001
             return await self._run_inflight_once(url=url)
 
-    async def _run_inflight_once(self, *, url: str) -> FetchResult:
+    async def _run_inflight_once(self, *, url: str) -> CrawlResult:
         timeout_s = float(self.config.inflight_timeout_s)
         token = _NESTED_INFLIGHT_BYPASS.set(True)
         try:
             with anyio.fail_after(timeout_s):
-                return await self._afetch_inner(url=url, timeout_s=timeout_s)
+                return await self._acrawl_inner(url=url, timeout_s=timeout_s)
         finally:
             _NESTED_INFLIGHT_BYPASS.reset(token)
 
@@ -242,30 +213,27 @@ class FetcherBase(ComponentBase[FetchConfigBase], ABC):
         *,
         url: str,
         timeout_s: float | None,
-    ) -> FetchResult:
+    ) -> CrawlResult:
         if timeout_s is None:
-            return await self._afetch_inner(url=url, timeout_s=timeout_s)
+            return await self._acrawl_inner(url=url, timeout_s=timeout_s)
         with anyio.fail_after(float(timeout_s)):
-            return await self._afetch_inner(url=url, timeout_s=timeout_s)
+            return await self._acrawl_inner(url=url, timeout_s=timeout_s)
 
     @abstractmethod
-    async def _afetch_inner(
+    async def _acrawl_inner(
         self,
         *,
         url: str,
         timeout_s: float | None = None,
-    ) -> FetchResult:
+    ) -> CrawlResult:
         raise NotImplementedError
 
 
 __all__ = [
-    "FetchAbstractSettings",
-    "FetchAutoSettings",
-    "FetchConfigBase",
-    "FetchExtractSettings",
-    "FetcherBase",
-    "FetchOverviewSettings",
-    "FetchQualitySettings",
-    "FetchRenderSettings",
-    "RetrySettings",
+    "CrawlAutoSettings",
+    "CrawlConfigBase",
+    "CrawlerBase",
+    "CrawlQualitySettings",
+    "CrawlRenderSettings",
+    "CrawlRetrySettings",
 ]

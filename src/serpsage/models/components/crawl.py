@@ -7,19 +7,19 @@ from pydantic import Field
 from serpsage.models.base import FrozenModel
 
 
-class FetchResult(FrozenModel):
+class CrawlResult(FrozenModel):
     url: str
     status_code: int
     content_type: str | None = None
     content: bytes = b""
-    fetch_mode: Literal["curl_cffi", "playwright"] = "curl_cffi"
+    crawl_backend: Literal["curl_cffi", "playwright"] = "curl_cffi"
     rendered: bool = False
     content_kind: Literal["html", "pdf", "text", "binary", "unknown"] = "unknown"
     headers: dict[str, str] = Field(default_factory=dict)
     attempt_chain: list[str] = Field(default_factory=list)
 
 
-class FetchAttempt(FetchResult):
+class CrawlAttempt(CrawlResult):
     strategy_used: Literal["curl_cffi", "playwright"] = "curl_cffi"
     content_encoding: str | None = None
     content_length_header: str | None = None
@@ -30,4 +30,4 @@ class FetchAttempt(FetchResult):
     render_reason: str | None = None
 
 
-__all__ = ["FetchAttempt", "FetchResult"]
+__all__ = ["CrawlAttempt", "CrawlResult"]

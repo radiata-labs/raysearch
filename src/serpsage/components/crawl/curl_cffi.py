@@ -7,8 +7,12 @@ from typing_extensions import override
 import anyio
 
 from serpsage.components.base import ComponentMeta
-from serpsage.components.fetch.base import FetchConfigBase, FetcherBase, RetrySettings
-from serpsage.components.fetch.utils import (
+from serpsage.components.crawl.base import (
+    CrawlConfigBase,
+    CrawlerBase,
+    CrawlRetrySettings,
+)
+from serpsage.components.crawl.utils import (
     analyze_content,
     browser_headers,
     classify_content_kind,
@@ -17,7 +21,7 @@ from serpsage.components.fetch.utils import (
 )
 from serpsage.components.http.base import HttpClientConfig
 from serpsage.load import register_component
-from serpsage.models.components.fetch import FetchAttempt, FetchResult
+from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,59 +43,61 @@ else:
 
 @dataclass(slots=True)
 class CurlProgressiveResult:
-    attempt: FetchAttempt
+    attempt: CrawlAttempt
     finished: bool
     bytes_read: int
 
 
-class CurlCffiFetcherConfig(FetchConfigBase):
+class CurlCffiCrawlerConfig(CrawlConfigBase):
     pass
 
 
-_CURL_FETCHER_META = ComponentMeta(
-    family="fetch",
+_CURL_CRAWLER_META = ComponentMeta(
+    family="crawl",
     name="curl_cffi",
     version="1.0.0",
-    summary="curl_cffi fetch backend.",
-    provides=("fetch.curl_engine",),
-    config_model=CurlCffiFetcherConfig,
+    summary="curl_cffi crawl backend.",
+    provides=("crawl.curl_engine",),
+    config_model=CurlCffiCrawlerConfig,
     config_optional=True,
 )
 
 
-@register_component(meta=_CURL_FETCHER_META)
-class CurlCffiFetcher(FetcherBase):
-    meta = _CURL_FETCHER_META
+@register_component(meta=_CURL_CRAWLER_META)
+class CurlCffiCrawler(CrawlerBase):
+    meta = _CURL_CRAWLER_META
 
     def __init__(self) -> None:
+        super().__init__()
         if not CURL_CFFI_AVAILABLE:
             raise RuntimeError("curl_cffi is not available; install curl_cffi")
         self._session: Any | None = None
 
     @override
     async def on_init(self) -> None:
+        await super().on_init()
         if self._session is None and CurlSessionFactory is not None:
             self._session = CurlSessionFactory()
 
     @override
-    async def _afetch_inner(
+    async def _acrawl_inner(
         self,
         *,
         url: str,
         timeout_s: float | None = None,
-    ) -> FetchResult:
-        res = await self.fetch_attempt(
+    ) -> CrawlResult:
+        res = await self.crawl_attempt(
             url=url,
             timeout_s=timeout_s,
         )
         if int(res.status_code) <= 0:
-            raise RuntimeError("curl_cffi fetch failed")
-        return FetchResult(
+            raise RuntimeError("curl_cffi crawl failed")
+        return CrawlResult(
             url=str(res.url or url),
             status_code=int(res.status_code),
             content_type=res.content_type,
             content=bytes(res.content or b""),
-            fetch_mode="curl_cffi",
+            crawl_backend="curl_cffi",
             rendered=False,
             content_kind=res.content_kind,
             headers=dict(res.headers or {}),
@@ -100,6 +106,7 @@ class CurlCffiFetcher(FetcherBase):
 
     @override
     async def on_close(self) -> None:
+        await super().on_close()
         if self._session is None:
             return
         try:
@@ -107,14 +114,14 @@ class CurlCffiFetcher(FetcherBase):
         finally:
             self._session = None
 
-    async def fetch_attempt(
+    async def crawl_attempt(
         self,
         *,
         url: str,
-        retry: RetrySettings | None = None,
+        retry: CrawlRetrySettings | None = None,
         timeout_s: float | None = None,
-    ) -> FetchAttempt:
-        progressive = await self.fetch_progressive_attempt(
+    ) -> CrawlAttempt:
+        progressive = await self.crawl_progressive_attempt(
             url=url,
             retry=retry,
             timeout_s=timeout_s,
@@ -123,23 +130,20 @@ class CurlCffiFetcher(FetcherBase):
         )
         return progressive.attempt
 
-    async def fetch_progressive_attempt(
+    async def crawl_progressive_attempt(
         self,
         *,
         url: str,
-        retry: RetrySettings | None = None,
+        retry: CrawlRetrySettings | None = None,
         timeout_s: float | None = None,
         scout_bytes: int | None,
-        continue_predicate: Callable[[FetchAttempt], bool] | None,
+        continue_predicate: Callable[[CrawlAttempt], bool] | None,
     ) -> CurlProgressiveResult:
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
         cfg = self.config
-        http_cfg = cast(
-            "HttpClientConfig",
-            self.components.resolve_default_config(
-                "http", expected_type=HttpClientConfig
-            ),
+        http_cfg = self.components.resolve_default_config(
+            "http", expected_type=HttpClientConfig
         )
         req_timeout_s = timeout_s or cfg.timeout_s
         max_attempts = max(1, int(getattr(retry, "max_attempts", 0) or 2))
@@ -196,7 +200,7 @@ class CurlCffiFetcher(FetcherBase):
         timeout_s: float,
         proxy: str | None,
         scout_bytes: int | None,
-        continue_predicate: Callable[[FetchAttempt], bool] | None,
+        continue_predicate: Callable[[CrawlAttempt], bool] | None,
     ) -> CurlProgressiveResult:
         cfg = self.config
         headers = browser_headers(
@@ -290,7 +294,7 @@ class CurlCffiFetcher(FetcherBase):
         content: bytes,
         headers: dict[str, str],
         finished: bool,
-    ) -> FetchAttempt:
+    ) -> CrawlAttempt:
         analysis = analyze_content(
             content=content,
             content_type=content_type,
@@ -300,13 +304,13 @@ class CurlCffiFetcher(FetcherBase):
         attempt_chain = ["curl_cffi"]
         if not finished:
             attempt_chain.append("curl_cffi:scout")
-        return FetchAttempt(
+        return CrawlAttempt(
             url=url,
             status_code=int(status_code or 0),
             content_type=content_type,
             content=content,
             strategy_used="curl_cffi",
-            fetch_mode="curl_cffi",
+            crawl_backend="curl_cffi",
             rendered=False,
             content_kind=analysis.content_kind,
             headers=headers,
@@ -336,7 +340,7 @@ class CurlCffiFetcher(FetcherBase):
 
 __all__ = [
     "CURL_CFFI_AVAILABLE",
-    "CurlCffiFetcher",
-    "CurlCffiFetcherConfig",
+    "CurlCffiCrawler",
+    "CurlCffiCrawlerConfig",
     "CurlProgressiveResult",
 ]

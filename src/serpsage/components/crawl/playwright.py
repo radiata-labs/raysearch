@@ -10,10 +10,10 @@ from typing_extensions import override
 import anyio
 
 from serpsage.components.base import ComponentMeta
-from serpsage.components.fetch.base import FetchConfigBase, FetcherBase
-from serpsage.components.fetch.utils import analyze_content
+from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
+from serpsage.components.crawl.utils import analyze_content
 from serpsage.load import register_component
-from serpsage.models.components.fetch import FetchAttempt, FetchResult
+from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route
@@ -70,26 +70,27 @@ Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
 """
 
 
-class PlaywrightFetcherConfig(FetchConfigBase):
+class PlaywrightCrawlerConfig(CrawlConfigBase):
     pass
 
 
-_PLAYWRIGHT_FETCHER_META = ComponentMeta(
-    family="fetch",
+_PLAYWRIGHT_CRAWLER_META = ComponentMeta(
+    family="crawl",
     name="playwright",
     version="1.0.0",
-    summary="Playwright browser fetch backend.",
-    provides=("fetch.playwright_engine",),
-    config_model=PlaywrightFetcherConfig,
+    summary="Playwright browser crawl backend.",
+    provides=("crawl.playwright_engine",),
+    config_model=PlaywrightCrawlerConfig,
     config_optional=True,
 )
 
 
-@register_component(meta=_PLAYWRIGHT_FETCHER_META)
-class PlaywrightFetcher(FetcherBase):
-    meta = _PLAYWRIGHT_FETCHER_META
+@register_component(meta=_PLAYWRIGHT_CRAWLER_META)
+class PlaywrightCrawler(CrawlerBase):
+    meta = _PLAYWRIGHT_CRAWLER_META
 
     def __init__(self) -> None:
+        super().__init__()
         if not PLAYWRIGHT_AVAILABLE or _pw_factory is None:
             raise RuntimeError("playwright is not available; install playwright")
         self._pw: Playwright | None = None
@@ -99,6 +100,7 @@ class PlaywrightFetcher(FetcherBase):
 
     @override
     async def on_init(self) -> None:
+        await super().on_init()
         if self._browser is not None:
             return
         if _pw_factory is None:
@@ -126,6 +128,7 @@ class PlaywrightFetcher(FetcherBase):
 
     @override
     async def on_close(self) -> None:
+        await super().on_close()
         if self._context is not None:
             with contextlib.suppress(Exception):
                 await self._context.close()
@@ -140,34 +143,34 @@ class PlaywrightFetcher(FetcherBase):
             self._pw = None
 
     @override
-    async def _afetch_inner(
+    async def _acrawl_inner(
         self,
         *,
         url: str,
         timeout_s: float | None = None,
-    ) -> FetchResult:
-        attempt = await self.fetch_attempt(url=url, timeout_s=timeout_s)
+    ) -> CrawlResult:
+        attempt = await self.crawl_attempt(url=url, timeout_s=timeout_s)
         if int(attempt.status_code or 0) <= 0:
-            raise RuntimeError("playwright fetch failed")
-        return FetchResult(
+            raise RuntimeError("playwright crawl failed")
+        return CrawlResult(
             url=attempt.url,
             status_code=int(attempt.status_code),
             content_type=attempt.content_type,
             content=attempt.content,
-            fetch_mode="playwright",
+            crawl_backend="playwright",
             rendered=True,
             content_kind=attempt.content_kind,
             headers=dict(attempt.headers or {}),
             attempt_chain=list(attempt.attempt_chain or []),
         )
 
-    async def fetch_attempt(
+    async def crawl_attempt(
         self,
         *,
         url: str,
         timeout_s: float | None = None,
         render_reason: str | None = None,
-    ) -> FetchAttempt:
+    ) -> CrawlAttempt:
         if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
         timeout_ms = int(self.config.render.nav_timeout_ms)
@@ -200,13 +203,13 @@ class PlaywrightFetcher(FetcherBase):
             url=final_url,
             markers=tuple(self.config.quality.blocked_markers),
         )
-        return FetchAttempt(
+        return CrawlAttempt(
             url=final_url,
             status_code=int(status),
             content_type=content_type,
             content=body,
             strategy_used="playwright",
-            fetch_mode="playwright",
+            crawl_backend="playwright",
             rendered=True,
             content_kind=analysis.content_kind,
             headers=headers,
@@ -358,4 +361,4 @@ class PlaywrightFetcher(FetcherBase):
         return 0
 
 
-__all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightFetcher", "PlaywrightFetcherConfig"]
+__all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightCrawler", "PlaywrightCrawlerConfig"]

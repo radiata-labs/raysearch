@@ -17,12 +17,12 @@ from serpsage.models.app.response import (
     FetchSubpagesResult,
 )
 from serpsage.models.base import MutableModel
+from serpsage.models.components.crawl import CrawlResult
 from serpsage.models.components.extract import (
     ExtractedDocument,
     ExtractRef,
     ExtractSpec,
 )
-from serpsage.models.components.fetch import FetchResult
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.settings.models import AppSettings
 
@@ -48,7 +48,7 @@ class FetchErrorState(MutableModel):
 class FetchPageState(MutableModel):
     crawl_mode: CrawlMode = "fallback"
     crawl_timeout_s: float = 0.0
-    raw: FetchResult | None = None
+    raw: CrawlResult | None = None
     return_content: bool = True
     content_request: FetchContentRequest = Field(default_factory=FetchContentRequest)
     extract: ExtractSpec = Field(default_factory=ExtractSpec)

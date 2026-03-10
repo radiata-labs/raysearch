@@ -1,8 +1,8 @@
 from serpsage.components.base import (
     BUILTIN_COMPONENT_FAMILIES,
     CACHE_FAMILY,
+    CRAWL_FAMILY,
     EXTRACT_FAMILY,
-    FETCH_FAMILY,
     HTTP_FAMILY,
     LLM_FAMILY,
     PROVIDER_FAMILY,
@@ -20,8 +20,8 @@ from serpsage.components.base import (
 __all__ = [
     "BUILTIN_COMPONENT_FAMILIES",
     "CACHE_FAMILY",
+    "CRAWL_FAMILY",
     "EXTRACT_FAMILY",
-    "FETCH_FAMILY",
     "HTTP_FAMILY",
     "LLM_FAMILY",
     "PROVIDER_FAMILY",

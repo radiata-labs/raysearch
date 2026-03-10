@@ -9,11 +9,11 @@ from typing_extensions import override
 
 from serpsage.components.cache import CacheBase
 from serpsage.components.cache.base import CacheConfigBase
-from serpsage.components.fetch import FetcherBase
-from serpsage.components.fetch.base import FetchConfigBase
+from serpsage.components.crawl import CrawlerBase
+from serpsage.components.crawl.base import CrawlConfigBase
 from serpsage.dependencies import Inject
 from serpsage.models.app.response import FetchErrorTag
-from serpsage.models.components.fetch import FetchResult
+from serpsage.models.components.crawl import CrawlResult
 from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
@@ -22,7 +22,7 @@ _CACHE_NAMESPACE = "fetch:v4"
 
 
 class FetchLoadStep(StepBase[FetchStepContext]):
-    fetcher: FetcherBase = Inject()
+    crawler: CrawlerBase = Inject()
     cache: CacheBase = Inject()
 
     @override
@@ -40,21 +40,21 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             )
             return ctx
         mode = str(ctx.page.crawl_mode or "fallback")
-        fetch_cfg = self.components.resolve_default_config(
-            "fetch", expected_type=FetchConfigBase
+        crawl_cfg = self.components.resolve_default_config(
+            "crawl", expected_type=CrawlConfigBase
         )
         cache_cfg = self.components.resolve_default_config(
             "cache", expected_type=CacheConfigBase
         )
         cache_key = _cache_key(
             url=url,
-            backend=self.components.family_name("fetch"),
+            backend=self.components.family_name("crawl"),
         )
-        timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(fetch_cfg.timeout_s)
+        timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(crawl_cfg.timeout_s)
         cache_fetch_ms = 0
         crawl_fetch_ms = 0
 
-        async def get_cached() -> FetchResult | None:
+        async def get_cached() -> CrawlResult | None:
             nonlocal cache_fetch_ms
             t0 = time.monotonic()
             payload = await self.cache.aget(namespace=_CACHE_NAMESPACE, key=cache_key)
@@ -66,17 +66,17 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             except Exception:
                 return None
 
-        async def crawl_once() -> FetchResult:
+        async def crawl_once() -> CrawlResult:
             nonlocal crawl_fetch_ms
             t0 = time.monotonic()
-            result = await self.fetcher.afetch(
+            result = await self.crawler.acrawl(
                 url=url,
                 timeout_s=float(timeout_s),
             )
             crawl_fetch_ms = int((time.monotonic() - t0) * 1000)
             return result
 
-        async def write_cache(result: FetchResult) -> None:
+        async def write_cache(result: CrawlResult) -> None:
             ttl_s = int(cache_cfg.fetch_ttl_s)
             if ttl_s <= 0:
                 return
@@ -88,7 +88,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             )
 
         source: str | None = None
-        fetched: FetchResult | None = None
+        fetched: CrawlResult | None = None
         crawl_exc: Exception | None = None
         if mode == "never":
             fetched = await get_cached()
@@ -367,14 +367,14 @@ def _cache_key(*, url: str, backend: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _encode_fetch_cache(result: FetchResult) -> bytes:
+def _encode_fetch_cache(result: CrawlResult) -> bytes:
     return json.dumps(
         {
             "url": str(result.url),
             "status_code": int(result.status_code),
             "content_type": result.content_type,
             "content_hex": bytes(result.content or b"").hex(),
-            "fetch_mode": str(result.fetch_mode),
+            "crawl_backend": str(result.crawl_backend),
             "rendered": bool(result.rendered),
             "content_kind": str(result.content_kind),
             "headers": {str(k): str(v) for k, v in dict(result.headers or {}).items()},
@@ -386,14 +386,14 @@ def _encode_fetch_cache(result: FetchResult) -> bytes:
     ).encode("utf-8")
 
 
-def _decode_fetch_cache(payload: bytes, *, url: str) -> FetchResult:
+def _decode_fetch_cache(payload: bytes, *, url: str) -> CrawlResult:
     obj = json.loads(payload.decode("utf-8"))
-    return FetchResult(
+    return CrawlResult(
         url=str(obj.get("url") or url),
         status_code=int(obj.get("status_code") or 0),
         content_type=obj.get("content_type"),
         content=bytes.fromhex(str(obj.get("content_hex") or "")),
-        fetch_mode=str(obj.get("fetch_mode") or "curl_cffi"),  # type: ignore[arg-type]
+        crawl_backend=str(obj.get("crawl_backend") or "curl_cffi"),  # type: ignore[arg-type]
         rendered=bool(obj.get("rendered", False)),
         content_kind=str(obj.get("content_kind") or "unknown"),  # type: ignore[arg-type]
         headers={str(k): str(v) for k, v in dict(obj.get("headers") or {}).items()},

@@ -73,7 +73,7 @@ def coerce_component_family(
 
 HTTP_FAMILY = define_component_family("http")
 PROVIDER_FAMILY = define_component_family("provider")
-FETCH_FAMILY = define_component_family("fetch")
+CRAWL_FAMILY = define_component_family("crawl")
 EXTRACT_FAMILY = define_component_family("extract")
 RANK_FAMILY = define_component_family("rank")
 LLM_FAMILY = define_component_family("llm")
@@ -84,7 +84,7 @@ RATE_LIMIT_FAMILY = define_component_family("rate_limit")
 BUILTIN_COMPONENT_FAMILIES = (
     HTTP_FAMILY,
     PROVIDER_FAMILY,
-    FETCH_FAMILY,
+    CRAWL_FAMILY,
     EXTRACT_FAMILY,
     RANK_FAMILY,
     LLM_FAMILY,
@@ -120,13 +120,13 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
 __all__ = [
     "BUILTIN_COMPONENT_FAMILIES",
     "CACHE_FAMILY",
+    "CRAWL_FAMILY",
     "ComponentBase",
     "ComponentConfigBase",
     "ComponentFamily",
     "ComponentMeta",
     "ConfigT",
     "EXTRACT_FAMILY",
-    "FETCH_FAMILY",
     "HTTP_FAMILY",
     "LLM_FAMILY",
     "PROVIDER_FAMILY",

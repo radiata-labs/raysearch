@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.app.tokens import CHILD_FETCH_RUNNER
-from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchOthersRequest
@@ -67,9 +66,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         child_link_limit = int(ctx.related.subpages.candidate_limit or 0)
         if child_link_limit <= 0:
             child_link_limit = 8
-        fetch_cfg = self.components.resolve_default_config(
-            "fetch", expected_type=FetchConfigBase
-        )
+        fetch_cfg = ctx.settings.fetch
         child_link_limit = min(
             int(fetch_cfg.extract.link_max_count),
             max(1, int(child_link_limit)),

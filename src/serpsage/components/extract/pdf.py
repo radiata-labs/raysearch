@@ -17,12 +17,12 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError, PdfStreamError
 
 from serpsage.components.base import ComponentMeta
+from serpsage.components.crawl.utils import classify_content_kind
 from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.utils import (
     finalize_markdown,
     markdown_to_text,
 )
-from serpsage.components.fetch.utils import classify_content_kind
 from serpsage.load import register_component
 from serpsage.models.components.extract import (
     ExtractContent,

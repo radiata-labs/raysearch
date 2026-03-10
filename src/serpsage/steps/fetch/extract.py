@@ -4,7 +4,6 @@ from typing_extensions import override
 
 from serpsage.components.extract import ExtractorBase
 from serpsage.components.extract.utils import markdown_to_text
-from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.dependencies import Inject
 from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.fetch import FetchStepContext
@@ -102,9 +101,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             ctx.related.others.links = []
             ctx.related.others.image_links = []
             ctx.related.subpages.candidates = []
-        fetch_cfg = self.components.resolve_default_config(
-            "fetch", expected_type=FetchConfigBase
-        )
+        fetch_cfg = ctx.settings.fetch
         markdown = str(extracted.content.markdown or "")
         text_chars = len(markdown_to_text(markdown))
         min_text_chars = int(fetch_cfg.extract.min_text_chars)

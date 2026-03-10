@@ -8,7 +8,6 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import anyio
 
 from serpsage.app.tokens import FETCH_RUNNER
-from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Inject
@@ -680,9 +679,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         urls: list[str],
     ) -> list[FetchStepContext]:
         max_chars = ctx.run.limits.fetch_page_max_chars
-        fetch_cfg = self.components.resolve_default_config(
-            "fetch", expected_type=FetchConfigBase
-        )
+        fetch_cfg = ctx.settings.fetch
         main_links_limit = max(1, int(fetch_cfg.extract.link_max_count))
         request = FetchRequest(
             urls=list(urls),

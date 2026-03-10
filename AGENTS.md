@@ -27,8 +27,8 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |- app/
 |  |  |- components/
 |  |  |  |- cache/
+|  |  |  |- crawl/
 |  |  |  |- extract/
-|  |  |  |- fetch/
 |  |  |  |- http/
 |  |  |  |- llm/
 |  |  |  |- provider/

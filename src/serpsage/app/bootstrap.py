@@ -22,8 +22,8 @@ from serpsage.app.tokens import (
 )
 from serpsage.components.base import (
     CACHE_FAMILY,
+    CRAWL_FAMILY,
     EXTRACT_FAMILY,
-    FETCH_FAMILY,
     HTTP_FAMILY,
     LLM_FAMILY,
     PROVIDER_FAMILY,
@@ -33,8 +33,8 @@ from serpsage.components.base import (
     ComponentFamily,
 )
 from serpsage.components.cache.base import CacheBase
+from serpsage.components.crawl.base import CrawlerBase
 from serpsage.components.extract.base import ExtractorBase
-from serpsage.components.fetch.base import FetcherBase
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.provider.base import SearchProviderBase
@@ -407,7 +407,7 @@ def _family_contracts() -> dict[str, type[object]]:
     return {
         HTTP_FAMILY.name: HttpClientBase,
         PROVIDER_FAMILY.name: SearchProviderBase,
-        FETCH_FAMILY.name: FetcherBase,
+        CRAWL_FAMILY.name: CrawlerBase,
         EXTRACT_FAMILY.name: ExtractorBase,
         RANK_FAMILY.name: RankerBase,
         LLM_FAMILY.name: LLMClientBase,
@@ -422,7 +422,7 @@ def _workunit_overrides(
 ) -> dict[ComponentFamily[Any], WorkUnit]:
     mapping = {
         PROVIDER_FAMILY: overrides.provider,
-        FETCH_FAMILY: overrides.fetcher,
+        CRAWL_FAMILY: overrides.crawler,
         EXTRACT_FAMILY: overrides.extractor,
         RANK_FAMILY: overrides.ranker,
         LLM_FAMILY: overrides.llm,
@@ -445,7 +445,7 @@ def _validate_override_workunits(ov: Overrides) -> None:
     _ensure_workunit_override("cache", ov.cache)
     _ensure_workunit_override("rate_limiter", ov.rate_limiter)
     _ensure_workunit_override("provider", ov.provider)
-    _ensure_workunit_override("fetcher", ov.fetcher)
+    _ensure_workunit_override("crawler", ov.crawler)
     _ensure_workunit_override("extractor", ov.extractor)
     _ensure_workunit_override("ranker", ov.ranker)
     _ensure_workunit_override("llm", ov.llm)

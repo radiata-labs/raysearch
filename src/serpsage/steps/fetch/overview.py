@@ -6,7 +6,6 @@ from typing import Any
 from typing_extensions import override
 
 from serpsage.components.cache import CacheBase
-from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.components.llm import LLMClientBase
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import FetchOverviewRequest
@@ -43,9 +42,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-        profile = self.components.resolve_default_config(
-            "fetch", expected_type=FetchConfigBase
-        ).overview
+        profile = ctx.settings.fetch.overview
         model_cfg = self.llm.describe_model(profile.use_model)
         schema = dict(req.json_schema) if isinstance(req.json_schema, dict) else None
         mode = "json" if schema is not None else "text"

@@ -7,7 +7,6 @@ from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from serpsage.app.tokens import SEARCH_RUNNER
-from serpsage.components.fetch.base import FetchConfigBase
 from serpsage.dependencies import Inject
 from serpsage.models.app.request import (
     FetchContentRequest,
@@ -119,9 +118,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         jobs = jobs[:executable_jobs]
         if not jobs:
             return ctx
-        fetch_cfg = self.components.resolve_default_config(
-            "fetch", expected_type=FetchConfigBase
-        )
+        fetch_cfg = ctx.settings.fetch
         main_links_limit = max(1, int(fetch_cfg.extract.link_max_count))
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):

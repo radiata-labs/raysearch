@@ -7,8 +7,8 @@ import httpx
 from pydantic import ConfigDict, Field
 
 from serpsage.components.cache.base import CacheBase
+from serpsage.components.crawl import CrawlerBase
 from serpsage.components.extract import ExtractorBase
-from serpsage.components.fetch import FetcherBase
 from serpsage.components.llm import LLMClientBase
 from serpsage.components.provider import SearchProviderBase
 from serpsage.components.rank import RankerBase
@@ -53,7 +53,7 @@ class Overrides(MutableModel):
     cache: CacheBase | None = None
     rate_limiter: RateLimiterBase[Any] | None = None
     provider: SearchProviderBase | None = None
-    fetcher: FetcherBase | None = None
+    crawler: CrawlerBase | None = None
     extractor: ExtractorBase | None = None
     ranker: RankerBase | None = None
     llm: LLMClientBase | None = None

@@ -8,10 +8,10 @@ from typing_extensions import override
 from urllib.parse import urlparse
 
 from serpsage.components.base import ComponentMeta
-from serpsage.components.fetch.base import FetchConfigBase, FetcherBase
-from serpsage.components.fetch.curl_cffi import CurlCffiFetcher
-from serpsage.components.fetch.playwright import PlaywrightFetcher
-from serpsage.components.fetch.utils import (
+from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
+from serpsage.components.crawl.curl_cffi import CurlCffiCrawler
+from serpsage.components.crawl.playwright import PlaywrightCrawler
+from serpsage.components.crawl.utils import (
     blocked_marker_hit,
     has_nextjs_signals,
     has_spa_signals,
@@ -20,7 +20,7 @@ from serpsage.components.fetch.utils import (
 from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.dependencies import Inject
 from serpsage.load import register_component
-from serpsage.models.components.fetch import FetchAttempt, FetchResult
+from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 _MIN_BYTES = 32
 _BLOCK_STATUSES = {401, 403, 429}
@@ -55,81 +55,82 @@ class _RouteMemory:
     last_used_ts: float = 0.0
 
 
-class AutoFetcherConfig(FetchConfigBase):
+class AutoCrawlerConfig(CrawlConfigBase):
     pass
 
 
-_AUTO_FETCHER_META = ComponentMeta(
-    family="fetch",
+_AUTO_CRAWLER_META = ComponentMeta(
+    family="crawl",
     name="auto",
     version="1.0.0",
-    summary="Adaptive fetcher choosing curl_cffi or Playwright.",
-    provides=("fetcher.page",),
-    config_model=AutoFetcherConfig,
+    summary="Adaptive crawler choosing curl_cffi or Playwright.",
+    provides=("crawler.page",),
+    config_model=AutoCrawlerConfig,
 )
 
 
-@register_component(meta=_AUTO_FETCHER_META)
-class AutoFetcher(FetcherBase):
-    meta = _AUTO_FETCHER_META
+@register_component(meta=_AUTO_CRAWLER_META)
+class AutoCrawler(CrawlerBase):
+    meta = _AUTO_CRAWLER_META
 
     rate_limiter: RateLimiterBase[Any] = Inject()
-    curl: CurlCffiFetcher = Inject()
-    playwright: PlaywrightFetcher = Inject()
+    curl: CurlCffiCrawler = Inject()
+    playwright: PlaywrightCrawler = Inject()
 
     route_memory: OrderedDict[str, _RouteMemory]
 
     def __init__(self) -> None:
+        super().__init__()
         self.route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
 
     @override
-    async def _afetch_inner(
+    async def _acrawl_inner(
         self,
         *,
         url: str,
         timeout_s: float | None = None,
-    ) -> FetchResult:
-        return await self._afetch(url=url, timeout_s=timeout_s)
+    ) -> CrawlResult:
+        return await self._acrawl(url=url, timeout_s=timeout_s)
 
-    async def _afetch(
+    async def _acrawl(
         self,
         *,
         url: str,
         timeout_s: float | None,
-    ) -> FetchResult:
+    ) -> CrawlResult:
         host = urlparse(url).netloc.lower()
         await self.rate_limiter.acquire(host=host)
         try:
-            attempt = await self._fetch_useful(url=url, timeout_s=timeout_s)
+            attempt = await self._crawl_useful(url=url, timeout_s=timeout_s)
         finally:
             await self.rate_limiter.release(host=host)
-        return FetchResult(
+        return CrawlResult(
             url=attempt.url,
             status_code=int(attempt.status_code),
             content_type=attempt.content_type,
             content=attempt.content,
-            fetch_mode=attempt.fetch_mode,
+            crawl_backend=attempt.crawl_backend,
             rendered=bool(attempt.rendered),
             content_kind=attempt.content_kind,
             headers=dict(attempt.headers or {}),
             attempt_chain=list(attempt.attempt_chain or []),
         )
 
-    async def _fetch_useful(
+    async def _crawl_useful(
         self,
         *,
         url: str,
         timeout_s: float | None,
-    ) -> FetchAttempt:
+    ) -> CrawlAttempt:
         deadline_ts = time.monotonic() + self._resolve_timeout_s(timeout_s)
-        return await self._fetch_auto(url=url, deadline_ts=deadline_ts)
+        return await self._crawl_auto(url=url, deadline_ts=deadline_ts)
 
-    async def _fetch_auto(
+    async def _crawl_auto(
         self,
         *,
         url: str,
         deadline_ts: float,
-    ) -> FetchAttempt:
+    ) -> CrawlAttempt:
         route_key = normalize_route_key(url)
         route_memory = self._get_route_memory(route_key)
         direct_backend = self._choose_direct_backend(route_memory)
@@ -148,7 +149,7 @@ class AutoFetcher(FetcherBase):
                 return direct_attempt
         scout_bytes = int(self.config.auto.scout_bytes)
         curl_started = time.monotonic()
-        progressive = await self.curl.fetch_progressive_attempt(
+        progressive = await self.curl.crawl_progressive_attempt(
             url=url,
             timeout_s=self._remaining_timeout_s(deadline_ts),
             scout_bytes=scout_bytes,
@@ -196,7 +197,7 @@ class AutoFetcher(FetcherBase):
                 chain_prefix=["decision:playwright:route_memory", "fallback:curl_cffi"],
             )
         raise RuntimeError(
-            f"fetch_unusable:auto:playwright:{int(curl_attempt.status_code)}"
+            f"crawl_unusable:auto:playwright:{int(curl_attempt.status_code)}"
         )
 
     def _choose_direct_backend(self, route_memory: _RouteMemory) -> str | None:
@@ -216,7 +217,7 @@ class AutoFetcher(FetcherBase):
     def _should_continue_curl(
         self,
         *,
-        attempt: FetchAttempt,
+        attempt: CrawlAttempt,
         route_memory: _RouteMemory,
     ) -> bool:
         if self._is_blocked(attempt):
@@ -244,7 +245,7 @@ class AutoFetcher(FetcherBase):
             return False
         return not (route_prefers_playwright and curl_score < 0.55)
 
-    def _should_accept_truncated_curl(self, attempt: FetchAttempt) -> bool:
+    def _should_accept_truncated_curl(self, attempt: CrawlAttempt) -> bool:
         if attempt.content_kind in {"pdf", "text"} and self._is_useful(attempt):
             return True
         if attempt.content_kind != "html":
@@ -253,7 +254,7 @@ class AutoFetcher(FetcherBase):
             int(self.config.quality.min_text_chars) * 6
         )
 
-    def _playwright_reason(self, attempt: FetchAttempt) -> str:
+    def _playwright_reason(self, attempt: CrawlAttempt) -> str:
         if self._is_blocked(attempt):
             return "blocked"
         if attempt.content_kind == "html":
@@ -273,7 +274,7 @@ class AutoFetcher(FetcherBase):
         route_key: str,
         render_reason: str,
         chain_prefix: list[str],
-    ) -> FetchAttempt | None:
+    ) -> CrawlAttempt | None:
         started = time.monotonic()
         try:
             attempt = await self._run_playwright(
@@ -289,7 +290,7 @@ class AutoFetcher(FetcherBase):
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
             raise RuntimeError(
-                f"fetch_unusable:auto:playwright_error:{type(exc).__name__}"
+                f"crawl_unusable:auto:playwright_error:{type(exc).__name__}"
             ) from exc
         latency_ms = int((time.monotonic() - started) * 1000)
         self._record_route_result(
@@ -318,7 +319,7 @@ class AutoFetcher(FetcherBase):
         *,
         route_key: str,
         backend: str,
-        attempt: FetchAttempt | None,
+        attempt: CrawlAttempt | None,
         latency_ms: int,
     ) -> None:
         memory = self._get_route_memory(route_key)
@@ -335,9 +336,9 @@ class AutoFetcher(FetcherBase):
             alpha * float(max(1, latency_ms))
         )
 
-    async def _run_curl(self, *, url: str, deadline_ts: float) -> FetchAttempt:
+    async def _run_curl(self, *, url: str, deadline_ts: float) -> CrawlAttempt:
         timeout_s = self._remaining_timeout_s(deadline_ts)
-        return await self.curl.fetch_attempt(url=url, timeout_s=timeout_s)
+        return await self.curl.crawl_attempt(url=url, timeout_s=timeout_s)
 
     async def _run_playwright(
         self,
@@ -345,9 +346,9 @@ class AutoFetcher(FetcherBase):
         url: str,
         deadline_ts: float,
         render_reason: str,
-    ) -> FetchAttempt:
+    ) -> CrawlAttempt:
         timeout_s = self._remaining_timeout_s(deadline_ts)
-        return await self.playwright.fetch_attempt(
+        return await self.playwright.crawl_attempt(
             url=url,
             timeout_s=timeout_s,
             render_reason=render_reason,
@@ -362,10 +363,10 @@ class AutoFetcher(FetcherBase):
     def _remaining_timeout_s(self, deadline_ts: float) -> float:
         remaining = float(deadline_ts - time.monotonic())
         if remaining <= 0.0:
-            raise TimeoutError("fetch timeout reached before backend request")
+            raise TimeoutError("crawl timeout reached before backend request")
         return remaining
 
-    def _is_blocked(self, res: FetchAttempt) -> bool:
+    def _is_blocked(self, res: CrawlAttempt) -> bool:
         status = int(res.status_code or 0)
         if status in _BLOCK_STATUSES:
             return True
@@ -376,11 +377,11 @@ class AutoFetcher(FetcherBase):
             return True
         return bool(res.blocked)
 
-    def _is_useful(self, res: FetchAttempt) -> bool:
+    def _is_useful(self, res: CrawlAttempt) -> bool:
         score, _ = self._content_quality_score(res)
         return score >= float(self.config.quality.quality_score_threshold)
 
-    def _content_quality_score(self, res: FetchAttempt) -> tuple[float, list[str]]:
+    def _content_quality_score(self, res: CrawlAttempt) -> tuple[float, list[str]]:
         quality = self.config.quality
         reasons: list[str] = []
         status = int(res.status_code or 0)
@@ -421,18 +422,18 @@ class AutoFetcher(FetcherBase):
     def _attach_attempt_chain(
         self,
         *,
-        winner: FetchAttempt,
+        winner: CrawlAttempt,
         chain_prefix: list[str],
-    ) -> FetchAttempt:
+    ) -> CrawlAttempt:
         out: list[str] = []
-        for item in chain_prefix + list(winner.attempt_chain or [winner.fetch_mode]):
+        for item in chain_prefix + list(winner.attempt_chain or [winner.crawl_backend]):
             token = str(item or "").strip()
             if not token or token in out:
                 continue
             out.append(token)
         if not out:
-            out = [winner.fetch_mode]
+            out = [winner.crawl_backend]
         return winner.model_copy(update={"attempt_chain": out})
 
 
-__all__ = ["AutoFetcher", "AutoFetcherConfig"]
+__all__ = ["AutoCrawler", "AutoCrawlerConfig"]
