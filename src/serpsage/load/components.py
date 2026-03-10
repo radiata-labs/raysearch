@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import importlib
+import inspect
 import os
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+import pkgutil
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -16,6 +19,7 @@ from typing import (
 )
 
 import httpx
+from pydantic import ValidationError, create_model
 
 from serpsage.components.base import (
     BUILTIN_COMPONENT_FAMILIES,
@@ -26,172 +30,74 @@ from serpsage.components.base import (
     coerce_component_family,
 )
 from serpsage.dependencies import analyze_class
-from serpsage.settings.models import ComponentFamilySettings
+from serpsage.settings.models import (
+    AppSettings,
+    CacheSettings,
+    ComponentSettings,
+    CrawlSettings,
+    ExtractSettings,
+    HttpSettings,
+    LlmSettings,
+    ProviderSettings,
+    RankSettings,
+    RateLimitSettings,
+    SettingModel,
+    TelemetrySettings,
+)
 
 if TYPE_CHECKING:
     from types import ModuleType
 
     from serpsage.core.runtime import Overrides
-    from serpsage.settings.models import AppSettings
 
 ComponentClass: TypeAlias = type[ComponentBase[Any]]
-ComponentLoader: TypeAlias = Callable[["ComponentRegistry"], None]
 _T = TypeVar("_T", bound=type[ComponentBase[Any]])
 _ConfigT = TypeVar("_ConfigT", bound=ComponentConfigBase)
 TypeMap = dict[object, Any]
 _COMPONENT_META_ATTR = "__serpsage_component_meta__"
 
-_BUILTIN_COMPONENT_MODULES = {
-    ("cache", "memory"): "serpsage.components.cache.memory",
-    ("cache", "mysql"): "serpsage.components.cache.mysql",
-    ("cache", "null"): "serpsage.components.cache.null",
-    ("cache", "redis"): "serpsage.components.cache.redis",
-    ("cache", "sqlalchemy"): "serpsage.components.cache.sqlalchemy",
-    ("cache", "sqlite"): "serpsage.components.cache.sqlite",
-    ("extract", "auto"): "serpsage.components.extract.auto",
-    ("extract", "html"): "serpsage.components.extract.html",
-    ("extract", "pdf"): "serpsage.components.extract.pdf",
-    ("crawl", "auto"): "serpsage.components.crawl.auto",
-    ("crawl", "curl_cffi"): "serpsage.components.crawl.curl_cffi",
-    ("crawl", "playwright"): "serpsage.components.crawl.playwright",
-    ("http", "httpx"): "serpsage.components.http.client",
-    ("llm", "dashscope"): "serpsage.components.llm.dashscope",
-    ("llm", "gemini"): "serpsage.components.llm.gemini",
-    ("llm", "openai"): "serpsage.components.llm.openai",
-    ("llm", "router"): "serpsage.components.llm.router",
-    ("provider", "google"): "serpsage.components.provider.google",
-    ("provider", "searxng"): "serpsage.components.provider.searxng",
-    ("rank", "blend"): "serpsage.components.rank.blend",
-    ("rank", "bm25"): "serpsage.components.rank.bm25",
-    ("rank", "cross_encoder"): "serpsage.components.rank.cross_encoder",
-    ("rank", "heuristic"): "serpsage.components.rank.heuristic",
-    ("rank", "tfidf"): "serpsage.components.rank.tfidf",
-    ("rate_limit", "basic"): "serpsage.components.rate_limit.basic",
-    ("telemetry", "async_emitter"): "serpsage.components.telemetry.emitter",
-    ("telemetry", "jsonl_sink"): "serpsage.components.telemetry.sinks",
-    ("telemetry", "null_emitter"): "serpsage.components.telemetry.emitter",
-    ("telemetry", "null_sink"): "serpsage.components.telemetry.sinks",
-    ("telemetry", "sqlite_metering_sink"): "serpsage.components.telemetry.sinks",
+_FAMILY_SETTING_BASES: dict[str, type[SettingModel]] = {
+    "cache": CacheSettings,
+    "crawl": CrawlSettings,
+    "extract": ExtractSettings,
+    "http": HttpSettings,
+    "llm": LlmSettings,
+    "provider": ProviderSettings,
+    "rank": RankSettings,
+    "rate_limit": RateLimitSettings,
+    "telemetry": TelemetrySettings,
 }
-_OPTIONAL_BUILTIN_COMPONENTS = frozenset(
-    {
-        ("cache", "null"),
-        ("extract", "html"),
-        ("extract", "pdf"),
-        ("crawl", "curl_cffi"),
-        ("crawl", "playwright"),
-        ("http", "httpx"),
-        ("rank", "bm25"),
-        ("rank", "cross_encoder"),
-        ("rank", "heuristic"),
-        ("rank", "tfidf"),
-        ("rate_limit", "basic"),
-        ("telemetry", "null_emitter"),
-    }
-)
+_PREFERRED_DEFAULT_COMPONENTS = {
+    "cache": "null",
+    "crawl": "auto",
+    "extract": "auto",
+    "http": "httpx",
+    "llm": "router",
+    "provider": "searxng",
+    "rank": "blend",
+    "rate_limit": "basic",
+    "telemetry": "async_emitter",
+}
 
 
-class ComponentResolutionError(RuntimeError):
+class _ComponentResolutionError(RuntimeError):
     pass
 
 
 @dataclass(frozen=True, slots=True)
-class ComponentDescriptor:
+class _ComponentDescriptor:
     family: ComponentFamily[Any]
-    meta: ComponentMeta
     cls: ComponentClass
+    config_cls: type[ComponentConfigBase]
+    meta: ComponentMeta
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedComponentSpec:
+class _ResolvedComponent:
     family: ComponentFamily[Any]
-    instance_id: str
     component_name: str
-    descriptor: ComponentDescriptor
+    descriptor: _ComponentDescriptor
     config: ComponentConfigBase
-
-
-class ComponentRegistry:
-    def __init__(self) -> None:
-        self._items: dict[tuple[str, str], ComponentDescriptor] = {}
-
-    def register(self, meta: ComponentMeta, cls: _T) -> _T:
-        family = coerce_component_family(meta.family)
-        normalized_meta = replace(meta, family=family)
-        self._validate_component_signature(meta=normalized_meta, cls=cls)
-        key = (family.name, normalized_meta.name)
-        existing = self._items.get(key)
-        if existing is not None and existing.cls is cls:
-            return cls
-        if existing is not None:
-            raise ValueError(
-                f"component `{family.name}:{normalized_meta.name}` is already registered"
-            )
-        self._items[key] = ComponentDescriptor(
-            family=family,
-            meta=normalized_meta,
-            cls=cls,
-        )
-        return cls
-
-    def get(self, family: ComponentFamily[Any] | str, name: str) -> ComponentDescriptor:
-        item = self.maybe_get(family, name)
-        family_name = coerce_component_family(family).name
-        if item is None:
-            raise KeyError(f"component `{family_name}:{name}` is not registered")
-        return item
-
-    def maybe_get(
-        self,
-        family: ComponentFamily[Any] | str,
-        name: str,
-    ) -> ComponentDescriptor | None:
-        family_name = coerce_component_family(family).name
-        return self._items.get((family_name, str(name)))
-
-    def list_family(
-        self,
-        family: ComponentFamily[Any] | str,
-    ) -> list[ComponentDescriptor]:
-        family_name = coerce_component_family(family).name
-        return [item for key, item in self._items.items() if key[0] == family_name]
-
-    def families(self) -> tuple[ComponentFamily[Any], ...]:
-        unique: dict[str, ComponentFamily[Any]] = {}
-        for item in self._items.values():
-            unique[item.family.name] = item.family
-        return tuple(sorted(unique.values(), key=lambda family: family.name))
-
-    def _validate_component_signature(
-        self,
-        *,
-        meta: ComponentMeta,
-        cls: ComponentClass,
-    ) -> None:
-        _ = analyze_class(cls)
-        config_type = _resolve_component_config_type(cls)
-        family_name = cast("ComponentFamily[Any]", meta.family).name
-        if not isinstance(config_type, type):
-            raise TypeError(
-                f"component `{family_name}:{meta.name}` must bind a concrete "
-                "`ComponentBase[ConfigModel]` config type"
-            )
-        if not issubclass(meta.config_model, config_type):
-            raise TypeError(
-                f"component `{family_name}:{meta.name}` config model "
-                f"`{meta.config_model.__name__}` is incompatible with component config "
-                f"type `{config_type.__name__}`"
-            )
-        for contract in meta.contracts:
-            if not isinstance(contract, type):
-                raise TypeError(
-                    f"component `{family_name}:{meta.name}` contracts must be types"
-                )
-            if not issubclass(cls, contract):
-                raise TypeError(
-                    f"component `{family_name}:{meta.name}` must implement contract "
-                    f"`{contract.__name__}`"
-                )
 
 
 class ComponentCatalog:
@@ -199,25 +105,33 @@ class ComponentCatalog:
         self,
         *,
         settings: AppSettings,
-        registry: ComponentRegistry,
+        descriptors: tuple[_ComponentDescriptor, ...],
         overrides: Overrides | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
         self._settings = settings
-        self._registry = registry
+        self._descriptors = descriptors
+        self._descriptors_by_family = _group_descriptors_by_family(descriptors)
         self._overrides = overrides
         self._env = dict(env or settings.runtime_env or os.environ)
-        self._spec_cache: dict[tuple[str, str], ResolvedComponentSpec] = {}
+        self._family_spec_cache: dict[str, tuple[_ResolvedComponent, ...]] = {}
 
     def resolve_default_spec(
         self,
         family: ComponentFamily[Any] | str,
-    ) -> ResolvedComponentSpec:
+    ) -> _ResolvedComponent:
         normalized = coerce_component_family(family)
-        return self.resolve_spec(
-            family=normalized,
-            instance_id=self.family_settings(normalized).default,
-        )
+        specs = self._family_specs(normalized)
+        if not specs:
+            raise _ComponentResolutionError(
+                f"component family `{normalized.name}` has no enabled component"
+            )
+        preferred_name = _PREFERRED_DEFAULT_COMPONENTS.get(normalized.name)
+        if preferred_name:
+            for spec in specs:
+                if spec.component_name == preferred_name:
+                    return spec
+        return specs[0]
 
     @overload
     def resolve_default_config(
@@ -234,6 +148,7 @@ class ComponentCatalog:
         *,
         expected_type: None = None,
     ) -> ComponentConfigBase: ...
+
     def resolve_default_config(
         self,
         family: ComponentFamily[Any] | str,
@@ -250,101 +165,26 @@ class ComponentCatalog:
             )
         return config
 
-    def resolve_spec(
-        self,
-        *,
-        family: ComponentFamily[Any] | str,
-        instance_id: str,
-    ) -> ResolvedComponentSpec:
-        normalized = coerce_component_family(family)
-        key = (normalized.name, str(instance_id))
-        cached = self._spec_cache.get(key)
-        if cached is not None:
-            return cached
-        family_settings = self.family_settings(normalized)
-        instance_settings = family_settings.instances.get(str(instance_id))
-        if instance_settings is None:
-            raise ComponentResolutionError(
-                f"component instance `{normalized.name}:{instance_id}` does not exist"
-            )
-        if not bool(instance_settings.enabled):
-            raise ComponentResolutionError(
-                f"component instance `{normalized.name}:{instance_id}` is disabled"
-            )
-        descriptor = self._resolve_descriptor(
-            family=normalized,
-            component_name=str(instance_settings.component),
-        )
-        if (
-            str(instance_id) not in family_settings.declared_instances
-            and not descriptor.meta.config_optional
-        ):
-            raise ComponentResolutionError(
-                f"component instance `{normalized.name}:{instance_id}` is not explicitly configured"
-            )
-        config = descriptor.meta.config_model.from_raw(
-            dict(instance_settings.config or {}),
-            env=self._env,
-        )
-        spec = ResolvedComponentSpec(
-            family=normalized,
-            instance_id=str(instance_id),
-            component_name=str(instance_settings.component),
-            descriptor=descriptor,
-            config=config,
-        )
-        self._spec_cache[key] = spec
-        return spec
-
-    def family_settings(
-        self,
-        family: ComponentFamily[Any] | str,
-    ) -> ComponentFamilySettings:
-        family_name = coerce_component_family(family).name
-        value = getattr(self._settings, family_name, None)
-        if not isinstance(value, ComponentFamilySettings):
-            raise ComponentResolutionError(
-                f"settings family `{family_name}` is not configured as a component family"
-            )
-        return value
-
     def family_name(self, family: ComponentFamily[Any] | str) -> str:
         return self.resolve_default_spec(family).component_name
 
     def component_families(self) -> tuple[ComponentFamily[Any], ...]:
-        return tuple(
+        families: list[ComponentFamily[Any]] = [
             family
             for family in BUILTIN_COMPONENT_FAMILIES
-            if isinstance(
-                getattr(self._settings, family.name, None), ComponentFamilySettings
-            )
-        )
+            if self._family_specs(family)
+        ]
+        for family in _descriptor_families(self._descriptors):
+            if family in BUILTIN_COMPONENT_FAMILIES:
+                continue
+            if self._family_specs(family):
+                families.append(family)
+        return tuple(families)
 
-    def iter_enabled_specs(self) -> tuple[ResolvedComponentSpec, ...]:
-        specs: list[ResolvedComponentSpec] = []
+    def iter_enabled_specs(self) -> tuple[_ResolvedComponent, ...]:
+        specs: list[_ResolvedComponent] = []
         for family in self.component_families():
-            family_settings = self.family_settings(family)
-            for instance_id, instance_settings in family_settings.instances.items():
-                if not bool(instance_settings.enabled):
-                    continue
-                descriptor = self._registry.maybe_get(
-                    family, instance_settings.component
-                )
-                if descriptor is None:
-                    if instance_id in family_settings.declared_instances:
-                        self._resolve_descriptor(
-                            family=family,
-                            component_name=str(instance_settings.component),
-                        )
-                    continue
-                if (
-                    instance_id not in family_settings.declared_instances
-                    and not descriptor.meta.config_optional
-                ):
-                    continue
-                specs.append(
-                    self.resolve_spec(family=family, instance_id=str(instance_id))
-                )
+            specs.extend(self._family_specs(family))
         return tuple(specs)
 
     def http_override(self) -> httpx.AsyncClient | None:
@@ -354,41 +194,64 @@ class ComponentCatalog:
         client = overrides.http
         return client if isinstance(client, httpx.AsyncClient) else None
 
-    def _resolve_descriptor(
+    def _family_specs(
         self,
-        *,
-        family: ComponentFamily[Any],
-        component_name: str,
-    ) -> ComponentDescriptor:
-        try:
-            return self._registry.get(family, component_name)
-        except KeyError as exc:
-            raise ComponentResolutionError(
-                f"component `{family.name}:{component_name}` is not available in this load session"
-            ) from exc
+        family: ComponentFamily[Any] | str,
+    ) -> tuple[_ResolvedComponent, ...]:
+        normalized = coerce_component_family(family)
+        cached = self._family_spec_cache.get(normalized.name)
+        if cached is not None:
+            return cached
+        family_settings = _family_settings(self._settings, normalized.name)
+        specs: list[_ResolvedComponent] = []
+        for descriptor in self._descriptors_by_family.get(normalized.name, ()):
+            config = getattr(
+                family_settings,
+                descriptor.config_cls.__setting_name__,
+                None,
+            )
+            if not isinstance(config, descriptor.config_cls):
+                continue
+            if not bool(config.enabled):
+                continue
+            specs.append(
+                _ResolvedComponent(
+                    family=normalized,
+                    component_name=descriptor.config_cls.__setting_name__,
+                    descriptor=descriptor,
+                    config=descriptor.config_cls.from_raw(
+                        config.model_dump(mode="python"),
+                        env=self._env,
+                    ),
+                )
+            )
+        resolved = tuple(specs)
+        self._family_spec_cache[normalized.name] = resolved
+        return resolved
 
 
-ComponentContainer = ComponentCatalog
+def load_component_descriptors() -> tuple[_ComponentDescriptor, ...]:
+    items: dict[tuple[str, str], _ComponentDescriptor] = {}
+    for module in _iter_component_modules():
+        _register_module_components(items=items, module=module)
+    return tuple(items.values())
 
 
-def load_component_registry(
+def materialize_settings(
     *,
-    settings: AppSettings,
-    component_loader: ComponentLoader | None = None,
-) -> ComponentRegistry:
-    registry = ComponentRegistry()
-    imported_modules: set[str] = set()
-    for module_path in _iter_builtin_module_paths(settings):
-        if module_path in imported_modules:
-            continue
-        imported_modules.add(module_path)
-        _register_module_components(
-            registry=registry,
-            module=importlib.import_module(module_path),
+    settings: AppSettings | Mapping[str, Any],
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> AppSettings:
+    if isinstance(settings, AppSettings):
+        raw_settings = settings.model_dump(mode="python")
+    elif isinstance(settings, Mapping):
+        raw_settings = dict(settings)
+    else:
+        raise TypeError(
+            f"settings must be an AppSettings or mapping, got `{type(settings).__name__}`"
         )
-    if component_loader is not None:
-        component_loader(registry)
-    return registry
+    app_model = _create_settings_model(descriptors=descriptors)
+    return app_model.model_validate(raw_settings)
 
 
 def register_component(*, meta: ComponentMeta) -> Callable[[_T], _T]:
@@ -399,31 +262,55 @@ def register_component(*, meta: ComponentMeta) -> Callable[[_T], _T]:
     return decorator
 
 
-def _iter_builtin_module_paths(settings: AppSettings) -> tuple[str, ...]:
-    selected: list[str] = []
-    seen: set[str] = set()
-    for family in BUILTIN_COMPONENT_FAMILIES:
-        family_settings = getattr(settings, family.name, None)
-        if not isinstance(family_settings, ComponentFamilySettings):
+def _create_settings_model(
+    *,
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> type[AppSettings]:
+    component_fields: dict[str, Any] = {}
+    for family_name in _iter_component_family_names(descriptors):
+        family_model = _build_family_settings_model(
+            family_name=family_name,
+            descriptors=_list_family_descriptors(descriptors, family_name),
+        )
+        component_fields[family_name] = (
+            family_model,
+            _default_model_instance(family_model),
+        )
+    components_model = cast(
+        "type[ComponentSettings]",
+        create_model(
+            "ComponentSettings",
+            __base__=ComponentSettings,
+            **component_fields,
+        ),
+    )
+    return cast(
+        "type[AppSettings]",
+        create_model(
+            "AppSettings",
+            __base__=AppSettings,
+            components=(components_model, _default_model_instance(components_model)),
+        ),
+    )
+
+
+def _iter_component_modules() -> tuple[ModuleType, ...]:
+    modules: list[ModuleType] = []
+    package = importlib.import_module("serpsage.components")
+    for module_info in pkgutil.walk_packages(
+        package.__path__,
+        prefix=f"{package.__name__}.",
+    ):
+        if module_info.ispkg:
             continue
-        for instance_id, instance_settings in family_settings.instances.items():
-            key = (family.name, str(instance_settings.component))
-            if (
-                instance_id not in family_settings.declared_instances
-                and key not in _OPTIONAL_BUILTIN_COMPONENTS
-            ):
-                continue
-            module_path = _BUILTIN_COMPONENT_MODULES.get(key)
-            if module_path is None or module_path in seen:
-                continue
-            seen.add(module_path)
-            selected.append(module_path)
-    return tuple(selected)
+        with contextlib.suppress(ImportError):
+            modules.append(importlib.import_module(module_info.name))
+    return tuple(modules)
 
 
 def _register_module_components(
     *,
-    registry: ComponentRegistry,
+    items: dict[tuple[str, str], _ComponentDescriptor],
     module: ModuleType,
 ) -> None:
     for value in module.__dict__.values():
@@ -436,7 +323,168 @@ def _register_module_components(
         meta = getattr(value, _COMPONENT_META_ATTR, None)
         if not isinstance(meta, ComponentMeta):
             continue
-        registry.register(meta, value)
+        _register_component_descriptor(items=items, meta=meta, cls=value)
+
+
+def _register_component_descriptor(
+    *,
+    items: dict[tuple[str, str], _ComponentDescriptor],
+    meta: ComponentMeta,
+    cls: type[ComponentBase[Any]],
+) -> None:
+    config_cls = _resolve_registered_config_class(cls)
+    family = coerce_component_family(config_cls.__setting_family__)
+    key = (family.name, config_cls.__setting_name__)
+    existing = items.get(key)
+    if existing is not None and existing.cls is cls:
+        return
+    if existing is not None:
+        raise ValueError(
+            f"component `{family.name}:{config_cls.__setting_name__}` is already registered"
+        )
+    _validate_component_signature(cls=cls, config_cls=config_cls)
+    items[key] = _ComponentDescriptor(
+        family=family,
+        cls=cls,
+        config_cls=config_cls,
+        meta=meta,
+    )
+
+
+def _resolve_registered_config_class(
+    cls: type[Any],
+) -> type[ComponentConfigBase]:
+    config_cls = getattr(cls, "Config", None)
+    if not _is_setting_class(config_cls):
+        raise TypeError(
+            f"{cls.__name__} must expose a concrete Config class with "
+            "`__setting_family__` and `__setting_name__`"
+        )
+    return cast("type[ComponentConfigBase]", config_cls)
+
+
+def _validate_component_signature(
+    *,
+    cls: ComponentClass,
+    config_cls: type[ComponentConfigBase],
+) -> None:
+    _ = analyze_class(cls)
+    config_type = _resolve_component_config_type(cls)
+    if not isinstance(config_type, type):
+        raise TypeError(
+            f"{cls.__name__} must bind a concrete `ComponentBase[ConfigModel]` config type"
+        )
+    if not issubclass(config_cls, config_type):
+        raise TypeError(
+            f"{cls.__name__} config model `{config_cls.__name__}` is incompatible "
+            f"with `{config_type.__name__}`"
+        )
+
+
+def _build_family_settings_model(
+    *,
+    family_name: str,
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> type[SettingModel]:
+    field_definitions: dict[str, Any] = {}
+    for descriptor in descriptors:
+        default_value = _default_field_value(descriptor.config_cls)
+        field_definitions[descriptor.config_cls.__setting_name__] = (
+            descriptor.config_cls,
+            default_value,
+        )
+    base = _FAMILY_SETTING_BASES.get(family_name, SettingModel)
+    return cast(
+        "type[SettingModel]",
+        create_model(
+            _family_model_name(family_name),
+            __base__=base,
+            **field_definitions,
+        ),
+    )
+
+
+def _family_settings(settings: AppSettings, family_name: str) -> SettingModel:
+    value = getattr(settings.components, family_name, None)
+    if not isinstance(value, SettingModel):
+        raise _ComponentResolutionError(
+            f"settings family `{family_name}` is not available in components"
+        )
+    return value
+
+
+def _iter_component_family_names(
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> tuple[str, ...]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for family_name in _FAMILY_SETTING_BASES:
+        names.append(family_name)
+        seen.add(family_name)
+    for family in _descriptor_families(descriptors):
+        if family.name in seen:
+            continue
+        seen.add(family.name)
+        names.append(family.name)
+    return tuple(names)
+
+
+def _list_family_descriptors(
+    descriptors: tuple[_ComponentDescriptor, ...],
+    family: ComponentFamily[Any] | str,
+) -> tuple[_ComponentDescriptor, ...]:
+    family_name = coerce_component_family(family).name
+    return tuple(
+        descriptor
+        for descriptor in descriptors
+        if descriptor.family.name == family_name
+    )
+
+
+def _descriptor_families(
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> tuple[ComponentFamily[Any], ...]:
+    unique: dict[str, ComponentFamily[Any]] = {}
+    for descriptor in descriptors:
+        unique[descriptor.family.name] = descriptor.family
+    return tuple(sorted(unique.values(), key=lambda family: family.name))
+
+
+def _group_descriptors_by_family(
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> dict[str, tuple[_ComponentDescriptor, ...]]:
+    grouped: dict[str, list[_ComponentDescriptor]] = {}
+    for descriptor in descriptors:
+        grouped.setdefault(descriptor.family.name, []).append(descriptor)
+    return {family_name: tuple(items) for family_name, items in grouped.items()}
+
+
+def _family_model_name(family_name: str) -> str:
+    parts = family_name.split("_")
+    return f"Dynamic{''.join(part.capitalize() for part in parts)}Settings"
+
+
+def _default_field_value(setting_class: type[ComponentConfigBase]) -> Any:
+    try:
+        return setting_class()
+    except ValidationError:
+        return ...
+
+
+def _default_model_instance(model_cls: type[SettingModel]) -> SettingModel:
+    try:
+        return model_cls()
+    except ValidationError:
+        return model_cls.model_construct()
+
+
+def _is_setting_class(candidate: object) -> bool:
+    return (
+        inspect.isclass(candidate)
+        and issubclass(candidate, ComponentConfigBase)
+        and bool(str(getattr(candidate, "__setting_family__", "")).strip())
+        and bool(str(getattr(candidate, "__setting_name__", "")).strip())
+    )
 
 
 def _resolve_component_config_type(cls: type[Any]) -> type[ComponentConfigBase] | None:
@@ -497,13 +545,4 @@ def _resolve_typevar(value: Any, type_map: TypeMap) -> Any:
     return current
 
 
-__all__ = [
-    "ComponentCatalog",
-    "ComponentContainer",
-    "ComponentDescriptor",
-    "ComponentRegistry",
-    "ComponentResolutionError",
-    "ResolvedComponentSpec",
-    "load_component_registry",
-    "register_component",
-]
+__all__ = ["ComponentCatalog"]

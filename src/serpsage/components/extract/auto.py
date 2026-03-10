@@ -8,7 +8,6 @@ from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.html import HtmlExtractor
 from serpsage.components.extract.pdf import PdfExtractor
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
 _AUTO_EXTRACTOR_META = ComponentMeta(
@@ -21,7 +20,6 @@ _AUTO_EXTRACTOR_META = ComponentMeta(
 )
 
 
-@register_component(meta=_AUTO_EXTRACTOR_META)
 class AutoExtractor(ExtractorBase):
     meta = _AUTO_EXTRACTOR_META
 

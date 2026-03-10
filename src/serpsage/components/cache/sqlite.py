@@ -9,7 +9,6 @@ from pydantic import field_validator
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
-from serpsage.load import register_component
 
 AioSqliteModule: Any | None = None
 try:
@@ -43,7 +42,6 @@ _SQLITE_CACHE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_SQLITE_CACHE_META)
 class SqliteCache(CacheBase[SqliteCacheConfig]):
     meta = _SQLITE_CACHE_META
 

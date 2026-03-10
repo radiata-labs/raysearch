@@ -9,7 +9,6 @@ from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -58,7 +57,6 @@ _SEARXNG_META = ComponentMeta(
 )
 
 
-@register_component(meta=_SEARXNG_META)
 class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
     meta = _SEARXNG_META
 

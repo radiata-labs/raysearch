@@ -19,7 +19,6 @@ from serpsage.components.crawl.utils import (
 )
 from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 _MIN_BYTES = 32
@@ -69,7 +68,6 @@ _AUTO_CRAWLER_META = ComponentMeta(
 )
 
 
-@register_component(meta=_AUTO_CRAWLER_META)
 class AutoCrawler(CrawlerBase):
     meta = _AUTO_CRAWLER_META
 

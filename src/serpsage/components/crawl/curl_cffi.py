@@ -20,7 +20,6 @@ from serpsage.components.crawl.utils import (
     parse_retry_after_s,
 )
 from serpsage.components.http.base import HttpClientConfig
-from serpsage.load import register_component
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 if TYPE_CHECKING:
@@ -63,7 +62,6 @@ _CURL_CRAWLER_META = ComponentMeta(
 )
 
 
-@register_component(meta=_CURL_CRAWLER_META)
 class CurlCffiCrawler(CrawlerBase):
     meta = _CURL_CRAWLER_META
 

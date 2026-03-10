@@ -15,7 +15,6 @@ from serpsage.components.provider.base import (
     SearchProviderBase,
 )
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -105,7 +104,6 @@ _GOOGLE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_GOOGLE_META)
 class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
     meta = _GOOGLE_META
 

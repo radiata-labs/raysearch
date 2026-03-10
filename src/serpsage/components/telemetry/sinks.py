@@ -13,7 +13,6 @@ from serpsage.components.base import ComponentConfigBase, ComponentMeta
 from serpsage.components.telemetry.base import (
     EventSinkBase,
 )
-from serpsage.load import register_component
 from serpsage.models.components.telemetry import EventEnvelope
 
 AioSqliteModule: Any | None = None
@@ -75,7 +74,6 @@ _SQLITE_SINK_META = ComponentMeta(
 )
 
 
-@register_component(meta=_NULL_SINK_META)
 class NullObsSink(EventSinkBase[ComponentConfigBase]):
     meta = _NULL_SINK_META
 
@@ -84,7 +82,6 @@ class NullObsSink(EventSinkBase[ComponentConfigBase]):
         _ = event
 
 
-@register_component(meta=_JSONL_SINK_META)
 class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
     meta = _JSONL_SINK_META
 
@@ -124,7 +121,6 @@ class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
         self._file = None
 
 
-@register_component(meta=_SQLITE_SINK_META)
 class SqliteMeterLedgerSink(EventSinkBase[SqliteMeteringConfig]):
     meta = _SQLITE_SINK_META
 

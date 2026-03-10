@@ -12,7 +12,6 @@ from serpsage.app.tokens import (
 )
 from serpsage.core.runtime import Overrides
 from serpsage.core.workunit import WorkUnit
-from serpsage.load import ComponentRegistry
 from serpsage.models.app.response import (
     AnswerResponse,
     FetchResponse,
@@ -29,8 +28,6 @@ from serpsage.models.steps.search import SearchStepContext
 from serpsage.steps.base import RunnerBase
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from serpsage.models.app.request import (
         AnswerRequest,
         FetchRequest,
@@ -49,18 +46,21 @@ class Engine(WorkUnit):
     @classmethod
     def from_settings(
         cls,
-        settings: AppSettings,
+        setting_file: str | None = None,
         *,
+        settings: AppSettings | dict[str, Any] | None = None,
         overrides: Overrides | None = None,
-        component_loader: Callable[[ComponentRegistry], None] | None = None,
     ) -> Engine:
         """Build an engine through the component registry/container bootstrap."""
+        if settings is None:
+            from serpsage.settings.load import load_settings  # noqa: PLC0415
+
+            settings = load_settings(path=setting_file)
         from serpsage.app.bootstrap import build_engine  # noqa: PLC0415
 
         return build_engine(
             settings=settings,
             overrides=overrides,
-            component_loader=component_loader,
         )
 
     async def search(self, req: SearchRequest) -> SearchResponse:

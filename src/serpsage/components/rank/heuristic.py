@@ -10,7 +10,6 @@ from typing_extensions import override
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import HeuristicRankSettings, RankerBase, RankMode
-from serpsage.load import register_component
 from serpsage.utils import normalize_text
 
 _HEURISTIC_META = ComponentMeta(
@@ -24,7 +23,6 @@ _HEURISTIC_META = ComponentMeta(
 )
 
 
-@register_component(meta=_HEURISTIC_META)
 class HeuristicRanker(RankerBase[HeuristicRankSettings]):
     meta = _HEURISTIC_META
     _ASCII_TOKEN_RE = re.compile(r"^[a-z0-9_]+$")

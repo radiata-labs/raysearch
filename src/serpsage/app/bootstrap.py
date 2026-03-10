@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from typing_extensions import override
 
 from serpsage.app.engine import Engine
@@ -51,12 +52,8 @@ from serpsage.dependencies import (
     ServiceProvider,
     format_service_key,
 )
-from serpsage.load import (
-    ComponentCatalog,
-    ComponentContainer,
-    ComponentRegistry,
-    load_component_registry,
-)
+from serpsage.load import ComponentCatalog
+from serpsage.load.components import load_component_descriptors, materialize_settings
 from serpsage.settings.models import AppSettings
 from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
 from serpsage.steps.base import RunnerBase
@@ -95,9 +92,6 @@ from serpsage.steps.search import (
     SearchStep,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 
 class SystemClock(ClockBase):
     @override
@@ -118,18 +112,19 @@ def build_runtime(
 
 def build_component_container(
     *,
-    settings: AppSettings,
+    settings: AppSettings | dict[str, Any],
     overrides: Overrides | None = None,
-    component_loader: Callable[[ComponentRegistry], None] | None = None,
-) -> tuple[Runtime, ComponentContainer]:
+) -> Runtime:
     ov = overrides or Overrides()
-    rt = build_runtime(settings=settings, overrides=ov)
-    catalog = ComponentCatalog(
+    descriptors = load_component_descriptors()
+    normalized_settings = materialize_settings(
         settings=settings,
-        registry=load_component_registry(
-            settings=settings,
-            component_loader=component_loader,
-        ),
+        descriptors=descriptors,
+    )
+    rt = build_runtime(settings=normalized_settings, overrides=ov)
+    catalog = ComponentCatalog(
+        settings=normalized_settings,
+        descriptors=descriptors,
         overrides=ov,
         env=rt.env,
     )
@@ -140,21 +135,19 @@ def build_component_container(
         "TelemetryEmitterBase[Any]",
         provider.require(TelemetryEmitterBase),
     )
-    return rt, catalog
+    return rt
 
 
 def build_engine(
     *,
-    settings: AppSettings,
+    settings: AppSettings | dict[str, Any],
     overrides: Overrides | None = None,
-    component_loader: Callable[[ComponentRegistry], None] | None = None,
 ) -> Engine:
     ov = overrides or Overrides()
     _validate_override_workunits(ov)
-    rt, _catalog = build_component_container(
+    rt = build_component_container(
         settings=settings,
         overrides=ov,
-        component_loader=component_loader,
     )
     services = rt.services
     if services is None:
@@ -193,6 +186,10 @@ def _register_component_services(
 ) -> None:
     family_defaults = _family_contracts()
     family_overrides = _workunit_overrides(overrides)
+    default_specs = {
+        family.name: catalog.resolve_default_spec(family)
+        for family in catalog.component_families()
+    }
     collection_orders: dict[str, int] = {}
     for family, override_instance in family_overrides.items():
         contract = family_defaults.get(family.name)
@@ -202,7 +199,7 @@ def _register_component_services(
     for spec in catalog.iter_enabled_specs():
         if spec.family in family_overrides:
             continue
-        instance_key = _component_instance_key(spec.family, spec.instance_id)
+        instance_key = _component_instance_key(spec.family, spec.component_name)
         services.bind_class(
             instance_key,
             spec.descriptor.cls,
@@ -210,23 +207,26 @@ def _register_component_services(
             overrides={"config": spec.config},
         )
         services.bind_alias(spec.descriptor.cls, instance_key)
-        contracts = list(spec.descriptor.meta.contracts)
+        contracts = _component_contracts(spec.descriptor.cls)
         default_contract = family_defaults.get(spec.family.name)
-        if (
-            default_contract is not None
-            and issubclass(spec.descriptor.cls, default_contract)
-            and default_contract not in contracts
-        ):
-            contracts.insert(0, default_contract)
-        family_settings = catalog.family_settings(spec.family)
-        is_default = str(spec.instance_id) == str(family_settings.default)
+        default_spec = default_specs.get(spec.family.name)
+        is_default = default_spec is not None and str(spec.component_name) == str(
+            default_spec.component_name
+        )
         for contract in contracts:
+            if default_contract is not None and contract is default_contract:
+                if is_default:
+                    services.bind_alias(contract, instance_key)
+                else:
+                    key_name = format_key_name(contract)
+                    order = collection_orders.get(key_name, 0) + 10
+                    collection_orders[key_name] = order
+                    services.bind_many(contract, instance_key, order=order)
+                continue
             key_name = format_key_name(contract)
             order = collection_orders.get(key_name, 0) + 10
             collection_orders[key_name] = order
             services.bind_many(contract, instance_key, order=order)
-            if is_default:
-                services.bind_alias(contract, instance_key)
 
 
 def _register_pipeline_services(services: ServiceCollection) -> None:
@@ -415,6 +415,25 @@ def _family_contracts() -> dict[str, type[object]]:
         TELEMETRY_FAMILY.name: TelemetryEmitterBase,
         RATE_LIMIT_FAMILY.name: RateLimiterBase,
     }
+
+
+def _component_contracts(cls: type[object]) -> tuple[type[object], ...]:
+    contracts: list[type[object]] = []
+    seen: set[type[object]] = set()
+    for base in cls.__mro__[1:]:
+        if base in {object, WorkUnit}:
+            continue
+        if base.__name__ == "ComponentBase":
+            continue
+        if not inspect.isabstract(base):
+            continue
+        if not issubclass(base, WorkUnit):
+            continue
+        if base in seen:
+            continue
+        seen.add(base)
+        contracts.append(base)
+    return tuple(contracts)
 
 
 def _workunit_overrides(

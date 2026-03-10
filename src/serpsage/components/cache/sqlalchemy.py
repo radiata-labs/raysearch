@@ -9,7 +9,6 @@ from pydantic import field_validator
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
-from serpsage.load import register_component
 
 _SAFE_SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -44,7 +43,6 @@ _SQLALCHEMY_CACHE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_SQLALCHEMY_CACHE_META)
 class SQLAlchemyCache(CacheBase[SQLAlchemyCacheConfig]):
     meta = _SQLALCHEMY_CACHE_META
 

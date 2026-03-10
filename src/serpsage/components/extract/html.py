@@ -26,7 +26,6 @@ from serpsage.components.extract.utils import (
     guess_apparent_encoding,
     markdown_to_text,
 )
-from serpsage.load import register_component
 from serpsage.models.components.extract import (
     ExtractContent,
     ExtractContentTag,
@@ -50,7 +49,6 @@ _HTML_EXTRACTOR_META = ComponentMeta(
 )
 
 
-@register_component(meta=_HTML_EXTRACTOR_META)
 class HtmlExtractor(ExtractorBase):
     meta = _HTML_EXTRACTOR_META
 

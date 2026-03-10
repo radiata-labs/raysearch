@@ -8,7 +8,6 @@ from sklearn.metrics.pairwise import linear_kernel
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import RankerBase, RankMode, RankTfidfSettings
-from serpsage.load import register_component
 from serpsage.tokenize import tokenize
 from serpsage.utils import normalize_text
 
@@ -63,7 +62,6 @@ _TFIDF_META = ComponentMeta(
 )
 
 
-@register_component(meta=_TFIDF_META)
 class TfidfRanker(RankerBase[RankTfidfSettings]):
     meta = _TFIDF_META
 

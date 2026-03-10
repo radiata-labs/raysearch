@@ -10,7 +10,6 @@ from pydantic import field_validator
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
-from serpsage.load import register_component
 
 _SAFE_SQL_IDENT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -88,7 +87,6 @@ _MYSQL_CACHE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_MYSQL_CACHE_META)
 class MySQLCache(CacheBase[MySQLCacheConfig]):
     meta = _MYSQL_CACHE_META
 

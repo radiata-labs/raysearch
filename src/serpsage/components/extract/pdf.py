@@ -23,7 +23,6 @@ from serpsage.components.extract.utils import (
     finalize_markdown,
     markdown_to_text,
 )
-from serpsage.load import register_component
 from serpsage.models.components.extract import (
     ExtractContent,
     ExtractedDocument,
@@ -60,7 +59,6 @@ class PdfExtractionResult:
     stats: dict[str, int | float | str | bool]
 
 
-@register_component(meta=_PDF_EXTRACTOR_META)
 class PdfExtractor(ExtractorBase):
     meta = _PDF_EXTRACTOR_META
 

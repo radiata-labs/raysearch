@@ -11,7 +11,6 @@ from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -64,7 +63,6 @@ _OPENAI_ROUTE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_OPENAI_ROUTE_META)
 class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
     meta = _OPENAI_ROUTE_META
     _SCHEMA_NAME = "SerpSageOverview"

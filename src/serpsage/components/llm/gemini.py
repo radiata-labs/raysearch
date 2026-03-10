@@ -10,7 +10,6 @@ from pydantic import BaseModel
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
-from serpsage.load import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -54,7 +53,6 @@ _GEMINI_META = ComponentMeta(
 )
 
 
-@register_component(meta=_GEMINI_META)
 class GeminiClient(LLMClientBase[GeminiModelConfig]):
     meta = _GEMINI_META
 

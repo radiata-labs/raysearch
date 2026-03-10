@@ -5,13 +5,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from serpsage.settings.models import AppSettings
-
 
 def load_settings(
     path: str | None = None, *, env: dict[str, str] | None = None
-) -> AppSettings:
-    """Load settings from YAML/JSON and preserve runtime env for component injection.
+) -> dict[str, Any]:
+    """Load raw settings data from YAML/JSON and preserve runtime env.
 
     Precedence:
     1) explicit `path`
@@ -19,9 +17,8 @@ def load_settings(
     3) `serpsage.yaml`
     4) defaults
 
-    Raw component instance declarations are preserved through validation so the
-    isolated component loader can distinguish explicit user config from
-    post-merge defaults.
+    The final AppSettings model is built later, after component discovery has
+    injected component-specific config models into the settings schema.
     """
     env_map = dict(env) if env is not None else dict(os.environ)
     candidate = path or env_map.get("SERPSAGE_CONFIG_PATH") or "serpsage.yaml"
@@ -39,9 +36,8 @@ def load_settings(
             data = json.loads(raw)
         else:
             raise ValueError(f"Unsupported settings file type: {p.suffix}")
-    settings = AppSettings.model_validate(data)
-    settings.runtime_env = env_map
-    return settings
+    data["runtime_env"] = env_map
+    return data
 
 
 __all__ = ["load_settings"]

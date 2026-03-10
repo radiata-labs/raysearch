@@ -6,7 +6,6 @@ import httpx
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase, HttpClientConfig
-from serpsage.load import register_component
 
 _HTTPX_META = ComponentMeta(
     family="http",
@@ -19,7 +18,6 @@ _HTTPX_META = ComponentMeta(
 )
 
 
-@register_component(meta=_HTTPX_META)
 class HttpClient(HttpClientBase):
     meta = _HTTPX_META
 

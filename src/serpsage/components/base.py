@@ -1,20 +1,33 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
+from typing import (
+    Any,
+    ClassVar,
+    Generic,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from pydantic import ConfigDict
 
 from serpsage.core.workunit import WorkUnit
-from serpsage.dependencies.contracts import Inject
-from serpsage.settings.models import Model
+from serpsage.settings.models import SettingModel
 
 ConfigT = TypeVar("ConfigT", bound="ComponentConfigBase")
 WorkUnitT = TypeVar("WorkUnitT", bound=WorkUnit)
 
 
-class ComponentConfigBase(Model):
+class ComponentConfigBase(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    enabled: bool = False
+
+    __setting_family__: str = ""
+    __setting_name__: str = ""
 
     @classmethod
     def inject_env(
@@ -111,10 +124,76 @@ class ComponentMeta:
 class ComponentBase(WorkUnit, Generic[ConfigT]):
     meta: ClassVar[ComponentMeta]
 
-    if TYPE_CHECKING:
-        config: ConfigT
-    else:
-        config: ComponentConfigBase = Inject(ComponentConfigBase)
+    Config: type[ConfigT]
+
+    def __init_subclass__(
+        cls,
+        config: type[ConfigT] | None = None,
+        **_kwargs: Any,
+    ) -> None:
+        super().__init_subclass__()
+
+        orig_bases: tuple[type, ...] = getattr(cls, "__orig_bases__", ())
+        for orig_base in orig_bases:
+            origin_class = get_origin(orig_base)
+            if not (
+                inspect.isclass(origin_class)
+                and issubclass(origin_class, ComponentBase)
+            ):
+                continue
+            try:
+                config_t = cast("tuple[ConfigT]", get_args(orig_base))[0]
+            except ValueError:  # pragma: no cover
+                continue
+            if (
+                config is None
+                and inspect.isclass(config_t)
+                and issubclass(config_t, ComponentConfigBase)
+            ):
+                config = config_t
+        if config is not None:
+            cls.Config = _specialize_component_config(cls=cls, config=config)
+
+    @property
+    def config(self) -> ConfigT:
+        default: Any = None
+        config_class = getattr(self, "Config", None)
+        if inspect.isclass(config_class) and issubclass(
+            config_class, ComponentConfigBase
+        ):
+            value = getattr(
+                getattr(
+                    self.rt.settings.components, config_class.__setting_family__, None
+                ),
+                config_class.__setting_name__,
+                default,
+            )
+            return cast("ConfigT", value)
+        return cast("ConfigT", default)
+
+
+def _specialize_component_config(
+    *,
+    cls: type[ComponentBase[Any]],
+    config: type[ConfigT],
+) -> type[ConfigT]:
+    meta = getattr(cls, "meta", None)
+    if not isinstance(meta, ComponentMeta):
+        return config
+    family_name = coerce_component_family(meta.family).name
+    setting_name = str(meta.name or "").strip()
+    if not family_name or not setting_name:
+        raise TypeError(f"{cls.__name__} must declare a non-empty component meta")
+    specialized = type(
+        f"{cls.__name__}Config",
+        (config,),
+        {
+            "__module__": cls.__module__,
+            "__setting_family__": family_name,
+            "__setting_name__": setting_name,
+        },
+    )
+    return cast("type[ConfigT]", specialized)
 
 
 __all__ = [

@@ -2,7 +2,7 @@
 SerpSage 3.0 (async-only).
 Public API:
 - Engine: async search pipeline orchestrator
-- load_settings: load AppSettings from YAML/JSON/env
+- load_settings: load raw settings data from YAML/JSON/env
 - SearchRequest/SearchResponse + FetchRequest/FetchResponse + AnswerRequest/AnswerResponse
   request/response models
 """
@@ -37,11 +37,7 @@ from serpsage.models.app.response import (
     SearchResponse,
 )
 from serpsage.settings.load import load_settings
-from serpsage.settings.models import (
-    AppSettings,
-    ComponentFamilySettings,
-    ComponentInstanceSettings,
-)
+from serpsage.settings.models import AppSettings
 
 
 def __getattr__(name: str) -> object:
@@ -54,8 +50,6 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "AppSettings",
-    "ComponentFamilySettings",
-    "ComponentInstanceSettings",
     "AnswerRequest",
     "AnswerCitation",
     "AnswerResponse",

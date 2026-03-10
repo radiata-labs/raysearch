@@ -17,7 +17,6 @@ from serpsage.components.telemetry.base import (
     TelemetryEmitterBase,
 )
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 from serpsage.models.components.telemetry import (
     EventAttributes,
     EventEnvelope,
@@ -51,7 +50,6 @@ _ASYNC_EMITTER_META = ComponentMeta(
 )
 
 
-@register_component(meta=_NULL_EMITTER_META)
 class NullTelemetryEmitter(TelemetryEmitterBase[ComponentConfigBase]):
     meta = _NULL_EMITTER_META
 
@@ -69,7 +67,6 @@ class NullTelemetryEmitter(TelemetryEmitterBase[ComponentConfigBase]):
         _ = token
 
 
-@register_component(meta=_ASYNC_EMITTER_META)
 class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
     meta = _ASYNC_EMITTER_META
 

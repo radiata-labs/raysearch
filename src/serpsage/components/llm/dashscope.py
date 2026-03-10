@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
-from serpsage.load import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -53,7 +52,6 @@ _DASHSCOPE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_DASHSCOPE_META)
 class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
     meta = _DASHSCOPE_META
     _SCHEMA_NAME = "SerpSageOverview"

@@ -14,7 +14,6 @@ except Exception:  # noqa: BLE001
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import RankBm25Settings, RankerBase, RankMode
-from serpsage.load import register_component
 from serpsage.tokenize import tokenize
 
 _BM25_META = ComponentMeta(
@@ -28,7 +27,6 @@ _BM25_META = ComponentMeta(
 )
 
 
-@register_component(meta=_BM25_META)
 class Bm25Ranker(RankerBase[RankBm25Settings]):
     meta = _BM25_META
 

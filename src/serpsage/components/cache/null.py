@@ -4,7 +4,6 @@ from typing_extensions import override
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
-from serpsage.load import register_component
 
 _NULL_CACHE_META = ComponentMeta(
     family="cache",
@@ -17,7 +16,6 @@ _NULL_CACHE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_NULL_CACHE_META)
 class NullCache(CacheBase[CacheConfigBase]):
     meta = _NULL_CACHE_META
 

@@ -21,7 +21,6 @@ from serpsage.components.rank.base import (
     RankerBase,
     RankMode,
 )
-from serpsage.load import register_component
 from serpsage.utils import clean_whitespace
 
 
@@ -65,7 +64,6 @@ _CROSS_ENCODER_META = ComponentMeta(
 )
 
 
-@register_component(meta=_CROSS_ENCODER_META)
 class CrossEncoderRanker(RankerBase[RankCrossEncoderSettings]):
     meta = _CROSS_ENCODER_META
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -8,234 +8,14 @@ _FINAL_WEIGHT_SUM_TARGET = 1.0
 _WEIGHT_SUM_EPS = 1e-6
 
 
-class Model(BaseModel):
-    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+class SettingModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
 
 
 ReportStyleKey = Literal["decision", "explainer", "execution"]
 
 
-class ComponentInstanceSettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    component: str
-    enabled: bool = True
-    config: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("component")
-    @classmethod
-    def _validate_component(cls, value: str) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("component must be non-empty")
-        return token
-
-
-class ComponentFamilySettings(Model):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    default: str = "default"
-    instances: dict[str, ComponentInstanceSettings] = Field(default_factory=dict)
-    declared_instances: frozenset[str] = Field(
-        default_factory=frozenset,
-        exclude=True,
-        repr=False,
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_component_family(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "backend" in value:
-            raise ValueError(
-                "legacy component config format is no longer supported; "
-                "use `default` and `instances`"
-            )
-        payload = dict(value)
-        if "declared_instances" not in payload:
-            raw_instances = payload.get("instances")
-            payload["declared_instances"] = (
-                frozenset(str(key) for key in raw_instances)
-                if isinstance(raw_instances, dict)
-                else frozenset()
-            )
-        return payload
-
-    @field_validator("default")
-    @classmethod
-    def _validate_default(cls, value: str) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("default component instance id must be non-empty")
-        return token
-
-
-def _family_settings(
-    *,
-    default: str,
-    instances: dict[str, dict[str, Any]],
-) -> ComponentFamilySettings:
-    return ComponentFamilySettings(
-        default=default,
-        instances={
-            key: ComponentInstanceSettings(
-                component=str(item.get("component") or ""),
-                enabled=bool(item.get("enabled", True)),
-                config=dict(item.get("config") or {}),
-            )
-            for key, item in instances.items()
-        },
-        declared_instances=frozenset(),
-    )
-
-
-def _default_http_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="httpx",
-        instances={
-            "httpx": {
-                "component": "httpx",
-                "config": {},
-            }
-        },
-    )
-
-
-def _default_provider_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="searxng",
-        instances={
-            "searxng": {
-                "component": "searxng",
-                "config": {},
-            }
-        },
-    )
-
-
-def _default_crawl_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="auto",
-        instances={
-            "auto": {
-                "component": "auto",
-                "config": {},
-            },
-            "curl_cffi": {
-                "component": "curl_cffi",
-                "config": {},
-            },
-            "playwright": {
-                "component": "playwright",
-                "config": {},
-            },
-        },
-    )
-
-
-def _default_extract_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="auto",
-        instances={
-            "auto": {
-                "component": "auto",
-                "config": {},
-            },
-            "html": {
-                "component": "html",
-                "config": {},
-            },
-            "pdf": {
-                "component": "pdf",
-                "config": {},
-            },
-        },
-    )
-
-
-def _default_rank_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="blend",
-        instances={
-            "blend": {
-                "component": "blend",
-                "config": {},
-            },
-            "heuristic": {
-                "component": "heuristic",
-                "config": {},
-            },
-            "tfidf": {
-                "component": "tfidf",
-                "config": {},
-            },
-            "bm25": {
-                "component": "bm25",
-                "config": {},
-            },
-            "cross_encoder": {
-                "component": "cross_encoder",
-                "config": {},
-            },
-        },
-    )
-
-
-def _default_cache_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="null",
-        instances={
-            "null": {
-                "component": "null",
-                "config": {},
-            }
-        },
-    )
-
-
-def _default_llm_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="router",
-        instances={
-            "router": {
-                "component": "router",
-                "config": {},
-            },
-            "default_model": {
-                "component": "openai",
-                "config": {
-                    "name": "gpt-4.1-mini",
-                    "model": "gpt-4.1-mini",
-                },
-            },
-        },
-    )
-
-
-def _default_telemetry_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="null",
-        instances={
-            "null": {
-                "component": "null_emitter",
-                "config": {},
-            }
-        },
-    )
-
-
-def _default_rate_limit_settings() -> ComponentFamilySettings:
-    return _family_settings(
-        default="basic",
-        instances={
-            "basic": {
-                "component": "basic",
-                "config": {},
-            }
-        },
-    )
-
-
-class FetchExtractSettings(Model):
+class FetchExtractSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_markdown_chars: int = 160_000
     min_text_chars: int = 220
@@ -247,7 +27,7 @@ class FetchExtractSettings(Model):
     link_keep_hash: bool = False
 
 
-class FetchAbstractSettings(Model):
+class FetchAbstractSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_abstract_chars: int = 2000
     min_abstract_score: float = 0.20
@@ -255,7 +35,7 @@ class FetchAbstractSettings(Model):
     title_boost_alpha: float = 0.35
 
 
-class FetchOverviewSettings(Model):
+class FetchOverviewSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     use_model: str = "gpt-4.1-mini"
     max_abstract_chars: int = 900
@@ -264,14 +44,14 @@ class FetchOverviewSettings(Model):
     force_language: str = "auto"
 
 
-class FetchSettings(Model):
+class FetchSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     extract: FetchExtractSettings = Field(default_factory=FetchExtractSettings)
     abstract: FetchAbstractSettings = Field(default_factory=FetchAbstractSettings)
     overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
 
 
-class SearchDeepSettings(Model):
+class SearchDeepSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     enabled: bool = True
     max_expanded_queries: int = 6
@@ -330,7 +110,7 @@ class SearchDeepSettings(Model):
         return self
 
 
-class SearchSettings(Model):
+class SearchSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_results: int = 16
     additional_query_score_weight: float = 0.8
@@ -345,7 +125,7 @@ class SearchSettings(Model):
         return self
 
 
-class AnswerStageSettings(Model):
+class AnswerStageSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     use_model: str = "gpt-4.1-mini"
 
@@ -361,13 +141,13 @@ class AnswerGenerateSettings(AnswerStageSettings):
         return int(value)
 
 
-class AnswerSettings(Model):
+class AnswerSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     plan: AnswerStageSettings = Field(default_factory=AnswerStageSettings)
     generate: AnswerGenerateSettings = Field(default_factory=AnswerGenerateSettings)
 
 
-class ResearchModelsSettings(Model):
+class ResearchModelsSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     plan: str = ""
     link_select: str = ""
@@ -377,7 +157,7 @@ class ResearchModelsSettings(Model):
     markdown: str = ""
 
 
-class ResearchModeSettings(Model):
+class ResearchModeSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_rounds: int = 5
     max_search_calls: int = 12
@@ -502,7 +282,7 @@ def _default_research_pro_mode() -> ResearchModeSettings:
     )
 
 
-class ResearchSettings(Model):
+class ResearchSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     tool_max_attempts: int = 3
     llm_self_heal_retries: int = 2
@@ -526,7 +306,7 @@ class ResearchSettings(Model):
         return self
 
 
-class RunnerSettings(Model):
+class RunnerSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     search_limit: int = Field(default=8, ge=1)
     fetch_limit: int = Field(default=24, ge=1)
@@ -534,96 +314,64 @@ class RunnerSettings(Model):
     queue_size: int = Field(default=256, ge=1)
 
 
-class AppSettings(Model):
+class CacheSettings(SettingModel):
+    pass
+
+
+class CrawlSettings(SettingModel):
+    pass
+
+
+class ExtractSettings(SettingModel):
+    pass
+
+
+class HttpSettings(SettingModel):
+    pass
+
+
+class LlmSettings(SettingModel):
+    pass
+
+
+class ProviderSettings(SettingModel):
+    pass
+
+
+class RankSettings(SettingModel):
+    pass
+
+
+class RateLimitSettings(SettingModel):
+    pass
+
+
+class TelemetrySettings(SettingModel):
+    pass
+
+
+class ComponentSettings(SettingModel):
+    cache: CacheSettings = Field(default_factory=CacheSettings)
+    crawl: CrawlSettings = Field(default_factory=CrawlSettings)
+    extract: ExtractSettings = Field(default_factory=ExtractSettings)
+    http: HttpSettings = Field(default_factory=HttpSettings)
+    llm: LlmSettings = Field(default_factory=LlmSettings)
+    provider: ProviderSettings = Field(default_factory=ProviderSettings)
+    rank: RankSettings = Field(default_factory=RankSettings)
+    rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
+
+
+class AppSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    http: ComponentFamilySettings = Field(default_factory=_default_http_settings)
-    provider: ComponentFamilySettings = Field(
-        default_factory=_default_provider_settings
-    )
-    crawl: ComponentFamilySettings = Field(default_factory=_default_crawl_settings)
-    extract: ComponentFamilySettings = Field(default_factory=_default_extract_settings)
-    rank: ComponentFamilySettings = Field(default_factory=_default_rank_settings)
-    llm: ComponentFamilySettings = Field(default_factory=_default_llm_settings)
-    cache: ComponentFamilySettings = Field(default_factory=_default_cache_settings)
-    telemetry: ComponentFamilySettings = Field(
-        default_factory=_default_telemetry_settings
-    )
-    rate_limit: ComponentFamilySettings = Field(
-        default_factory=_default_rate_limit_settings
-    )
+    components: ComponentSettings = Field(default_factory=ComponentSettings)
+
     search: SearchSettings = Field(default_factory=SearchSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
     answer: AnswerSettings = Field(default_factory=AnswerSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
     runtime_env: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _merge_component_family_defaults(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(value)
-        for family_name, factory in _COMPONENT_FAMILY_DEFAULT_FACTORIES.items():
-            payload[family_name] = _merge_component_family_payload(
-                default_settings=factory(),
-                raw_value=payload.get(family_name),
-            )
-        return payload
-
-
-_COMPONENT_FAMILY_DEFAULT_FACTORIES = {
-    "http": _default_http_settings,
-    "provider": _default_provider_settings,
-    "crawl": _default_crawl_settings,
-    "extract": _default_extract_settings,
-    "rank": _default_rank_settings,
-    "llm": _default_llm_settings,
-    "cache": _default_cache_settings,
-    "telemetry": _default_telemetry_settings,
-    "rate_limit": _default_rate_limit_settings,
-}
-
-
-def _merge_component_family_payload(
-    *,
-    default_settings: ComponentFamilySettings,
-    raw_value: object,
-) -> object:
-    default_payload = default_settings.model_dump(
-        mode="python",
-        exclude={"declared_instances"},
-    )
-    default_instances = dict(default_payload.get("instances") or {})
-    if raw_value is None:
-        return {
-            **default_payload,
-            "declared_instances": frozenset(),
-        }
-    if isinstance(raw_value, ComponentFamilySettings):
-        raw_payload = raw_value.model_dump(
-            mode="python",
-            exclude={"declared_instances"},
-        )
-        declared_instances = frozenset(str(key) for key in raw_value.declared_instances)
-    elif isinstance(raw_value, dict):
-        raw_payload = dict(raw_value)
-        raw_instances = raw_payload.get("instances")
-        declared_instances = (
-            frozenset(str(key) for key in raw_instances)
-            if isinstance(raw_instances, dict)
-            else frozenset()
-        )
-    else:
-        return raw_value
-    merged_instances = dict(default_instances)
-    merged_instances.update(dict(raw_payload.get("instances") or {}))
-    return {
-        **default_payload,
-        **raw_payload,
-        "instances": merged_instances,
-        "declared_instances": declared_instances,
-    }
 
 
 __all__ = [
@@ -635,9 +383,17 @@ __all__ = [
     "AnswerGenerateSettings",
     "AnswerSettings",
     "AnswerStageSettings",
-    "ComponentFamilySettings",
-    "ComponentInstanceSettings",
-    "Model",
+    "CacheSettings",
+    "ComponentSettings",
+    "CrawlSettings",
+    "ExtractSettings",
+    "HttpSettings",
+    "LlmSettings",
+    "ProviderSettings",
+    "RankSettings",
+    "RateLimitSettings",
+    "SettingModel",
+    "TelemetrySettings",
     "ReportStyleKey",
     "ResearchModeSettings",
     "ResearchModelsSettings",

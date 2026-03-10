@@ -12,7 +12,6 @@ from serpsage.components.llm.base import (
     LLMModelConfig,
 )
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -37,7 +36,6 @@ _ROUTER_META = ComponentMeta(
 )
 
 
-@register_component(meta=_ROUTER_META)
 class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
     meta = _ROUTER_META
 

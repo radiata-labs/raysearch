@@ -17,7 +17,6 @@ from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
 from serpsage.dependencies import Inject
-from serpsage.load import register_component
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,7 +31,6 @@ _BLEND_META = ComponentMeta(
 )
 
 
-@register_component(meta=_BLEND_META)
 class BlendRanker(RankerBase[RankBlendSettings]):
     meta = _BLEND_META
 

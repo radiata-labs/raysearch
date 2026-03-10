@@ -8,7 +8,6 @@ from pydantic import field_validator
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
-from serpsage.load import register_component
 
 AioredisModule: Any | None = None
 try:
@@ -41,7 +40,6 @@ _REDIS_CACHE_META = ComponentMeta(
 )
 
 
-@register_component(meta=_REDIS_CACHE_META)
 class RedisCache(CacheBase[RedisCacheConfig]):
     meta = _REDIS_CACHE_META
 

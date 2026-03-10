@@ -12,7 +12,6 @@ import anyio
 from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
 from serpsage.components.crawl.utils import analyze_content
-from serpsage.load import register_component
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 if TYPE_CHECKING:
@@ -85,7 +84,6 @@ _PLAYWRIGHT_CRAWLER_META = ComponentMeta(
 )
 
 
-@register_component(meta=_PLAYWRIGHT_CRAWLER_META)
 class PlaywrightCrawler(CrawlerBase):
     meta = _PLAYWRIGHT_CRAWLER_META
 
