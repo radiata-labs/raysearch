@@ -4,7 +4,6 @@ import json
 from typing import TYPE_CHECKING, Any, cast, overload
 from typing_extensions import TypeVar, override
 
-from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from serpsage.components.base import ComponentMeta
@@ -71,6 +70,10 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
     def __init__(
         self,
     ) -> None:
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise RuntimeError("openai is required for OpenAIClient") from exc
         self.client = AsyncOpenAI(
             api_key=self.config.api_key,
             base_url=self.config.base_url,

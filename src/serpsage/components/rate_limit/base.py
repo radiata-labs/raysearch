@@ -11,6 +11,8 @@ RateLimiterConfigT = TypeVar("RateLimiterConfigT", bound=ComponentConfigBase)
 class RateLimiterBase(
     ComponentBase[RateLimiterConfigT], ABC, Generic[RateLimiterConfigT]
 ):
+    __di_contract__ = True
+
     @abstractmethod
     async def acquire(self, *, host: str) -> None:
         raise NotImplementedError

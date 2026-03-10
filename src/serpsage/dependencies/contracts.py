@@ -60,6 +60,7 @@ class MultiBinding:
     binding_id: str
     key: ServiceKey[Any]
     order: int
+    linked_binding_id: str | None = None
     provider_cls: type[Any] | None = None
     instance: object = field(default_factory=lambda: _MISSING)
     alias_key: ServiceKey[Any] | None = None

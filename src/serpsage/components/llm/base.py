@@ -48,6 +48,8 @@ LLMConfigT = TypeVar(
 
 
 class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
+    __di_contract__ = True
+
     def describe_model(self, name: str) -> LLMModelConfig:
         raise ValueError(f"llm model `{name}` is not available")
 

@@ -15,6 +15,7 @@ from typing import (
 from pydantic import ConfigDict
 
 from serpsage.core.workunit import WorkUnit
+from serpsage.dependencies.contracts import InjectToken
 from serpsage.settings.models import SettingModel
 
 ConfigT = TypeVar("ConfigT", bound="ComponentConfigBase")
@@ -60,6 +61,7 @@ class ComponentFamily(Generic[WorkUnitT]):
 
 
 _COMPONENT_FAMILIES: dict[str, ComponentFamily[Any]] = {}
+_COMPONENT_COLLECTION_TOKENS: dict[str, InjectToken[tuple[object, ...]]] = {}
 
 
 def define_component_family(name: str) -> ComponentFamily[Any]:
@@ -82,6 +84,20 @@ def coerce_component_family(
         if isinstance(family, ComponentFamily)
         else define_component_family(family)
     )
+
+
+def family_collection_token(
+    family: ComponentFamily[Any] | str,
+) -> InjectToken[tuple[object, ...]]:
+    normalized = coerce_component_family(family).name
+    token = _COMPONENT_COLLECTION_TOKENS.get(normalized)
+    if token is not None:
+        return token
+    created: InjectToken[tuple[object, ...]] = InjectToken(
+        f"components.{normalized}.all"
+    )
+    _COMPONENT_COLLECTION_TOKENS[normalized] = created
+    return created
 
 
 HTTP_FAMILY = define_component_family("http")
@@ -115,8 +131,9 @@ class ComponentMeta:
 
 class ComponentBase(WorkUnit, Generic[ConfigT]):
     meta: ClassVar[ComponentMeta]
-
     Config: type[ConfigT]
+    __di_contract__: ClassVar[bool] = False
+    _component_config: ConfigT
 
     def __init_subclass__(
         cls,
@@ -124,6 +141,7 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
         **_kwargs: Any,
     ) -> None:
         super().__init_subclass__()
+        resolved_config = config
 
         orig_bases: tuple[type, ...] = getattr(cls, "__orig_bases__", ())
         for orig_base in orig_bases:
@@ -138,37 +156,31 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
             except ValueError:  # pragma: no cover
                 continue
             if (
-                config is None
+                resolved_config is None
                 and inspect.isclass(config_t)
                 and issubclass(config_t, ComponentConfigBase)
             ):
-                config = config_t
-        if config is not None:
-            family_name = str(getattr(config, "__setting_family__", "")).strip()
-            setting_name = str(getattr(config, "__setting_name__", "")).strip()
+                resolved_config = cast("type[ConfigT]", config_t)
+        if resolved_config is not None:
+            family_name = str(
+                getattr(resolved_config, "__setting_family__", "")
+            ).strip()
+            setting_name = str(getattr(resolved_config, "__setting_name__", "")).strip()
             if not family_name or not setting_name:
                 raise TypeError(
-                    f"{cls.__name__} config `{config.__name__}` must declare "
+                    f"{cls.__name__} config `{resolved_config.__name__}` must declare "
                     "non-empty `__setting_family__` and `__setting_name__`"
                 )
-            cls.Config = config
+            cls.Config = resolved_config
 
     @property
     def config(self) -> ConfigT:
-        default: Any = None
-        config_class = getattr(self, "Config", None)
-        if inspect.isclass(config_class) and issubclass(
-            config_class, ComponentConfigBase
-        ):
-            value = getattr(
-                getattr(
-                    self.rt.settings.components, config_class.__setting_family__, None
-                ),
-                config_class.__setting_name__,
-                default,
-            )
-            return cast("ConfigT", value)
-        return cast("ConfigT", default)
+        try:
+            return self._component_config
+        except AttributeError as exc:  # pragma: no cover
+            raise RuntimeError(
+                f"{type(self).__name__} has no bound component config"
+            ) from exc
 
 
 __all__ = [
@@ -189,4 +201,5 @@ __all__ = [
     "TELEMETRY_FAMILY",
     "coerce_component_family",
     "define_component_family",
+    "family_collection_token",
 ]

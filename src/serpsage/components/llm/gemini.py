@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any, Protocol, TypeVar, overload, runtime_checkable
 from typing_extensions import override
 
-from google import genai
-from google.genai import types
 from pydantic import BaseModel
 
 from serpsage.components.base import ComponentMeta
@@ -58,15 +57,20 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
     def __init__(
         self,
     ) -> None:
+        try:
+            genai = importlib.import_module("google.genai")
+            self._types = importlib.import_module("google.genai.types")
+        except ImportError as exc:
+            raise RuntimeError("google-genai is required for GeminiClient") from exc
         timeout_ms = max(1, int(float(self.config.timeout_s) * 1000))
         attempts = max(1, int(self.config.max_retries) + 1)
         self.client = genai.Client(
             api_key=self.config.api_key,
-            http_options=types.HttpOptions(
+            http_options=self._types.HttpOptions(
                 base_url=self.config.base_url,
                 headers=dict(self.config.headers or {}),
                 timeout=timeout_ms,
-                retry_options=types.HttpRetryOptions(attempts=attempts),
+                retry_options=self._types.HttpRetryOptions(attempts=attempts),
             ),
         )
 
@@ -156,18 +160,18 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
             )
         return ChatDictResult(text=text, data=data, usage=usage)
 
-    @staticmethod
     def _build_config(
+        self,
         *,
         system_instruction: str | None,
         temperature: float,
         timeout_ms: int,
         schema: dict[str, object] | None,
         enable_structured: bool,
-    ) -> types.GenerateContentConfig:
-        http_options = types.HttpOptions(timeout=int(timeout_ms))
+    ) -> Any:
+        http_options = self._types.HttpOptions(timeout=int(timeout_ms))
         if schema is not None and enable_structured:
-            return types.GenerateContentConfig(
+            return self._types.GenerateContentConfig(
                 temperature=float(temperature),
                 http_options=http_options,
                 system_instruction=system_instruction or None,
@@ -175,24 +179,24 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
                 response_json_schema=schema,
             )
         if schema is not None:
-            return types.GenerateContentConfig(
+            return self._types.GenerateContentConfig(
                 temperature=float(temperature),
                 http_options=http_options,
                 system_instruction=system_instruction or None,
                 response_mime_type="application/json",
             )
-        return types.GenerateContentConfig(
+        return self._types.GenerateContentConfig(
             temperature=float(temperature),
             http_options=http_options,
             system_instruction=system_instruction or None,
         )
 
-    @staticmethod
     def _merge_config_kwargs(
+        self,
         *,
-        config: types.GenerateContentConfig,
+        config: Any,
         kwargs: dict[str, Any],
-    ) -> types.GenerateContentConfig:
+    ) -> Any:
         if not kwargs:
             return config
         dumped = config.model_dump(exclude_none=True)
@@ -200,16 +204,16 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
         if isinstance(dumped, dict):
             merged.update(dumped)
         merged.update(kwargs)
-        return types.GenerateContentConfig(**merged)
+        return self._types.GenerateContentConfig(**merged)
 
     def _to_gemini_messages(
         self,
         messages: list[dict[str, str]],
         response_model: type[BaseModel] | None = None,
         enable_structured: bool = True,
-    ) -> tuple[str | None, list[types.ContentUnion]]:
+    ) -> tuple[str | None, list[Any]]:
         system_parts: list[str] = []
-        contents: list[types.ContentUnion] = []
+        contents: list[Any] = []
         if not enable_structured and response_model is not None:
             structure_prompt = self.get_format_instructions(response_model)
             if structure_prompt:
@@ -223,20 +227,24 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
                 continue
             gem_role = "model" if role == "assistant" else "user"
             contents.append(
-                types.Content(role=gem_role, parts=[types.Part.from_text(text=text)])
+                self._types.Content(
+                    role=gem_role,
+                    parts=[self._types.Part.from_text(text=text)],
+                )
             )
         if not contents:
             contents.append(
-                types.Content(role="user", parts=[types.Part.from_text(text="")])
+                self._types.Content(
+                    role="user",
+                    parts=[self._types.Part.from_text(text="")],
+                )
             )
         if not system_parts:
             return None, contents
         return "\n\n".join(system_parts), contents
 
     @staticmethod
-    def _extract_json_object(
-        *, resp: types.GenerateContentResponse, fallback_text: str
-    ) -> dict[str, object]:
+    def _extract_json_object(*, resp: object, fallback_text: str) -> dict[str, object]:
         parsed = getattr(resp, "parsed", None)
         if parsed is not None:
             data: object = parsed

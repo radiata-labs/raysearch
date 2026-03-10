@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import time
 from typing import Any, cast
 from typing_extensions import override
@@ -32,6 +31,7 @@ from serpsage.components.base import (
     RATE_LIMIT_FAMILY,
     TELEMETRY_FAMILY,
     ComponentFamily,
+    family_collection_token,
 )
 from serpsage.components.cache.base import CacheBase
 from serpsage.components.crawl.base import CrawlerBase
@@ -50,7 +50,6 @@ from serpsage.dependencies import (
     InjectToken,
     ServiceCollection,
     ServiceProvider,
-    analyze_class,
     format_service_key,
 )
 from serpsage.load import ComponentCatalog
@@ -176,6 +175,7 @@ def _build_services(
 
     provider = services.build_provider(validate=False)
     provider.bind_instance(ServiceProvider, provider)
+    provider.validate()
     return provider
 
 
@@ -196,21 +196,41 @@ def _register_component_services(
         contract = family_defaults.get(family.name)
         if contract is not None:
             services.bind_instance(contract, override_instance)
+            services.bind_many(
+                contract,
+                override_instance,
+                order=_next_collection_order(collection_orders, contract),
+            )
         services.bind_instance(type(override_instance), override_instance)
+        services.bind_many(
+            family_collection_token(family),
+            override_instance,
+            order=_next_collection_order(
+                collection_orders,
+                family_collection_token(family),
+            ),
+        )
     for spec in catalog.iter_enabled_specs():
         if spec.family in family_overrides:
             continue
         instance_key = _component_instance_key(spec.family, spec.component_name)
+        instance_binding_id = _single_binding_id(instance_key)
         services.bind_class(
             instance_key,
             spec.descriptor.cls,
             scope=BindingScope.SINGLETON,
-            overrides=_component_binding_overrides(
-                spec.descriptor.cls,
-                config=spec.config,
-            ),
+            overrides=_component_binding_overrides(config=spec.config),
         )
         services.bind_alias(spec.descriptor.cls, instance_key)
+        services.bind_many(
+            family_collection_token(spec.family),
+            instance_key,
+            order=_next_collection_order(
+                collection_orders,
+                family_collection_token(spec.family),
+            ),
+            linked_binding_id=instance_binding_id,
+        )
         contracts = _component_contracts(spec.descriptor.cls)
         default_contract = family_defaults.get(spec.family.name)
         default_spec = default_specs.get(spec.family.name)
@@ -221,16 +241,12 @@ def _register_component_services(
             if default_contract is not None and contract is default_contract:
                 if is_default:
                     services.bind_alias(contract, instance_key)
-                else:
-                    key_name = format_key_name(contract)
-                    order = collection_orders.get(key_name, 0) + 10
-                    collection_orders[key_name] = order
-                    services.bind_many(contract, instance_key, order=order)
-                continue
-            key_name = format_key_name(contract)
-            order = collection_orders.get(key_name, 0) + 10
-            collection_orders[key_name] = order
-            services.bind_many(contract, instance_key, order=order)
+            services.bind_many(
+                contract,
+                instance_key,
+                order=_next_collection_order(collection_orders, contract),
+                linked_binding_id=instance_binding_id,
+            )
 
 
 def _register_pipeline_services(services: ServiceCollection) -> None:
@@ -408,14 +424,10 @@ def _component_instance_key(
 
 
 def _component_binding_overrides(
-    cls: type[object],
     *,
     config: object,
 ) -> dict[str, object]:
-    plan = analyze_class(cls)
-    valid_names = {item.name for item in plan.fields}
-    valid_names.update(item.name for item in plan.parameters)
-    return {"config": config} if "config" in valid_names else {}
+    return {"config": config}
 
 
 def _family_contracts() -> dict[str, type[object]]:
@@ -438,11 +450,7 @@ def _component_contracts(cls: type[object]) -> tuple[type[object], ...]:
     for base in cls.__mro__[1:]:
         if base in {object, WorkUnit}:
             continue
-        if base.__name__ == "ComponentBase":
-            continue
-        if not inspect.isabstract(base):
-            continue
-        if not issubclass(base, WorkUnit):
+        if not bool(getattr(base, "__di_contract__", False)):
             continue
         if base in seen:
             continue
@@ -471,8 +479,18 @@ def _workunit_overrides(
     }
 
 
-def format_key_name(contract: type[object]) -> str:
-    return format_service_key(contract)
+def _single_binding_id(key: type[object] | InjectToken[Any]) -> str:
+    return f"single:{format_service_key(key)}"
+
+
+def _next_collection_order(
+    orders: dict[str, int],
+    key: type[object] | InjectToken[Any],
+) -> int:
+    key_name = format_service_key(key)
+    order = orders.get(key_name, 0) + 10
+    orders[key_name] = order
+    return order
 
 
 def _validate_override_workunits(ov: Overrides) -> None:

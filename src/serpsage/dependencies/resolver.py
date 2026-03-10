@@ -10,6 +10,7 @@ from typing import (
     Literal,
     TypeGuard,
     Union,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -121,6 +122,7 @@ class ServiceCollection:
         provider: type[Any] | InjectToken[Any] | object,
         *,
         order: int,
+        linked_binding_id: str | None = None,
         scope: BindingScope = BindingScope.SINGLETON,
         overrides: dict[str, object] | None = None,
         init_kwargs: dict[str, object] | None = None,
@@ -139,6 +141,7 @@ class ServiceCollection:
                     binding_id=binding_id,
                     key=normalized,
                     order=int(order),
+                    linked_binding_id=linked_binding_id,
                     alias_key=provider,
                     scope=scope,
                     overrides=payload,
@@ -151,6 +154,7 @@ class ServiceCollection:
                     binding_id=binding_id,
                     key=normalized,
                     order=int(order),
+                    linked_binding_id=linked_binding_id,
                     provider_cls=provider,
                     scope=scope,
                     overrides=payload,
@@ -162,6 +166,7 @@ class ServiceCollection:
                 binding_id=binding_id,
                 key=normalized,
                 order=int(order),
+                linked_binding_id=linked_binding_id,
                 instance=provider,
                 scope=scope,
                 overrides=payload,
@@ -248,7 +253,7 @@ class ServiceProvider:
 
     def validate(self) -> None:
         for binding in self._single_bindings.values():
-            self._validate_binding(
+            self._validate_binding_entry(
                 binding=binding,
                 path=[format_service_key(binding.key)],
                 current_binding_id=None,
@@ -256,7 +261,7 @@ class ServiceProvider:
             )
         for key, items in self._multi_bindings.items():
             for item in items:
-                self._validate_multibinding(
+                self._validate_binding_entry(
                     binding=item,
                     path=[f"{format_service_key(key)}[]"],
                     current_binding_id=None,
@@ -277,7 +282,7 @@ class ServiceProvider:
                 f"missing binding for `{format_service_key(key)}`",
                 path=path,
             )
-        return self._resolve_service_binding(
+        return self._resolve_binding(
             binding=binding,
             path=path,
             current_binding_id=current_binding_id,
@@ -294,13 +299,13 @@ class ServiceProvider:
     ) -> tuple[object, ...]:
         values: list[object] = []
         for binding in self._multi_bindings.get(key, ()):
-            if (
-                current_binding_id is not None
-                and binding.binding_id == current_binding_id
-            ):
+            if current_binding_id is not None and current_binding_id in {
+                binding.binding_id,
+                binding.linked_binding_id,
+            }:
                 continue
             values.append(
-                self._resolve_multi_binding(
+                self._resolve_binding(
                     binding=binding,
                     path=path,
                     current_binding_id=current_binding_id,
@@ -309,10 +314,10 @@ class ServiceProvider:
             )
         return tuple(values)
 
-    def _resolve_service_binding(
+    def _resolve_binding(
         self,
         *,
-        binding: ServiceBinding,
+        binding: ServiceBinding | MultiBinding,
         path: list[str],
         current_binding_id: str | None,
         resolving: set[str],
@@ -321,8 +326,13 @@ class ServiceProvider:
         if binding.scope is BindingScope.SINGLETON and cache_key in self._singletons:
             return self._singletons[cache_key]
         if cache_key in resolving:
+            cycle_label = (
+                format_service_key(binding.key)
+                if isinstance(binding, ServiceBinding)
+                else binding.binding_id
+            )
             raise self._resolution_error(
-                f"dependency cycle detected at `{format_service_key(binding.key)}`",
+                f"dependency cycle detected at `{cycle_label}`",
                 path=path,
             )
         resolving.add(cache_key)
@@ -345,54 +355,13 @@ class ServiceProvider:
                     resolving=resolving,
                 )
             else:
+                missing_provider = (
+                    f"binding `{format_service_key(binding.key)}` has no provider"
+                    if isinstance(binding, ServiceBinding)
+                    else f"multibinding `{binding.binding_id}` has no provider"
+                )
                 raise self._resolution_error(
-                    f"binding `{format_service_key(binding.key)}` has no provider",
-                    path=path,
-                )
-        finally:
-            resolving.remove(cache_key)
-        if binding.scope is BindingScope.SINGLETON:
-            self._singletons[cache_key] = value
-        return value
-
-    def _resolve_multi_binding(
-        self,
-        *,
-        binding: MultiBinding,
-        path: list[str],
-        current_binding_id: str | None,
-        resolving: set[str],
-    ) -> object:
-        cache_key = binding.binding_id
-        if binding.scope is BindingScope.SINGLETON and cache_key in self._singletons:
-            return self._singletons[cache_key]
-        if cache_key in resolving:
-            raise self._resolution_error(
-                f"dependency cycle detected at `{binding.binding_id}`",
-                path=path,
-            )
-        resolving.add(cache_key)
-        try:
-            if binding.alias_key is not None:
-                value = self._resolve_single(
-                    binding.alias_key,
-                    path=path + [format_service_key(binding.alias_key)],
-                    current_binding_id=binding.binding_id,
-                    resolving=resolving,
-                )
-            elif binding.instance is not _MISSING:
-                value = binding.instance
-            elif binding.provider_cls is not None:
-                value = self._instantiate_class(
-                    cls=binding.provider_cls,
-                    overrides=binding.overrides,
-                    path=path,
-                    current_binding_id=binding.binding_id,
-                    resolving=resolving,
-                )
-            else:
-                raise self._resolution_error(
-                    f"multibinding `{binding.binding_id}` has no provider",
+                    missing_provider,
                     path=path,
                 )
         finally:
@@ -428,12 +397,20 @@ class ServiceProvider:
                 resolving=resolving,
             )
             _bootstrap_workunit(instance, runtime_value)
+        if _is_component_subclass(cls):
+            config_value = overrides.get("config", _MISSING)
+            if config_value is _MISSING:
+                raise self._resolution_error(
+                    f"`{cls.__name__}` is missing component config",
+                    path=path,
+                )
+            _bind_component_config(instance, config_value)
 
         for field in plan.fields:
-            value = self._resolve_field_value(
-                field=field,
+            value = self._resolve_member_value(
+                member=field,
                 overrides=overrides,
-                resolved_fields=resolved_fields,
+                resolved=resolved_fields,
                 path=path + [f"{cls.__name__}.{field.name}"],
                 current_binding_id=current_binding_id,
                 resolving=resolving,
@@ -443,10 +420,10 @@ class ServiceProvider:
 
         kwargs: dict[str, object] = {}
         for parameter in plan.parameters:
-            value = self._resolve_parameter_value(
-                parameter=parameter,
+            value = self._resolve_member_value(
+                member=parameter,
                 overrides=overrides,
-                resolved_params=resolved_params,
+                resolved=resolved_params,
                 path=path + [f"{cls.__name__}.{parameter.name}"],
                 current_binding_id=current_binding_id,
                 resolving=resolving,
@@ -472,20 +449,20 @@ class ServiceProvider:
     ) -> object:
         field = next((item for item in plan.fields if item.name == "rt"), None)
         if field is not None:
-            return self._resolve_field_value(
-                field=field,
+            return self._resolve_member_value(
+                member=field,
                 overrides=overrides,
-                resolved_fields=resolved_fields,
+                resolved=resolved_fields,
                 path=path + [f"{plan.cls.__name__}.rt"],
                 current_binding_id=current_binding_id,
                 resolving=resolving,
             )
         parameter = next((item for item in plan.parameters if item.name == "rt"), None)
         if parameter is not None:
-            return self._resolve_parameter_value(
-                parameter=parameter,
+            return self._resolve_member_value(
+                member=parameter,
                 overrides=overrides,
-                resolved_params=resolved_params,
+                resolved=resolved_params,
                 path=path + [f"{plan.cls.__name__}.rt"],
                 current_binding_id=current_binding_id,
                 resolving=resolving,
@@ -495,123 +472,74 @@ class ServiceProvider:
             path=path,
         )
 
-    def _resolve_field_value(
+    def _resolve_member_value(
         self,
         *,
-        field: FieldPlan,
+        member: FieldPlan | ParameterPlan,
         overrides: dict[str, object],
-        resolved_fields: dict[str, object],
+        resolved: dict[str, object],
         path: list[str],
         current_binding_id: str,
         resolving: set[str],
     ) -> object:
-        cached = resolved_fields.get(field.name, _MISSING)
+        cached = resolved.get(member.name, _MISSING)
         if cached is not _MISSING:
             return cached
-        if field.name in overrides:
-            value = self._resolve_member_override(
-                overrides[field.name],
-                annotation=field.annotation,
-                key=field.key,
-                name=field.name,
+        if member.name in overrides:
+            override_value = overrides[member.name]
+            if not isinstance(override_value, InjectRequest):
+                value = override_value
+            else:
+                target_key = override_value.key or member.key
+                if target_key is None:
+                    raise self._resolution_error(
+                        f"invalid dependency declaration for `{member.name}`",
+                        path=path,
+                    )
+                origin = get_origin(member.annotation)
+                if origin in {tuple, list}:
+                    value = self._resolve_dependency(
+                        shape="collection",
+                        key=target_key,
+                        name=member.name,
+                        path=path,
+                        current_binding_id=current_binding_id,
+                        resolving=resolving,
+                        as_list=origin is list,
+                    )
+                else:
+                    annotation_shape, _ = _analyze_annotation(member.annotation)
+                    value = self._resolve_dependency(
+                        shape=annotation_shape,
+                        key=target_key,
+                        name=member.name,
+                        path=path,
+                        current_binding_id=current_binding_id,
+                        resolving=resolving,
+                    )
+        elif member.request is not None:
+            value = self._resolve_dependency(
+                shape=member.shape,
+                key=member.key,
+                name=member.name,
                 path=path,
                 current_binding_id=current_binding_id,
                 resolving=resolving,
             )
-        else:
-            value = self._resolve_request(
-                shape=field.shape,
-                key=field.key,
-                name=field.name,
-                path=path,
-                current_binding_id=current_binding_id,
-                resolving=resolving,
-            )
-        resolved_fields[field.name] = value
-        return value
-
-    def _resolve_parameter_value(
-        self,
-        *,
-        parameter: ParameterPlan,
-        overrides: dict[str, object],
-        resolved_params: dict[str, object],
-        path: list[str],
-        current_binding_id: str,
-        resolving: set[str],
-    ) -> object:
-        cached = resolved_params.get(parameter.name, _MISSING)
-        if cached is not _MISSING:
-            return cached
-        if parameter.name in overrides:
-            value = self._resolve_member_override(
-                overrides[parameter.name],
-                annotation=parameter.annotation,
-                key=parameter.key,
-                name=parameter.name,
-                path=path,
-                current_binding_id=current_binding_id,
-                resolving=resolving,
-            )
-        elif parameter.request is not None:
-            value = self._resolve_request(
-                shape=parameter.shape,
-                key=parameter.key,
-                name=parameter.name,
-                path=path,
-                current_binding_id=current_binding_id,
-                resolving=resolving,
-            )
-        elif parameter.default is not inspect.Parameter.empty:
-            value = parameter.default
+        elif (
+            isinstance(member, ParameterPlan)
+            and member.default is not inspect.Parameter.empty
+        ):
+            value = member.default
         else:
             raise self._resolution_error(
-                f"missing constructor argument `{parameter.name}`",
+                f"missing constructor argument `{member.name}`",
                 path=path,
             )
-        resolved_params[parameter.name] = value
+        resolved[member.name] = value
         return value
 
-    def _resolve_member_override(
-        self,
-        value: object,
-        *,
-        annotation: Any,
-        key: ServiceKey[Any] | None,
-        name: str,
-        path: list[str],
-        current_binding_id: str,
-        resolving: set[str],
-    ) -> object:
-        if not isinstance(value, InjectRequest):
-            return value
-        target_key = value.key or key
-        if target_key is None:
-            raise self._resolution_error(
-                f"invalid dependency declaration for `{name}`",
-                path=path,
-            )
-        origin = get_origin(annotation)
-        if origin in {tuple, list}:
-            items = self._resolve_many(
-                target_key,
-                path=path,
-                current_binding_id=current_binding_id,
-                resolving=resolving,
-            )
-            return list(items) if origin is list else items
-        target_type, optional = _unwrap_optional(annotation)
-        _ = target_type
-        if optional and target_key not in self._single_bindings:
-            return None
-        return self._resolve_single(
-            target_key,
-            path=path + [format_service_key(target_key)],
-            current_binding_id=current_binding_id,
-            resolving=resolving,
-        )
-
-    def _resolve_request(
+    def _resolve_dependency(
         self,
         *,
         shape: ParameterShape,
@@ -620,6 +548,7 @@ class ServiceProvider:
         path: list[str],
         current_binding_id: str,
         resolving: set[str],
+        as_list: bool = False,
     ) -> object:
         if key is None:
             raise self._resolution_error(
@@ -627,12 +556,13 @@ class ServiceProvider:
                 path=path,
             )
         if shape == "collection":
-            return self._resolve_many(
+            items = self._resolve_many(
                 key,
                 path=path,
                 current_binding_id=current_binding_id,
                 resolving=resolving,
             )
+            return list(items) if as_list else items
         if shape == "optional" and key not in self._single_bindings:
             return None
         return self._resolve_single(
@@ -642,18 +572,23 @@ class ServiceProvider:
             resolving=resolving,
         )
 
-    def _validate_binding(
+    def _validate_binding_entry(
         self,
         *,
-        binding: ServiceBinding,
+        binding: ServiceBinding | MultiBinding,
         path: list[str],
         current_binding_id: str | None,
         visiting: set[str],
     ) -> None:
         cache_key = binding.binding_id
         if cache_key in visiting:
+            cycle_label = (
+                format_service_key(binding.key)
+                if isinstance(binding, ServiceBinding)
+                else binding.binding_id
+            )
             raise self._resolution_error(
-                f"dependency cycle detected at `{format_service_key(binding.key)}`",
+                f"dependency cycle detected at `{cycle_label}`",
                 path=path,
             )
         if binding.instance is not _MISSING:
@@ -661,57 +596,23 @@ class ServiceProvider:
         visiting.add(cache_key)
         try:
             if binding.alias_key is not None:
-                self._validate_single_key(
-                    binding.alias_key,
+                self._validate_dependency(
+                    shape="single",
+                    key=binding.alias_key,
+                    name=format_service_key(binding.alias_key),
                     path=path + [format_service_key(binding.alias_key)],
                     current_binding_id=binding.binding_id,
                     visiting=visiting,
                 )
                 return
             if binding.provider_cls is None:
-                raise self._resolution_error(
-                    f"binding `{format_service_key(binding.key)}` has no provider",
-                    path=path,
+                missing_provider = (
+                    f"binding `{format_service_key(binding.key)}` has no provider"
+                    if isinstance(binding, ServiceBinding)
+                    else f"multibinding `{binding.binding_id}` has no provider"
                 )
-            self._validate_class_plan(
-                cls=binding.provider_cls,
-                overrides=binding.overrides,
-                path=path,
-                current_binding_id=binding.binding_id,
-                visiting=visiting,
-            )
-        finally:
-            visiting.remove(cache_key)
-
-    def _validate_multibinding(
-        self,
-        *,
-        binding: MultiBinding,
-        path: list[str],
-        current_binding_id: str | None,
-        visiting: set[str],
-    ) -> None:
-        cache_key = binding.binding_id
-        if cache_key in visiting:
-            raise self._resolution_error(
-                f"dependency cycle detected at `{binding.binding_id}`",
-                path=path,
-            )
-        if binding.instance is not _MISSING:
-            return
-        visiting.add(cache_key)
-        try:
-            if binding.alias_key is not None:
-                self._validate_single_key(
-                    binding.alias_key,
-                    path=path + [format_service_key(binding.alias_key)],
-                    current_binding_id=binding.binding_id,
-                    visiting=visiting,
-                )
-                return
-            if binding.provider_cls is None:
                 raise self._resolution_error(
-                    f"multibinding `{binding.binding_id}` has no provider",
+                    missing_provider,
                     path=path,
                 )
             self._validate_class_plan(
@@ -744,130 +645,82 @@ class ServiceProvider:
                 visiting=visiting,
             )
         for field in plan.fields:
-            self._validate_field(
-                field=field,
+            self._validate_member(
+                member=field,
                 overrides=overrides,
                 path=path + [f"{cls.__name__}.{field.name}"],
                 current_binding_id=current_binding_id,
                 visiting=visiting,
             )
         for parameter in plan.parameters:
-            self._validate_parameter(
-                parameter=parameter,
+            self._validate_member(
+                member=parameter,
                 overrides=overrides,
                 path=path + [f"{cls.__name__}.{parameter.name}"],
                 current_binding_id=current_binding_id,
                 visiting=visiting,
             )
 
-    def _validate_field(
+    def _validate_member(
         self,
         *,
-        field: FieldPlan,
+        member: FieldPlan | ParameterPlan,
         overrides: dict[str, object],
         path: list[str],
         current_binding_id: str,
         visiting: set[str],
     ) -> None:
-        if field.name in overrides:
-            self._validate_member_override(
-                overrides[field.name],
-                annotation=field.annotation,
-                key=field.key,
-                name=field.name,
-                path=path,
-                current_binding_id=current_binding_id,
-                visiting=visiting,
-            )
-            return
-        self._validate_request(
-            shape=field.shape,
-            key=field.key,
-            name=field.name,
-            path=path,
-            current_binding_id=current_binding_id,
-            visiting=visiting,
-        )
-
-    def _validate_parameter(
-        self,
-        *,
-        parameter: ParameterPlan,
-        overrides: dict[str, object],
-        path: list[str],
-        current_binding_id: str,
-        visiting: set[str],
-    ) -> None:
-        if parameter.name in overrides:
-            self._validate_member_override(
-                overrides[parameter.name],
-                annotation=parameter.annotation,
-                key=parameter.key,
-                name=parameter.name,
-                path=path,
-                current_binding_id=current_binding_id,
-                visiting=visiting,
-            )
-            return
-        if parameter.request is not None:
-            self._validate_request(
-                shape=parameter.shape,
-                key=parameter.key,
-                name=parameter.name,
-                path=path,
-                current_binding_id=current_binding_id,
-                visiting=visiting,
-            )
-            return
-        if parameter.default is inspect.Parameter.empty:
-            raise self._resolution_error(
-                f"missing constructor argument `{parameter.name}`",
-                path=path,
-            )
-
-    def _validate_member_override(
-        self,
-        value: object,
-        *,
-        annotation: Any,
-        key: ServiceKey[Any] | None,
-        name: str,
-        path: list[str],
-        current_binding_id: str,
-        visiting: set[str],
-    ) -> None:
-        if not isinstance(value, InjectRequest):
-            return
-        target_key = value.key or key
-        if target_key is None:
-            raise self._resolution_error(
-                f"invalid dependency declaration for `{name}`",
-                path=path,
-            )
-        origin = get_origin(annotation)
-        if origin in {tuple, list}:
-            for binding in self._multi_bindings.get(target_key, ()):
-                if binding.binding_id == current_binding_id:
-                    continue
-                self._validate_multibinding(
-                    binding=binding,
-                    path=path + [f"{format_service_key(target_key)}[]"],
+        if member.name in overrides:
+            override_value = overrides[member.name]
+            if not isinstance(override_value, InjectRequest):
+                return
+            target_key = override_value.key or member.key
+            if target_key is None:
+                raise self._resolution_error(
+                    f"invalid dependency declaration for `{member.name}`",
+                    path=path,
+                )
+            origin = get_origin(member.annotation)
+            if origin in {tuple, list}:
+                self._validate_dependency(
+                    shape="collection",
+                    key=target_key,
+                    name=member.name,
+                    path=path,
                     current_binding_id=current_binding_id,
                     visiting=visiting,
                 )
+                return
+            annotation_shape, _ = _analyze_annotation(member.annotation)
+            self._validate_dependency(
+                shape=annotation_shape,
+                key=target_key,
+                name=member.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
             return
-        target_type, optional = _unwrap_optional(annotation)
-        _ = target_type
-        if optional and target_key not in self._single_bindings:
+        if member.request is not None:
+            self._validate_dependency(
+                shape=member.shape,
+                key=member.key,
+                name=member.name,
+                path=path,
+                current_binding_id=current_binding_id,
+                visiting=visiting,
+            )
             return
-        self._validate_single_key(
-            target_key,
-            path=path + [format_service_key(target_key)],
-            current_binding_id=current_binding_id,
-            visiting=visiting,
-        )
+        if (
+            isinstance(member, ParameterPlan)
+            and member.default is inspect.Parameter.empty
+        ):
+            raise self._resolution_error(
+                f"missing constructor argument `{member.name}`",
+                path=path,
+            )
 
-    def _validate_request(
+    def _validate_dependency(
         self,
         *,
         shape: ParameterShape,
@@ -884,9 +737,12 @@ class ServiceProvider:
             )
         if shape == "collection":
             for binding in self._multi_bindings.get(key, ()):
-                if binding.binding_id == current_binding_id:
+                if current_binding_id in {
+                    binding.binding_id,
+                    binding.linked_binding_id,
+                }:
                     continue
-                self._validate_multibinding(
+                self._validate_binding_entry(
                     binding=binding,
                     path=path + [f"{format_service_key(key)}[]"],
                     current_binding_id=current_binding_id,
@@ -895,29 +751,14 @@ class ServiceProvider:
             return
         if shape == "optional" and key not in self._single_bindings:
             return
-        self._validate_single_key(
-            key,
-            path=path + [format_service_key(key)],
-            current_binding_id=current_binding_id,
-            visiting=visiting,
-        )
-
-    def _validate_single_key(
-        self,
-        key: ServiceKey[Any],
-        *,
-        path: list[str],
-        current_binding_id: str,
-        visiting: set[str],
-    ) -> None:
-        binding = self._single_bindings.get(key)
-        if binding is None:
+        single_binding = self._single_bindings.get(key)
+        if single_binding is None:
             raise self._resolution_error(
                 f"missing binding for `{format_service_key(key)}`",
                 path=path,
             )
-        self._validate_binding(
-            binding=binding,
+        self._validate_binding_entry(
+            binding=single_binding,
             path=path,
             current_binding_id=current_binding_id,
             visiting=visiting,
@@ -934,8 +775,8 @@ class ServiceProvider:
     ) -> None:
         field = next((item for item in plan.fields if item.name == "rt"), None)
         if field is not None:
-            self._validate_field(
-                field=field,
+            self._validate_member(
+                member=field,
                 overrides=overrides,
                 path=path + [f"{plan.cls.__name__}.rt"],
                 current_binding_id=current_binding_id,
@@ -944,8 +785,8 @@ class ServiceProvider:
             return
         parameter = next((item for item in plan.parameters if item.name == "rt"), None)
         if parameter is not None:
-            self._validate_parameter(
-                parameter=parameter,
+            self._validate_member(
+                member=parameter,
                 overrides=overrides,
                 path=path + [f"{plan.cls.__name__}.rt"],
                 current_binding_id=current_binding_id,
@@ -966,6 +807,8 @@ class ServiceProvider:
     ) -> None:
         valid_names = {item.name for item in plan.fields}
         valid_names.update(item.name for item in plan.parameters)
+        if _is_component_subclass(plan.cls):
+            valid_names.add("config")
         unknown = sorted(name for name in overrides if name not in valid_names)
         if unknown:
             joined = ", ".join(f"`{name}`" for name in unknown)
@@ -1008,12 +851,26 @@ def _bootstrap_workunit(instance: WorkUnit, rt: object) -> None:
     bootstrap_workunit(instance, rt)
 
 
+def _component_base_class() -> type[Any]:
+    from serpsage.components.base import ComponentBase
+
+    return ComponentBase
+
+
+def _bind_component_config(instance: object, config: object) -> None:
+    cast("Any", instance)._component_config = config
+
+
 def _is_workunit_instance(value: object) -> TypeGuard[WorkUnit]:
     return isinstance(value, _workunit_class())
 
 
 def _is_workunit_subclass(cls: type[Any]) -> TypeGuard[type[WorkUnit]]:
     return issubclass(cls, _workunit_class())
+
+
+def _is_component_subclass(cls: type[Any]) -> bool:
+    return issubclass(cls, _component_base_class())
 
 
 def analyze_class(cls: type[Any]) -> ClassPlan:
@@ -1036,8 +893,7 @@ def analyze_class(cls: type[Any]) -> ClassPlan:
                 raise TypeError(
                     f"{owner.__name__}.{name} must declare a type annotation for Inject()"
                 )
-            shape = _member_shape(annotation)
-            key = _member_key(annotation=annotation, request=value, shape=shape)
+            shape, key = _member_contract(annotation=annotation, request=value)
             if key is None:
                 raise TypeError(
                     f"{owner.__name__}.{name} has an unsupported Inject() annotation"
@@ -1079,8 +935,7 @@ def _analyze_parameters(cls: type[Any]) -> tuple[ParameterPlan, ...]:
             raise TypeError(
                 f"{cls.__name__}.{name} must declare a type annotation for Inject()"
             )
-        shape = _member_shape(annotation)
-        key = _member_key(annotation=annotation, request=request, shape=shape)
+        shape, key = _member_contract(annotation=annotation, request=request)
         if request is not None and key is None:
             raise TypeError(
                 f"{cls.__name__}.{name} has an unsupported Inject() annotation"
@@ -1098,54 +953,42 @@ def _analyze_parameters(cls: type[Any]) -> tuple[ParameterPlan, ...]:
     return tuple(parameters)
 
 
-def _member_shape(annotation: Any) -> ParameterShape:
-    collection_key, is_collection = _unwrap_collection(annotation)
-    if is_collection:
-        _ = collection_key
-        return "collection"
-    target_type, optional = _unwrap_optional(annotation)
-    _ = target_type
-    return "optional" if optional else "single"
-
-
-def _member_key(
+def _member_contract(
     *,
     annotation: Any,
     request: InjectRequest[Any] | None,
-    shape: ParameterShape,
-) -> ServiceKey[Any] | None:
-    if request is not None and request.key is not None:
-        return assert_service_key(request.key)
+) -> tuple[ParameterShape, ServiceKey[Any] | None]:
+    shape, inferred_key = _analyze_annotation(annotation)
     if request is None:
-        return None
-    if shape == "collection":
-        item_key, _ = _unwrap_collection(annotation)
-        return item_key
-    item_key, _optional = _unwrap_optional(annotation)
-    return item_key
+        return shape, None
+    if request.key is not None:
+        return shape, assert_service_key(request.key)
+    return shape, inferred_key
 
 
-def _unwrap_collection(annotation: Any) -> tuple[ServiceKey[Any] | None, bool]:
+def _analyze_annotation(
+    annotation: Any,
+) -> tuple[ParameterShape, ServiceKey[Any] | None]:
     origin = get_origin(annotation)
-    if origin is not tuple:
-        return None, False
-    args = get_args(annotation)
-    if len(args) != 2 or args[1] is not Ellipsis:
-        return None, True
-    return _annotation_service_type(args[0]), True
+    if origin is list:
+        list_args = get_args(annotation)
+        if len(list_args) != 1:
+            return "collection", None
+        return "collection", _service_key_from_annotation(list_args[0])
+    if origin is tuple:
+        tuple_args = get_args(annotation)
+        if len(tuple_args) != 2 or tuple_args[1] is not Ellipsis:
+            return "collection", None
+        return "collection", _service_key_from_annotation(tuple_args[0])
+    if origin in {UnionType, Union}:
+        union_args = [item for item in get_args(annotation) if item is not type(None)]
+        if len(union_args) != 1:
+            return "single", None
+        return "optional", _service_key_from_annotation(union_args[0])
+    return "single", _service_key_from_annotation(annotation)
 
 
-def _unwrap_optional(annotation: Any) -> tuple[ServiceKey[Any] | None, bool]:
-    origin = get_origin(annotation)
-    if origin not in {UnionType, Union}:
-        return _annotation_service_type(annotation), False
-    args = [item for item in get_args(annotation) if item is not type(None)]
-    if len(args) != 1:
-        return None, False
-    return _annotation_service_type(args[0]), True
-
-
-def _annotation_service_type(annotation: Any) -> ServiceKey[Any] | None:
+def _service_key_from_annotation(annotation: Any) -> ServiceKey[Any] | None:
     if isinstance(annotation, type):
         return annotation
     origin = get_origin(annotation)

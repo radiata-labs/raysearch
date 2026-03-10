@@ -60,6 +60,8 @@ ProviderConfigT = TypeVar(
 
 
 class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderConfigT]):
+    __di_contract__ = True
+
     @abstractmethod
     async def asearch(
         self,

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import inspect
 import json
-from typing import Any, TypeVar, cast, overload
+from typing import Any, TypeVar, overload
 from typing_extensions import override
 
-from dashscope.aigc.generation import AioGeneration  # type: ignore[import-untyped]
-from dashscope.api_entities.dashscope_response import (  # type: ignore[import-untyped]
-    GenerationResponse,
-    Message,
-)
 from pydantic import BaseModel
 
 from serpsage.components.base import ComponentMeta
@@ -58,6 +54,15 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
     def __init__(
         self,
     ) -> None:
+        try:
+            generation_mod = importlib.import_module("dashscope.aigc.generation")
+            response_mod = importlib.import_module(
+                "dashscope.api_entities.dashscope_response"
+            )
+        except ImportError as exc:
+            raise RuntimeError("dashscope is required for DashScopeClient") from exc
+        self._generation_api = generation_mod.AioGeneration
+        self._message_type = response_mod.Message
         self._api_key = self.config.api_key
 
     @override
@@ -158,13 +163,14 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
         timeout: int,
         result_format: str,
         **kwargs: Any,
-    ) -> GenerationResponse:
+    ) -> Any:
         if not self._api_key:
             raise RuntimeError("missing LLM api_key")
         message_objects = [
-            Message(role=msg["role"], content=msg["content"]) for msg in messages
+            self._message_type(role=msg["role"], content=msg["content"])
+            for msg in messages
         ]
-        response = await AioGeneration.call(
+        response = await self._generation_api.call(
             model=model,
             messages=message_objects,
             temperature=temperature,
@@ -175,7 +181,7 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
         )
         if inspect.isasyncgen(response):
             raise TypeError("DashScope streaming response is not supported")
-        return cast("GenerationResponse", response)
+        return response
 
     @classmethod
     def _inject_structure_instruction(
@@ -219,7 +225,7 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
         return out
 
     @staticmethod
-    def _extract_text(response: GenerationResponse | None) -> str:
+    def _extract_text(response: object | None) -> str:
         if response is None:
             return ""
         output = getattr(response, "output", None)
@@ -234,7 +240,7 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
         return str(content or "")
 
     @staticmethod
-    def _to_usage(response: GenerationResponse | None) -> LLMUsage:
+    def _to_usage(response: object | None) -> LLMUsage:
         if response is None:
             return LLMUsage()
         usage = getattr(response, "usage", None)

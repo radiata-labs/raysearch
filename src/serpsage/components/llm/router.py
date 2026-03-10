@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar, cast, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.base import ComponentConfigBase, ComponentMeta
+from serpsage.components.base import (
+    LLM_FAMILY,
+    ComponentConfigBase,
+    ComponentMeta,
+    family_collection_token,
+)
 from serpsage.components.llm.base import (
     LLMClientBase,
     LLMModelConfig,
@@ -39,14 +44,16 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
     def __init__(
         self,
         *,
-        routes: tuple[LLMClientBase[LLMModelConfig], ...] = Inject(),
+        routes: tuple[object, ...] = Inject(family_collection_token(LLM_FAMILY)),
     ) -> None:
-        route_clients = routes
+        route_clients = cast("tuple[LLMClientBase[LLMModelConfig], ...]", routes)
         self.routes: dict[str, tuple[LLMClientBase[LLMModelConfig], str]] = {}
         for client in route_clients:
             model_cfg = client.describe_model(client.config.name)
             if not model_cfg.api_key:
                 continue
+            if model_cfg.name in self.routes:
+                raise ValueError(f"duplicate llm route `{model_cfg.name}`")
             self.routes[model_cfg.name] = (client, model_cfg.model)
 
     @override

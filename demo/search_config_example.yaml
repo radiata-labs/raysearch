@@ -1,5 +1,6 @@
 components:
   http:
+    default: httpx
     httpx:
       enabled: true
       proxy: http://127.0.0.1:7890
@@ -9,6 +10,7 @@ components:
       keepalive_expiry_s: 5.0
 
   provider:
+    default: searxng
     google:
       enabled: true
       base_url: https://www.google.com/search
@@ -25,6 +27,7 @@ components:
       results_per_page: 10
 
   crawl:
+    default: auto
     auto:
       enabled: true
       timeout_s: 10.0
@@ -66,6 +69,7 @@ components:
       timeout_s: 20.0
 
   extract:
+    default: auto
     auto:
       enabled: true
     html:
@@ -74,6 +78,7 @@ components:
       enabled: true
 
   rank:
+    default: blend
     blend:
       enabled: true
       providers:
@@ -104,6 +109,7 @@ components:
       max_length: 512
 
   cache:
+    default: "null"
     "null":
       enabled: true
     sqlite:
@@ -113,6 +119,7 @@ components:
       table: cache
 
   llm:
+    default: router
     router:
       enabled: true
     openai:
@@ -150,6 +157,7 @@ components:
       enable_structured: true
 
   telemetry:
+    default: async_emitter
     async_emitter:
       enabled: true
       queue_size: 2048
@@ -161,6 +169,7 @@ components:
       enabled: true
 
   rate_limit:
+    default: basic
     basic:
       enabled: true
 

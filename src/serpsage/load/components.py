@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import importlib
 import inspect
 import os
@@ -8,15 +7,7 @@ import pkgutil
 from abc import ABC
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    TypeAlias,
-    TypeGuard,
-    TypeVar,
-    cast,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeGuard, TypeVar, cast, overload
 
 import httpx
 from pydantic import ValidationError, create_model
@@ -45,15 +36,15 @@ from serpsage.settings.models import (
 )
 
 if TYPE_CHECKING:
-    from types import ModuleType
-
     from serpsage.core.runtime import Overrides
 
 ComponentClass: TypeAlias = type[ComponentBase[Any]]
 _T = TypeVar("_T", bound=type[ComponentBase[Any]])
 _ConfigT = TypeVar("_ConfigT", bound=ComponentConfigBase)
-TypeMap = dict[object, Any]
 _COMPONENT_META_ATTR = "__serpsage_component_meta__"
+_APP_SETTINGS_MODEL_CACHE: dict[
+    tuple[tuple[str, str, str], ...], type[AppSettings]
+] = {}
 
 _FAMILY_SETTING_BASES: dict[str, type[SettingModel]] = {
     "cache": CacheSettings,
@@ -109,8 +100,20 @@ class ComponentCatalog:
         env: dict[str, str] | None = None,
     ) -> None:
         self._settings = settings
-        self._descriptors = descriptors
-        self._descriptors_by_family = _group_descriptors_by_family(descriptors)
+        grouped: dict[str, list[_ComponentDescriptor]] = {}
+        dynamic_families: dict[str, ComponentFamily[Any]] = {}
+        for descriptor in descriptors:
+            grouped.setdefault(descriptor.family.name, []).append(descriptor)
+            dynamic_families[descriptor.family.name] = descriptor.family
+        self._descriptors_by_family = {
+            family_name: tuple(items) for family_name, items in grouped.items()
+        }
+        ordered_families: list[ComponentFamily[Any]] = list(BUILTIN_COMPONENT_FAMILIES)
+        for family in sorted(dynamic_families.values(), key=lambda item: item.name):
+            if family in BUILTIN_COMPONENT_FAMILIES:
+                continue
+            ordered_families.append(family)
+        self._ordered_families = tuple(ordered_families)
         self._overrides = overrides
         self._env = dict(env or settings.runtime_env or os.environ)
         self._family_spec_cache: dict[str, tuple[_ResolvedComponent, ...]] = {}
@@ -124,6 +127,19 @@ class ComponentCatalog:
         if not specs:
             raise _ComponentResolutionError(
                 f"component family `{normalized.name}` has no enabled component"
+            )
+        family_settings = self._family_settings(normalized.name)
+        configured_name_raw = getattr(family_settings, "default", "")
+        configured_name = (
+            "" if configured_name_raw is None else str(configured_name_raw).strip()
+        )
+        if configured_name:
+            for spec in specs:
+                if spec.component_name == configured_name:
+                    return spec
+            raise _ComponentResolutionError(
+                f"component family `{normalized.name}` configured default "
+                f"`{configured_name}` is not enabled or not registered"
             )
         preferred_name = _PREFERRED_DEFAULT_COMPONENTS.get(normalized.name)
         if preferred_name:
@@ -168,17 +184,9 @@ class ComponentCatalog:
         return self.resolve_default_spec(family).component_name
 
     def component_families(self) -> tuple[ComponentFamily[Any], ...]:
-        families: list[ComponentFamily[Any]] = [
-            family
-            for family in BUILTIN_COMPONENT_FAMILIES
-            if self._family_specs(family)
-        ]
-        for family in _descriptor_families(self._descriptors):
-            if family in BUILTIN_COMPONENT_FAMILIES:
-                continue
-            if self._family_specs(family):
-                families.append(family)
-        return tuple(families)
+        return tuple(
+            family for family in self._ordered_families if self._family_specs(family)
+        )
 
     def iter_enabled_specs(self) -> tuple[_ResolvedComponent, ...]:
         specs: list[_ResolvedComponent] = []
@@ -201,7 +209,7 @@ class ComponentCatalog:
         cached = self._family_spec_cache.get(normalized.name)
         if cached is not None:
             return cached
-        family_settings = _family_settings(self._settings, normalized.name)
+        family_settings = self._family_settings(normalized.name)
         specs: list[_ResolvedComponent] = []
         for descriptor in self._descriptors_by_family.get(normalized.name, ()):
             config = getattr(
@@ -228,12 +236,70 @@ class ComponentCatalog:
         self._family_spec_cache[normalized.name] = resolved
         return resolved
 
+    def _family_settings(self, family_name: str) -> SettingModel:
+        value = getattr(self._settings.components, family_name, None)
+        if not isinstance(value, SettingModel):
+            raise _ComponentResolutionError(
+                f"settings family `{family_name}` is not available in components"
+            )
+        return value
+
 
 def load_component_descriptors() -> tuple[_ComponentDescriptor, ...]:
     items: dict[tuple[str, str], _ComponentDescriptor] = {}
-    for module in _iter_component_modules():
-        _register_module_components(items=items, module=module)
-    return tuple(items.values())
+    package = importlib.import_module("serpsage.components")
+    module_infos = sorted(
+        pkgutil.walk_packages(
+            package.__path__,
+            prefix=f"{package.__name__}.",
+        ),
+        key=lambda item: item.name,
+    )
+    for module_info in module_infos:
+        if module_info.ispkg:
+            continue
+        try:
+            module = importlib.import_module(module_info.name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to import component module `{module_info.name}`"
+            ) from exc
+        for value in module.__dict__.values():
+            if not (
+                isinstance(value, type)
+                and value.__module__ == module.__name__
+                and issubclass(value, ComponentBase)
+                and ABC not in value.__bases__
+                and not inspect.isabstract(value)
+            ):
+                continue
+            meta = getattr(value, _COMPONENT_META_ATTR, None)
+            if not isinstance(meta, ComponentMeta):
+                meta = value.__dict__.get("meta")
+            if not isinstance(meta, ComponentMeta):
+                continue
+            config_cls = getattr(value, "Config", None)
+            if not _is_setting_class(config_cls):
+                raise TypeError(
+                    f"{value.__name__} must expose a concrete Config class with "
+                    "`__setting_family__` and `__setting_name__`"
+                )
+            family = coerce_component_family(config_cls.__setting_family__)
+            key = (family.name, config_cls.__setting_name__)
+            existing = items.get(key)
+            if existing is not None and existing.cls is value:
+                continue
+            if existing is not None:
+                raise ValueError(
+                    f"component `{family.name}:{config_cls.__setting_name__}` is already registered"
+                )
+            items[key] = _ComponentDescriptor(
+                family=family,
+                cls=value,
+                config_cls=config_cls,
+                meta=meta,
+            )
+    return tuple(items[key] for key in sorted(items))
 
 
 def materialize_settings(
@@ -265,16 +331,61 @@ def _create_settings_model(
     *,
     descriptors: tuple[_ComponentDescriptor, ...],
 ) -> type[AppSettings]:
+    cache_key = tuple(
+        sorted(
+            (
+                descriptor.family.name,
+                descriptor.config_cls.__setting_name__,
+                f"{descriptor.config_cls.__module__}.{descriptor.config_cls.__qualname__}",
+            )
+            for descriptor in descriptors
+        )
+    )
+    cached = _APP_SETTINGS_MODEL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    family_descriptors: dict[str, list[_ComponentDescriptor]] = {}
+    for descriptor in descriptors:
+        family_descriptors.setdefault(descriptor.family.name, []).append(descriptor)
+
+    family_names: list[str] = list(_FAMILY_SETTING_BASES)
+    seen = set(family_names)
+    for family_name in sorted(family_descriptors):
+        if family_name in seen:
+            continue
+        family_names.append(family_name)
+        seen.add(family_name)
+
     component_fields: dict[str, Any] = {}
-    for family_name in _iter_component_family_names(descriptors):
-        family_model = _build_family_settings_model(
-            family_name=family_name,
-            descriptors=_list_family_descriptors(descriptors, family_name),
+    for family_name in family_names:
+        field_definitions: dict[str, Any] = {}
+        for descriptor in family_descriptors.get(family_name, ()):
+            try:
+                default_value: Any = descriptor.config_cls()
+            except ValidationError:
+                default_value = ...
+            field_definitions[descriptor.config_cls.__setting_name__] = (
+                descriptor.config_cls,
+                default_value,
+            )
+
+        model_name = "Dynamic" + "".join(
+            part.capitalize() for part in family_name.split("_")
         )
-        component_fields[family_name] = (
-            family_model,
-            _default_model_instance(family_model),
+        family_model = cast(
+            "type[SettingModel]",
+            create_model(
+                f"{model_name}Settings",
+                __base__=_FAMILY_SETTING_BASES.get(family_name, SettingModel),
+                **field_definitions,
+            ),
         )
+        try:
+            family_default = family_model()
+        except ValidationError:
+            family_default = family_model.model_construct()
+        component_fields[family_name] = (family_model, family_default)
+
     components_model = cast(
         "type[ComponentSettings]",
         create_model(
@@ -283,167 +394,20 @@ def _create_settings_model(
             **component_fields,
         ),
     )
-    return cast(
+    try:
+        components_default = components_model()
+    except ValidationError:
+        components_default = components_model.model_construct()
+    app_model = cast(
         "type[AppSettings]",
         create_model(
             "AppSettings",
             __base__=AppSettings,
-            components=(components_model, _default_model_instance(components_model)),
+            components=(components_model, components_default),
         ),
     )
-
-
-def _iter_component_modules() -> tuple[ModuleType, ...]:
-    modules: list[ModuleType] = []
-    package = importlib.import_module("serpsage.components")
-    for module_info in pkgutil.walk_packages(
-        package.__path__,
-        prefix=f"{package.__name__}.",
-    ):
-        if module_info.ispkg:
-            continue
-        with contextlib.suppress(ImportError):
-            modules.append(importlib.import_module(module_info.name))
-    return tuple(modules)
-
-
-def _register_module_components(
-    *,
-    items: dict[tuple[str, str], _ComponentDescriptor],
-    module: ModuleType,
-) -> None:
-    for value in module.__dict__.values():
-        if (
-            isinstance(value, type)
-            and value.__module__ == module.__name__
-            and issubclass(value, ComponentBase)
-            and ABC not in value.__bases__
-            and not inspect.isabstract(value)
-        ):
-            meta = getattr(value, _COMPONENT_META_ATTR, None)
-            if not isinstance(meta, ComponentMeta):
-                meta = value.__dict__.get("meta")
-            if not isinstance(meta, ComponentMeta):
-                continue
-            config_cls = getattr(value, "Config", None)
-            if not _is_setting_class(config_cls):
-                raise TypeError(
-                    f"{value.__name__} must expose a concrete Config class with "
-                    "`__setting_family__` and `__setting_name__`"
-                )
-
-            family = coerce_component_family(config_cls.__setting_family__)
-            key = (family.name, config_cls.__setting_name__)
-            existing = items.get(key)
-            if existing is not None and existing.cls is value:
-                return
-            if existing is not None:
-                raise ValueError(
-                    f"component `{family.name}:{config_cls.__setting_name__}` is already registered"
-                )
-            items[key] = _ComponentDescriptor(
-                family=family,
-                cls=value,
-                config_cls=config_cls,
-                meta=meta,
-            )
-
-
-def _build_family_settings_model(
-    *,
-    family_name: str,
-    descriptors: tuple[_ComponentDescriptor, ...],
-) -> type[SettingModel]:
-    field_definitions: dict[str, Any] = {}
-    for descriptor in descriptors:
-        default_value = _default_field_value(descriptor.config_cls)
-        field_definitions[descriptor.config_cls.__setting_name__] = (
-            descriptor.config_cls,
-            default_value,
-        )
-    base = _FAMILY_SETTING_BASES.get(family_name, SettingModel)
-    return cast(
-        "type[SettingModel]",
-        create_model(
-            _family_model_name(family_name),
-            __base__=base,
-            **field_definitions,
-        ),
-    )
-
-
-def _family_settings(settings: AppSettings, family_name: str) -> SettingModel:
-    value = getattr(settings.components, family_name, None)
-    if not isinstance(value, SettingModel):
-        raise _ComponentResolutionError(
-            f"settings family `{family_name}` is not available in components"
-        )
-    return value
-
-
-def _iter_component_family_names(
-    descriptors: tuple[_ComponentDescriptor, ...],
-) -> tuple[str, ...]:
-    names: list[str] = []
-    seen: set[str] = set()
-    for family_name in _FAMILY_SETTING_BASES:
-        names.append(family_name)
-        seen.add(family_name)
-    for family in _descriptor_families(descriptors):
-        if family.name in seen:
-            continue
-        seen.add(family.name)
-        names.append(family.name)
-    return tuple(names)
-
-
-def _list_family_descriptors(
-    descriptors: tuple[_ComponentDescriptor, ...],
-    family: ComponentFamily[Any] | str,
-) -> tuple[_ComponentDescriptor, ...]:
-    family_name = coerce_component_family(family).name
-    return tuple(
-        descriptor
-        for descriptor in descriptors
-        if descriptor.family.name == family_name
-    )
-
-
-def _descriptor_families(
-    descriptors: tuple[_ComponentDescriptor, ...],
-) -> tuple[ComponentFamily[Any], ...]:
-    unique: dict[str, ComponentFamily[Any]] = {}
-    for descriptor in descriptors:
-        unique[descriptor.family.name] = descriptor.family
-    return tuple(sorted(unique.values(), key=lambda family: family.name))
-
-
-def _group_descriptors_by_family(
-    descriptors: tuple[_ComponentDescriptor, ...],
-) -> dict[str, tuple[_ComponentDescriptor, ...]]:
-    grouped: dict[str, list[_ComponentDescriptor]] = {}
-    for descriptor in descriptors:
-        grouped.setdefault(descriptor.family.name, []).append(descriptor)
-    return {family_name: tuple(items) for family_name, items in grouped.items()}
-
-
-def _family_model_name(family_name: str) -> str:
-    parts = family_name.split("_")
-    return f"Dynamic{''.join(part.capitalize() for part in parts)}Settings"
-
-
-def _default_field_value(setting_class: type[ComponentConfigBase]) -> Any:
-    try:
-        return setting_class()
-    except ValidationError:
-        return ...
-
-
-def _default_model_instance(model_cls: type[SettingModel]) -> SettingModel:
-    try:
-        return model_cls()
-    except ValidationError:
-        return model_cls.model_construct()
+    _APP_SETTINGS_MODEL_CACHE[cache_key] = app_model
+    return app_model
 
 
 def _is_setting_class(candidate: object) -> TypeGuard[type[ComponentConfigBase]]:

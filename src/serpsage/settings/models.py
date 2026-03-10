@@ -314,39 +314,48 @@ class RunnerSettings(SettingModel):
     queue_size: int = Field(default=256, ge=1)
 
 
-class CacheSettings(SettingModel):
+class ComponentFamilySettings(SettingModel):
+    default: str = ""
+
+    @field_validator("default")
+    @classmethod
+    def _normalize_default(cls, value: str) -> str:
+        return str(value).strip()
+
+
+class CacheSettings(ComponentFamilySettings):
     pass
 
 
-class CrawlSettings(SettingModel):
+class CrawlSettings(ComponentFamilySettings):
     pass
 
 
-class ExtractSettings(SettingModel):
+class ExtractSettings(ComponentFamilySettings):
     pass
 
 
-class HttpSettings(SettingModel):
+class HttpSettings(ComponentFamilySettings):
     pass
 
 
-class LlmSettings(SettingModel):
+class LlmSettings(ComponentFamilySettings):
     pass
 
 
-class ProviderSettings(SettingModel):
+class ProviderSettings(ComponentFamilySettings):
     pass
 
 
-class RankSettings(SettingModel):
+class RankSettings(ComponentFamilySettings):
     pass
 
 
-class RateLimitSettings(SettingModel):
+class RateLimitSettings(ComponentFamilySettings):
     pass
 
 
-class TelemetrySettings(SettingModel):
+class TelemetrySettings(ComponentFamilySettings):
     pass
 
 
