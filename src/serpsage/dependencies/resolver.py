@@ -4,9 +4,17 @@ import inspect
 import sys
 from dataclasses import dataclass
 from types import UnionType
-from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    TypeGuard,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
-from serpsage.core.workunit import WorkUnit, bootstrap_workunit
 from serpsage.dependencies.contracts import (
     _MISSING,
     BindingScope,
@@ -18,6 +26,9 @@ from serpsage.dependencies.contracts import (
     assert_service_key,
     format_service_key,
 )
+
+if TYPE_CHECKING:
+    from serpsage.core.workunit import WorkUnit
 
 ParameterShape = Literal["single", "optional", "collection"]
 
@@ -406,7 +417,7 @@ class ServiceProvider:
         owned: list[WorkUnit] = []
         instance = object.__new__(cls)
 
-        if isinstance(instance, WorkUnit):
+        if _is_workunit_instance(instance):
             runtime_value = self._resolve_workunit_runtime(
                 plan=plan,
                 overrides=overrides,
@@ -416,7 +427,7 @@ class ServiceProvider:
                 current_binding_id=current_binding_id,
                 resolving=resolving,
             )
-            bootstrap_workunit(instance, runtime_value)
+            _bootstrap_workunit(instance, runtime_value)
 
         for field in plan.fields:
             value = self._resolve_field_value(
@@ -444,7 +455,7 @@ class ServiceProvider:
             self._collect_workunits(owned, value)
 
         cls.__init__(instance, **kwargs)
-        if isinstance(instance, WorkUnit) and owned:
+        if _is_workunit_instance(instance) and owned:
             instance.bind_deps(*owned)
         return instance
 
@@ -724,7 +735,7 @@ class ServiceProvider:
     ) -> None:
         plan = self.plan_for(cls)
         self._validate_override_targets(plan=plan, overrides=overrides, path=path)
-        if issubclass(cls, WorkUnit):
+        if _is_workunit_subclass(cls):
             self._validate_workunit_runtime_source(
                 plan=plan,
                 overrides=overrides,
@@ -966,10 +977,10 @@ class ServiceProvider:
     @staticmethod
     def _collect_workunits(out: list[WorkUnit], value: object) -> None:
         queue: list[WorkUnit] = []
-        if isinstance(value, WorkUnit):
+        if _is_workunit_instance(value):
             queue.append(value)
         elif isinstance(value, (tuple, list)):
-            queue.extend(item for item in value if isinstance(item, WorkUnit))
+            queue.extend(item for item in value if _is_workunit_instance(item))
         existing = {id(item) for item in out}
         for item in queue:
             if id(item) in existing:
@@ -983,6 +994,26 @@ class ServiceProvider:
         if joined:
             return ServiceResolutionError(f"{message} (path: {joined})")
         return ServiceResolutionError(message)
+
+
+def _workunit_class() -> type[WorkUnit]:
+    from serpsage.core.workunit import WorkUnit
+
+    return WorkUnit
+
+
+def _bootstrap_workunit(instance: WorkUnit, rt: object) -> None:
+    from serpsage.core.workunit import bootstrap_workunit
+
+    bootstrap_workunit(instance, rt)
+
+
+def _is_workunit_instance(value: object) -> TypeGuard[WorkUnit]:
+    return isinstance(value, _workunit_class())
+
+
+def _is_workunit_subclass(cls: type[Any]) -> TypeGuard[type[WorkUnit]]:
+    return issubclass(cls, _workunit_class())
 
 
 def analyze_class(cls: type[Any]) -> ClassPlan:
@@ -1101,21 +1132,24 @@ def _unwrap_collection(annotation: Any) -> tuple[ServiceKey[Any] | None, bool]:
     args = get_args(annotation)
     if len(args) != 2 or args[1] is not Ellipsis:
         return None, True
-    item = args[0]
-    if isinstance(item, type):
-        return item, True
-    return None, True
+    return _annotation_service_type(args[0]), True
 
 
 def _unwrap_optional(annotation: Any) -> tuple[ServiceKey[Any] | None, bool]:
     origin = get_origin(annotation)
     if origin not in {UnionType, Union}:
-        return (annotation if isinstance(annotation, type) else None), False
+        return _annotation_service_type(annotation), False
     args = [item for item in get_args(annotation) if item is not type(None)]
     if len(args) != 1:
         return None, False
-    item = args[0]
-    return (item if isinstance(item, type) else None), True
+    return _annotation_service_type(args[0]), True
+
+
+def _annotation_service_type(annotation: Any) -> ServiceKey[Any] | None:
+    if isinstance(annotation, type):
+        return annotation
+    origin = get_origin(annotation)
+    return origin if isinstance(origin, type) else None
 
 
 def _merge_overrides(
@@ -1133,7 +1167,7 @@ def _uses_inherited_compat_init(cls: type[Any]) -> bool:
         return False
     if cls.__init__ is object.__init__:
         return True
-    if cls.__init__ is WorkUnit.__init__:
+    if cls.__init__ is _workunit_class().__init__:
         return True
     try:
         from serpsage.components.base import ComponentBase
@@ -1147,10 +1181,11 @@ def _get_function_hints(func: Any) -> dict[str, Any]:
 
 
 def _get_class_hints(cls: type[Any]) -> dict[str, Any]:
-    return get_type_hints(
+    return inspect.get_annotations(
         cls,
-        globalns=_annotation_globals(cls),
-        localns=dict(vars(cls)),
+        globals=_annotation_globals(cls),
+        locals=dict(vars(cls)),
+        eval_str=True,
     )
 
 

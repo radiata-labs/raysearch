@@ -3,8 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
-from typing_extensions import override
+from typing import Any, Generic
+from typing_extensions import TypeVar, override
 
 import anyio
 from pydantic import Field, field_validator
@@ -100,7 +100,14 @@ class _InFlightEntry:
     error: BaseException | None = None
 
 
-class CrawlerBase(ComponentBase[CrawlConfigBase], ABC):
+CrawlerConfigT = TypeVar(
+    "CrawlerConfigT",
+    bound=CrawlConfigBase,
+    default=CrawlConfigBase,
+)
+
+
+class CrawlerBase(ComponentBase[CrawlerConfigT], ABC, Generic[CrawlerConfigT]):
     def __init__(self) -> None:
         self._inflight_lock = anyio.Lock()
         self._inflight_pool: dict[str, _InFlightEntry] = {}
@@ -232,6 +239,7 @@ class CrawlerBase(ComponentBase[CrawlConfigBase], ABC):
 __all__ = [
     "CrawlAutoSettings",
     "CrawlConfigBase",
+    "CrawlerConfigT",
     "CrawlerBase",
     "CrawlQualitySettings",
     "CrawlRenderSettings",

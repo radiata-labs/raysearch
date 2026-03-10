@@ -8,17 +8,12 @@ from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase, HttpClientConfig
 
 _HTTPX_META = ComponentMeta(
-    family="http",
-    name="httpx",
     version="1.0.0",
     summary="Shared httpx async client.",
-    provides=("http.client",),
-    config_model=HttpClientConfig,
-    config_optional=True,
 )
 
 
-class HttpClient(HttpClientBase):
+class HttpClient(HttpClientBase[HttpClientConfig]):
     meta = _HTTPX_META
 
     def __init__(

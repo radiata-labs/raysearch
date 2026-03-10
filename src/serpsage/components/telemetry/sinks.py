@@ -22,7 +22,15 @@ except Exception:  # noqa: BLE001
     AioSqliteModule = None
 
 
+class NullObsConfig(ComponentConfigBase):
+    __setting_family__ = "telemetry"
+    __setting_name__ = "null_sink"
+
+
 class JsonlObsConfig(ComponentConfigBase):
+    __setting_family__ = "telemetry"
+    __setting_name__ = "jsonl_sink"
+
     jsonl_path: str = ".serpsage_events.jsonl"
 
     @field_validator("jsonl_path")
@@ -35,6 +43,9 @@ class JsonlObsConfig(ComponentConfigBase):
 
 
 class SqliteMeteringConfig(ComponentConfigBase):
+    __setting_family__ = "telemetry"
+    __setting_name__ = "sqlite_metering_sink"
+
     sqlite_db_path: str = ".serpsage_metering.sqlite3"
 
     @field_validator("sqlite_db_path")
@@ -47,34 +58,20 @@ class SqliteMeteringConfig(ComponentConfigBase):
 
 
 _NULL_SINK_META = ComponentMeta(
-    family="telemetry",
-    name="null_sink",
     version="1.0.0",
     summary="No-op telemetry sink.",
-    provides=("telemetry.sink",),
-    contracts=(EventSinkBase,),
 )
 _JSONL_SINK_META = ComponentMeta(
-    family="telemetry",
-    name="jsonl_sink",
     version="1.0.0",
     summary="Append telemetry events to a JSONL file.",
-    provides=("telemetry.sink",),
-    contracts=(EventSinkBase,),
-    config_model=JsonlObsConfig,
 )
 _SQLITE_SINK_META = ComponentMeta(
-    family="telemetry",
-    name="sqlite_metering_sink",
     version="1.0.0",
     summary="Write metering events into sqlite.",
-    provides=("telemetry.sink",),
-    contracts=(EventSinkBase,),
-    config_model=SqliteMeteringConfig,
 )
 
 
-class NullObsSink(EventSinkBase[ComponentConfigBase]):
+class NullObsSink(EventSinkBase[NullObsConfig]):
     meta = _NULL_SINK_META
 
     @override
@@ -223,4 +220,11 @@ class SqliteMeterLedgerSink(EventSinkBase[SqliteMeteringConfig]):
         self._con = None
 
 
-__all__ = ["JsonlObsSink", "NullObsSink", "SqliteMeterLedgerSink"]
+__all__ = [
+    "JsonlObsConfig",
+    "JsonlObsSink",
+    "NullObsConfig",
+    "NullObsSink",
+    "SqliteMeteringConfig",
+    "SqliteMeterLedgerSink",
+]

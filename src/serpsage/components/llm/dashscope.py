@@ -26,6 +26,9 @@ TModel = TypeVar("TModel", bound=BaseModel)
 
 
 class DashScopeModelConfig(LLMModelConfig):
+    __setting_family__ = "llm"
+    __setting_name__ = "dashscope"
+
     @classmethod
     @override
     def inject_env(
@@ -43,12 +46,8 @@ class DashScopeModelConfig(LLMModelConfig):
 
 
 _DASHSCOPE_META = ComponentMeta(
-    family="llm",
-    name="dashscope",
     version="1.0.0",
     summary="DashScope route client.",
-    provides=("llm.route",),
-    config_model=DashScopeModelConfig,
 )
 
 

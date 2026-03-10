@@ -15,7 +15,6 @@ from serpsage import (
     FetchOverviewRequest,
     FetchRequest,
     FetchSubpagesRequest,
-    load_settings,
 )
 
 load_dotenv()
@@ -26,7 +25,6 @@ async def main(
     query: str | None = None,
     overview: bool = False,
 ) -> dict[str, Any]:
-    settings = load_settings("demo/search_config_example.yaml")
     req = FetchRequest(
         urls=[url],
         crawl_timeout=30,
@@ -37,7 +35,7 @@ async def main(
         subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
         others=FetchOthersRequest(max_links=5, max_image_links=5),
     )
-    async with Engine.from_settings(settings) as engine:
+    async with Engine.from_settings("demo/search_config_example.yaml") as engine:
         await anyio.sleep(1)
         t1 = time.time()
         resp = await engine.fetch(req)

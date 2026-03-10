@@ -13,13 +13,8 @@ from serpsage.components.rank.base import HeuristicRankSettings, RankerBase, Ran
 from serpsage.utils import normalize_text
 
 _HEURISTIC_META = ComponentMeta(
-    family="rank",
-    name="heuristic",
     version="1.0.0",
     summary="Rule-based text ranker.",
-    provides=("rank.heuristic_engine",),
-    config_model=HeuristicRankSettings,
-    config_optional=True,
 )
 
 

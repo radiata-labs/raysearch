@@ -27,30 +27,29 @@ _REQUEST_ID_CTX: ContextVar[str] = ContextVar("telemetry_request_id", default=""
 
 
 class TelemetryEmitterConfig(ComponentConfigBase):
+    __setting_family__ = "telemetry"
+    __setting_name__ = "async_emitter"
+
     queue_size: int = 2048
     drop_noncritical_when_full: bool = True
 
 
+class NullTelemetryEmitterConfig(ComponentConfigBase):
+    __setting_family__ = "telemetry"
+    __setting_name__ = "null_emitter"
+
+
 _NULL_EMITTER_META = ComponentMeta(
-    family="telemetry",
-    name="null_emitter",
     version="1.0.0",
     summary="No-op telemetry emitter.",
-    provides=("telemetry.emitter",),
-    config_model=ComponentConfigBase,
-    config_optional=True,
 )
 _ASYNC_EMITTER_META = ComponentMeta(
-    family="telemetry",
-    name="async_emitter",
     version="1.0.0",
     summary="Async telemetry emitter with sink fan-out.",
-    provides=("telemetry.emitter",),
-    config_model=TelemetryEmitterConfig,
 )
 
 
-class NullTelemetryEmitter(TelemetryEmitterBase[ComponentConfigBase]):
+class NullTelemetryEmitter(TelemetryEmitterBase[NullTelemetryEmitterConfig]):
     meta = _NULL_EMITTER_META
 
     @override
@@ -217,4 +216,9 @@ class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
         self._dropped_noncritical = 0
 
 
-__all__ = ["AsyncEventEmitter", "NullTelemetryEmitter"]
+__all__ = [
+    "AsyncEventEmitter",
+    "NullTelemetryEmitter",
+    "NullTelemetryEmitterConfig",
+    "TelemetryEmitterConfig",
+]

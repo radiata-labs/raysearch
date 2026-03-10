@@ -41,7 +41,13 @@ class Engine(WorkUnit):
     """Async-only engine with search/fetch/answer/research paths."""
 
     def __init__(self) -> None:
-        self.bind_deps(self.telemetry)
+        self.bind_deps(
+            self.telemetry,
+            self._search_runner(),
+            self._fetch_runner(),
+            self._answer_runner(),
+            self._research_runner(),
+        )
 
     @classmethod
     def from_settings(

@@ -19,6 +19,9 @@ _DEFAULT_SEARXNG_BASE_URL = "https://searx.be/search"
 
 
 class SearxngProviderConfig(ProviderConfigBase):
+    __setting_family__ = "provider"
+    __setting_name__ = "searxng"
+
     @classmethod
     @override
     def inject_env(
@@ -48,12 +51,8 @@ class SearxngProviderConfig(ProviderConfigBase):
 
 
 _SEARXNG_META = ComponentMeta(
-    family="provider",
-    name="searxng",
     version="1.0.0",
     summary="SearxNG JSON search provider.",
-    provides=("provider.search",),
-    config_model=SearxngProviderConfig,
 )
 
 

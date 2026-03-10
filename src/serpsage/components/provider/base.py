@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal
 from typing_extensions import TypeVar
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.provider import SearchProviderResponse
@@ -28,14 +28,23 @@ class ProviderConfigBase(ComponentConfigBase):
     results_per_page: int = 10
     retry: RetrySettings = Field(default_factory=RetrySettings)
 
+    @field_validator("base_url")
+    @classmethod
+    def _normalize_base_url(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if normalized and not normalized.startswith(("http://", "https://")):
+            raise ValueError("provider base_url must start with http:// or https://")
+        return normalized
+
+    @field_validator("user_agent")
+    @classmethod
+    def _normalize_user_agent(cls, value: str) -> str:
+        return str(value or "").strip()
+
     @model_validator(mode="after")
     def _validate_provider(self) -> ProviderConfigBase:
-        self.base_url = str(self.base_url or "").strip()
-        if self.base_url and not self.base_url.startswith(("http://", "https://")):
-            raise ValueError("provider base_url must start with http:// or https://")
         if float(self.timeout_s) <= 0:
             raise ValueError("provider timeout_s must be > 0")
-        self.user_agent = str(self.user_agent or "").strip()
         if int(self.results_per_page) <= 0:
             raise ValueError("provider results_per_page must be > 0")
         if int(self.results_per_page) > 100:

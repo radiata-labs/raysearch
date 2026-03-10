@@ -54,6 +54,9 @@ _DEFAULT_GOOGLE_USER_AGENT = (
 
 
 class GoogleProviderConfig(ProviderConfigBase):
+    __setting_family__ = "provider"
+    __setting_name__ = "google"
+
     safe: GoogleSafeSearchKey = "off"
     country: str = "US"
 
@@ -95,12 +98,8 @@ class GoogleProviderConfig(ProviderConfigBase):
 
 
 _GOOGLE_META = ComponentMeta(
-    family="provider",
-    name="google",
     version="1.0.0",
     summary="Google HTML search provider.",
-    provides=("provider.search",),
-    config_model=GoogleProviderConfig,
 )
 
 

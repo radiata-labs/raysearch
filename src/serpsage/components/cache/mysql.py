@@ -59,6 +59,9 @@ class _SQL:
 
 
 class MySQLCacheConfig(CacheConfigBase):
+    __setting_family__ = "cache"
+    __setting_name__ = "mysql"
+
     driver: str = "auto"
     host: str = "127.0.0.1"
     port: int = 3306
@@ -78,12 +81,8 @@ class MySQLCacheConfig(CacheConfigBase):
 
 
 _MYSQL_CACHE_META = ComponentMeta(
-    family="cache",
-    name="mysql",
     version="1.0.0",
     summary="MySQL-backed cache.",
-    provides=("cache.store",),
-    config_model=MySQLCacheConfig,
 )
 
 

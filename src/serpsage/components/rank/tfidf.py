@@ -52,13 +52,8 @@ def _score_texts_sync(
 
 
 _TFIDF_META = ComponentMeta(
-    family="rank",
-    name="tfidf",
     version="1.0.0",
     summary="TF-IDF based text ranker.",
-    provides=("rank.tfidf_engine",),
-    config_model=RankTfidfSettings,
-    config_optional=True,
 )
 
 

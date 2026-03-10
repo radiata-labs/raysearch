@@ -27,6 +27,9 @@ class _ModelDumpable(Protocol):
 
 
 class GeminiModelConfig(LLMModelConfig):
+    __setting_family__ = "llm"
+    __setting_name__ = "gemini"
+
     @classmethod
     @override
     def inject_env(
@@ -44,12 +47,8 @@ class GeminiModelConfig(LLMModelConfig):
 
 
 _GEMINI_META = ComponentMeta(
-    family="llm",
-    name="gemini",
     version="1.0.0",
     summary="Gemini route client.",
-    provides=("llm.route",),
-    config_model=GeminiModelConfig,
 )
 
 

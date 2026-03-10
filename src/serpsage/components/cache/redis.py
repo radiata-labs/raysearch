@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 
 class RedisCacheConfig(CacheConfigBase):
+    __setting_family__ = "cache"
+    __setting_name__ = "redis"
+
     url: str = "redis://127.0.0.1:6379/0"
     key_prefix: str = "serpsage"
 
@@ -31,12 +34,8 @@ class RedisCacheConfig(CacheConfigBase):
 
 
 _REDIS_CACHE_META = ComponentMeta(
-    family="cache",
-    name="redis",
     version="1.0.0",
     summary="Redis-backed cache.",
-    provides=("cache.store",),
-    config_model=RedisCacheConfig,
 )
 
 

@@ -18,6 +18,9 @@ RankConfigT = TypeVar(
 
 
 class HeuristicRankSettings(ComponentConfigBase):
+    __setting_family__ = "rank"
+    __setting_name__ = "heuristic"
+
     early_bonus: float = 1.15
     unique_hit_weight: float = 6.0
     count_weight: float = 1.5
@@ -30,14 +33,19 @@ class HeuristicRankSettings(ComponentConfigBase):
 
 
 class RankBm25Settings(ComponentConfigBase):
-    pass
+    __setting_family__ = "rank"
+    __setting_name__ = "bm25"
 
 
 class RankTfidfSettings(ComponentConfigBase):
-    pass
+    __setting_family__ = "rank"
+    __setting_name__ = "tfidf"
 
 
 class RankCrossEncoderSettings(ComponentConfigBase):
+    __setting_family__ = "rank"
+    __setting_name__ = "cross_encoder"
+
     model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     batch_size: int = Field(default=16, ge=1)
     max_length: int = Field(default=512, ge=1)
@@ -63,6 +71,9 @@ def _default_rank_blend_providers() -> dict[str, float]:
 
 
 class RankBlendSettings(ComponentConfigBase):
+    __setting_family__ = "rank"
+    __setting_name__ = "blend"
+
     providers: dict[str, float] = Field(default_factory=_default_rank_blend_providers)
     rerank: RankBlendRerankSettings = Field(default_factory=RankBlendRerankSettings)
 

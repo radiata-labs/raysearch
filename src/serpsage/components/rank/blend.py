@@ -22,12 +22,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _BLEND_META = ComponentMeta(
-    family="rank",
-    name="blend",
     version="1.0.0",
     summary="Weighted composite ranker.",
-    provides=("ranker.text",),
-    config_model=RankBlendSettings,
 )
 
 

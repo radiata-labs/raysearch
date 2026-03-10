@@ -7,17 +7,19 @@ import anyio
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
 
+
+class MemoryCacheConfig(CacheConfigBase):
+    __setting_family__ = "cache"
+    __setting_name__ = "memory"
+
+
 _MEMORY_CACHE_META = ComponentMeta(
-    family="cache",
-    name="memory",
     version="1.0.0",
     summary="In-memory TTL cache.",
-    provides=("cache.store",),
-    config_model=CacheConfigBase,
 )
 
 
-class MemoryCache(CacheBase[CacheConfigBase]):
+class MemoryCache(CacheBase[MemoryCacheConfig]):
     meta = _MEMORY_CACHE_META
 
     store: dict[tuple[str, str], tuple[int, bytes]] = {}
@@ -51,4 +53,4 @@ class MemoryCache(CacheBase[CacheConfigBase]):
                 self.store.pop(k, None)
 
 
-__all__ = ["MemoryCache"]
+__all__ = ["MemoryCache", "MemoryCacheConfig"]

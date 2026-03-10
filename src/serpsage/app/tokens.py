@@ -1,34 +1,54 @@
 from __future__ import annotations
 
-from serpsage.dependencies import InjectToken
+from typing import TYPE_CHECKING
+
+from serpsage.dependencies.contracts import InjectToken
 from serpsage.models.steps.answer import AnswerStepContext
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.research import ResearchStepContext
 from serpsage.models.steps.search import SearchStepContext
-from serpsage.steps.base import RunnerBase, StepBase
 
-SEARCH_RUNNER = InjectToken[RunnerBase[SearchStepContext]]("app.search_runner")
-FETCH_RUNNER = InjectToken[RunnerBase[FetchStepContext]]("app.fetch_runner")
-CHILD_FETCH_RUNNER = InjectToken[RunnerBase[FetchStepContext]]("app.child_fetch_runner")
-ANSWER_RUNNER = InjectToken[RunnerBase[AnswerStepContext]]("app.answer_runner")
-RESEARCH_ROUND_RUNNER = InjectToken[RunnerBase[ResearchStepContext]](
+if TYPE_CHECKING:
+    from serpsage.steps.base import RunnerBase, StepBase
+
+SEARCH_RUNNER: InjectToken[RunnerBase[SearchStepContext]] = InjectToken(
+    "app.search_runner"
+)
+FETCH_RUNNER: InjectToken[RunnerBase[FetchStepContext]] = InjectToken(
+    "app.fetch_runner"
+)
+CHILD_FETCH_RUNNER: InjectToken[RunnerBase[FetchStepContext]] = InjectToken(
+    "app.child_fetch_runner"
+)
+ANSWER_RUNNER: InjectToken[RunnerBase[AnswerStepContext]] = InjectToken(
+    "app.answer_runner"
+)
+RESEARCH_ROUND_RUNNER: InjectToken[RunnerBase[ResearchStepContext]] = InjectToken(
     "app.research_round_runner"
 )
-RESEARCH_RUNNER = InjectToken[RunnerBase[ResearchStepContext]]("app.research_runner")
-RESEARCH_SUBREPORT_STEP = InjectToken[StepBase[ResearchStepContext]](
+RESEARCH_RUNNER: InjectToken[RunnerBase[ResearchStepContext]] = InjectToken(
+    "app.research_runner"
+)
+RESEARCH_SUBREPORT_STEP: InjectToken[StepBase[ResearchStepContext]] = InjectToken(
     "app.research_subreport_step"
 )
 
-CHILD_FETCH_STEPS = InjectToken[tuple[StepBase[FetchStepContext], ...]](
+CHILD_FETCH_STEPS: InjectToken[tuple[StepBase[FetchStepContext], ...]] = InjectToken(
     "app.child_fetch_steps"
 )
-FETCH_STEPS = InjectToken[tuple[StepBase[FetchStepContext], ...]]("app.fetch_steps")
-SEARCH_STEPS = InjectToken[tuple[StepBase[SearchStepContext], ...]]("app.search_steps")
-ANSWER_STEPS = InjectToken[tuple[StepBase[AnswerStepContext], ...]]("app.answer_steps")
-RESEARCH_ROUND_STEPS = InjectToken[tuple[StepBase[ResearchStepContext], ...]](
-    "app.research_round_steps"
+FETCH_STEPS: InjectToken[tuple[StepBase[FetchStepContext], ...]] = InjectToken(
+    "app.fetch_steps"
 )
-RESEARCH_STEPS = InjectToken[tuple[StepBase[ResearchStepContext], ...]](
+SEARCH_STEPS: InjectToken[tuple[StepBase[SearchStepContext], ...]] = InjectToken(
+    "app.search_steps"
+)
+ANSWER_STEPS: InjectToken[tuple[StepBase[AnswerStepContext], ...]] = InjectToken(
+    "app.answer_steps"
+)
+RESEARCH_ROUND_STEPS: InjectToken[tuple[StepBase[ResearchStepContext], ...]] = (
+    InjectToken("app.research_round_steps")
+)
+RESEARCH_STEPS: InjectToken[tuple[StepBase[ResearchStepContext], ...]] = InjectToken(
     "app.research_steps"
 )
 

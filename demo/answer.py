@@ -6,7 +6,7 @@ from typing import Any
 import anyio
 from dotenv import load_dotenv
 
-from serpsage import AnswerRequest, Engine, load_settings
+from serpsage import AnswerRequest, Engine
 
 load_dotenv()
 
@@ -16,13 +16,12 @@ async def main(
     content: bool = True,
     json_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    settings = load_settings("demo/search_config_example.yaml")
     req = AnswerRequest(
         query=query,
         content=content,
         json_schema=json_schema,
     )
-    async with Engine.from_settings(settings) as engine:
+    async with Engine.from_settings("demo/search_config_example.yaml") as engine:
         resp = await engine.answer(req)
     return {
         "answer": resp.answer,

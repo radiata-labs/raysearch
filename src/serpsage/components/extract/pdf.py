@@ -36,14 +36,14 @@ _LINE_SPLIT_RE = re.compile(r"\r?\n+")
 _PAGE_SEPARATOR = "\n\n---\n\n"
 
 
+class PdfExtractorConfig(ExtractConfigBase):
+    __setting_family__ = "extract"
+    __setting_name__ = "pdf"
+
+
 _PDF_EXTRACTOR_META = ComponentMeta(
-    family="extract",
-    name="pdf",
     version="1.0.0",
     summary="PDF content extractor.",
-    provides=("extract.pdf_engine",),
-    config_model=ExtractConfigBase,
-    config_optional=True,
 )
 
 
@@ -59,7 +59,7 @@ class PdfExtractionResult:
     stats: dict[str, int | float | str | bool]
 
 
-class PdfExtractor(ExtractorBase):
+class PdfExtractor(ExtractorBase[PdfExtractorConfig]):
     meta = _PDF_EXTRACTOR_META
 
     @override
@@ -506,4 +506,4 @@ class PdfExtractor(ExtractorBase):
         )
 
 
-__all__ = ["PdfExtractor"]
+__all__ = ["PdfExtractor", "PdfExtractorConfig"]

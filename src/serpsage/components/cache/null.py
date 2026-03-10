@@ -5,18 +5,19 @@ from typing_extensions import override
 from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
 
+
+class NullCacheConfig(CacheConfigBase):
+    __setting_family__ = "cache"
+    __setting_name__ = "null"
+
+
 _NULL_CACHE_META = ComponentMeta(
-    family="cache",
-    name="null",
     version="1.0.0",
     summary="No-op cache backend.",
-    provides=("cache.store",),
-    config_model=CacheConfigBase,
-    config_optional=True,
 )
 
 
-class NullCache(CacheBase[CacheConfigBase]):
+class NullCache(CacheBase[NullCacheConfig]):
     meta = _NULL_CACHE_META
 
     @override
@@ -33,4 +34,4 @@ class NullCache(CacheBase[CacheConfigBase]):
         _ = ttl_s
 
 
-__all__ = ["NullCache"]
+__all__ = ["NullCache", "NullCacheConfig"]

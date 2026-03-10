@@ -20,6 +20,9 @@ except Exception:  # noqa: BLE001
 
 
 class SqliteCacheConfig(CacheConfigBase):
+    __setting_family__ = "cache"
+    __setting_name__ = "sqlite"
+
     db_path: str = ".serpsage_cache.sqlite3"
     table: str = "cache"
 
@@ -33,12 +36,8 @@ class SqliteCacheConfig(CacheConfigBase):
 
 
 _SQLITE_CACHE_META = ComponentMeta(
-    family="cache",
-    name="sqlite",
     version="1.0.0",
     summary="SQLite-backed cache.",
-    provides=("cache.store",),
-    config_model=SqliteCacheConfig,
 )
 
 

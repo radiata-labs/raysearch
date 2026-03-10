@@ -5,16 +5,16 @@ import importlib
 import inspect
 import os
 import pkgutil
+from abc import ABC
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
     TypeAlias,
+    TypeGuard,
     TypeVar,
     cast,
-    get_args,
-    get_origin,
     overload,
 )
 
@@ -29,7 +29,6 @@ from serpsage.components.base import (
     ComponentMeta,
     coerce_component_family,
 )
-from serpsage.dependencies import analyze_class
 from serpsage.settings.models import (
     AppSettings,
     CacheSettings,
@@ -314,71 +313,40 @@ def _register_module_components(
     module: ModuleType,
 ) -> None:
     for value in module.__dict__.values():
-        if not isinstance(value, type):
-            continue
-        if value.__module__ != module.__name__:
-            continue
-        if not issubclass(value, ComponentBase):
-            continue
-        meta = getattr(value, _COMPONENT_META_ATTR, None)
-        if not isinstance(meta, ComponentMeta):
-            continue
-        _register_component_descriptor(items=items, meta=meta, cls=value)
+        if (
+            isinstance(value, type)
+            and value.__module__ == module.__name__
+            and issubclass(value, ComponentBase)
+            and ABC not in value.__bases__
+            and not inspect.isabstract(value)
+        ):
+            meta = getattr(value, _COMPONENT_META_ATTR, None)
+            if not isinstance(meta, ComponentMeta):
+                meta = value.__dict__.get("meta")
+            if not isinstance(meta, ComponentMeta):
+                continue
+            config_cls = getattr(value, "Config", None)
+            if not _is_setting_class(config_cls):
+                raise TypeError(
+                    f"{value.__name__} must expose a concrete Config class with "
+                    "`__setting_family__` and `__setting_name__`"
+                )
 
-
-def _register_component_descriptor(
-    *,
-    items: dict[tuple[str, str], _ComponentDescriptor],
-    meta: ComponentMeta,
-    cls: type[ComponentBase[Any]],
-) -> None:
-    config_cls = _resolve_registered_config_class(cls)
-    family = coerce_component_family(config_cls.__setting_family__)
-    key = (family.name, config_cls.__setting_name__)
-    existing = items.get(key)
-    if existing is not None and existing.cls is cls:
-        return
-    if existing is not None:
-        raise ValueError(
-            f"component `{family.name}:{config_cls.__setting_name__}` is already registered"
-        )
-    _validate_component_signature(cls=cls, config_cls=config_cls)
-    items[key] = _ComponentDescriptor(
-        family=family,
-        cls=cls,
-        config_cls=config_cls,
-        meta=meta,
-    )
-
-
-def _resolve_registered_config_class(
-    cls: type[Any],
-) -> type[ComponentConfigBase]:
-    config_cls = getattr(cls, "Config", None)
-    if not _is_setting_class(config_cls):
-        raise TypeError(
-            f"{cls.__name__} must expose a concrete Config class with "
-            "`__setting_family__` and `__setting_name__`"
-        )
-    return cast("type[ComponentConfigBase]", config_cls)
-
-
-def _validate_component_signature(
-    *,
-    cls: ComponentClass,
-    config_cls: type[ComponentConfigBase],
-) -> None:
-    _ = analyze_class(cls)
-    config_type = _resolve_component_config_type(cls)
-    if not isinstance(config_type, type):
-        raise TypeError(
-            f"{cls.__name__} must bind a concrete `ComponentBase[ConfigModel]` config type"
-        )
-    if not issubclass(config_cls, config_type):
-        raise TypeError(
-            f"{cls.__name__} config model `{config_cls.__name__}` is incompatible "
-            f"with `{config_type.__name__}`"
-        )
+            family = coerce_component_family(config_cls.__setting_family__)
+            key = (family.name, config_cls.__setting_name__)
+            existing = items.get(key)
+            if existing is not None and existing.cls is value:
+                return
+            if existing is not None:
+                raise ValueError(
+                    f"component `{family.name}:{config_cls.__setting_name__}` is already registered"
+                )
+            items[key] = _ComponentDescriptor(
+                family=family,
+                cls=value,
+                config_cls=config_cls,
+                meta=meta,
+            )
 
 
 def _build_family_settings_model(
@@ -478,71 +446,13 @@ def _default_model_instance(model_cls: type[SettingModel]) -> SettingModel:
         return model_cls.model_construct()
 
 
-def _is_setting_class(candidate: object) -> bool:
+def _is_setting_class(candidate: object) -> TypeGuard[type[ComponentConfigBase]]:
     return (
         inspect.isclass(candidate)
         and issubclass(candidate, ComponentConfigBase)
         and bool(str(getattr(candidate, "__setting_family__", "")).strip())
         and bool(str(getattr(candidate, "__setting_name__", "")).strip())
     )
-
-
-def _resolve_component_config_type(cls: type[Any]) -> type[ComponentConfigBase] | None:
-    return _walk_component_config_type(cls, {})
-
-
-def _walk_component_config_type(
-    cls: type[Any],
-    type_map: TypeMap,
-) -> type[ComponentConfigBase] | None:
-    for base in getattr(cls, "__orig_bases__", ()):
-        origin = get_origin(base) or base
-        params = getattr(origin, "__parameters__", ())
-        args = tuple(_resolve_typevar(arg, type_map) for arg in get_args(base))
-        local_map = dict(type_map)
-        local_map.update(
-            {
-                param: arg
-                for param, arg in zip(params, args, strict=False)
-                if isinstance(param, TypeVar)
-            }
-        )
-        if origin is ComponentBase:
-            if not args:
-                return None
-            candidate = args[0]
-            return (
-                candidate
-                if isinstance(candidate, type)
-                and issubclass(candidate, ComponentConfigBase)
-                else None
-            )
-        if isinstance(origin, type):
-            resolved = _walk_component_config_type(origin, local_map)
-            if resolved is not None:
-                return resolved
-    for base in cls.__bases__:
-        if base is object:
-            continue
-        resolved = _walk_component_config_type(base, type_map)
-        if resolved is not None:
-            return resolved
-    return None
-
-
-def _resolve_typevar(value: Any, type_map: TypeMap) -> Any:
-    current = value
-    visited: set[int] = set()
-    while isinstance(current, TypeVar):
-        marker = id(current)
-        if marker in visited:
-            break
-        visited.add(marker)
-        mapped = type_map.get(current, current)
-        if mapped is current:
-            break
-        current = mapped
-    return current
 
 
 __all__ = ["ComponentCatalog"]

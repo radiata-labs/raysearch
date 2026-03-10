@@ -17,13 +17,8 @@ from serpsage.components.rank.base import RankBm25Settings, RankerBase, RankMode
 from serpsage.tokenize import tokenize
 
 _BM25_META = ComponentMeta(
-    family="rank",
-    name="bm25",
     version="1.0.0",
     summary="BM25 text ranker.",
-    provides=("rank.bm25_engine",),
-    config_model=RankBm25Settings,
-    config_optional=True,
 )
 
 

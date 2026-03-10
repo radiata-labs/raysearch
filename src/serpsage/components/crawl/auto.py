@@ -55,20 +55,17 @@ class _RouteMemory:
 
 
 class AutoCrawlerConfig(CrawlConfigBase):
-    pass
+    __setting_family__ = "crawl"
+    __setting_name__ = "auto"
 
 
 _AUTO_CRAWLER_META = ComponentMeta(
-    family="crawl",
-    name="auto",
     version="1.0.0",
     summary="Adaptive crawler choosing curl_cffi or Playwright.",
-    provides=("crawler.page",),
-    config_model=AutoCrawlerConfig,
 )
 
 
-class AutoCrawler(CrawlerBase):
+class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
     meta = _AUTO_CRAWLER_META
 
     rate_limiter: RateLimiterBase[Any] = Inject()

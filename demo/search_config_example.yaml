@@ -1,86 +1,188 @@
-http:
-  default: shared
-  instances:
-    shared:
-      component: httpx
+components:
+  http:
+    httpx:
       enabled: true
-      config:
-        proxy: http://127.0.0.1:7890
-        trust_env: true
-        max_connections: 100
-        max_keepalive_connections: 20
-        keepalive_expiry_s: 5.0
+      proxy: http://127.0.0.1:7890
+      trust_env: true
+      max_connections: 100
+      max_keepalive_connections: 20
+      keepalive_expiry_s: 5.0
 
-provider:
-  default: google_main
-  instances:
-    google_main:
-      component: google
+  provider:
+    google:
       enabled: true
-      config:
-        base_url: https://www.google.com/search
-        allow_redirects: false
-        country: US
-        safe: off
-        results_per_page: 10
-        cookies:
-          CONSENT: "YES+"
-    searxng_main:
-      component: searxng
+      base_url: https://www.google.com/search
+      allow_redirects: false
+      country: US
+      safe: "off"
+      results_per_page: 10
+      cookies:
+        CONSENT: "YES+"
+    searxng:
       enabled: true
-      config:
-        base_url: https://searx.be/search
-        allow_redirects: false
-        results_per_page: 10
+      base_url: https://searx.be/search
+      allow_redirects: false
+      results_per_page: 10
 
-crawl:
-  default: auto_main
-  instances:
-    auto_main:
-      component: auto
+  crawl:
+    auto:
       enabled: true
-      config:
-        timeout_s: 2.0
-        inflight_enabled: true
-        inflight_timeout_s: 60.0
-        follow_redirects: true
-        user_agent: serpsage-bot/4.0
-        auto:
-          scout_bytes: 48000
-          route_memory_size: 4096
-          direct_route_min_samples: 3
-          direct_playwright_cost_ratio: 0.78
-          direct_playwright_min_useful: 0.72
-          learning_rate: 0.22
-        render:
-          js_concurrency: 12
-          nav_timeout_ms: 8000
-          block_resources: true
-          readiness_poll_ms: 150
-          readiness_stable_rounds: 2
-          post_ready_wait_ms: 120
-        quality:
-          min_text_chars: 100
-          script_ratio_threshold: 0.35
-          quality_score_threshold: 0.15
-          blocked_markers:
-            - cloudflare
-            - just a moment
-            - verify you are human
-            - access denied
-            - please enable javascript
-            - security check
-            - checking your browser
-    curl_main:
-      component: curl_cffi
+      timeout_s: 10.0
+      inflight_enabled: true
+      inflight_timeout_s: 60.0
+      follow_redirects: true
+      user_agent: serpsage-bot/4.0
+      auto:
+        scout_bytes: 48000
+        route_memory_size: 4096
+        direct_route_min_samples: 3
+        direct_playwright_cost_ratio: 0.78
+        direct_playwright_min_useful: 0.72
+        learning_rate: 0.22
+      render:
+        js_concurrency: 12
+        nav_timeout_ms: 8000
+        block_resources: true
+        readiness_poll_ms: 150
+        readiness_stable_rounds: 2
+        post_ready_wait_ms: 120
+      quality:
+        min_text_chars: 100
+        script_ratio_threshold: 0.35
+        quality_score_threshold: 0.15
+        blocked_markers:
+          - cloudflare
+          - just a moment
+          - verify you are human
+          - access denied
+          - please enable javascript
+          - security check
+          - checking your browser
+    curl_cffi:
       enabled: true
-      config:
-        timeout_s: 2.0
-    playwright_main:
-      component: playwright
+      timeout_s: 10.0
+    playwright:
       enabled: true
-      config:
-        timeout_s: 8.0
+      timeout_s: 20.0
+
+  extract:
+    auto:
+      enabled: true
+    html:
+      enabled: true
+    pdf:
+      enabled: true
+
+  rank:
+    blend:
+      enabled: true
+      providers:
+        heuristic: 0.7
+        tfidf: 0.3
+      rerank:
+        retrieve_weight: 0.35
+        cross_encoder_weight: 0.65
+    heuristic:
+      enabled: true
+      early_bonus: 1.15
+      unique_hit_weight: 6.0
+      count_weight: 1.5
+      intent_hit_weight: 5.0
+      max_count_per_token: 5
+      temperature: 1.0
+      min_items_for_sigmoid: 5
+      flat_spread_eps: 1.0e-9
+      z_clip: 8.0
+    tfidf:
+      enabled: true
+    bm25:
+      enabled: true
+    cross_encoder:
+      enabled: true
+      model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+      batch_size: 16
+      max_length: 512
+
+  cache:
+    "null":
+      enabled: true
+    sqlite:
+      enabled: false
+      fetch_ttl_s: 86400
+      db_path: ./.cache/serpsage_cache.sqlite3
+      table: cache
+
+  llm:
+    router:
+      enabled: true
+    openai:
+      enabled: true
+      name: gpt-4.1-mini
+      base_url: https://api.chatanywhere.tech/v1
+      api_key: null
+      model: gpt-4.1-mini
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      enable_structured: true
+    gemini:
+      enabled: true
+      name: gemini-3-flash
+      base_url: null
+      api_key: null
+      model: gemini-3-flash-preview
+      timeout_s: 60.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      enable_structured: true
+    dashscope:
+      enabled: true
+      name: kimi-k2.5
+      base_url: null
+      api_key: null
+      model: kimi-k2.5
+      timeout_s: 600.0
+      max_retries: 2
+      temperature: 0.0
+      headers: {}
+      enable_structured: true
+
+  telemetry:
+    async_emitter:
+      enabled: true
+      queue_size: 2048
+      drop_noncritical_when_full: true
+    jsonl_sink:
+      enabled: true
+      jsonl_path: .serpsage_events.jsonl
+    null_sink:
+      enabled: true
+
+  rate_limit:
+    basic:
+      enabled: true
+
+search:
+  max_results: 16
+  additional_query_score_weight: 0.8
+  deep:
+    enabled: true
+    max_expanded_queries: 6
+    rule_max_queries: 4
+    llm_max_queries: 3
+    prefetch_multiplier: 3.0
+    prefetch_max_urls: 48
+    manual_query_score_weight: 0.8
+    rule_query_score_weight: 0.75
+    llm_query_score_weight: 0.85
+    coverage_bonus_weight: 0.08
+    final_page_weight: 0.55
+    final_context_weight: 0.30
+    final_prefetch_weight: 0.15
+    expansion_model: gpt-4.1-mini
+    expansion_timeout_s: 20.0
 
 fetch:
   extract:
@@ -103,174 +205,6 @@ fetch:
     cache_ttl_s: 0
     self_heal_retries: 1
     force_language: auto
-
-extract:
-  default: auto_main
-  instances:
-    auto_main:
-      component: auto
-      enabled: true
-      config: {}
-    html_main:
-      component: html
-      enabled: true
-      config: {}
-    pdf_main:
-      component: pdf
-      enabled: true
-      config: {}
-
-rank:
-  default: blend_main
-  instances:
-    blend_main:
-      component: blend
-      enabled: true
-      config:
-        providers:
-          heuristic: 0.7
-          tfidf: 0.3
-        rerank:
-          retrieve_weight: 0.35
-          cross_encoder_weight: 0.65
-    heuristic_main:
-      component: heuristic
-      enabled: true
-      config:
-        early_bonus: 1.15
-        unique_hit_weight: 6.0
-        count_weight: 1.5
-        intent_hit_weight: 5.0
-        max_count_per_token: 5
-        temperature: 1.0
-        min_items_for_sigmoid: 5
-        flat_spread_eps: 1.0e-9
-        z_clip: 8.0
-    tfidf_main:
-      component: tfidf
-      enabled: true
-      config: {}
-    bm25_main:
-      component: bm25
-      enabled: true
-      config: {}
-    cross_encoder_main:
-      component: cross_encoder
-      enabled: true
-      config:
-        model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
-        batch_size: 16
-        max_length: 512
-
-cache:
-  default: null_main
-  instances:
-    null_main:
-      component: null
-      enabled: true
-      config:
-        fetch_ttl_s: 86400
-    sqlite_main:
-      component: sqlite
-      enabled: false
-      config:
-        fetch_ttl_s: 86400
-        db_path: ./.cache/serpsage_cache.sqlite3
-        table: cache
-
-llm:
-  default: router_main
-  instances:
-    router_main:
-      component: router
-      enabled: true
-      config: {}
-    gpt41_mini:
-      component: openai
-      enabled: true
-      config:
-        name: gpt-4.1-mini
-        base_url: https://api.chatanywhere.tech/v1
-        api_key: null
-        model: gpt-4.1-mini
-        timeout_s: 60.0
-        max_retries: 2
-        temperature: 0.0
-        headers: {}
-        enable_structured: true
-    gemini_flash:
-      component: gemini
-      enabled: true
-      config:
-        name: gemini-3-flash
-        base_url: null
-        api_key: null
-        model: gemini-3-flash-preview
-        timeout_s: 60.0
-        max_retries: 2
-        temperature: 0.0
-        headers: {}
-        enable_structured: true
-    kimi_k25:
-      component: openai
-      enabled: true
-      config:
-        name: kimi-k2.5
-        base_url: https://coding.dashscope.aliyuncs.com/v1
-        api_key: null
-        model: kimi-k2.5
-        timeout_s: 600.0
-        max_retries: 2
-        temperature: 0.0
-        headers: {}
-        enable_structured: true
-
-telemetry:
-  default: async_main
-  instances:
-    async_main:
-      component: async_emitter
-      enabled: true
-      config:
-        queue_size: 2048
-        drop_noncritical_when_full: true
-    jsonl_main:
-      component: jsonl_sink
-      enabled: true
-      config:
-        jsonl_path: .serpsage_events.jsonl
-    meter_null:
-      component: null_sink
-      enabled: true
-      config: {}
-
-rate_limit:
-  default: basic_main
-  instances:
-    basic_main:
-      component: basic
-      enabled: true
-      config: {}
-
-search:
-  max_results: 16
-  additional_query_score_weight: 0.8
-  deep:
-    enabled: true
-    max_expanded_queries: 6
-    rule_max_queries: 4
-    llm_max_queries: 3
-    prefetch_multiplier: 3.0
-    prefetch_max_urls: 48
-    manual_query_score_weight: 0.8
-    rule_query_score_weight: 0.75
-    llm_query_score_weight: 0.85
-    coverage_bonus_weight: 0.08
-    final_page_weight: 0.55
-    final_context_weight: 0.30
-    final_prefetch_weight: 0.15
-    expansion_model: gpt-4.1-mini
-    expansion_timeout_s: 20.0
 
 answer:
   plan:

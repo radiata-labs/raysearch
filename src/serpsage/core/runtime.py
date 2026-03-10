@@ -60,4 +60,18 @@ class Overrides(MutableModel):
     telemetry: TelemetryEmitterBase[Any] | None = None
 
 
+def _rebuild_runtime_model() -> None:
+    from serpsage.dependencies.resolver import ServiceProvider
+    from serpsage.load.components import ComponentCatalog
+
+    Runtime.model_rebuild(
+        _types_namespace={
+            "ComponentCatalog": ComponentCatalog,
+            "ServiceProvider": ServiceProvider,
+        }
+    )
+
+
+_rebuild_runtime_model()
+
 __all__ = ["ClockBase", "Overrides", "Runtime"]

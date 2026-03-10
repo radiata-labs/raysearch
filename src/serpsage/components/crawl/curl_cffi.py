@@ -48,21 +48,17 @@ class CurlProgressiveResult:
 
 
 class CurlCffiCrawlerConfig(CrawlConfigBase):
-    pass
+    __setting_family__ = "crawl"
+    __setting_name__ = "curl_cffi"
 
 
 _CURL_CRAWLER_META = ComponentMeta(
-    family="crawl",
-    name="curl_cffi",
     version="1.0.0",
     summary="curl_cffi crawl backend.",
-    provides=("crawl.curl_engine",),
-    config_model=CurlCffiCrawlerConfig,
-    config_optional=True,
 )
 
 
-class CurlCffiCrawler(CrawlerBase):
+class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
     meta = _CURL_CRAWLER_META
 
     def __init__(self) -> None:

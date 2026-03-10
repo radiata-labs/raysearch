@@ -22,17 +22,14 @@ from serpsage.models.components.telemetry import EventStatus, MeterPayload
 
 
 class LLMRouterConfig(ComponentConfigBase):
-    pass
+    __setting_family__ = "llm"
+    __setting_name__ = "router"
 
 
 TModel = TypeVar("TModel", bound=BaseModel)
 _ROUTER_META = ComponentMeta(
-    family="llm",
-    name="router",
     version="1.0.0",
     summary="Named model router over llm.route instances.",
-    provides=("llm.client",),
-    config_model=LLMRouterConfig,
 )
 
 

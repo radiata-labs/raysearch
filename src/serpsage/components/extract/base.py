@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic
+from typing_extensions import TypeVar
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.components.extract.utils import (
@@ -29,7 +30,14 @@ class ExtractConfigBase(ComponentConfigBase):
     link_keep_hash: bool = False
 
 
-class ExtractorBase(ComponentBase[ExtractConfigBase], ABC):
+ExtractConfigT = TypeVar(
+    "ExtractConfigT",
+    bound=ExtractConfigBase,
+    default=ExtractConfigBase,
+)
+
+
+class ExtractorBase(ComponentBase[ExtractConfigT], ABC, Generic[ExtractConfigT]):
     def _finalize_content(
         self,
         *,
@@ -92,4 +100,4 @@ class ExtractorBase(ComponentBase[ExtractConfigBase], ABC):
         raise NotImplementedError
 
 
-__all__ = ["ExtractConfigBase", "ExtractorBase"]
+__all__ = ["ExtractConfigBase", "ExtractConfigT", "ExtractorBase"]

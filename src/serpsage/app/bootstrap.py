@@ -50,6 +50,7 @@ from serpsage.dependencies import (
     InjectToken,
     ServiceCollection,
     ServiceProvider,
+    analyze_class,
     format_service_key,
 )
 from serpsage.load import ComponentCatalog
@@ -204,7 +205,10 @@ def _register_component_services(
             instance_key,
             spec.descriptor.cls,
             scope=BindingScope.SINGLETON,
-            overrides={"config": spec.config},
+            overrides=_component_binding_overrides(
+                spec.descriptor.cls,
+                config=spec.config,
+            ),
         )
         services.bind_alias(spec.descriptor.cls, instance_key)
         contracts = _component_contracts(spec.descriptor.cls)
@@ -401,6 +405,17 @@ def _component_instance_key(
     instance_id: str,
 ) -> InjectToken[object]:
     return InjectToken(f"component.{family.name}.{instance_id}")
+
+
+def _component_binding_overrides(
+    cls: type[object],
+    *,
+    config: object,
+) -> dict[str, object]:
+    plan = analyze_class(cls)
+    valid_names = {item.name for item in plan.fields}
+    valid_names.update(item.name for item in plan.parameters)
+    return {"config": config} if "config" in valid_names else {}
 
 
 def _family_contracts() -> dict[str, type[object]]:

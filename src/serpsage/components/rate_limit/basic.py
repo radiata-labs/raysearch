@@ -9,19 +9,17 @@ from serpsage.components.rate_limit.base import RateLimiterBase
 
 
 class RateLimiterConfig(ComponentConfigBase):
+    __setting_family__ = "rate_limit"
+    __setting_name__ = "basic"
+
     global_limit: int = 24
     per_host: int = 4
     politeness_delay_ms: int = 0
 
 
 _BASIC_RATE_LIMITER_META = ComponentMeta(
-    family="rate_limit",
-    name="basic",
     version="1.0.0",
     summary="Basic semaphore-based host-aware rate limiter.",
-    provides=("rate_limit.control",),
-    config_model=RateLimiterConfig,
-    config_optional=True,
 )
 
 

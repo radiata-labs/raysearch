@@ -37,6 +37,9 @@ TModel = TypeVar("TModel", bound=BaseModel)
 
 
 class OpenAIModelConfig(LLMModelConfig):
+    __setting_family__ = "llm"
+    __setting_name__ = "openai"
+
     @classmethod
     @override
     def inject_env(
@@ -54,12 +57,8 @@ class OpenAIModelConfig(LLMModelConfig):
 
 
 _OPENAI_ROUTE_META = ComponentMeta(
-    family="llm",
-    name="openai",
     version="1.0.0",
     summary="OpenAI-compatible route client.",
-    provides=("llm.route",),
-    config_model=OpenAIModelConfig,
 )
 
 

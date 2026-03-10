@@ -70,21 +70,17 @@ Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
 
 
 class PlaywrightCrawlerConfig(CrawlConfigBase):
-    pass
+    __setting_family__ = "crawl"
+    __setting_name__ = "playwright"
 
 
 _PLAYWRIGHT_CRAWLER_META = ComponentMeta(
-    family="crawl",
-    name="playwright",
     version="1.0.0",
     summary="Playwright browser crawl backend.",
-    provides=("crawl.playwright_engine",),
-    config_model=PlaywrightCrawlerConfig,
-    config_optional=True,
 )
 
 
-class PlaywrightCrawler(CrawlerBase):
+class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
     meta = _PLAYWRIGHT_CRAWLER_META
 
     def __init__(self) -> None:

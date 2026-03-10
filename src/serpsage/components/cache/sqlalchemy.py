@@ -21,6 +21,9 @@ def _ensure_identifier(value: str) -> str:
 
 
 class SQLAlchemyCacheConfig(CacheConfigBase):
+    __setting_family__ = "cache"
+    __setting_name__ = "sqlalchemy"
+
     url: str = "sqlite+aiosqlite:///./.serpsage_cache.sqlite3"
     table: str = "cache"
 
@@ -34,12 +37,8 @@ class SQLAlchemyCacheConfig(CacheConfigBase):
 
 
 _SQLALCHEMY_CACHE_META = ComponentMeta(
-    family="cache",
-    name="sqlalchemy",
     version="1.0.0",
     summary="SQLAlchemy async cache backend.",
-    provides=("cache.store",),
-    config_model=SQLAlchemyCacheConfig,
 )
 
 

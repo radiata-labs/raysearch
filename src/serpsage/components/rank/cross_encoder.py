@@ -54,13 +54,8 @@ def _normalize_predictions(raw: object) -> list[float]:
 
 
 _CROSS_ENCODER_META = ComponentMeta(
-    family="rank",
-    name="cross_encoder",
     version="1.0.0",
     summary="Cross-encoder ranker.",
-    provides=("rank.cross_encoder_engine",),
-    config_model=RankCrossEncoderSettings,
-    config_optional=True,
 )
 
 

@@ -109,16 +109,8 @@ BUILTIN_COMPONENT_FAMILIES = (
 
 @dataclass(frozen=True, slots=True)
 class ComponentMeta:
-    family: ComponentFamily[Any] | str
-    name: str
     version: str
     summary: str
-    provides: tuple[str, ...] = ()
-    contracts: tuple[type[Any], ...] = ()
-    config_model: type[ComponentConfigBase] = ComponentConfigBase
-    priority: int = 100
-    enabled_by_default: bool = True
-    config_optional: bool = False
 
 
 class ComponentBase(WorkUnit, Generic[ConfigT]):
@@ -152,7 +144,14 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
             ):
                 config = config_t
         if config is not None:
-            cls.Config = _specialize_component_config(cls=cls, config=config)
+            family_name = str(getattr(config, "__setting_family__", "")).strip()
+            setting_name = str(getattr(config, "__setting_name__", "")).strip()
+            if not family_name or not setting_name:
+                raise TypeError(
+                    f"{cls.__name__} config `{config.__name__}` must declare "
+                    "non-empty `__setting_family__` and `__setting_name__`"
+                )
+            cls.Config = config
 
     @property
     def config(self) -> ConfigT:
@@ -170,30 +169,6 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
             )
             return cast("ConfigT", value)
         return cast("ConfigT", default)
-
-
-def _specialize_component_config(
-    *,
-    cls: type[ComponentBase[Any]],
-    config: type[ConfigT],
-) -> type[ConfigT]:
-    meta = getattr(cls, "meta", None)
-    if not isinstance(meta, ComponentMeta):
-        return config
-    family_name = coerce_component_family(meta.family).name
-    setting_name = str(meta.name or "").strip()
-    if not family_name or not setting_name:
-        raise TypeError(f"{cls.__name__} must declare a non-empty component meta")
-    specialized = type(
-        f"{cls.__name__}Config",
-        (config,),
-        {
-            "__module__": cls.__module__,
-            "__setting_family__": family_name,
-            "__setting_name__": setting_name,
-        },
-    )
-    return cast("type[ConfigT]", specialized)
 
 
 __all__ = [

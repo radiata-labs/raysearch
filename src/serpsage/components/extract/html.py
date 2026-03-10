@@ -38,18 +38,19 @@ from serpsage.models.components.extract import (
 )
 from serpsage.utils import clean_whitespace
 
+
+class HtmlExtractorConfig(ExtractConfigBase):
+    __setting_family__ = "extract"
+    __setting_name__ = "html"
+
+
 _HTML_EXTRACTOR_META = ComponentMeta(
-    family="extract",
-    name="html",
     version="1.0.0",
     summary="HTML and text content extractor.",
-    provides=("extract.html_engine",),
-    config_model=ExtractConfigBase,
-    config_optional=True,
 )
 
 
-class HtmlExtractor(ExtractorBase):
+class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
     meta = _HTML_EXTRACTOR_META
 
     @dataclass(slots=True)
@@ -1142,4 +1143,4 @@ class HtmlExtractor(ExtractorBase):
         return int(value()) if callable(value) else int(value)
 
 
-__all__ = ["HtmlExtractor"]
+__all__ = ["HtmlExtractor", "HtmlExtractorConfig"]

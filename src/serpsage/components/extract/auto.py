@@ -10,17 +10,19 @@ from serpsage.components.extract.pdf import PdfExtractor
 from serpsage.dependencies import Inject
 from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
+
+class AutoExtractorConfig(ExtractConfigBase):
+    __setting_family__ = "extract"
+    __setting_name__ = "auto"
+
+
 _AUTO_EXTRACTOR_META = ComponentMeta(
-    family="extract",
-    name="auto",
     version="1.0.0",
     summary="Automatic extractor dispatching between HTML and PDF handlers.",
-    provides=("extractor.document",),
-    config_model=ExtractConfigBase,
 )
 
 
-class AutoExtractor(ExtractorBase):
+class AutoExtractor(ExtractorBase[AutoExtractorConfig]):
     meta = _AUTO_EXTRACTOR_META
 
     html_extractor: HtmlExtractor = Inject()
@@ -62,4 +64,4 @@ class AutoExtractor(ExtractorBase):
         )
 
 
-__all__ = ["AutoExtractor"]
+__all__ = ["AutoExtractor", "AutoExtractorConfig"]
