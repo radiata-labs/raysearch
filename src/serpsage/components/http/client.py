@@ -19,12 +19,6 @@ class HttpClient(HttpClientBase[HttpClientConfig]):
     def __init__(
         self,
     ) -> None:
-        components = self.rt.components
-        override_client = components.http_override() if components is not None else None
-        if isinstance(override_client, httpx.AsyncClient):
-            self._client = override_client
-            self._owns_client = False
-            return
         limits = httpx.Limits(
             max_connections=int(self.config.max_connections),
             max_keepalive_connections=int(self.config.max_keepalive_connections),

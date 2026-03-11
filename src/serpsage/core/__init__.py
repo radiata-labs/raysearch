@@ -3,12 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import Overrides, Runtime
+    from serpsage.core.runtime import Runtime
     from serpsage.core.workunit import WorkUnit
     from serpsage.models.base import FrozenModel, MutableModel
 
 __all__ = [
-    "Overrides",
     "Runtime",
     "FrozenModel",
     "MutableModel",
@@ -21,10 +20,10 @@ def __getattr__(name: str) -> Any:
         from serpsage.models.base import FrozenModel, MutableModel
 
         return {"FrozenModel": FrozenModel, "MutableModel": MutableModel}[name]
-    if name in {"Overrides", "Runtime"}:
-        from serpsage.core.runtime import Overrides, Runtime
+    if name == "Runtime":
+        from serpsage.core.runtime import Runtime
 
-        return {"Overrides": Overrides, "Runtime": Runtime}[name]
+        return Runtime
     if name == "WorkUnit":
         from serpsage.core.workunit import WorkUnit
 

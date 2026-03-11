@@ -3,14 +3,12 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 from typing_extensions import override
 from urllib.parse import urlparse
 
 from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
-from serpsage.components.crawl.curl_cffi import CurlCffiCrawler
-from serpsage.components.crawl.playwright import PlaywrightCrawler
 from serpsage.components.crawl.utils import (
     blocked_marker_hit,
     has_nextjs_signals,
@@ -18,7 +16,6 @@ from serpsage.components.crawl.utils import (
     normalize_route_key,
 )
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.dependencies import Inject
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 _MIN_BYTES = 32
@@ -68,15 +65,23 @@ _AUTO_CRAWLER_META = ComponentMeta(
 class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
     meta = _AUTO_CRAWLER_META
 
-    rate_limiter: RateLimiterBase[Any] = Inject()
-    curl: CurlCffiCrawler = Inject()
-    playwright: PlaywrightCrawler = Inject()
-
     route_memory: OrderedDict[str, _RouteMemory]
 
     def __init__(self) -> None:
         super().__init__()
+        self._rate_limiter = _coerce_rate_limiter(
+            self.components.require_default_component("rate_limit")
+        )
+        self._curl = _coerce_crawler(
+            "curl_cffi",
+            self.components.require_component_optional("crawl", "curl_cffi"),
+        )
+        self._playwright = _coerce_crawler(
+            "playwright",
+            self.components.require_component_optional("crawl", "playwright"),
+        )
         self.route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
+        self.bind_deps(self._rate_limiter, self._curl, self._playwright)
 
     @override
     async def _acrawl_inner(
@@ -94,11 +99,11 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         timeout_s: float | None,
     ) -> CrawlResult:
         host = urlparse(url).netloc.lower()
-        await self.rate_limiter.acquire(host=host)
+        await self._rate_limiter.acquire(host=host)
         try:
             attempt = await self._crawl_useful(url=url, timeout_s=timeout_s)
         finally:
-            await self.rate_limiter.release(host=host)
+            await self._rate_limiter.release(host=host)
         return CrawlResult(
             url=attempt.url,
             status_code=int(attempt.status_code),
@@ -144,7 +149,8 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
                 return direct_attempt
         scout_bytes = int(self.config.auto.scout_bytes)
         curl_started = time.monotonic()
-        progressive = await self.curl.crawl_progressive_attempt(
+        curl = _require_crawler("curl_cffi", self._curl)
+        progressive = await cast("Any", curl).crawl_progressive_attempt(
             url=url,
             timeout_s=self._remaining_timeout_s(deadline_ts),
             scout_bytes=scout_bytes,
@@ -333,7 +339,11 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
 
     async def _run_curl(self, *, url: str, deadline_ts: float) -> CrawlAttempt:
         timeout_s = self._remaining_timeout_s(deadline_ts)
-        return await self.curl.crawl_attempt(url=url, timeout_s=timeout_s)
+        curl = _require_crawler("curl_cffi", self._curl)
+        return cast(
+            "CrawlAttempt",
+            await cast("Any", curl).crawl_attempt(url=url, timeout_s=timeout_s),
+        )
 
     async def _run_playwright(
         self,
@@ -343,10 +353,14 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         render_reason: str,
     ) -> CrawlAttempt:
         timeout_s = self._remaining_timeout_s(deadline_ts)
-        return await self.playwright.crawl_attempt(
-            url=url,
-            timeout_s=timeout_s,
-            render_reason=render_reason,
+        playwright = _require_crawler("playwright", self._playwright)
+        return cast(
+            "CrawlAttempt",
+            await cast("Any", playwright).crawl_attempt(
+                url=url,
+                timeout_s=timeout_s,
+                render_reason=render_reason,
+            ),
         )
 
     def _resolve_timeout_s(self, timeout_s: float | None) -> float:
@@ -432,3 +446,29 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
 
 
 __all__ = ["AutoCrawler", "AutoCrawlerConfig"]
+
+
+def _coerce_rate_limiter(value: object) -> RateLimiterBase[Any]:
+    if not isinstance(value, RateLimiterBase):
+        raise TypeError("default rate_limit component must implement RateLimiterBase")
+    return value
+
+
+def _coerce_crawler(
+    name: str,
+    value: object | None,
+) -> CrawlerBase[Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, CrawlerBase):
+        raise TypeError(f"crawl component `{name}` must implement CrawlerBase")
+    return value
+
+
+def _require_crawler(
+    name: str,
+    value: CrawlerBase[Any] | None,
+) -> CrawlerBase[Any]:
+    if value is None:
+        raise RuntimeError(f"crawl component `{name}` is not enabled")
+    return value

@@ -78,6 +78,7 @@ class ServiceCollection:
 
     def bind_instance(self, key: ServiceKey[Any], value: object) -> None:
         normalized = assert_service_key(key)
+        _validate_binding_value(key=normalized, value=value)
         self._ensure_single_free(normalized)
         self._single_bindings[normalized] = ServiceBinding(
             binding_id=f"single:{format_service_key(normalized)}",
@@ -96,6 +97,7 @@ class ServiceCollection:
         init_kwargs: dict[str, object] | None = None,
     ) -> None:
         normalized = assert_service_key(key)
+        _validate_binding_class(key=normalized, cls=cls)
         self._ensure_single_free(normalized)
         self._single_bindings[normalized] = ServiceBinding(
             binding_id=f"single:{format_service_key(normalized)}",
@@ -108,6 +110,7 @@ class ServiceCollection:
     def bind_alias(self, key: ServiceKey[Any], target_key: ServiceKey[Any]) -> None:
         normalized = assert_service_key(key)
         target = assert_service_key(target_key)
+        _validate_binding_alias(key=normalized, target_key=target)
         self._ensure_single_free(normalized)
         self._single_bindings[normalized] = ServiceBinding(
             binding_id=f"single:{format_service_key(normalized)}",
@@ -149,6 +152,7 @@ class ServiceCollection:
             )
             return
         if isinstance(provider, type):
+            _validate_binding_class(key=normalized, cls=provider)
             entries.append(
                 MultiBinding(
                     binding_id=binding_id,
@@ -161,6 +165,7 @@ class ServiceCollection:
                 )
             )
             return
+        _validate_binding_value(key=normalized, value=provider)
         entries.append(
             MultiBinding(
                 binding_id=binding_id,
@@ -230,6 +235,7 @@ class ServiceProvider:
 
     def bind_instance(self, key: ServiceKey[Any], value: object) -> None:
         normalized = assert_service_key(key)
+        _validate_binding_value(key=normalized, value=value)
         if normalized in self._single_bindings:
             raise ValueError(
                 f"duplicate single binding for `{format_service_key(normalized)}`"
@@ -1003,6 +1009,35 @@ def _merge_overrides(
     if overrides and init_kwargs:
         raise ValueError("pass either `overrides` or `init_kwargs`, not both")
     return dict(overrides or init_kwargs or {})
+
+
+def _validate_binding_value(*, key: ServiceKey[Any], value: object) -> None:
+    if isinstance(key, type) and not isinstance(value, key):
+        raise TypeError(
+            f"binding value `{type(value).__name__}` does not satisfy `{key.__name__}`"
+        )
+
+
+def _validate_binding_class(*, key: ServiceKey[Any], cls: type[Any]) -> None:
+    if isinstance(key, type) and not issubclass(cls, key):
+        raise TypeError(
+            f"binding class `{cls.__name__}` does not satisfy `{key.__name__}`"
+        )
+
+
+def _validate_binding_alias(
+    *,
+    key: ServiceKey[Any],
+    target_key: ServiceKey[Any],
+) -> None:
+    if (
+        isinstance(key, type)
+        and isinstance(target_key, type)
+        and not issubclass(target_key, key)
+    ):
+        raise TypeError(
+            f"binding alias `{target_key.__name__}` does not satisfy `{key.__name__}`"
+        )
 
 
 def _uses_inherited_compat_init(cls: type[Any]) -> bool:

@@ -55,7 +55,7 @@ class WorkUnit:
     def _require_bootstrapped(self) -> None:
         if not bool(getattr(self, "_wu_bootstrapped", False)):
             raise RuntimeError(
-                f"{type(self).__name__} is not bootstrapped; construct it through the service provider"
+                f"{type(self).__name__} is not bootstrapped; construct it through Engine-managed services"
             )
 
     @property

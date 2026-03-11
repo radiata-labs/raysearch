@@ -14,7 +14,6 @@ from serpsage.components.base import (
     ComponentFamily,
     ComponentMeta,
     coerce_component_family,
-    define_component_family,
 )
 
 __all__ = [
@@ -33,5 +32,4 @@ __all__ = [
     "ComponentFamily",
     "ComponentMeta",
     "coerce_component_family",
-    "define_component_family",
 ]

@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from serpsage.app.engine import Engine
-    from serpsage.core.runtime import Overrides
-from serpsage.core.runtime import Overrides
 from serpsage.models.app.request import (
     AnswerRequest,
     CrawlMode,
@@ -70,6 +68,5 @@ __all__ = [
     "ResearchSearchMode",
     "ResearchRequest",
     "ResearchResponse",
-    "Overrides",
     "load_settings",
 ]

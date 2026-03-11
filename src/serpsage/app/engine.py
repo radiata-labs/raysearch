@@ -1,17 +1,57 @@
 from __future__ import annotations
 
+import time
 import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
+from typing_extensions import override
 
 from serpsage.app.tokens import (
     ANSWER_RUNNER,
+    ANSWER_STEPS,
+    CHILD_FETCH_RUNNER,
+    CHILD_FETCH_STEPS,
     FETCH_RUNNER,
+    FETCH_STEPS,
+    RESEARCH_ROUND_RUNNER,
+    RESEARCH_ROUND_STEPS,
     RESEARCH_RUNNER,
+    RESEARCH_STEPS,
+    RESEARCH_SUBREPORT_STEP,
     SEARCH_RUNNER,
+    SEARCH_STEPS,
 )
-from serpsage.core.runtime import Overrides
+from serpsage.components.base import (
+    CACHE_FAMILY,
+    CRAWL_FAMILY,
+    EXTRACT_FAMILY,
+    HTTP_FAMILY,
+    LLM_FAMILY,
+    PROVIDER_FAMILY,
+    RANK_FAMILY,
+    RATE_LIMIT_FAMILY,
+    TELEMETRY_FAMILY,
+)
+from serpsage.components.cache.base import CacheBase
+from serpsage.components.crawl.base import CrawlerBase
+from serpsage.components.extract.base import ExtractorBase
+from serpsage.components.http.base import HttpClientBase
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.components.rate_limit.base import RateLimiterBase
+from serpsage.components.telemetry import TelemetryEmitterBase
+from serpsage.core.runtime import ClockBase, Runtime
 from serpsage.core.workunit import WorkUnit
+from serpsage.dependencies import (
+    BindingScope,
+    Inject,
+    InjectToken,
+    ServiceCollection,
+    ServiceProvider,
+    format_service_key,
+)
+from serpsage.load.components import ComponentCatalog, ComponentRegistry
 from serpsage.models.app.response import (
     AnswerResponse,
     FetchResponse,
@@ -25,7 +65,43 @@ from serpsage.models.steps.answer import AnswerStepContext
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.research import ResearchStepContext
 from serpsage.models.steps.search import SearchStepContext
+from serpsage.settings.models import AppSettings
+from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
 from serpsage.steps.base import RunnerBase
+from serpsage.steps.fetch import (
+    FetchAbstractBuildStep,
+    FetchAbstractRankStep,
+    FetchExtractStep,
+    FetchFinalizeStep,
+    FetchLoadStep,
+    FetchOverviewStep,
+    FetchParallelEnrichStep,
+    FetchPrepareStep,
+    FetchSubpageStep,
+)
+from serpsage.steps.research import (
+    ResearchContentStep,
+    ResearchDecideStep,
+    ResearchFetchStep,
+    ResearchFinalizeStep,
+    ResearchLoopStep,
+    ResearchOverviewStep,
+    ResearchPlanStep,
+    ResearchPrepareStep,
+    ResearchRenderStep,
+    ResearchSearchStep,
+    ResearchSubreportStep,
+    ResearchThemeStep,
+)
+from serpsage.steps.search import (
+    SearchExpandStep,
+    SearchFetchStep,
+    SearchFinalizeStep,
+    SearchOptimizeStep,
+    SearchPrepareStep,
+    SearchRankStep,
+    SearchStep,
+)
 
 if TYPE_CHECKING:
     from serpsage.models.app.request import (
@@ -34,7 +110,286 @@ if TYPE_CHECKING:
         ResearchRequest,
         SearchRequest,
     )
-    from serpsage.settings.models import AppSettings
+
+
+class EngineRuntime(Runtime):
+    pass
+
+
+class EnginePluginRegistry(ComponentRegistry):
+    pass
+
+
+class EngineComponentCatalog(ComponentCatalog):
+    pass
+
+
+class EngineServiceProvider(ServiceProvider):
+    pass
+
+
+class EngineServiceContainer(ServiceCollection):
+    @override
+    def build_provider(self, *, validate: bool = True) -> EngineServiceProvider:
+        provider = EngineServiceProvider(
+            single_bindings=dict(self._single_bindings),
+            multi_bindings={
+                key: tuple(sorted(items, key=lambda item: item.order))
+                for key, items in self._multi_bindings.items()
+            },
+        )
+        if validate:
+            provider.validate()
+        return provider
+
+
+class SystemClock(ClockBase):
+    @override
+    def now_ms(self) -> int:
+        return int(time.time() * 1000)
+
+
+class _EngineAssembler:
+    def build(
+        self,
+        *,
+        settings: AppSettings | dict[str, Any],
+    ) -> Engine:
+        registry = EnginePluginRegistry.discover()
+        normalized_settings = registry.materialize_settings(settings)
+        runtime = EngineRuntime(
+            settings=normalized_settings,
+            clock=SystemClock(),
+            env=dict(normalized_settings.runtime_env or {}),
+        )
+        catalog = EngineComponentCatalog(
+            settings=normalized_settings,
+            registry=registry,
+            env=runtime.env,
+        )
+        catalog.attach_runtime(runtime)
+        runtime.components = catalog
+        services = self._build_services(rt=runtime, catalog=catalog)
+        runtime.services = services
+        runtime.telemetry = cast(
+            "TelemetryEmitterBase[Any]",
+            services.require(TelemetryEmitterBase),
+        )
+        return cast("Engine", services.require(Engine))
+
+    def _build_services(
+        self,
+        *,
+        rt: EngineRuntime,
+        catalog: EngineComponentCatalog,
+    ) -> EngineServiceProvider:
+        services = EngineServiceContainer()
+        services.bind_instance(AppSettings, rt.settings)
+        services.bind_instance(ClockBase, rt.clock)
+        services.bind_instance(Runtime, rt)
+        services.bind_instance(EngineRuntime, rt)
+        services.bind_instance(ComponentCatalog, catalog)
+        services.bind_instance(EngineComponentCatalog, catalog)
+
+        self._register_component_services(services=services, catalog=catalog)
+        self._register_pipeline_services(services)
+        services.bind_class(Engine, Engine, scope=BindingScope.SINGLETON)
+
+        provider = services.build_provider(validate=False)
+        provider.bind_instance(ServiceProvider, provider)
+        provider.bind_instance(EngineServiceProvider, provider)
+        provider.validate()
+        return provider
+
+    def _register_component_services(
+        self,
+        *,
+        services: EngineServiceContainer,
+        catalog: EngineComponentCatalog,
+    ) -> None:
+        family_defaults = _family_contracts()
+        default_specs = {
+            family.name: catalog.resolve_default_spec(family)
+            for family in catalog.component_families()
+        }
+        collection_orders: dict[str, int] = {}
+        for spec in catalog.iter_enabled_specs():
+            instance_key = catalog.instance_key(spec.family, spec.component_name)
+            instance_binding_id = _single_binding_id(instance_key)
+            services.bind_class(
+                instance_key,
+                spec.descriptor.cls,
+                scope=BindingScope.SINGLETON,
+                overrides={"config": spec.config},
+            )
+            services.bind_alias(spec.descriptor.cls, instance_key)
+            contracts = _component_contracts(spec.descriptor.cls)
+            default_contract = family_defaults.get(spec.family.name)
+            default_spec = default_specs.get(spec.family.name)
+            is_default = default_spec is not None and (
+                spec.component_name == default_spec.component_name
+            )
+            for contract in contracts:
+                if default_contract is not None and contract is default_contract:
+                    if is_default:
+                        services.bind_alias(contract, instance_key)
+                services.bind_many(
+                    contract,
+                    instance_key,
+                    order=_next_collection_order(collection_orders, contract),
+                    linked_binding_id=instance_binding_id,
+                )
+
+    def _register_pipeline_services(self, services: EngineServiceContainer) -> None:
+        services.bind_class(
+            FetchOverviewStep,
+            FetchOverviewStep,
+            scope=BindingScope.SINGLETON,
+        )
+        services.bind_class(
+            FetchSubpageStep,
+            FetchSubpageStep,
+            scope=BindingScope.SINGLETON,
+        )
+        _bind_steps(
+            services,
+            CHILD_FETCH_STEPS,
+            (
+                (10, FetchPrepareStep, {}),
+                (20, FetchLoadStep, {}),
+                (30, FetchExtractStep, {}),
+                (40, FetchAbstractBuildStep, {}),
+                (50, FetchAbstractRankStep, {}),
+                (60, FetchOverviewStep, {}),
+                (70, FetchFinalizeStep, {}),
+            ),
+        )
+        _bind_steps(
+            services,
+            FETCH_STEPS,
+            (
+                (10, FetchPrepareStep, {}),
+                (20, FetchLoadStep, {}),
+                (30, FetchExtractStep, {}),
+                (40, FetchAbstractBuildStep, {}),
+                (50, FetchAbstractRankStep, {}),
+                (60, FetchParallelEnrichStep, {}),
+                (70, FetchFinalizeStep, {}),
+            ),
+        )
+        _bind_steps(
+            services,
+            SEARCH_STEPS,
+            (
+                (10, SearchPrepareStep, {}),
+                (20, SearchOptimizeStep, {}),
+                (30, SearchExpandStep, {}),
+                (40, SearchStep, {}),
+                (50, SearchFetchStep, {}),
+                (60, SearchRankStep, {}),
+                (70, SearchFinalizeStep, {}),
+            ),
+        )
+        _bind_steps(
+            services,
+            ANSWER_STEPS,
+            (
+                (10, AnswerPlanStep, {}),
+                (20, AnswerSearchStep, {}),
+                (30, AnswerGenerateStep, {}),
+            ),
+        )
+        _bind_steps(
+            services,
+            RESEARCH_ROUND_STEPS,
+            (
+                (10, ResearchPlanStep, {}),
+                (20, ResearchFetchStep, {"phase": "pre"}),
+                (30, ResearchSearchStep, {}),
+                (40, ResearchFetchStep, {"phase": "post"}),
+                (50, ResearchOverviewStep, {}),
+                (60, ResearchContentStep, {}),
+                (70, ResearchDecideStep, {}),
+            ),
+        )
+        _bind_steps(
+            services,
+            RESEARCH_STEPS,
+            (
+                (10, ResearchPrepareStep, {}),
+                (20, ResearchThemeStep, {}),
+                (30, ResearchLoopStep, {}),
+                (40, ResearchRenderStep, {}),
+                (50, ResearchFinalizeStep, {}),
+            ),
+        )
+
+        services.bind_class(
+            CHILD_FETCH_RUNNER,
+            RunnerBase,
+            scope=BindingScope.SINGLETON,
+            overrides={
+                "rt": Inject(Runtime),
+                "steps": Inject(CHILD_FETCH_STEPS),
+                "kind": "child_fetch",
+            },
+        )
+        services.bind_class(
+            FETCH_RUNNER,
+            RunnerBase,
+            scope=BindingScope.SINGLETON,
+            overrides={
+                "rt": Inject(Runtime),
+                "steps": Inject(FETCH_STEPS),
+                "kind": "fetch",
+            },
+        )
+        services.bind_class(
+            SEARCH_RUNNER,
+            RunnerBase,
+            scope=BindingScope.SINGLETON,
+            overrides={
+                "rt": Inject(Runtime),
+                "steps": Inject(SEARCH_STEPS),
+                "kind": "search",
+            },
+        )
+        services.bind_class(
+            ANSWER_RUNNER,
+            RunnerBase,
+            scope=BindingScope.SINGLETON,
+            overrides={
+                "rt": Inject(Runtime),
+                "steps": Inject(ANSWER_STEPS),
+                "kind": "search",
+            },
+        )
+        services.bind_class(
+            RESEARCH_ROUND_RUNNER,
+            RunnerBase,
+            scope=BindingScope.SINGLETON,
+            overrides={
+                "rt": Inject(Runtime),
+                "steps": Inject(RESEARCH_ROUND_STEPS),
+                "kind": "search",
+            },
+        )
+        services.bind_class(
+            RESEARCH_SUBREPORT_STEP,
+            ResearchSubreportStep,
+            scope=BindingScope.SINGLETON,
+            overrides={"rt": Inject(Runtime)},
+        )
+        services.bind_class(
+            RESEARCH_RUNNER,
+            RunnerBase,
+            scope=BindingScope.SINGLETON,
+            overrides={
+                "rt": Inject(Runtime),
+                "steps": Inject(RESEARCH_STEPS),
+                "kind": "search",
+            },
+        )
 
 
 class Engine(WorkUnit):
@@ -55,19 +410,13 @@ class Engine(WorkUnit):
         setting_file: str | None = None,
         *,
         settings: AppSettings | dict[str, Any] | None = None,
-        overrides: Overrides | None = None,
     ) -> Engine:
-        """Build an engine through the component registry/container bootstrap."""
+        """Build an engine through the Engine-owned plugin registry and DI graph."""
         if settings is None:
             from serpsage.settings.load import load_settings  # noqa: PLC0415
 
             settings = load_settings(path=setting_file)
-        from serpsage.app.bootstrap import build_engine  # noqa: PLC0415
-
-        return build_engine(
-            settings=settings,
-            overrides=overrides,
-        )
+        return _EngineAssembler().build(settings=settings)
 
     async def search(self, req: SearchRequest) -> SearchResponse:
         request_id = uuid.uuid4().hex
@@ -225,9 +574,8 @@ class Engine(WorkUnit):
                 attrs={
                     "request_kind": "fetch",
                     "result_count": len(response.results),
-                    "success_count": int(success_count),
-                    "error_count": int(error_count),
-                    "url_count": len(req.urls),
+                    "success_count": success_count,
+                    "error_count": error_count,
                 },
             )
             await self._emit_request_meter(request_id=request_id, stage="fetch")
@@ -271,25 +619,15 @@ class Engine(WorkUnit):
             request_id=request_id,
             response=AnswerResponse(
                 request_id=request_id,
-                answer={},
+                answer="",
                 citations=[],
             ),
         )
         try:
-            ctx = await self._answer_runner().run(ctx)
-            answer: str | object
-            if isinstance(req.json_schema, dict):
-                answer = (
-                    ctx.output.answers if isinstance(ctx.output.answers, dict) else {}
-                )
-            else:
-                answer = (
-                    str(ctx.output.answers)
-                    if isinstance(ctx.output.answers, str)
-                    else ""
-                )
-            ctx.response.answer = answer
-            ctx.response.citations = list(ctx.output.citations)
+            answer_runner = self._answer_runner()
+            ctx = await answer_runner.run(ctx)
+            ctx.response.answer = ctx.output.answers
+            ctx.response.citations = list(ctx.output.citations or [])
             response = ctx.response
             await self._emit_safe(
                 event_name="request.end",
@@ -300,10 +638,8 @@ class Engine(WorkUnit):
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
                 attrs={
                     "request_kind": "answer",
+                    "content_chars": len(str(response.answer or "")),
                     "citation_count": len(response.citations),
-                    "has_answer": bool(
-                        response.answer if isinstance(response.answer, str) else True
-                    ),
                 },
             )
             await self._emit_request_meter(request_id=request_id, stage="answer")
@@ -458,6 +794,64 @@ class Engine(WorkUnit):
             "RunnerBase[ResearchStepContext]",
             self.services.require(RESEARCH_RUNNER),
         )
+
+
+def _bind_steps(
+    services: EngineServiceContainer,
+    key: InjectToken[Any],
+    steps: tuple[tuple[int, type[object], dict[str, object]], ...],
+) -> None:
+    for order, cls, overrides in steps:
+        services.bind_many(
+            key,
+            cls,
+            order=order,
+            scope=BindingScope.SINGLETON,
+            overrides=overrides,
+        )
+
+
+def _family_contracts() -> dict[str, type[object]]:
+    return {
+        HTTP_FAMILY.name: HttpClientBase,
+        PROVIDER_FAMILY.name: SearchProviderBase,
+        CRAWL_FAMILY.name: CrawlerBase,
+        EXTRACT_FAMILY.name: ExtractorBase,
+        RANK_FAMILY.name: RankerBase,
+        LLM_FAMILY.name: LLMClientBase,
+        CACHE_FAMILY.name: CacheBase,
+        TELEMETRY_FAMILY.name: TelemetryEmitterBase,
+        RATE_LIMIT_FAMILY.name: RateLimiterBase,
+    }
+
+
+def _component_contracts(cls: type[object]) -> tuple[type[object], ...]:
+    contracts: list[type[object]] = []
+    seen: set[type[object]] = set()
+    for base in cls.__mro__[1:]:
+        if base in {object, WorkUnit}:
+            continue
+        if not bool(getattr(base, "__di_contract__", False)):
+            continue
+        if base in seen:
+            continue
+        seen.add(base)
+        contracts.append(base)
+    return tuple(contracts)
+
+
+def _single_binding_id(key: type[object] | InjectToken[Any]) -> str:
+    return f"single:{format_service_key(key)}"
+
+
+def _next_collection_order(
+    orders: dict[str, int],
+    key: type[object] | InjectToken[Any],
+) -> int:
+    key_name = format_service_key(key)
+    order = orders.get(key_name, 0) + 10
+    orders[key_name] = order
+    return order
 
 
 __all__ = ["Engine"]
