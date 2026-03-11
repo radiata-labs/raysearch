@@ -12,19 +12,11 @@ except Exception:  # noqa: BLE001
     BM25Okapi = None
     BM25_AVAILABLE = False
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import RankBm25Settings, RankerBase, RankMode
 from serpsage.tokenize import tokenize
 
-_BM25_META = ComponentMeta(
-    version="1.0.0",
-    summary="BM25 text ranker.",
-)
-
 
 class Bm25Ranker(RankerBase[RankBm25Settings]):
-    meta = _BM25_META
-
     @override
     async def score_texts(
         self,

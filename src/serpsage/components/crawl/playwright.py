@@ -9,7 +9,6 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
 from serpsage.components.crawl.utils import analyze_content
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
@@ -74,15 +73,7 @@ class PlaywrightCrawlerConfig(CrawlConfigBase):
     __setting_name__ = "playwright"
 
 
-_PLAYWRIGHT_CRAWLER_META = ComponentMeta(
-    version="1.0.0",
-    summary="Playwright browser crawl backend.",
-)
-
-
 class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
-    meta = _PLAYWRIGHT_CRAWLER_META
-
     def __init__(self) -> None:
         super().__init__()
         if not PLAYWRIGHT_AVAILABLE or _pw_factory is None:

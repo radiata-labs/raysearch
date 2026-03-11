@@ -18,8 +18,7 @@ from serpsage.models.base import MutableModel
 from serpsage.settings.models import AppSettings
 
 if TYPE_CHECKING:
-    from serpsage.dependencies import ServiceProvider
-    from serpsage.load import ComponentCatalog
+    from serpsage.components.loads import ComponentRegistry
 
 
 class ClockBase(ABC):
@@ -37,8 +36,7 @@ class Runtime(MutableModel):
     settings: AppSettings
     clock: ClockBase
     telemetry: TelemetryEmitterBase[Any] | None = None
-    components: ComponentCatalog | None = None
-    services: ServiceProvider | None = None
+    components: ComponentRegistry | None = None
     env: dict[str, str] = Field(default_factory=dict)
 
 
@@ -61,13 +59,11 @@ class Overrides(MutableModel):
 
 
 def _rebuild_runtime_model() -> None:
-    from serpsage.dependencies.resolver import ServiceProvider
-    from serpsage.load.components import ComponentCatalog
+    from serpsage.components.loads import ComponentRegistry
 
     Runtime.model_rebuild(
         _types_namespace={
-            "ComponentCatalog": ComponentCatalog,
-            "ServiceProvider": ServiceProvider,
+            "ComponentRegistry": ComponentRegistry,
         }
     )
 

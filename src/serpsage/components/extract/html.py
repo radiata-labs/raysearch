@@ -17,7 +17,6 @@ from html_to_markdown import (
 )
 from selectolax.parser import HTMLParser, Node
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.utils import classify_content_kind
 from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.utils import (
@@ -44,15 +43,7 @@ class HtmlExtractorConfig(ExtractConfigBase):
     __setting_name__ = "html"
 
 
-_HTML_EXTRACTOR_META = ComponentMeta(
-    version="1.0.0",
-    summary="HTML and text content extractor.",
-)
-
-
 class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
-    meta = _HTML_EXTRACTOR_META
-
     @dataclass(slots=True)
     class Profile:
         max_markdown_chars: int

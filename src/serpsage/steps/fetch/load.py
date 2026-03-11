@@ -11,7 +11,7 @@ from serpsage.components.cache import CacheBase
 from serpsage.components.cache.base import CacheConfigBase
 from serpsage.components.crawl import CrawlerBase
 from serpsage.components.crawl.base import CrawlConfigBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.app.response import FetchErrorTag
 from serpsage.models.components.crawl import CrawlResult
 from serpsage.models.components.telemetry import MeterPayload
@@ -22,8 +22,8 @@ _CACHE_NAMESPACE = "fetch:v4"
 
 
 class FetchLoadStep(StepBase[FetchStepContext]):
-    crawler: CrawlerBase = Inject()
-    cache: CacheBase = Inject()
+    crawler: CrawlerBase = Depends()
+    cache: CacheBase = Depends()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
@@ -40,17 +40,19 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             )
             return ctx
         mode = str(ctx.page.crawl_mode or "fallback")
-        crawl_cfg = self.components.resolve_default_config(
+        default_crawl_cfg = self.components.resolve_default_config(
             "crawl", expected_type=CrawlConfigBase
         )
-        cache_cfg = self.components.resolve_default_config(
+        default_cache_cfg = self.components.resolve_default_config(
             "cache", expected_type=CacheConfigBase
         )
         cache_key = _cache_key(
             url=url,
             backend=self.components.family_name("crawl"),
         )
-        timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(crawl_cfg.timeout_s)
+        timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(
+            default_crawl_cfg.timeout_s
+        )
         cache_fetch_ms = 0
         crawl_fetch_ms = 0
 
@@ -77,7 +79,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             return result
 
         async def write_cache(result: CrawlResult) -> None:
-            ttl_s = int(cache_cfg.fetch_ttl_s)
+            ttl_s = int(default_cache_cfg.fetch_ttl_s)
             if ttl_s <= 0:
                 return
             await self.cache.aset(

@@ -4,14 +4,14 @@ from typing_extensions import override
 
 from serpsage.components.extract import ExtractorBase
 from serpsage.components.extract.utils import markdown_to_text
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 
 
 class FetchExtractStep(StepBase[FetchStepContext]):
-    extractor: ExtractorBase = Inject()
+    extractor: ExtractorBase = Depends()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:

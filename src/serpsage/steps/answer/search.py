@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Literal
 from typing_extensions import override
 
-from serpsage.app.tokens import SEARCH_RUNNER
-from serpsage.dependencies import Inject
+from serpsage.dependencies import SEARCH_RUNNER, Depends
 from serpsage.models.app.request import (
     FetchAbstractsRequest,
     SearchFetchRequest,
@@ -27,7 +26,7 @@ _FIXED_ABSTRACT_MAX_CHARS = 1000
 
 
 class AnswerSearchStep(StepBase[AnswerStepContext]):
-    search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER)
+    search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER)
 
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:

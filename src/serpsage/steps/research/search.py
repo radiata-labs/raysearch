@@ -6,8 +6,7 @@ import re
 from typing_extensions import override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from serpsage.app.tokens import SEARCH_RUNNER
-from serpsage.dependencies import Inject
+from serpsage.dependencies import SEARCH_RUNNER, Depends
 from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOthersRequest,
@@ -81,7 +80,7 @@ _HIGH_AUTHORITY_TITLE_HINTS = (
 
 
 class ResearchSearchStep(StepBase[ResearchStepContext]):
-    search_runner: RunnerBase[SearchStepContext] = Inject(SEARCH_RUNNER)
+    search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:

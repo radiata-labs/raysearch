@@ -7,7 +7,6 @@ from typing_extensions import override
 
 from pydantic import field_validator
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
 
 _SAFE_SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -36,15 +35,7 @@ class SQLAlchemyCacheConfig(CacheConfigBase):
         return token
 
 
-_SQLALCHEMY_CACHE_META = ComponentMeta(
-    version="1.0.0",
-    summary="SQLAlchemy async cache backend.",
-)
-
-
 class SQLAlchemyCache(CacheBase[SQLAlchemyCacheConfig]):
-    meta = _SQLALCHEMY_CACHE_META
-
     def __init__(self) -> None:
         try:
             import sqlalchemy as sa  # noqa: PLC0415

@@ -5,10 +5,9 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -50,16 +49,8 @@ class SearxngProviderConfig(ProviderConfigBase):
         return payload
 
 
-_SEARXNG_META = ComponentMeta(
-    version="1.0.0",
-    summary="SearxNG JSON search provider.",
-)
-
-
 class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
-    meta = _SEARXNG_META
-
-    http: HttpClientBase = Inject()
+    http: HttpClientBase = Depends()
 
     @override
     async def asearch(

@@ -4,23 +4,15 @@ from typing_extensions import override
 
 import httpx
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase, HttpClientConfig
-
-_HTTPX_META = ComponentMeta(
-    version="1.0.0",
-    summary="Shared httpx async client.",
-)
 
 
 class HttpClient(HttpClientBase[HttpClientConfig]):
-    meta = _HTTPX_META
-
     def __init__(
         self,
     ) -> None:
-        components = self.rt.components
-        override_client = components.http_override() if components is not None else None
+        registry = self.rt.components
+        override_client = registry.http_override() if registry is not None else None
         if isinstance(override_client, httpx.AsyncClient):
             self._client = override_client
             self._owns_client = False

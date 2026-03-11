@@ -1,37 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self
 
 import anyio
 
-from serpsage.dependencies.contracts import Inject
+from serpsage.dependencies import Depends
 
 if TYPE_CHECKING:
     from types import TracebackType
 
+    from serpsage.components.loads import ComponentRegistry
     from serpsage.components.telemetry import TelemetryEmitterBase
     from serpsage.core.runtime import ClockBase, Runtime
-    from serpsage.dependencies import ServiceProvider
-    from serpsage.load import ComponentCatalog
     from serpsage.settings.models import AppSettings
 
 
-def bootstrap_workunit(instance: WorkUnit, rt: Runtime | object) -> None:
-    if bool(getattr(instance, "_wu_bootstrapped", False)):
-        raise RuntimeError(f"{type(instance).__name__} is already bootstrapped")
-    instance.rt = rt  # type: ignore[assignment]
-    instance._wu_bootstrapped = True
-    instance._wu_deps = []
-    instance._wu_dep_ids = set()
-    instance._wu_op_lock = anyio.Lock()
-    instance._wu_node_lock = anyio.Lock()
-    instance._wu_initialized = False
-    instance._wu_closed = False
-    instance._wu_init_order = None
-
-
 class WorkUnit:
-    rt: Runtime = Inject()
+    rt: Runtime = Depends()
 
     _wu_bootstrapped: bool
     _wu_deps: list[WorkUnit]
@@ -49,14 +35,74 @@ class WorkUnit:
             names = ", ".join(forbidden)
             raise TypeError(
                 f"{cls.__name__} must not override {names}; "
-                "override on_ainit/on_aclose instead"
+                "override on_init/on_close instead"
             )
 
     def _require_bootstrapped(self) -> None:
         if not bool(getattr(self, "_wu_bootstrapped", False)):
             raise RuntimeError(
-                f"{type(self).__name__} is not bootstrapped; construct it through the service provider"
+                f"{type(self).__name__} is not bootstrapped; construct it through the dependency solver"
             )
+
+    def _wu_bootstrap(self, rt: Runtime | object) -> None:
+        if bool(getattr(self, "_wu_bootstrapped", False)):
+            raise RuntimeError(f"{type(self).__name__} is already bootstrapped")
+        self.rt = rt  # type: ignore[assignment]
+        self._wu_bootstrapped = True
+        self._wu_deps = []
+        self._wu_dep_ids = set()
+        self._wu_op_lock = anyio.Lock()
+        self._wu_node_lock = anyio.Lock()
+        self._wu_initialized = False
+        self._wu_closed = False
+        self._wu_init_order = None
+
+    def _wu_bind_injected(self, *values: object) -> None:
+        self._require_bootstrapped()
+        deps = list(self._wu_collect_injected(values))
+        if deps:
+            self.bind_deps(*deps)
+
+    def _wu_collect_injected(
+        self,
+        values: tuple[object, ...],
+    ) -> tuple[WorkUnit, ...]:
+        seen: set[int] = set()
+        found: list[WorkUnit] = []
+        for value in values:
+            self._wu_collect_injected_one(value, seen=seen, found=found)
+        return tuple(found)
+
+    def _wu_collect_injected_one(
+        self,
+        value: object,
+        *,
+        seen: set[int],
+        found: list[WorkUnit],
+    ) -> None:
+        if value is None:
+            return
+        if isinstance(value, WorkUnit):
+            if value is self:
+                return
+            dep_id = id(value)
+            if dep_id in seen:
+                return
+            seen.add(dep_id)
+            found.append(value)
+            return
+        value_id = id(value)
+        if value_id in seen:
+            return
+        if isinstance(value, Mapping):
+            seen.add(value_id)
+            for item in value.values():
+                self._wu_collect_injected_one(item, seen=seen, found=found)
+            return
+        if isinstance(value, (list, tuple, set, frozenset)):
+            seen.add(value_id)
+            for item in value:
+                self._wu_collect_injected_one(item, seen=seen, found=found)
 
     @property
     def settings(self) -> AppSettings:
@@ -71,18 +117,11 @@ class WorkUnit:
         return self.rt.telemetry
 
     @property
-    def components(self) -> ComponentCatalog:
+    def components(self) -> ComponentRegistry:
         container = self.rt.components
         if container is None:
-            raise RuntimeError("component container is not attached to the runtime")
+            raise RuntimeError("component registry is not attached to the runtime")
         return container
-
-    @property
-    def services(self) -> ServiceProvider:
-        services = self.rt.services
-        if services is None:
-            raise RuntimeError("service provider is not attached to the runtime")
-        return services
 
     def bind_deps(self, *deps: WorkUnit | None) -> None:
         self._require_bootstrapped()

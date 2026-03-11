@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
 from typing import (
     Any,
-    ClassVar,
     Generic,
     TypeVar,
     cast,
@@ -15,7 +13,6 @@ from typing import (
 from pydantic import ConfigDict
 
 from serpsage.core.workunit import WorkUnit
-from serpsage.dependencies.contracts import InjectToken
 from serpsage.settings.models import SettingModel
 
 ConfigT = TypeVar("ConfigT", bound="ComponentConfigBase")
@@ -51,89 +48,8 @@ class ComponentConfigBase(SettingModel):
         return cls.model_validate(payload)
 
 
-@dataclass(frozen=True, slots=True)
-class ComponentFamily(Generic[WorkUnitT]):
-    name: str
-
-    def __post_init__(self) -> None:
-        if not str(self.name or "").strip():
-            raise ValueError("component family name must be non-empty")
-
-
-_COMPONENT_FAMILIES: dict[str, ComponentFamily[Any]] = {}
-_COMPONENT_COLLECTION_TOKENS: dict[str, InjectToken[tuple[object, ...]]] = {}
-
-
-def define_component_family(name: str) -> ComponentFamily[Any]:
-    normalized = str(name or "").strip()
-    if not normalized:
-        raise ValueError("component family name must be non-empty")
-    family = _COMPONENT_FAMILIES.get(normalized)
-    if family is not None:
-        return family
-    created = ComponentFamily[Any](name=normalized)
-    _COMPONENT_FAMILIES[normalized] = created
-    return created
-
-
-def coerce_component_family(
-    family: ComponentFamily[Any] | str,
-) -> ComponentFamily[Any]:
-    return (
-        family
-        if isinstance(family, ComponentFamily)
-        else define_component_family(family)
-    )
-
-
-def family_collection_token(
-    family: ComponentFamily[Any] | str,
-) -> InjectToken[tuple[object, ...]]:
-    normalized = coerce_component_family(family).name
-    token = _COMPONENT_COLLECTION_TOKENS.get(normalized)
-    if token is not None:
-        return token
-    created: InjectToken[tuple[object, ...]] = InjectToken(
-        f"components.{normalized}.all"
-    )
-    _COMPONENT_COLLECTION_TOKENS[normalized] = created
-    return created
-
-
-HTTP_FAMILY = define_component_family("http")
-PROVIDER_FAMILY = define_component_family("provider")
-CRAWL_FAMILY = define_component_family("crawl")
-EXTRACT_FAMILY = define_component_family("extract")
-RANK_FAMILY = define_component_family("rank")
-LLM_FAMILY = define_component_family("llm")
-CACHE_FAMILY = define_component_family("cache")
-TELEMETRY_FAMILY = define_component_family("telemetry")
-RATE_LIMIT_FAMILY = define_component_family("rate_limit")
-
-BUILTIN_COMPONENT_FAMILIES = (
-    HTTP_FAMILY,
-    PROVIDER_FAMILY,
-    CRAWL_FAMILY,
-    EXTRACT_FAMILY,
-    RANK_FAMILY,
-    LLM_FAMILY,
-    CACHE_FAMILY,
-    TELEMETRY_FAMILY,
-    RATE_LIMIT_FAMILY,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class ComponentMeta:
-    version: str
-    summary: str
-
-
 class ComponentBase(WorkUnit, Generic[ConfigT]):
-    meta: ClassVar[ComponentMeta]
     Config: type[ConfigT]
-    __di_contract__: ClassVar[bool] = False
-    _component_config: ConfigT
 
     def __init_subclass__(
         cls,
@@ -141,7 +57,6 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
         **_kwargs: Any,
     ) -> None:
         super().__init_subclass__()
-        resolved_config = config
 
         orig_bases: tuple[type, ...] = getattr(cls, "__orig_bases__", ())
         for orig_base in orig_bases:
@@ -156,50 +71,41 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
             except ValueError:  # pragma: no cover
                 continue
             if (
-                resolved_config is None
+                config is None
                 and inspect.isclass(config_t)
                 and issubclass(config_t, ComponentConfigBase)
             ):
-                resolved_config = cast("type[ConfigT]", config_t)
-        if resolved_config is not None:
-            family_name = str(
-                getattr(resolved_config, "__setting_family__", "")
-            ).strip()
-            setting_name = str(getattr(resolved_config, "__setting_name__", "")).strip()
+                config = config_t
+        if config is not None:
+            family_name = str(getattr(config, "__setting_family__", "")).strip()
+            setting_name = str(getattr(config, "__setting_name__", "")).strip()
             if not family_name or not setting_name:
                 raise TypeError(
-                    f"{cls.__name__} config `{resolved_config.__name__}` must declare "
+                    f"{cls.__name__} config `{config.__name__}` must declare "
                     "non-empty `__setting_family__` and `__setting_name__`"
                 )
-            cls.Config = resolved_config
+            cls.Config = config
 
     @property
     def config(self) -> ConfigT:
-        try:
-            return self._component_config
-        except AttributeError as exc:  # pragma: no cover
-            raise RuntimeError(
-                f"{type(self).__name__} has no bound component config"
-            ) from exc
+        default: Any = None
+        config_class = getattr(self, "Config", None)
+        if inspect.isclass(config_class) and issubclass(
+            config_class, ComponentConfigBase
+        ):
+            value = getattr(
+                getattr(
+                    self.rt.settings.components, config_class.__setting_family__, None
+                ),
+                config_class.__setting_name__,
+                default,
+            )
+            return cast("ConfigT", value)
+        return cast("ConfigT", default)
 
 
 __all__ = [
-    "BUILTIN_COMPONENT_FAMILIES",
-    "CACHE_FAMILY",
-    "CRAWL_FAMILY",
     "ComponentBase",
     "ComponentConfigBase",
-    "ComponentFamily",
-    "ComponentMeta",
     "ConfigT",
-    "EXTRACT_FAMILY",
-    "HTTP_FAMILY",
-    "LLM_FAMILY",
-    "PROVIDER_FAMILY",
-    "RANK_FAMILY",
-    "RATE_LIMIT_FAMILY",
-    "TELEMETRY_FAMILY",
-    "coerce_component_family",
-    "define_component_family",
-    "family_collection_token",
 ]

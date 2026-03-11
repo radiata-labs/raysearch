@@ -6,7 +6,6 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.base import (
     CrawlConfigBase,
     CrawlerBase,
@@ -52,15 +51,7 @@ class CurlCffiCrawlerConfig(CrawlConfigBase):
     __setting_name__ = "curl_cffi"
 
 
-_CURL_CRAWLER_META = ComponentMeta(
-    version="1.0.0",
-    summary="curl_cffi crawl backend.",
-)
-
-
 class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
-    meta = _CURL_CRAWLER_META
-
     def __init__(self) -> None:
         super().__init__()
         if not CURL_CFFI_AVAILABLE:
@@ -136,7 +127,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
         cfg = self.config
-        http_cfg = self.components.resolve_default_config(
+        default_http_cfg = self.components.resolve_default_config(
             "http", expected_type=HttpClientConfig
         )
         req_timeout_s = timeout_s or cfg.timeout_s
@@ -148,7 +139,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
                 result = await self._stream_attempt_once(
                     url=url,
                     timeout_s=req_timeout_s,
-                    proxy=http_cfg.proxy,
+                    proxy=default_http_cfg.proxy,
                     scout_bytes=scout_bytes,
                     continue_predicate=continue_predicate,
                 )

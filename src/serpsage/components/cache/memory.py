@@ -4,7 +4,6 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
 
 
@@ -13,15 +12,7 @@ class MemoryCacheConfig(CacheConfigBase):
     __setting_name__ = "memory"
 
 
-_MEMORY_CACHE_META = ComponentMeta(
-    version="1.0.0",
-    summary="In-memory TTL cache.",
-)
-
-
 class MemoryCache(CacheBase[MemoryCacheConfig]):
-    meta = _MEMORY_CACHE_META
-
     store: dict[tuple[str, str], tuple[int, bytes]] = {}
     lock: anyio.Lock = anyio.Lock()
 

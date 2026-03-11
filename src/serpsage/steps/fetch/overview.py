@@ -7,7 +7,7 @@ from typing_extensions import override
 
 from serpsage.components.cache import CacheBase
 from serpsage.components.llm import LLMClientBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.app.request import FetchOverviewRequest
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
@@ -15,8 +15,8 @@ from serpsage.utils import clean_whitespace, stable_json
 
 
 class FetchOverviewStep(StepBase[FetchStepContext]):
-    llm: LLMClientBase = Inject()
-    cache: CacheBase = Inject()
+    llm: LLMClientBase = Depends()
+    cache: CacheBase = Depends()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:

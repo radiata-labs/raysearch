@@ -9,7 +9,7 @@ from typing_extensions import override
 import anyio
 from pydantic import field_validator
 
-from serpsage.components.base import ComponentConfigBase, ComponentMeta
+from serpsage.components.base import ComponentConfigBase
 from serpsage.components.telemetry.base import (
     EventSinkBase,
 )
@@ -57,31 +57,13 @@ class SqliteMeteringConfig(ComponentConfigBase):
         return token
 
 
-_NULL_SINK_META = ComponentMeta(
-    version="1.0.0",
-    summary="No-op telemetry sink.",
-)
-_JSONL_SINK_META = ComponentMeta(
-    version="1.0.0",
-    summary="Append telemetry events to a JSONL file.",
-)
-_SQLITE_SINK_META = ComponentMeta(
-    version="1.0.0",
-    summary="Write metering events into sqlite.",
-)
-
-
 class NullObsSink(EventSinkBase[NullObsConfig]):
-    meta = _NULL_SINK_META
-
     @override
     async def emit(self, *, event: EventEnvelope) -> None:
         _ = event
 
 
 class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
-    meta = _JSONL_SINK_META
-
     def __init__(self) -> None:
         self._file_path = str(self.config.jsonl_path).strip()
         self._file: Any | None = None
@@ -119,8 +101,6 @@ class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
 
 
 class SqliteMeterLedgerSink(EventSinkBase[SqliteMeteringConfig]):
-    meta = _SQLITE_SINK_META
-
     def __init__(self) -> None:
         self._db_path = Path(str(self.config.sqlite_db_path).strip())
         self._con: Any | None = None

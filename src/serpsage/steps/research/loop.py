@@ -3,9 +3,12 @@ from __future__ import annotations
 import math
 from typing_extensions import override
 
-from serpsage.app.tokens import RESEARCH_ROUND_RUNNER, RESEARCH_SUBREPORT_STEP
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import (
+    RESEARCH_ROUND_RUNNER,
+    RESEARCH_SUBREPORT_STEP,
+    Depends,
+)
 from serpsage.models.app.response import ResearchResponse
 from serpsage.models.steps.research import (
     ResearchBudgetTier,
@@ -28,9 +31,9 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         "high": 0.6,
     }
 
-    llm: LLMClientBase = Inject()
-    round_runner: RunnerBase[ResearchStepContext] = Inject(RESEARCH_ROUND_RUNNER)
-    render_step: StepBase[ResearchStepContext] = Inject(RESEARCH_SUBREPORT_STEP)
+    llm: LLMClientBase = Depends()
+    round_runner: RunnerBase[ResearchStepContext] = Depends(RESEARCH_ROUND_RUNNER)
+    render_step: StepBase[ResearchStepContext] = Depends(RESEARCH_SUBREPORT_STEP)
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:

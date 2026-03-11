@@ -7,14 +7,13 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import (
     GoogleSafeSearchKey,
     ProviderConfigBase,
     SearchProviderBase,
 )
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -97,16 +96,8 @@ class GoogleProviderConfig(ProviderConfigBase):
         return payload
 
 
-_GOOGLE_META = ComponentMeta(
-    version="1.0.0",
-    summary="Google HTML search provider.",
-)
-
-
 class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
-    meta = _GOOGLE_META
-
-    http: HttpClientBase = Inject()
+    http: HttpClientBase = Depends()
 
     @override
     async def asearch(

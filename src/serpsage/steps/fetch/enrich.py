@@ -4,7 +4,7 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.steps.fetch.overview import FetchOverviewStep
@@ -12,8 +12,8 @@ from serpsage.steps.fetch.subpages import FetchSubpageStep
 
 
 class FetchParallelEnrichStep(StepBase[FetchStepContext]):
-    overview_step: FetchOverviewStep = Inject()
-    subpages_step: FetchSubpageStep = Inject()
+    overview_step: FetchOverviewStep = Depends()
+    subpages_step: FetchSubpageStep = Depends()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:

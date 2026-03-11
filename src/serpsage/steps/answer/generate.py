@@ -8,7 +8,7 @@ from typing_extensions import override
 from urllib.parse import urlsplit, urlunsplit
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.app.response import AnswerCitation, FetchResultItem
 from serpsage.models.steps.answer import (
     AnswerStepContext,
@@ -29,7 +29,7 @@ _FIXED_ABSTRACT_MAX_CHARS = 1000
 
 
 class AnswerGenerateStep(StepBase[AnswerStepContext]):
-    llm: LLMClientBase = Inject()
+    llm: LLMClientBase = Depends()
 
     @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:

@@ -4,7 +4,7 @@ import math
 from typing_extensions import override
 
 from serpsage.components.rank.base import RankerBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.steps.fetch import (
     FetchStepContext,
     PreparedPassage,
@@ -17,7 +17,7 @@ from serpsage.utils import clean_whitespace
 
 
 class FetchAbstractRankStep(StepBase[FetchStepContext]):
-    ranker: RankerBase = Inject()
+    ranker: RankerBase = Depends()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:

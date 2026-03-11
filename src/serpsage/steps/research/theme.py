@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
     ResearchLimits,
     ResearchQuestionCard,
@@ -37,7 +37,7 @@ _ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
 
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
-    llm: LLMClientBase = Inject()
+    llm: LLMClientBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:

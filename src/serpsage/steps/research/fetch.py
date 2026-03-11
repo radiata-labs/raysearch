@@ -7,10 +7,9 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import anyio
 
-from serpsage.app.tokens import FETCH_RUNNER
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import FETCH_RUNNER, Depends
 from serpsage.models.app.request import (
     FetchContentRequest,
     FetchOthersRequest,
@@ -57,9 +56,9 @@ _LINK_PICKER_PRERANK_FLOOR = 16
 
 
 class ResearchFetchStep(StepBase[ResearchStepContext]):
-    fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER)
-    ranker: RankerBase = Inject()
-    llm: LLMClientBase = Inject()
+    fetch_runner: RunnerBase[FetchStepContext] = Depends(FETCH_RUNNER)
+    ranker: RankerBase = Depends()
+    llm: LLMClientBase = Depends()
 
     def __init__(
         self,

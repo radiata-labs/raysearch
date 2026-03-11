@@ -8,18 +8,11 @@ import statistics
 from collections import Counter
 from typing_extensions import override
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import HeuristicRankSettings, RankerBase, RankMode
 from serpsage.utils import normalize_text
 
-_HEURISTIC_META = ComponentMeta(
-    version="1.0.0",
-    summary="Rule-based text ranker.",
-)
-
 
 class HeuristicRanker(RankerBase[HeuristicRankSettings]):
-    meta = _HEURISTIC_META
     _ASCII_TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
     _WORD_CHAR_CLASS = r"[a-z0-9_]"
     _DEFAULT_LOCAL_IDF_BOOST = 0.35

@@ -4,7 +4,7 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import ComponentConfigBase, ComponentMeta
+from serpsage.components.base import ComponentConfigBase
 from serpsage.components.rate_limit.base import RateLimiterBase
 
 
@@ -17,15 +17,7 @@ class RateLimiterConfig(ComponentConfigBase):
     politeness_delay_ms: int = 0
 
 
-_BASIC_RATE_LIMITER_META = ComponentMeta(
-    version="1.0.0",
-    summary="Basic semaphore-based host-aware rate limiter.",
-)
-
-
 class BasicRateLimiter(RateLimiterBase[RateLimiterConfig]):
-    meta = _BASIC_RATE_LIMITER_META
-
     def __init__(self) -> None:
         self._global = anyio.Semaphore(max(1, int(self.config.global_limit)))
         self._per_host_limit = max(1, int(self.config.per_host))

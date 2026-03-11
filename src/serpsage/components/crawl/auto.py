@@ -7,7 +7,6 @@ from typing import Any
 from typing_extensions import override
 from urllib.parse import urlparse
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
 from serpsage.components.crawl.curl_cffi import CurlCffiCrawler
 from serpsage.components.crawl.playwright import PlaywrightCrawler
@@ -18,7 +17,7 @@ from serpsage.components.crawl.utils import (
     normalize_route_key,
 )
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 _MIN_BYTES = 32
@@ -59,18 +58,10 @@ class AutoCrawlerConfig(CrawlConfigBase):
     __setting_name__ = "auto"
 
 
-_AUTO_CRAWLER_META = ComponentMeta(
-    version="1.0.0",
-    summary="Adaptive crawler choosing curl_cffi or Playwright.",
-)
-
-
 class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
-    meta = _AUTO_CRAWLER_META
-
-    rate_limiter: RateLimiterBase[Any] = Inject()
-    curl: CurlCffiCrawler = Inject()
-    playwright: PlaywrightCrawler = Inject()
+    rate_limiter: RateLimiterBase[Any] = Depends()
+    curl: CurlCffiCrawler = Depends()
+    playwright: PlaywrightCrawler = Depends()
 
     route_memory: OrderedDict[str, _RouteMemory]
 

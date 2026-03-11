@@ -15,7 +15,6 @@ except Exception:  # noqa: BLE001
     _CROSS_ENCODER_CTOR = None
     CROSS_ENCODER_AVAILABLE = False
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import (
     RankCrossEncoderSettings,
     RankerBase,
@@ -53,15 +52,7 @@ def _normalize_predictions(raw: object) -> list[float]:
     return [_coerce_prediction_value(raw)]
 
 
-_CROSS_ENCODER_META = ComponentMeta(
-    version="1.0.0",
-    summary="Cross-encoder ranker.",
-)
-
-
 class CrossEncoderRanker(RankerBase[RankCrossEncoderSettings]):
-    meta = _CROSS_ENCODER_META
-
     model: object | None = None
 
     @override

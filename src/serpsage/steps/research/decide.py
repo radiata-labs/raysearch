@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
     ResearchDecideSignalPayload,
     ResearchStepContext,
@@ -16,7 +16,7 @@ from serpsage.steps.research.utils import resolve_research_model
 class ResearchDecideStep(StepBase[ResearchStepContext]):
     _LOW_GAIN_THRESHOLD = 0.05
 
-    llm: LLMClientBase = Inject()
+    llm: LLMClientBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:

@@ -1,17 +1,45 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
+from typing_extensions import override
 
-from serpsage.app.tokens import (
-    ANSWER_RUNNER,
-    FETCH_RUNNER,
-    RESEARCH_RUNNER,
-    SEARCH_RUNNER,
+import anyio
+
+from serpsage.components.cache.base import CacheBase
+from serpsage.components.crawl.base import CrawlerBase
+from serpsage.components.extract.base import ExtractorBase
+from serpsage.components.http.base import HttpClientBase
+from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.llm.router import LLM_ROUTES_TOKEN
+from serpsage.components.loads import (
+    ComponentRegistry,
+    load_components,
+    materialize_settings,
 )
-from serpsage.core.runtime import Overrides
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.rank.base import RankerBase
+from serpsage.components.rate_limit.base import RateLimiterBase
+from serpsage.components.telemetry import TelemetryEmitterBase
+from serpsage.components.telemetry.base import EventSinkBase
+from serpsage.components.telemetry.emitter import TELEMETRY_SINKS_TOKEN
+from serpsage.core.runtime import ClockBase, Overrides, Runtime
 from serpsage.core.workunit import WorkUnit
+from serpsage.dependencies import (
+    ANSWER_RUNNER,
+    CHILD_FETCH_RUNNER,
+    FETCH_RUNNER,
+    RESEARCH_ROUND_RUNNER,
+    RESEARCH_RUNNER,
+    RESEARCH_SUBREPORT_STEP,
+    SEARCH_RUNNER,
+    Depends,
+    solve_dependencies,
+)
 from serpsage.models.app.response import (
     AnswerResponse,
     FetchResponse,
@@ -25,7 +53,42 @@ from serpsage.models.steps.answer import AnswerStepContext
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.research import ResearchStepContext
 from serpsage.models.steps.search import SearchStepContext
-from serpsage.steps.base import RunnerBase
+from serpsage.settings.models import AppSettings
+from serpsage.steps.answer import AnswerGenerateStep, AnswerPlanStep, AnswerSearchStep
+from serpsage.steps.base import RunnerBase, StepBase
+from serpsage.steps.fetch import (
+    FetchAbstractBuildStep,
+    FetchAbstractRankStep,
+    FetchExtractStep,
+    FetchFinalizeStep,
+    FetchLoadStep,
+    FetchOverviewStep,
+    FetchParallelEnrichStep,
+    FetchPrepareStep,
+)
+from serpsage.steps.research import (
+    ResearchContentStep,
+    ResearchDecideStep,
+    ResearchFetchStep,
+    ResearchFinalizeStep,
+    ResearchLoopStep,
+    ResearchOverviewStep,
+    ResearchPlanStep,
+    ResearchPrepareStep,
+    ResearchRenderStep,
+    ResearchSearchStep,
+    ResearchSubreportStep,
+    ResearchThemeStep,
+)
+from serpsage.steps.search import (
+    SearchExpandStep,
+    SearchFetchStep,
+    SearchFinalizeStep,
+    SearchOptimizeStep,
+    SearchPrepareStep,
+    SearchRankStep,
+    SearchStep,
+)
 
 if TYPE_CHECKING:
     from serpsage.models.app.request import (
@@ -34,19 +97,35 @@ if TYPE_CHECKING:
         ResearchRequest,
         SearchRequest,
     )
-    from serpsage.settings.models import AppSettings
+
+
+class SystemClock(ClockBase):
+    @override
+    def now_ms(self) -> int:
+        return int(time.time() * 1000)
 
 
 class Engine(WorkUnit):
-    """Async-only engine with search/fetch/answer/research paths."""
+    """Async-only engine with integrated bootstrap/search/fetch/answer/research paths."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER),
+        fetch_runner: RunnerBase[FetchStepContext] = Depends(FETCH_RUNNER),
+        answer_runner: RunnerBase[AnswerStepContext] = Depends(ANSWER_RUNNER),
+        research_runner: RunnerBase[ResearchStepContext] = Depends(RESEARCH_RUNNER),
+    ) -> None:
+        self._search_runner = search_runner
+        self._fetch_runner = fetch_runner
+        self._answer_runner = answer_runner
+        self._research_runner = research_runner
         self.bind_deps(
             self.telemetry,
-            self._search_runner(),
-            self._fetch_runner(),
-            self._answer_runner(),
-            self._research_runner(),
+            self._search_runner,
+            self._fetch_runner,
+            self._answer_runner,
+            self._research_runner,
         )
 
     @classmethod
@@ -57,17 +136,265 @@ class Engine(WorkUnit):
         settings: AppSettings | dict[str, Any] | None = None,
         overrides: Overrides | None = None,
     ) -> Engine:
-        """Build an engine through the component registry/container bootstrap."""
         if settings is None:
             from serpsage.settings.load import load_settings  # noqa: PLC0415
 
             settings = load_settings(path=setting_file)
-        from serpsage.app.bootstrap import build_engine  # noqa: PLC0415
+        overrides = overrides or Overrides()
+        for name, override_value in {
+            "cache": overrides.cache,
+            "rate_limiter": overrides.rate_limiter,
+            "provider": overrides.provider,
+            "crawler": overrides.crawler,
+            "extractor": overrides.extractor,
+            "ranker": overrides.ranker,
+            "llm": overrides.llm,
+            "telemetry": overrides.telemetry,
+        }.items():
+            if override_value is None:
+                continue
+            if not isinstance(override_value, WorkUnit):
+                raise TypeError(
+                    "override "
+                    f"`{name}` must be a WorkUnit, got `{type(override_value).__name__}`"
+                )
+            if not bool(getattr(override_value, "_wu_bootstrapped", False)):
+                raise TypeError(
+                    f"override `{name}` must have a bootstrapped WorkUnit runtime"
+                )
 
-        return build_engine(
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return anyio.run(cls._build_engine, settings, overrides)
+
+        payload: Any = None
+        failure: BaseException | None = None
+
+        def _worker() -> None:
+            nonlocal payload, failure
+            try:
+                payload = anyio.run(cls._build_engine, settings, overrides)
+            except BaseException as exc:  # noqa: BLE001
+                failure = exc
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        thread.join()
+        if failure is not None:
+            raise failure
+        if payload is None:
+            raise RuntimeError("failed to assemble engine")
+        return cast("Engine", payload)
+
+    @classmethod
+    async def _build_engine(
+        cls,
+        settings: AppSettings | dict[str, Any],
+        overrides: Overrides,
+    ) -> Engine:
+        components = load_components()
+        normalized_settings = materialize_settings(
             settings=settings,
-            overrides=overrides,
+            components=components,
         )
+        runtime = Runtime(
+            settings=normalized_settings,
+            clock=(overrides.clock or SystemClock()),
+            env=dict(normalized_settings.runtime_env or {}),
+        )
+        registry = ComponentRegistry(
+            settings=normalized_settings,
+            components=components,
+            overrides=overrides,
+            env=runtime.env,
+        )
+        runtime.components = registry
+        cache: dict[Any, Any] = {
+            AppSettings: runtime.settings,
+            ClockBase: runtime.clock,
+            Runtime: runtime,
+            ComponentRegistry: registry,
+        }
+        for spec in registry.all_specs():
+            cache[spec.config_cls] = spec.config
+            if not bool(spec.config.enabled):
+                cache[spec.cls] = None
+
+        async def solve(
+            dependent: Any,
+            *,
+            use_cache: bool = True,
+            **named: object,
+        ) -> Any:
+            marker = object()
+            previous: dict[str, object] = {}
+            for key, value in named.items():
+                previous[key] = cache.get(key, marker)
+                cache[key] = value
+            try:
+                return await solve_dependencies(
+                    dependent,
+                    use_cache=use_cache,
+                    dependency_cache=cache,
+                )
+            finally:
+                for key, value in previous.items():
+                    if value is marker:
+                        cache.pop(key, None)
+                    else:
+                        cache[key] = value
+
+        async def solve_transient(dependent: Any, **named: object) -> Any:
+            resolved = await solve(dependent, use_cache=False, **named)
+            cache.pop(dependent, None)
+            return resolved
+
+        async def solve_many(
+            *dependents: type[StepBase[Any]],
+        ) -> list[StepBase[Any]]:
+            out: list[StepBase[Any]] = []
+            for dependent in dependents:
+                instance = await solve(dependent)
+                if not isinstance(instance, StepBase):
+                    raise TypeError(
+                        f"{dependent.__name__} did not resolve to a StepBase"
+                    )
+                out.append(instance)
+            return out
+
+        for family, contract, override_value in (
+            ("http", HttpClientBase, None),
+            ("cache", CacheBase, overrides.cache),
+            ("rate_limit", RateLimiterBase, overrides.rate_limiter),
+            ("extract", ExtractorBase, overrides.extractor),
+            ("rank", RankerBase, overrides.ranker),
+            ("provider", SearchProviderBase, overrides.provider),
+            ("crawl", CrawlerBase, overrides.crawler),
+        ):
+            if override_value is not None:
+                cache[contract] = override_value
+                cache[type(override_value)] = override_value
+                continue
+            enabled_specs = registry.enabled_specs(family)
+            if not enabled_specs:
+                continue
+            cache[contract] = await solve(registry.default_spec(family).cls)
+
+        telemetry_sinks: list[object] = []
+        for spec in registry.enabled_specs("telemetry"):
+            if not issubclass(spec.cls, EventSinkBase):
+                continue
+            sink = await solve(spec.cls)
+            if sink is not None:
+                telemetry_sinks.append(sink)
+        cache[TELEMETRY_SINKS_TOKEN] = tuple(telemetry_sinks)
+        if overrides.telemetry is not None:
+            cache[TelemetryEmitterBase] = overrides.telemetry
+            cache[type(overrides.telemetry)] = overrides.telemetry
+        elif registry.enabled_specs("telemetry"):
+            cache[TelemetryEmitterBase] = await solve(
+                registry.default_spec("telemetry").cls
+            )
+
+        llm_routes: list[object] = []
+        for spec in registry.enabled_specs("llm"):
+            if spec.cls.__name__ == "RoutedLLMClient":
+                continue
+            if not issubclass(spec.cls, LLMClientBase):
+                continue
+            route = await solve(spec.cls)
+            if route is not None:
+                llm_routes.append(route)
+        cache[LLM_ROUTES_TOKEN] = tuple(llm_routes)
+        if overrides.llm is not None:
+            cache[LLMClientBase] = overrides.llm
+            cache[type(overrides.llm)] = overrides.llm
+        elif registry.enabled_specs("llm"):
+            cache[LLMClientBase] = await solve(registry.default_spec("llm").cls)
+
+        telemetry = cache.get(TelemetryEmitterBase)
+        if isinstance(telemetry, TelemetryEmitterBase):
+            runtime.telemetry = telemetry
+
+        cache[CHILD_FETCH_RUNNER] = await solve_transient(
+            RunnerBase,
+            steps=await solve_many(
+                FetchPrepareStep,
+                FetchLoadStep,
+                FetchExtractStep,
+                FetchAbstractBuildStep,
+                FetchAbstractRankStep,
+                FetchOverviewStep,
+                FetchFinalizeStep,
+            ),
+            kind="child_fetch",
+        )
+        cache[FETCH_RUNNER] = await solve_transient(
+            RunnerBase,
+            steps=await solve_many(
+                FetchPrepareStep,
+                FetchLoadStep,
+                FetchExtractStep,
+                FetchAbstractBuildStep,
+                FetchAbstractRankStep,
+                FetchParallelEnrichStep,
+                FetchFinalizeStep,
+            ),
+            kind="fetch",
+        )
+        cache[SEARCH_RUNNER] = await solve_transient(
+            RunnerBase,
+            steps=await solve_many(
+                SearchPrepareStep,
+                SearchOptimizeStep,
+                SearchExpandStep,
+                SearchStep,
+                SearchFetchStep,
+                SearchRankStep,
+                SearchFinalizeStep,
+            ),
+            kind="search",
+        )
+        cache[ANSWER_RUNNER] = await solve_transient(
+            RunnerBase,
+            steps=await solve_many(
+                AnswerPlanStep,
+                AnswerSearchStep,
+                AnswerGenerateStep,
+            ),
+            kind="search",
+        )
+        cache[RESEARCH_ROUND_RUNNER] = await solve_transient(
+            RunnerBase,
+            steps=[
+                await solve(ResearchPlanStep),
+                await solve_transient(ResearchFetchStep, phase="pre"),
+                await solve(ResearchSearchStep),
+                await solve_transient(ResearchFetchStep, phase="post"),
+                await solve(ResearchOverviewStep),
+                await solve(ResearchContentStep),
+                await solve(ResearchDecideStep),
+            ],
+            kind="search",
+        )
+        cache[RESEARCH_SUBREPORT_STEP] = await solve(ResearchSubreportStep)
+        cache[RESEARCH_RUNNER] = await solve_transient(
+            RunnerBase,
+            steps=await solve_many(
+                ResearchPrepareStep,
+                ResearchThemeStep,
+                ResearchLoopStep,
+                ResearchRenderStep,
+                ResearchFinalizeStep,
+            ),
+            kind="search",
+        )
+
+        engine = await solve(cls)
+        if not isinstance(engine, cls):
+            raise TypeError("engine was not constructed")
+        return engine
 
     async def search(self, req: SearchRequest) -> SearchResponse:
         request_id = uuid.uuid4().hex
@@ -92,7 +419,7 @@ class Engine(WorkUnit):
             ),
         )
         try:
-            ctx = await self._search_runner().run(ctx)
+            ctx = await self._search_runner.run(ctx)
             ctx.response.search_mode = ctx.request.mode
             ctx.response.results = list(ctx.output.results)
             response = ctx.response
@@ -172,7 +499,7 @@ class Engine(WorkUnit):
                 )
                 contexts.append(fetch_ctx)
             if contexts:
-                contexts = await self._fetch_runner().run_batch(contexts)
+                contexts = await self._fetch_runner.run_batch(contexts)
             results = [
                 ctx.result
                 for ctx in contexts
@@ -276,7 +603,7 @@ class Engine(WorkUnit):
             ),
         )
         try:
-            ctx = await self._answer_runner().run(ctx)
+            ctx = await self._answer_runner.run(ctx)
             answer: str | object
             if isinstance(req.json_schema, dict):
                 answer = (
@@ -352,8 +679,7 @@ class Engine(WorkUnit):
             ),
         )
         try:
-            research_runner = self._research_runner()
-            ctx = await research_runner.run(ctx)
+            ctx = await self._research_runner.run(ctx)
             ctx.response.content = ctx.result.content
             ctx.response.structured = ctx.result.structured
             response = ctx.response
@@ -440,24 +766,5 @@ class Engine(WorkUnit):
         with suppress(Exception):
             telemetry.pop_request_context(token)
 
-    def _search_runner(self) -> RunnerBase[SearchStepContext]:
-        return cast(
-            "RunnerBase[SearchStepContext]", self.services.require(SEARCH_RUNNER)
-        )
 
-    def _fetch_runner(self) -> RunnerBase[FetchStepContext]:
-        return cast("RunnerBase[FetchStepContext]", self.services.require(FETCH_RUNNER))
-
-    def _answer_runner(self) -> RunnerBase[AnswerStepContext]:
-        return cast(
-            "RunnerBase[AnswerStepContext]", self.services.require(ANSWER_RUNNER)
-        )
-
-    def _research_runner(self) -> RunnerBase[ResearchStepContext]:
-        return cast(
-            "RunnerBase[ResearchStepContext]",
-            self.services.require(RESEARCH_RUNNER),
-        )
-
-
-__all__ = ["Engine"]
+__all__ = ["Engine", "Overrides"]

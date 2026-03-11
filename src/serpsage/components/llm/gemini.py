@@ -7,7 +7,6 @@ from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
 from serpsage.models.components.llm import (
     ChatDictResult,
@@ -45,15 +44,7 @@ class GeminiModelConfig(LLMModelConfig):
         return payload
 
 
-_GEMINI_META = ComponentMeta(
-    version="1.0.0",
-    summary="Gemini route client.",
-)
-
-
 class GeminiClient(LLMClientBase[GeminiModelConfig]):
-    meta = _GEMINI_META
-
     def __init__(
         self,
     ) -> None:

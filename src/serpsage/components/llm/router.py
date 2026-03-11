@@ -7,16 +7,13 @@ from typing_extensions import override
 from pydantic import BaseModel
 
 from serpsage.components.base import (
-    LLM_FAMILY,
     ComponentConfigBase,
-    ComponentMeta,
-    family_collection_token,
 )
 from serpsage.components.llm.base import (
     LLMClientBase,
     LLMModelConfig,
 )
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -25,6 +22,8 @@ from serpsage.models.components.llm import (
 )
 from serpsage.models.components.telemetry import EventStatus, MeterPayload
 
+LLM_ROUTES_TOKEN = "component.llm_routes"  # noqa: S105
+
 
 class LLMRouterConfig(ComponentConfigBase):
     __setting_family__ = "llm"
@@ -32,19 +31,13 @@ class LLMRouterConfig(ComponentConfigBase):
 
 
 TModel = TypeVar("TModel", bound=BaseModel)
-_ROUTER_META = ComponentMeta(
-    version="1.0.0",
-    summary="Named model router over llm.route instances.",
-)
 
 
 class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
-    meta = _ROUTER_META
-
     def __init__(
         self,
         *,
-        routes: tuple[object, ...] = Inject(family_collection_token(LLM_FAMILY)),
+        routes: tuple[object, ...] = Depends(LLM_ROUTES_TOKEN),
     ) -> None:
         route_clients = cast("tuple[LLMClientBase[LLMModelConfig], ...]", routes)
         self.routes: dict[str, tuple[LLMClientBase[LLMModelConfig], str]] = {}
@@ -254,4 +247,4 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
             )
 
 
-__all__ = ["RoutedLLMClient"]
+__all__ = ["LLM_ROUTES_TOKEN", "RoutedLLMClient"]

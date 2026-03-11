@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing_extensions import override
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.utils import classify_content_kind
 from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.html import HtmlExtractor
 from serpsage.components.extract.pdf import PdfExtractor
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.extract import ExtractedDocument, ExtractSpec
 
 
@@ -16,17 +15,9 @@ class AutoExtractorConfig(ExtractConfigBase):
     __setting_name__ = "auto"
 
 
-_AUTO_EXTRACTOR_META = ComponentMeta(
-    version="1.0.0",
-    summary="Automatic extractor dispatching between HTML and PDF handlers.",
-)
-
-
 class AutoExtractor(ExtractorBase[AutoExtractorConfig]):
-    meta = _AUTO_EXTRACTOR_META
-
-    html_extractor: HtmlExtractor = Inject()
-    pdf_extractor: PdfExtractor = Inject()
+    html_extractor: HtmlExtractor = Depends()
+    pdf_extractor: PdfExtractor = Depends()
 
     @override
     async def extract(

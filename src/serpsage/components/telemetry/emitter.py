@@ -11,12 +11,12 @@ from anyio import WouldBlock
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from serpsage.components.base import ComponentConfigBase, ComponentMeta
+from serpsage.components.base import ComponentConfigBase
 from serpsage.components.telemetry.base import (
     EventSinkBase,
     TelemetryEmitterBase,
 )
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.telemetry import (
     EventAttributes,
     EventEnvelope,
@@ -24,6 +24,7 @@ from serpsage.models.components.telemetry import (
 )
 
 _REQUEST_ID_CTX: ContextVar[str] = ContextVar("telemetry_request_id", default="")
+TELEMETRY_SINKS_TOKEN = "component.telemetry_sinks"  # noqa: S105
 
 
 class TelemetryEmitterConfig(ComponentConfigBase):
@@ -39,19 +40,7 @@ class NullTelemetryEmitterConfig(ComponentConfigBase):
     __setting_name__ = "null_emitter"
 
 
-_NULL_EMITTER_META = ComponentMeta(
-    version="1.0.0",
-    summary="No-op telemetry emitter.",
-)
-_ASYNC_EMITTER_META = ComponentMeta(
-    version="1.0.0",
-    summary="Async telemetry emitter with sink fan-out.",
-)
-
-
 class NullTelemetryEmitter(TelemetryEmitterBase[NullTelemetryEmitterConfig]):
-    meta = _NULL_EMITTER_META
-
     @override
     async def emit_event(self, *, event: EventEnvelope) -> None:
         _ = event
@@ -67,13 +56,11 @@ class NullTelemetryEmitter(TelemetryEmitterBase[NullTelemetryEmitterConfig]):
 
 
 class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
-    meta = _ASYNC_EMITTER_META
-
     def __init__(
         self,
         *,
         config: TelemetryEmitterConfig,
-        sinks: tuple[EventSinkBase[Any], ...] = Inject(),
+        sinks: tuple[EventSinkBase[Any], ...] = Depends(TELEMETRY_SINKS_TOKEN),
     ) -> None:
         self._sinks = list(sinks)
         self._queue_size = max(1, int(config.queue_size))
@@ -220,5 +207,6 @@ __all__ = [
     "AsyncEventEmitter",
     "NullTelemetryEmitter",
     "NullTelemetryEmitterConfig",
+    "TELEMETRY_SINKS_TOKEN",
     "TelemetryEmitterConfig",
 ]

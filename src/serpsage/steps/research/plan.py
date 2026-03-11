@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
     PlanOutputPayload,
     ResearchLinkCandidate,
@@ -20,7 +20,7 @@ from serpsage.steps.research.utils import resolve_research_model
 
 
 class ResearchPlanStep(StepBase[ResearchStepContext]):
-    llm: LLMClientBase = Inject()
+    llm: LLMClientBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:

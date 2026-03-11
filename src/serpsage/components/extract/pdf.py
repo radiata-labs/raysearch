@@ -16,7 +16,6 @@ from anyio import to_thread
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError, PdfStreamError
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.crawl.utils import classify_content_kind
 from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.utils import (
@@ -41,12 +40,6 @@ class PdfExtractorConfig(ExtractConfigBase):
     __setting_name__ = "pdf"
 
 
-_PDF_EXTRACTOR_META = ComponentMeta(
-    version="1.0.0",
-    summary="PDF content extractor.",
-)
-
-
 @dataclass(slots=True)
 class PdfExtractionResult:
     markdown: str
@@ -60,8 +53,6 @@ class PdfExtractionResult:
 
 
 class PdfExtractor(ExtractorBase[PdfExtractorConfig]):
-    meta = _PDF_EXTRACTOR_META
-
     @override
     async def extract(
         self,

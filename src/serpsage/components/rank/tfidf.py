@@ -6,7 +6,6 @@ from anyio import to_thread
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import RankerBase, RankMode, RankTfidfSettings
 from serpsage.tokenize import tokenize
 from serpsage.utils import normalize_text
@@ -51,15 +50,7 @@ def _score_texts_sync(
     return [float(min(1.0, max(0.0, score))) for score in scores]
 
 
-_TFIDF_META = ComponentMeta(
-    version="1.0.0",
-    summary="TF-IDF based text ranker.",
-)
-
-
 class TfidfRanker(RankerBase[RankTfidfSettings]):
-    meta = _TFIDF_META
-
     @override
     async def score_texts(
         self,

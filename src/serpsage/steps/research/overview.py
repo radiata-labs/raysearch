@@ -5,7 +5,7 @@ from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
     OverviewConflictPayload,
     OverviewOutputPayload,
@@ -27,8 +27,8 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
     _CONTEXT_NEW_RESULT_TARGET_RATIO = 0.60
     _CONTEXT_MIN_HISTORY_SOURCES = 3
 
-    llm: LLMClientBase = Inject()
-    ranker: RankerBase = Inject()
+    llm: LLMClientBase = Depends()
+    ranker: RankerBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:

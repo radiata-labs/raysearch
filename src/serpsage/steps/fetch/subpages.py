@@ -3,9 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing_extensions import override
 
-from serpsage.app.tokens import CHILD_FETCH_RUNNER
 from serpsage.components.rank.base import RankerBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import CHILD_FETCH_RUNNER, Depends
 from serpsage.models.app.request import FetchOthersRequest
 from serpsage.models.app.response import FetchResponse, FetchSubpagesResult
 from serpsage.models.steps.fetch import FetchStepContext, FetchSubpageState
@@ -16,8 +15,8 @@ if TYPE_CHECKING:
 
 
 class FetchSubpageStep(StepBase[FetchStepContext]):
-    fetch_runner: RunnerBase[FetchStepContext] = Inject(CHILD_FETCH_RUNNER)
-    ranker: RankerBase = Inject()
+    fetch_runner: RunnerBase[FetchStepContext] = Depends(CHILD_FETCH_RUNNER)
+    ranker: RankerBase = Depends()
 
     @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:

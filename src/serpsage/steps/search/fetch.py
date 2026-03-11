@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing_extensions import override
 
-from serpsage.app.tokens import FETCH_RUNNER
-from serpsage.dependencies import Inject
+from serpsage.dependencies import FETCH_RUNNER, Depends
 from serpsage.models.app.request import FetchRequest
 from serpsage.models.app.response import FetchResponse
 from serpsage.models.steps.fetch import FetchStepContext
@@ -12,7 +11,7 @@ from serpsage.steps.base import RunnerBase, StepBase
 
 
 class SearchFetchStep(StepBase[SearchStepContext]):
-    fetch_runner: RunnerBase[FetchStepContext] = Inject(FETCH_RUNNER)
+    fetch_runner: RunnerBase[FetchStepContext] = Depends(FETCH_RUNNER)
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:

@@ -5,7 +5,6 @@ from typing_extensions import override
 
 import anyio
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.rank.base import (
     RankBlendSettings,
     RankerBase,
@@ -16,24 +15,17 @@ from serpsage.components.rank.cross_encoder import CrossEncoderRanker
 from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-_BLEND_META = ComponentMeta(
-    version="1.0.0",
-    summary="Weighted composite ranker.",
-)
-
 
 class BlendRanker(RankerBase[RankBlendSettings]):
-    meta = _BLEND_META
-
-    heuristic: HeuristicRanker = Inject()
-    tfidf: TfidfRanker = Inject()
-    bm25: Bm25Ranker = Inject()
-    cross_encoder: CrossEncoderRanker = Inject()
+    heuristic: HeuristicRanker = Depends()
+    tfidf: TfidfRanker = Depends()
+    bm25: Bm25Ranker = Depends()
+    cross_encoder: CrossEncoderRanker = Depends()
 
     def _provider_weights(self) -> dict[str, float]:
         raw = {

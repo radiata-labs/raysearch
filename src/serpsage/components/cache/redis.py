@@ -6,7 +6,6 @@ from typing_extensions import override
 
 from pydantic import field_validator
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
 
 AioredisModule: Any | None = None
@@ -33,15 +32,7 @@ class RedisCacheConfig(CacheConfigBase):
         return str(value or "").strip()
 
 
-_REDIS_CACHE_META = ComponentMeta(
-    version="1.0.0",
-    summary="Redis-backed cache.",
-)
-
-
 class RedisCache(CacheBase[RedisCacheConfig]):
-    meta = _REDIS_CACHE_META
-
     def __init__(self) -> None:
         if AioredisModule is None:
             raise RuntimeError("aioredis is required for RedisCache")

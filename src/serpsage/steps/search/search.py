@@ -11,7 +11,7 @@ import anyio
 
 from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
     SearchProviderResponse,
     SearchProviderResult,
@@ -39,8 +39,8 @@ _RE_CJK_TOKEN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]")
 
 
 class SearchStep(StepBase[SearchStepContext]):
-    provider: SearchProviderBase = Inject()
-    ranker: RankerBase = Inject()
+    provider: SearchProviderBase = Depends()
+    ranker: RankerBase = Depends()
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
@@ -247,7 +247,7 @@ class SearchStep(StepBase[SearchStepContext]):
         telemetry = self.telemetry
         if telemetry is None:
             return
-        provider_name = self.components.family_name("provider")
+        provider_backend = self.components.family_name("provider")
         with suppress(Exception):
             await telemetry.emit(
                 event_name="meter.usage.search_call",
@@ -262,13 +262,13 @@ class SearchStep(StepBase[SearchStepContext]):
                 attrs={
                     "query": query,
                     "mode": str(ctx.request.mode),
-                    "provider_backend": provider_name,
+                    "provider_backend": provider_backend,
                 },
                 meter=MeterPayload(
                     meter_type="search_call",
                     unit="call",
                     quantity=1.0,
-                    provider=provider_name,
+                    provider=provider_backend,
                 ),
             )
 

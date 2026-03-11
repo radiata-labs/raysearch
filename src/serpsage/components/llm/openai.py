@@ -6,10 +6,9 @@ from typing_extensions import TypeVar, override
 
 from pydantic import BaseModel
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
-from serpsage.dependencies import Inject
+from serpsage.dependencies import Depends
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -55,17 +54,10 @@ class OpenAIModelConfig(LLMModelConfig):
         return payload
 
 
-_OPENAI_ROUTE_META = ComponentMeta(
-    version="1.0.0",
-    summary="OpenAI-compatible route client.",
-)
-
-
 class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
-    meta = _OPENAI_ROUTE_META
     _SCHEMA_NAME = "SerpSageOverview"
 
-    http: HttpClientBase = Inject()
+    http: HttpClientBase = Depends()
 
     def __init__(
         self,

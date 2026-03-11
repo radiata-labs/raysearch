@@ -7,7 +7,6 @@ from typing_extensions import override
 
 from pydantic import field_validator
 
-from serpsage.components.base import ComponentMeta
 from serpsage.components.cache.base import CacheBase, CacheConfigBase
 
 AioSqliteModule: Any | None = None
@@ -35,15 +34,7 @@ class SqliteCacheConfig(CacheConfigBase):
         return token
 
 
-_SQLITE_CACHE_META = ComponentMeta(
-    version="1.0.0",
-    summary="SQLite-backed cache.",
-)
-
-
 class SqliteCache(CacheBase[SqliteCacheConfig]):
-    meta = _SQLITE_CACHE_META
-
     def __init__(self) -> None:
         if AioSqliteModule is None:
             raise RuntimeError("aiosqlite is required for SqliteCache")
