@@ -5,10 +5,11 @@ import inspect
 import os
 import pkgutil
 from abc import ABC
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeGuard, TypeVar, cast, overload
 
+import httpx
 from pydantic import ValidationError, create_model
 
 from serpsage.components.base import (
@@ -19,7 +20,6 @@ from serpsage.components.base import (
     ComponentMeta,
     coerce_component_family,
 )
-from serpsage.dependencies.contracts import InjectToken
 from serpsage.settings.models import (
     AppSettings,
     CacheSettings,
@@ -36,11 +36,15 @@ from serpsage.settings.models import (
 )
 
 if TYPE_CHECKING:
-    from serpsage.core.runtime import Runtime
+    from serpsage.core.runtime import Overrides
 
 ComponentClass: TypeAlias = type[ComponentBase[Any]]
+_T = TypeVar("_T", bound=type[ComponentBase[Any]])
 _ConfigT = TypeVar("_ConfigT", bound=ComponentConfigBase)
-_ComponentT = TypeVar("_ComponentT")
+_COMPONENT_META_ATTR = "__serpsage_component_meta__"
+_APP_SETTINGS_MODEL_CACHE: dict[
+    tuple[tuple[str, str, str], ...], type[AppSettings]
+] = {}
 
 _FAMILY_SETTING_BASES: dict[str, type[SettingModel]] = {
     "cache": CacheSettings,
@@ -66,12 +70,12 @@ _PREFERRED_DEFAULT_COMPONENTS = {
 }
 
 
-class ComponentResolutionError(RuntimeError):
+class _ComponentResolutionError(RuntimeError):
     pass
 
 
 @dataclass(frozen=True, slots=True)
-class ComponentDescriptor:
+class _ComponentDescriptor:
     family: ComponentFamily[Any]
     cls: ComponentClass
     config_cls: type[ComponentConfigBase]
@@ -79,17 +83,24 @@ class ComponentDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedComponent:
+class _ResolvedComponent:
     family: ComponentFamily[Any]
     component_name: str
-    descriptor: ComponentDescriptor
+    descriptor: _ComponentDescriptor
     config: ComponentConfigBase
 
 
-class ComponentRegistry:
-    def __init__(self, *, descriptors: tuple[ComponentDescriptor, ...]) -> None:
-        self._descriptors = descriptors
-        grouped: dict[str, list[ComponentDescriptor]] = {}
+class ComponentCatalog:
+    def __init__(
+        self,
+        *,
+        settings: AppSettings,
+        descriptors: tuple[_ComponentDescriptor, ...],
+        overrides: Overrides | None = None,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        self._settings = settings
+        grouped: dict[str, list[_ComponentDescriptor]] = {}
         dynamic_families: dict[str, ComponentFamily[Any]] = {}
         for descriptor in descriptors:
             grouped.setdefault(descriptor.family.name, []).append(descriptor)
@@ -99,131 +110,22 @@ class ComponentRegistry:
         }
         ordered_families: list[ComponentFamily[Any]] = list(BUILTIN_COMPONENT_FAMILIES)
         for family in sorted(dynamic_families.values(), key=lambda item: item.name):
-            if family in ordered_families:
+            if family in BUILTIN_COMPONENT_FAMILIES:
                 continue
             ordered_families.append(family)
         self._ordered_families = tuple(ordered_families)
-        self._settings_model: type[AppSettings] | None = None
-
-    @classmethod
-    def discover(cls) -> ComponentRegistry:
-        return cls(descriptors=_load_component_descriptors())
-
-    def component_families(self) -> tuple[ComponentFamily[Any], ...]:
-        return self._ordered_families
-
-    def descriptors_for_family(
-        self,
-        family: ComponentFamily[Any] | str,
-    ) -> tuple[ComponentDescriptor, ...]:
-        normalized = coerce_component_family(family)
-        return self._descriptors_by_family.get(normalized.name, ())
-
-    def materialize_settings(
-        self,
-        settings: AppSettings | Mapping[str, Any],
-    ) -> AppSettings:
-        if isinstance(settings, AppSettings):
-            raw_settings = settings.model_dump(mode="python")
-        elif isinstance(settings, Mapping):
-            raw_settings = dict(settings)
-        else:
-            raise TypeError(
-                f"settings must be an AppSettings or mapping, got `{type(settings).__name__}`"
-            )
-        return self._create_settings_model().model_validate(raw_settings)
-
-    def _create_settings_model(self) -> type[AppSettings]:
-        cached = self._settings_model
-        if cached is not None:
-            return cached
-        family_names: list[str] = list(_FAMILY_SETTING_BASES)
-        seen = set(family_names)
-        for family in self._ordered_families:
-            if family.name in seen:
-                continue
-            family_names.append(family.name)
-            seen.add(family.name)
-
-        component_fields: dict[str, Any] = {}
-        for family_name in family_names:
-            field_definitions: dict[str, Any] = {}
-            for descriptor in self._descriptors_by_family.get(family_name, ()):
-                try:
-                    default_value: Any = descriptor.config_cls()
-                except ValidationError:
-                    default_value = ...
-                field_definitions[descriptor.config_cls.__setting_name__] = (
-                    descriptor.config_cls,
-                    default_value,
-                )
-            model_name = "Dynamic" + "".join(
-                part.capitalize() for part in family_name.split("_")
-            )
-            family_model = cast(
-                "type[SettingModel]",
-                create_model(
-                    f"{model_name}Settings",
-                    __base__=_FAMILY_SETTING_BASES.get(family_name, SettingModel),
-                    **field_definitions,
-                ),
-            )
-            try:
-                family_default = family_model()
-            except ValidationError:
-                family_default = family_model.model_construct()
-            component_fields[family_name] = (family_model, family_default)
-
-        components_model = cast(
-            "type[ComponentSettings]",
-            create_model(
-                "ComponentSettings",
-                __base__=ComponentSettings,
-                **component_fields,
-            ),
-        )
-        try:
-            components_default = components_model()
-        except ValidationError:
-            components_default = components_model.model_construct()
-        app_model = cast(
-            "type[AppSettings]",
-            create_model(
-                "AppSettings",
-                __base__=AppSettings,
-                components=(components_model, components_default),
-            ),
-        )
-        self._settings_model = app_model
-        return app_model
-
-
-class ComponentCatalog:
-    def __init__(
-        self,
-        *,
-        settings: AppSettings,
-        registry: ComponentRegistry,
-        env: dict[str, str] | None = None,
-    ) -> None:
-        self._settings = settings
-        self._registry = registry
+        self._overrides = overrides
         self._env = dict(env or settings.runtime_env or os.environ)
-        self._runtime: Runtime | None = None
-        self._family_spec_cache: dict[str, tuple[ResolvedComponent, ...]] = {}
-        self._instance_keys: dict[tuple[str, str], InjectToken[object]] = {}
-
-    def attach_runtime(self, runtime: Runtime) -> None:
-        self._runtime = runtime
+        self._family_spec_cache: dict[str, tuple[_ResolvedComponent, ...]] = {}
 
     def resolve_default_spec(
         self,
         family: ComponentFamily[Any] | str,
-    ) -> ResolvedComponent:
+    ) -> _ResolvedComponent:
         normalized = coerce_component_family(family)
         specs = self._family_specs(normalized)
         if not specs:
-            raise ComponentResolutionError(
+            raise _ComponentResolutionError(
                 f"component family `{normalized.name}` has no enabled component"
             )
         family_settings = self._family_settings(normalized.name)
@@ -235,7 +137,7 @@ class ComponentCatalog:
             for spec in specs:
                 if spec.component_name == configured_name:
                     return spec
-            raise ComponentResolutionError(
+            raise _ComponentResolutionError(
                 f"component family `{normalized.name}` configured default "
                 f"`{configured_name}` is not enabled or not registered"
             )
@@ -283,149 +185,33 @@ class ComponentCatalog:
 
     def component_families(self) -> tuple[ComponentFamily[Any], ...]:
         return tuple(
-            family
-            for family in self._registry.component_families()
-            if self._family_specs(family)
+            family for family in self._ordered_families if self._family_specs(family)
         )
 
-    def iter_enabled_specs(
-        self,
-        family: ComponentFamily[Any] | str | None = None,
-    ) -> tuple[ResolvedComponent, ...]:
-        if family is not None:
-            return self._family_specs(family)
-        specs: list[ResolvedComponent] = []
-        for item in self.component_families():
-            specs.extend(self._family_specs(item))
+    def iter_enabled_specs(self) -> tuple[_ResolvedComponent, ...]:
+        specs: list[_ResolvedComponent] = []
+        for family in self.component_families():
+            specs.extend(self._family_specs(family))
         return tuple(specs)
 
-    def instance_key(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-    ) -> InjectToken[object]:
-        normalized = coerce_component_family(family)
-        key = (normalized.name, str(component_name).strip())
-        token = self._instance_keys.get(key)
-        if token is not None:
-            return token
-        created: InjectToken[object] = InjectToken(
-            f"component.{normalized.name}.{key[1]}"
-        )
-        self._instance_keys[key] = created
-        return created
-
-    @overload
-    def require_component(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-        *,
-        expected_type: type[_ComponentT],
-    ) -> _ComponentT: ...
-
-    @overload
-    def require_component(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-        *,
-        expected_type: None = None,
-    ) -> object: ...
-
-    def require_component(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-        *,
-        expected_type: type[_ComponentT] | None = None,
-    ) -> object | _ComponentT:
-        self._find_spec(family, component_name)
-        services = self._require_runtime().services
-        if services is None:
-            raise RuntimeError("service provider is not attached to the runtime")
-        value = services.require(self.instance_key(family, component_name))
-        return _cast_component_value(
-            value=value,
-            family=coerce_component_family(family).name,
-            component_name=component_name,
-            expected_type=expected_type,
-        )
-
-    @overload
-    def require_component_optional(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-        *,
-        expected_type: type[_ComponentT],
-    ) -> _ComponentT | None: ...
-
-    @overload
-    def require_component_optional(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-        *,
-        expected_type: None = None,
-    ) -> object | None: ...
-
-    def require_component_optional(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-        *,
-        expected_type: type[_ComponentT] | None = None,
-    ) -> object | _ComponentT | None:
-        try:
-            self._find_spec(family, component_name)
-        except ComponentResolutionError:
+    def http_override(self) -> httpx.AsyncClient | None:
+        overrides = self._overrides
+        if overrides is None:
             return None
-        services = self._require_runtime().services
-        if services is None:
-            raise RuntimeError("service provider is not attached to the runtime")
-        value = services.require_optional(self.instance_key(family, component_name))
-        if value is None:
-            return None
-        return _cast_component_value(
-            value=value,
-            family=coerce_component_family(family).name,
-            component_name=component_name,
-            expected_type=expected_type,
-        )
-
-    def require_default_component(
-        self,
-        family: ComponentFamily[Any] | str,
-    ) -> object:
-        spec = self.resolve_default_spec(family)
-        return self.require_component(spec.family, spec.component_name)
-
-    def _find_spec(
-        self,
-        family: ComponentFamily[Any] | str,
-        component_name: str,
-    ) -> ResolvedComponent:
-        normalized = coerce_component_family(family)
-        target = str(component_name).strip()
-        for spec in self._family_specs(normalized):
-            if spec.component_name == target:
-                return spec
-        raise ComponentResolutionError(
-            f"component `{normalized.name}:{target}` is not enabled or not registered"
-        )
+        client = overrides.http
+        return client if isinstance(client, httpx.AsyncClient) else None
 
     def _family_specs(
         self,
         family: ComponentFamily[Any] | str,
-    ) -> tuple[ResolvedComponent, ...]:
+    ) -> tuple[_ResolvedComponent, ...]:
         normalized = coerce_component_family(family)
         cached = self._family_spec_cache.get(normalized.name)
         if cached is not None:
             return cached
         family_settings = self._family_settings(normalized.name)
-        specs: list[ResolvedComponent] = []
-        for descriptor in self._registry.descriptors_for_family(normalized):
+        specs: list[_ResolvedComponent] = []
+        for descriptor in self._descriptors_by_family.get(normalized.name, ()):
             config = getattr(
                 family_settings,
                 descriptor.config_cls.__setting_name__,
@@ -436,7 +222,7 @@ class ComponentCatalog:
             if not bool(config.enabled):
                 continue
             specs.append(
-                ResolvedComponent(
+                _ResolvedComponent(
                     family=normalized,
                     component_name=descriptor.config_cls.__setting_name__,
                     descriptor=descriptor,
@@ -453,20 +239,14 @@ class ComponentCatalog:
     def _family_settings(self, family_name: str) -> SettingModel:
         value = getattr(self._settings.components, family_name, None)
         if not isinstance(value, SettingModel):
-            raise ComponentResolutionError(
+            raise _ComponentResolutionError(
                 f"settings family `{family_name}` is not available in components"
             )
         return value
 
-    def _require_runtime(self) -> Runtime:
-        runtime = self._runtime
-        if runtime is None:
-            raise RuntimeError("component catalog runtime is not attached")
-        return runtime
 
-
-def _load_component_descriptors() -> tuple[ComponentDescriptor, ...]:
-    items: dict[tuple[str, str], ComponentDescriptor] = {}
+def load_component_descriptors() -> tuple[_ComponentDescriptor, ...]:
+    items: dict[tuple[str, str], _ComponentDescriptor] = {}
     package = importlib.import_module("serpsage.components")
     module_infos = sorted(
         pkgutil.walk_packages(
@@ -493,7 +273,9 @@ def _load_component_descriptors() -> tuple[ComponentDescriptor, ...]:
                 and not inspect.isabstract(value)
             ):
                 continue
-            meta = value.__dict__.get("meta")
+            meta = getattr(value, _COMPONENT_META_ATTR, None)
+            if not isinstance(meta, ComponentMeta):
+                meta = value.__dict__.get("meta")
             if not isinstance(meta, ComponentMeta):
                 continue
             config_cls = getattr(value, "Config", None)
@@ -511,7 +293,7 @@ def _load_component_descriptors() -> tuple[ComponentDescriptor, ...]:
                 raise ValueError(
                     f"component `{family.name}:{config_cls.__setting_name__}` is already registered"
                 )
-            items[key] = ComponentDescriptor(
+            items[key] = _ComponentDescriptor(
                 family=family,
                 cls=value,
                 config_cls=config_cls,
@@ -520,21 +302,112 @@ def _load_component_descriptors() -> tuple[ComponentDescriptor, ...]:
     return tuple(items[key] for key in sorted(items))
 
 
-def _cast_component_value(
+def materialize_settings(
     *,
-    value: object,
-    family: str,
-    component_name: str,
-    expected_type: type[_ComponentT] | None,
-) -> object | _ComponentT:
-    if expected_type is None:
-        return value
-    if not isinstance(value, expected_type):
+    settings: AppSettings | Mapping[str, Any],
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> AppSettings:
+    if isinstance(settings, AppSettings):
+        raw_settings = settings.model_dump(mode="python")
+    elif isinstance(settings, Mapping):
+        raw_settings = dict(settings)
+    else:
         raise TypeError(
-            f"component `{family}:{component_name}` expected "
-            f"`{expected_type.__name__}`, got `{type(value).__name__}`"
+            f"settings must be an AppSettings or mapping, got `{type(settings).__name__}`"
         )
-    return value
+    app_model = _create_settings_model(descriptors=descriptors)
+    return app_model.model_validate(raw_settings)
+
+
+def register_component(*, meta: ComponentMeta) -> Callable[[_T], _T]:
+    def decorator(cls: _T) -> _T:
+        setattr(cls, _COMPONENT_META_ATTR, meta)
+        return cls
+
+    return decorator
+
+
+def _create_settings_model(
+    *,
+    descriptors: tuple[_ComponentDescriptor, ...],
+) -> type[AppSettings]:
+    cache_key = tuple(
+        sorted(
+            (
+                descriptor.family.name,
+                descriptor.config_cls.__setting_name__,
+                f"{descriptor.config_cls.__module__}.{descriptor.config_cls.__qualname__}",
+            )
+            for descriptor in descriptors
+        )
+    )
+    cached = _APP_SETTINGS_MODEL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    family_descriptors: dict[str, list[_ComponentDescriptor]] = {}
+    for descriptor in descriptors:
+        family_descriptors.setdefault(descriptor.family.name, []).append(descriptor)
+
+    family_names: list[str] = list(_FAMILY_SETTING_BASES)
+    seen = set(family_names)
+    for family_name in sorted(family_descriptors):
+        if family_name in seen:
+            continue
+        family_names.append(family_name)
+        seen.add(family_name)
+
+    component_fields: dict[str, Any] = {}
+    for family_name in family_names:
+        field_definitions: dict[str, Any] = {}
+        for descriptor in family_descriptors.get(family_name, ()):
+            try:
+                default_value: Any = descriptor.config_cls()
+            except ValidationError:
+                default_value = ...
+            field_definitions[descriptor.config_cls.__setting_name__] = (
+                descriptor.config_cls,
+                default_value,
+            )
+
+        model_name = "Dynamic" + "".join(
+            part.capitalize() for part in family_name.split("_")
+        )
+        family_model = cast(
+            "type[SettingModel]",
+            create_model(
+                f"{model_name}Settings",
+                __base__=_FAMILY_SETTING_BASES.get(family_name, SettingModel),
+                **field_definitions,
+            ),
+        )
+        try:
+            family_default = family_model()
+        except ValidationError:
+            family_default = family_model.model_construct()
+        component_fields[family_name] = (family_model, family_default)
+
+    components_model = cast(
+        "type[ComponentSettings]",
+        create_model(
+            "ComponentSettings",
+            __base__=ComponentSettings,
+            **component_fields,
+        ),
+    )
+    try:
+        components_default = components_model()
+    except ValidationError:
+        components_default = components_model.model_construct()
+    app_model = cast(
+        "type[AppSettings]",
+        create_model(
+            "AppSettings",
+            __base__=AppSettings,
+            components=(components_model, components_default),
+        ),
+    )
+    _APP_SETTINGS_MODEL_CACHE[cache_key] = app_model
+    return app_model
 
 
 def _is_setting_class(candidate: object) -> TypeGuard[type[ComponentConfigBase]]:
@@ -546,10 +419,4 @@ def _is_setting_class(candidate: object) -> TypeGuard[type[ComponentConfigBase]]
     )
 
 
-__all__ = [
-    "ComponentCatalog",
-    "ComponentDescriptor",
-    "ComponentRegistry",
-    "ComponentResolutionError",
-    "ResolvedComponent",
-]
+__all__ = ["ComponentCatalog"]

@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
+from typing import (
+    Any,
+    ClassVar,
+    Generic,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from pydantic import ConfigDict
 
 from serpsage.core.workunit import WorkUnit
+from serpsage.dependencies.contracts import InjectToken
 from serpsage.settings.models import SettingModel
 
 ConfigT = TypeVar("ConfigT", bound="ComponentConfigBase")
@@ -47,29 +56,59 @@ class ComponentFamily(Generic[WorkUnitT]):
     name: str
 
     def __post_init__(self) -> None:
-        normalized = str(self.name or "").strip()
-        if not normalized:
+        if not str(self.name or "").strip():
             raise ValueError("component family name must be non-empty")
-        object.__setattr__(self, "name", normalized)
+
+
+_COMPONENT_FAMILIES: dict[str, ComponentFamily[Any]] = {}
+_COMPONENT_COLLECTION_TOKENS: dict[str, InjectToken[tuple[object, ...]]] = {}
+
+
+def define_component_family(name: str) -> ComponentFamily[Any]:
+    normalized = str(name or "").strip()
+    if not normalized:
+        raise ValueError("component family name must be non-empty")
+    family = _COMPONENT_FAMILIES.get(normalized)
+    if family is not None:
+        return family
+    created = ComponentFamily[Any](name=normalized)
+    _COMPONENT_FAMILIES[normalized] = created
+    return created
 
 
 def coerce_component_family(
     family: ComponentFamily[Any] | str,
 ) -> ComponentFamily[Any]:
-    if isinstance(family, ComponentFamily):
-        return family
-    return ComponentFamily[Any](name=str(family))
+    return (
+        family
+        if isinstance(family, ComponentFamily)
+        else define_component_family(family)
+    )
 
 
-HTTP_FAMILY = ComponentFamily[Any](name="http")
-PROVIDER_FAMILY = ComponentFamily[Any](name="provider")
-CRAWL_FAMILY = ComponentFamily[Any](name="crawl")
-EXTRACT_FAMILY = ComponentFamily[Any](name="extract")
-RANK_FAMILY = ComponentFamily[Any](name="rank")
-LLM_FAMILY = ComponentFamily[Any](name="llm")
-CACHE_FAMILY = ComponentFamily[Any](name="cache")
-TELEMETRY_FAMILY = ComponentFamily[Any](name="telemetry")
-RATE_LIMIT_FAMILY = ComponentFamily[Any](name="rate_limit")
+def family_collection_token(
+    family: ComponentFamily[Any] | str,
+) -> InjectToken[tuple[object, ...]]:
+    normalized = coerce_component_family(family).name
+    token = _COMPONENT_COLLECTION_TOKENS.get(normalized)
+    if token is not None:
+        return token
+    created: InjectToken[tuple[object, ...]] = InjectToken(
+        f"components.{normalized}.all"
+    )
+    _COMPONENT_COLLECTION_TOKENS[normalized] = created
+    return created
+
+
+HTTP_FAMILY = define_component_family("http")
+PROVIDER_FAMILY = define_component_family("provider")
+CRAWL_FAMILY = define_component_family("crawl")
+EXTRACT_FAMILY = define_component_family("extract")
+RANK_FAMILY = define_component_family("rank")
+LLM_FAMILY = define_component_family("llm")
+CACHE_FAMILY = define_component_family("cache")
+TELEMETRY_FAMILY = define_component_family("telemetry")
+RATE_LIMIT_FAMILY = define_component_family("rate_limit")
 
 BUILTIN_COMPONENT_FAMILIES = (
     HTTP_FAMILY,
@@ -103,6 +142,7 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
     ) -> None:
         super().__init_subclass__()
         resolved_config = config
+
         orig_bases: tuple[type, ...] = getattr(cls, "__orig_bases__", ())
         for orig_base in orig_bases:
             origin_class = get_origin(orig_base)
@@ -160,4 +200,6 @@ __all__ = [
     "RATE_LIMIT_FAMILY",
     "TELEMETRY_FAMILY",
     "coerce_component_family",
+    "define_component_family",
+    "family_collection_token",
 ]

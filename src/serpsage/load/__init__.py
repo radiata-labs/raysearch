@@ -1,3 +1,3 @@
-from serpsage.load.components import ComponentCatalog, ComponentRegistry
+from serpsage.load.components import ComponentCatalog
 
-__all__ = ["ComponentCatalog", "ComponentRegistry"]
+__all__ = ["ComponentCatalog"]

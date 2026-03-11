@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
@@ -14,6 +16,30 @@ from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route
+
+_original_call_exception_handler = getattr(
+    asyncio.BaseEventLoop, "call_exception_handler", None
+)
+LoopExceptionHandler = Callable[[asyncio.AbstractEventLoop, dict[str, object]], None]
+_original_call_exception_handler = cast(
+    "LoopExceptionHandler | None", _original_call_exception_handler
+)
+
+
+def _suppress_future_exception_warning(
+    self: asyncio.AbstractEventLoop,
+    context: dict[str, object],
+) -> None:
+    exc = context.get("exception")
+    if exc is not None:
+        exc_name = type(exc).__name__
+        if exc_name in {"TimeoutError", "TargetClosedError", "Error"}:
+            return
+    if _original_call_exception_handler:
+        _original_call_exception_handler(self, context)
+
+
+asyncio.BaseEventLoop.call_exception_handler = _suppress_future_exception_warning  # type: ignore[method-assign]
 PLAYWRIGHT_AVAILABLE = False
 _pw_factory = None
 try:
