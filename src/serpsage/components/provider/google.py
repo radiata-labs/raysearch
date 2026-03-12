@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import re
+from typing import Any
 from typing_extensions import override
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from pydantic import Field, field_validator
 
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import (
@@ -20,15 +22,7 @@ from serpsage.models.components.provider import (
 )
 from serpsage.utils import clean_whitespace
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-_GOOGLE_TIME_RANGE_MAP = {
-    "day": "qdr:d",
-    "week": "qdr:w",
-    "month": "qdr:m",
-    "year": "qdr:y",
-}
+_GOOGLE_TIME_RANGE_MAP = {"day": "d", "week": "w", "month": "m", "year": "y"}
 _GOOGLE_BLOCK_MARKERS = (
     "unusual traffic",
     "sorry.google.com",
@@ -37,27 +31,32 @@ _GOOGLE_BLOCK_MARKERS = (
     "our systems have detected",
 )
 _GOOGLE_RESULT_SELECTORS = ("div.MjjYud", "div.g")
-_GOOGLE_SNIPPET_SELECTORS = (
-    '[data-sncf="1"]',
-    "div.VwiC3b",
-    "div.yXK7lf",
-    "span.aCOpRe",
-    "div.s3v9rd",
-)
+_GOOGLE_SNIPPET_SELECTORS = ('[data-sncf="1"]',)
+_GOOGLE_SUGGESTION_SELECTOR = "div.ouy7Mc a"
 _DEFAULT_GOOGLE_BASE_URL = "https://www.google.com/search"
 _DEFAULT_GOOGLE_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RQ3A.210905.001; wv) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 "
+    "Chrome/120.0.0.0 Mobile Safari/537.36 GSA/14.48.26.29.arm64"
 )
+_RE_DATA_IMAGE = re.compile(r'"(dimg_[^"]*)"[^;]*;(data:image[^;]*;[^;]*);')
+_RE_DATA_IMAGE_END = re.compile(r'"(dimg_[^"]*)"[^;]*;(data:image[^;]*;[^;]*)$')
 
 
 class GoogleProviderConfig(ProviderConfigBase):
     __setting_family__ = "provider"
     __setting_name__ = "google"
 
+    base_url: str = _DEFAULT_GOOGLE_BASE_URL
+    user_agent: str = _DEFAULT_GOOGLE_USER_AGENT
     safe: GoogleSafeSearchKey = "off"
     country: str = "US"
+    cookies: dict[str, str] = Field(default_factory=lambda: {"CONSENT": "YES+"})
+
+    @field_validator("user_agent")
+    @classmethod
+    def _normalize_user_agent(cls, value: str) -> str:
+        return clean_whitespace(str(value or ""))
 
     @classmethod
     @override
@@ -68,31 +67,8 @@ class GoogleProviderConfig(ProviderConfigBase):
         env: dict[str, str],
     ) -> dict[str, Any]:
         payload = dict(raw)
-        payload.setdefault("base_url", _DEFAULT_GOOGLE_BASE_URL)
-        payload.setdefault("user_agent", _DEFAULT_GOOGLE_USER_AGENT)
-        payload.setdefault("country", "US")
-        payload.setdefault("cookies", {}).setdefault("CONSENT", "YES+")
-        if env.get("PROVIDER_BASE_URL"):
-            payload["base_url"] = env["PROVIDER_BASE_URL"]
-        elif env.get("SEARCH_BASE_URL"):
-            payload["base_url"] = env["SEARCH_BASE_URL"]
-        elif env.get("GOOGLE_BASE_URL"):
+        if env.get("GOOGLE_BASE_URL"):
             payload["base_url"] = env["GOOGLE_BASE_URL"]
-        api_key = env.get("PROVIDER_API_KEY") or env.get("SEARCH_API_KEY")
-        if api_key:
-            payload["api_key"] = api_key
-        user_agent = env.get("PROVIDER_USER_AGENT") or env.get("GOOGLE_USER_AGENT")
-        if user_agent:
-            payload["user_agent"] = user_agent
-        country = env.get("PROVIDER_COUNTRY") or env.get("GOOGLE_COUNTRY")
-        if country:
-            payload["country"] = country
-        safe = env.get("PROVIDER_SAFE") or env.get("GOOGLE_SAFE")
-        if safe:
-            payload["safe"] = str(safe).strip().lower()
-        results_per_page = env.get("PROVIDER_RESULTS_PER_PAGE")
-        if results_per_page:
-            payload["results_per_page"] = results_per_page
         return payload
 
 
@@ -108,109 +84,130 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
         language: str = "",
         **kwargs: Any,
     ) -> SearchProviderResponse:
-        cfg = self.config
         normalized_query = clean_whitespace(query)
+        normalized_language = clean_whitespace(language)
         if not normalized_query:
             raise ValueError("query must not be empty")
-        request_params = self._build_request_params(
+
+        request = self._build_request(
             query=normalized_query,
             page=page,
-            language=language,
+            language=normalized_language,
             kwargs=kwargs,
         )
-        headers = dict(cfg.headers or {})
-        headers.setdefault("Accept", "*/*")
-        headers.setdefault("User-Agent", str(cfg.user_agent))
-        cookies = dict(cfg.cookies or {})
-        cookies.setdefault("CONSENT", "YES+")
         resp = await self.http.client.get(
-            str(cfg.base_url),
-            params=request_params,
-            headers=headers,
-            cookies=cookies,
-            timeout=httpx.Timeout(cfg.timeout_s),
-            follow_redirects=bool(cfg.allow_redirects),
+            request["url"],
+            headers=request["headers"],
+            cookies=request["cookies"],
+            timeout=httpx.Timeout(self.config.timeout_s),
+            follow_redirects=bool(self.config.allow_redirects),
         )
         resp.raise_for_status()
         self._raise_if_blocked(resp)
         results, suggestions = self._parse_search_results(
-            resp.text, base_url=cfg.base_url
+            resp.text,
+            base_url=str(resp.url),
         )
         return SearchProviderResponse(
             provider_backend="google",
             query=normalized_query,
             page=int(page),
-            language=clean_whitespace(language),
+            language=normalized_language,
             suggestions=suggestions,
             results=results,
             metadata={
                 "request_url": str(resp.url),
-                "google_domain": str(cfg.base_url),
+                "google_domain": str(request["base_url"]),
             },
         )
 
-    def _build_request_params(
+    def _build_request(
         self,
         *,
         query: str,
         page: int,
         language: str,
         kwargs: dict[str, Any],
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         cfg = self.config
         extra = dict(kwargs)
-        per_page = self._coerce_positive_int(extra.pop("num", cfg.results_per_page))
         safe = clean_whitespace(str(extra.pop("safe", cfg.safe) or "")).casefold()
         time_range = clean_whitespace(str(extra.pop("time_range", "") or "")).casefold()
         country = clean_whitespace(str(extra.pop("country", cfg.country) or "")).upper()
-        ui_lang, result_lang, region = self._resolve_locale(
+        google_info = self._get_google_info(
             language=language,
-            default_country=country,
+            default_country=country or "US",
         )
-        params: dict[str, str] = {
+        start = max(0, (int(page) - 1) * 10)
+        query_params: dict[str, str | int] = {
             "q": query,
-            "ie": "utf8",
-            "oe": "utf8",
+            **google_info["params"],
             "filter": "0",
-            "start": str(max(0, (int(page) - 1) * per_page)),
-            "num": str(per_page),
-            "hl": ui_lang,
+            "start": start,
         }
-        if result_lang:
-            params["lr"] = f"lang_{result_lang}"
-        if region:
-            params["gl"] = region
-            params["cr"] = f"country{region}"
-        if safe in {"off", "medium", "high"}:
-            params["safe"] = safe
-        if time_range in _GOOGLE_TIME_RANGE_MAP:
-            params["tbs"] = _GOOGLE_TIME_RANGE_MAP[time_range]
         for key, value in extra.items():
             token = clean_whitespace(str(key or ""))
             if not token or value is None:
                 continue
-            params[token] = str(value)
-        return params
+            query_params[token] = str(value)
+        query_url = str(google_info["base_url"]) + "?" + urlencode(query_params)
+        if time_range in _GOOGLE_TIME_RANGE_MAP:
+            query_url += "&" + urlencode(
+                {"tbs": "qdr:" + _GOOGLE_TIME_RANGE_MAP[time_range]}
+            )
+        if safe in {"medium", "high"}:
+            query_url += "&" + urlencode({"safe": safe})
+        return {
+            "url": query_url,
+            "headers": google_info["headers"],
+            "cookies": google_info["cookies"],
+            "base_url": google_info["base_url"],
+        }
 
-    def _resolve_locale(
+    def _get_google_info(
         self,
         *,
         language: str,
         default_country: str,
-    ) -> tuple[str, str, str]:
-        token = clean_whitespace(language).replace("_", "-")
-        if not token:
-            country = default_country or "US"
-            return f"en-{country}", "en", country
-        parts = [part for part in token.split("-") if part]
+    ) -> dict[str, Any]:
+        cfg = self.config
+        locale = clean_whitespace(language).replace("_", "-")
+        region_in_locale = False
+        if not locale or locale == "all":
+            locale = "en"
+        parts = [part for part in locale.split("-") if part]
         lang = clean_whitespace(parts[0]).lower() or "en"
-        region = (
-            clean_whitespace(parts[-1]).upper()
-            if len(parts) > 1 and len(clean_whitespace(parts[-1])) == 2
-            else default_country
-        )
-        ui_lang = f"{lang}-{region}" if region else lang
-        return ui_lang, lang, region
+        country = default_country or "US"
+        if len(parts) > 1 and len(clean_whitespace(parts[-1])) == 2:
+            country = clean_whitespace(parts[-1]).upper()
+            region_in_locale = True
+        lr = f"lang_{lang}"
+        if region_in_locale and lang == "zh":
+            lr = f"lang_{lang}-{country}"
+        if clean_whitespace(language).casefold() == "all":
+            lr = ""
+        lang_code = lr.split("_")[-1] if lr else lang
+        base_url = clean_whitespace(str(cfg.base_url or _DEFAULT_GOOGLE_BASE_URL))
+        headers = dict(cfg.headers or {})
+        headers["Accept"] = "*/*"
+        headers["User-Agent"] = self._google_user_agent()
+        cookies = dict(cfg.cookies or {})
+        cookies["CONSENT"] = "YES+"
+        params = {
+            "hl": f"{lang_code}-{country}",
+            "lr": lr,
+            "cr": f"country{country}" if region_in_locale else "",
+            "ie": "utf8",
+            "oe": "utf8",
+        }
+        return {
+            "base_url": base_url,
+            "params": params,
+            "headers": headers,
+            "cookies": cookies,
+            "country": country,
+            "language": lr,
+        }
 
     def _parse_search_results(
         self,
@@ -219,11 +216,14 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
         base_url: str,
     ) -> tuple[list[SearchProviderResult], list[str]]:
         soup = BeautifulSoup(raw_html, "html.parser")
+        data_image_map = self._parse_data_images(raw_html)
         results: list[SearchProviderResult] = []
+        suggestions: list[str] = []
         seen_urls: set[str] = set()
         for block in self._iter_result_blocks(soup):
-            for script in block.select("script, style"):
-                script.decompose()
+            title = self._extract_title(block)
+            if not title:
+                continue
             anchor = block.select_one("a[href]")
             if anchor is None:
                 continue
@@ -236,25 +236,34 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
             key = resolved_url.casefold()
             if key in seen_urls:
                 continue
-            title = self._extract_title(block)
             snippet = self._extract_snippet(block)
-            if not title and not snippet:
-                continue
+            display_url = self._extract_display_url(block)
+            metadata: dict[str, Any] = {}
+            thumbnail = self._extract_thumbnail(block, data_image_map)
+            if thumbnail:
+                metadata["thumbnail"] = thumbnail
             seen_urls.add(key)
             results.append(
                 SearchProviderResult(
                     url=resolved_url,
                     title=title,
                     snippet=snippet,
-                    display_url=self._extract_display_url(block),
+                    display_url=display_url,
                     source_engine="google",
                     position=len(results) + 1,
+                    metadata=metadata,
                 )
             )
-        suggestions = self._extract_suggestions(soup)
-        return results, suggestions
+        for anchor in soup.select(_GOOGLE_SUGGESTION_SELECTOR):
+            if not isinstance(anchor, Tag):
+                continue
+            suggestion = clean_whitespace(anchor.get_text(" ", strip=True))
+            if suggestion:
+                suggestions.append(suggestion)
+        return results, self._dedupe_text(suggestions)
 
-    def _iter_result_blocks(self, soup: BeautifulSoup) -> Iterable[Tag]:
+    def _iter_result_blocks(self, soup: BeautifulSoup) -> list[Tag]:
+        out: list[Tag] = []
         seen: set[int] = set()
         for selector in _GOOGLE_RESULT_SELECTORS:
             for block in soup.select(selector):
@@ -264,10 +273,11 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
                 if marker in seen:
                     continue
                 seen.add(marker)
-                yield block
+                out.append(block)
+        return out
 
     def _extract_title(self, block: Tag) -> str:
-        for selector in ("h3", '[role="heading"]', 'div[role="link"]'):
+        for selector in ('div[role*="link"]', "h3", '[role="heading"]'):
             node = block.select_one(selector)
             if node is None:
                 continue
@@ -277,14 +287,19 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
         return ""
 
     def _extract_snippet(self, block: Tag) -> str:
+        parts: list[str] = []
         for selector in _GOOGLE_SNIPPET_SELECTORS:
-            node = block.select_one(selector)
-            if node is None:
-                continue
-            snippet = clean_whitespace(node.get_text(" ", strip=True))
-            if snippet:
-                return snippet
-        return ""
+            for node in block.select(selector):
+                if not isinstance(node, Tag):
+                    continue
+                for script in node.select("script"):
+                    script.decompose()
+                snippet = clean_whitespace(node.get_text(" ", strip=True))
+                if snippet:
+                    parts.append(snippet)
+            if parts:
+                break
+        return clean_whitespace(" ".join(parts))
 
     def _extract_display_url(self, block: Tag) -> str:
         for selector in ("cite", "span.VuuXrf", "div.yuRUbf cite"):
@@ -296,26 +311,39 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
                 return value
         return ""
 
-    def _extract_suggestions(self, soup: BeautifulSoup) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for anchor in soup.select("div.ouy7Mc a"):
-            if not isinstance(anchor, Tag):
-                continue
-            value = clean_whitespace(anchor.get_text(" ", strip=True))
-            if not value:
-                continue
-            key = value.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(value)
-        return out
+    def _extract_thumbnail(
+        self,
+        block: Tag,
+        data_image_map: dict[str, str],
+    ) -> str:
+        image = block.select_one("img[src]")
+        if image is None:
+            return ""
+        src = clean_whitespace(str(image.get("src", "")))
+        if src.startswith("data:image"):
+            img_id = clean_whitespace(str(image.get("id", "")))
+            if img_id:
+                return clean_whitespace(data_image_map.get(img_id, src))
+        return src
+
+    def _parse_data_images(self, text: str) -> dict[str, str]:
+        data_image_map: dict[str, str] = {}
+        for img_id, data_image in _RE_DATA_IMAGE.findall(text):
+            end_pos = data_image.rfind("=")
+            if end_pos > 0:
+                data_image = data_image[: end_pos + 1]
+            data_image_map[img_id] = data_image
+        last = _RE_DATA_IMAGE_END.search(text)
+        if last is not None:
+            data_image_map[last.group(1)] = last.group(2)
+        return data_image_map
 
     def _resolve_result_url(self, raw_href: str, *, base_url: str) -> str:
         href = clean_whitespace(raw_href)
         if not href:
             return ""
+        if href.startswith("/url?q="):
+            href = unquote(href[7:].split("&sa=U")[0])
         absolute = urljoin(base_url, href)
         parsed = urlparse(absolute)
         if self._is_google_host(parsed.netloc) and parsed.path == "/url":
@@ -339,12 +367,23 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
         if any(marker in text for marker in _GOOGLE_BLOCK_MARKERS):
             raise RuntimeError("google blocked the request or requires verification")
 
-    def _coerce_positive_int(self, value: Any) -> int:
-        try:
-            resolved = int(value)
-        except Exception:
-            return 10
-        return max(1, min(100, resolved))
+    def _google_user_agent(self) -> str:
+        configured = clean_whitespace(str(self.config.user_agent or ""))
+        return configured or _DEFAULT_GOOGLE_USER_AGENT
+
+    def _dedupe_text(self, values: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            item = clean_whitespace(value)
+            if not item:
+                continue
+            key = item.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
 
     def _is_google_host(self, host: str) -> bool:
         normalized = clean_whitespace(host).lower()

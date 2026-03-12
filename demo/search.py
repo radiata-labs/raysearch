@@ -47,6 +47,10 @@ async def main(
 
 if __name__ == "__main__":
     import time
+    from pathlib import Path
 
-    out = anyio.run(main, "The details of kimi-k2.5", "deep", 5)
+    cache = Path("./.cache/.serpsage_events.jsonl")
+    if cache.exists():
+        cache.unlink()
+    out = anyio.run(main, "kimi-k2.5", "fast", 5)
     print(out["search_result"])

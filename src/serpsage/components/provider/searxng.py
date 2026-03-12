@@ -4,6 +4,7 @@ from typing import Any
 from typing_extensions import override
 
 import httpx
+from pydantic import field_validator
 
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
@@ -21,6 +22,23 @@ class SearxngProviderConfig(ProviderConfigBase):
     __setting_family__ = "provider"
     __setting_name__ = "searxng"
 
+    base_url: str = _DEFAULT_SEARXNG_BASE_URL
+    api_key: str | None = None
+    user_agent: str = ""
+
+    @field_validator("api_key")
+    @classmethod
+    def _normalize_api_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        token = clean_whitespace(str(value))
+        return token or None
+
+    @field_validator("user_agent")
+    @classmethod
+    def _normalize_user_agent(cls, value: str) -> str:
+        return clean_whitespace(str(value or ""))
+
     @classmethod
     @override
     def inject_env(
@@ -30,14 +48,9 @@ class SearxngProviderConfig(ProviderConfigBase):
         env: dict[str, str],
     ) -> dict[str, Any]:
         payload = dict(raw)
-        payload.setdefault("base_url", _DEFAULT_SEARXNG_BASE_URL)
-        if env.get("PROVIDER_BASE_URL"):
-            payload["base_url"] = env["PROVIDER_BASE_URL"]
-        elif env.get("SEARCH_BASE_URL"):
-            payload["base_url"] = env["SEARCH_BASE_URL"]
-        elif env.get("SEARXNG_BASE_URL"):
+        if env.get("SEARXNG_BASE_URL"):
             payload["base_url"] = env["SEARXNG_BASE_URL"]
-        api_key = env.get("PROVIDER_API_KEY") or env.get("SEARCH_API_KEY")
+        api_key = env.get("SEARXNG_API_KEY")
         if api_key:
             payload["api_key"] = api_key
         cf_id = env.get("SEARXNG_CF_ACCESS_CLIENT_ID")
