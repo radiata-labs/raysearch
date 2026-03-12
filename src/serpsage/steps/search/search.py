@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 import re
 from contextlib import suppress
-from typing import Any, Literal
+from typing import Literal
 from typing_extensions import override
-from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
+from urllib.parse import urlparse
 
 import anyio
 
@@ -26,10 +26,8 @@ from serpsage.models.steps.search import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
-from serpsage.utils import clean_whitespace, strip_html
+from serpsage.utils import canonicalize_url, clean_whitespace, strip_html
 
-_TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
-_TRACKING_QUERY_PREFIXES = ("utm_",)
 _AUTO_RULE_QUERY_WEIGHT = 0.35
 _AUTO_PREFETCH_MULTIPLIER = 1.6
 _AUTO_PREFETCH_EXTRA_CAP = 8
@@ -454,7 +452,7 @@ class SearchStep(StepBase[SearchStepContext]):
                 continue
             title = clean_whitespace(strip_html(raw.title))
             snippet = clean_whitespace(strip_html(raw.snippet))
-            canonical_url = self._canonicalize_url(url)
+            canonical_url = canonicalize_url(url)
             out.append(
                 SearchNormalizedResult(
                     url=url,
@@ -502,59 +500,11 @@ class SearchStep(StepBase[SearchStepContext]):
             f".{normalized_token}"
         )
 
-    def _canonicalize_url(self, url: str) -> str:
-        token = clean_whitespace(url)
-        if not token:
-            return ""
-        try:
-            parsed = urlsplit(token)
-        except Exception:  # noqa: BLE001
-            return token
-        scheme = clean_whitespace(parsed.scheme).lower() or "https"
-        host = clean_whitespace(str(parsed.hostname or "")).lower()
-        if not host:
-            return token
-        port = self._resolve_port(parsed)
-        netloc = self._compose_netloc(scheme=scheme, host=host, port=port)
-        path = clean_whitespace(parsed.path) or "/"
-        while "//" in path:
-            path = path.replace("//", "/")
-        if path != "/":
-            path = path.rstrip("/") or "/"
-        pairs: list[tuple[str, str]] = []
-        for key, value in parse_qsl(parsed.query, keep_blank_values=False):
-            normalized_key = clean_whitespace(key)
-            if not normalized_key:
-                continue
-            key_lc = normalized_key.casefold()
-            if key_lc in _TRACKING_QUERY_KEYS:
-                continue
-            if any(key_lc.startswith(prefix) for prefix in _TRACKING_QUERY_PREFIXES):
-                continue
-            pairs.append((normalized_key, clean_whitespace(value)))
-        pairs.sort(key=lambda item: (item[0].casefold(), item[1]))
-        query = urlencode(pairs, doseq=True)
-        return urlunsplit((scheme, netloc, path, query, ""))
-
     def _is_cjk_token(self, token: str) -> bool:
         return bool(_RE_CJK_TOKEN.search(token))
 
     def _contains_cjk(self, *, text: str) -> bool:
         return bool(_RE_CJK_TOKEN.search(text))
-
-    def _resolve_port(self, parsed: Any) -> int | None:
-        try:
-            value = parsed.port
-        except Exception:  # noqa: BLE001
-            return None
-        return int(value) if value is not None else None
-
-    def _compose_netloc(self, *, scheme: str, host: str, port: int | None) -> str:
-        if port is None:
-            return host
-        if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
-            return host
-        return f"{host}:{int(port)}"
 
     def _normalize_mode(self, value: object) -> Literal["fast", "auto", "deep"]:
         token = clean_whitespace(str(value or "")).casefold()

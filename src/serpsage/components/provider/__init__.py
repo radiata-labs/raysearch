@@ -1,3 +1,7 @@
-from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.provider.base import (
+    PROVIDER_ROUTES_TOKEN,
+    ProviderConfigBase,
+    SearchProviderBase,
+)
 
-__all__ = ["ProviderConfigBase", "SearchProviderBase"]
+__all__ = ["PROVIDER_ROUTES_TOKEN", "ProviderConfigBase", "SearchProviderBase"]

@@ -21,6 +21,7 @@ from serpsage.components.loads import (
     load_components,
     materialize_settings,
 )
+from serpsage.components.provider import PROVIDER_ROUTES_TOKEN
 from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.components.rate_limit.base import RateLimiterBase
@@ -269,7 +270,6 @@ class Engine(WorkUnit):
             ("rate_limit", RateLimiterBase, overrides.rate_limiter),
             ("extract", ExtractorBase, overrides.extractor),
             ("rank", RankerBase, overrides.ranker),
-            ("provider", SearchProviderBase, overrides.provider),
             ("crawl", CrawlerBase, overrides.crawler),
         ):
             if override_value is not None:
@@ -295,6 +295,24 @@ class Engine(WorkUnit):
         elif registry.enabled_specs("telemetry"):
             cache[TelemetryEmitterBase] = await solve(
                 registry.default_spec("telemetry").cls
+            )
+
+        provider_routes: list[object] = []
+        for spec in registry.enabled_specs("provider"):
+            if spec.name == "blend":
+                continue
+            if not issubclass(spec.cls, SearchProviderBase):
+                continue
+            route = await solve(spec.cls)
+            if route is not None:
+                provider_routes.append(route)
+        cache[PROVIDER_ROUTES_TOKEN] = tuple(provider_routes)
+        if overrides.provider is not None:
+            cache[SearchProviderBase] = overrides.provider
+            cache[type(overrides.provider)] = overrides.provider
+        elif registry.enabled_specs("provider"):
+            cache[SearchProviderBase] = await solve(
+                registry.default_spec("provider").cls
             )
 
         llm_routes: list[object] = []

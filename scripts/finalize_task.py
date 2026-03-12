@@ -230,12 +230,19 @@ def _run_cmd(
     *,
     env: dict[str, str] | None = None,
 ) -> tuple[bool, str]:
+    merged_env = dict(os.environ)
+    if env:
+        merged_env.update(env)
+    merged_env.setdefault("PYTHONIOENCODING", "utf-8")
+    merged_env.setdefault("PYTHONUTF8", "1")
     completed = subprocess.run(  # noqa: PLW1510, S603
         cmd,
         cwd=repo_root,
         capture_output=True,
         text=True,
-        env=env,
+        encoding="utf-8",
+        errors="replace",
+        env=merged_env,
     )
     output = (completed.stdout or "") + (completed.stderr or "")
     return completed.returncode == 0, output.strip()

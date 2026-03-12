@@ -10,6 +10,7 @@ from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.provider import SearchProviderResult
 
 GoogleSafeSearchKey = Literal["off", "medium", "high"]
+PROVIDER_ROUTES_TOKEN = "component.provider_routes"  # noqa: S105
 
 
 class RetrySettings(ComponentConfigBase):
@@ -76,6 +77,7 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
 
 __all__ = [
     "GoogleSafeSearchKey",
+    "PROVIDER_ROUTES_TOKEN",
     "ProviderConfigBase",
     "RetrySettings",
     "SearchProviderBase",
