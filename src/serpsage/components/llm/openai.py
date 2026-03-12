@@ -7,7 +7,7 @@ from typing_extensions import TypeVar, override
 from pydantic import BaseModel
 
 from serpsage.components.http.base import HttpClientBase
-from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
+from serpsage.components.llm.base import LLMClientBase, LLMConfig, LLMModelConfig
 from serpsage.dependencies import Depends
 from serpsage.models.components.llm import (
     ChatDictResult,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
-class OpenAIModelConfig(LLMModelConfig):
+class OpenAIModelConfig(LLMConfig):
     __setting_family__ = "llm"
     __setting_name__ = "openai"
 
@@ -46,12 +46,12 @@ class OpenAIModelConfig(LLMModelConfig):
         *,
         env: dict[str, str],
     ) -> dict[str, Any]:
-        payload = dict(raw)
-        if not payload.get("api_key") and env.get("OPENAI_API_KEY"):
-            payload["api_key"] = env["OPENAI_API_KEY"]
-        if not payload.get("base_url") and env.get("OPENAI_BASE_URL"):
-            payload["base_url"] = env["OPENAI_BASE_URL"]
-        return payload
+        return cls.inject_model_env(
+            raw,
+            env=env,
+            api_key_env="OPENAI_API_KEY",
+            base_url_env="OPENAI_BASE_URL",
+        )
 
 
 class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
@@ -66,21 +66,17 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
             from openai import AsyncOpenAI
         except ImportError as exc:
             raise RuntimeError("openai is required for OpenAIClient") from exc
-        self.client = AsyncOpenAI(
-            api_key=self.config.api_key,
-            base_url=self.config.base_url,
-            timeout=float(self.config.timeout_s),
-            max_retries=int(self.config.max_retries),
-            default_headers=dict(self.config.headers or {}),
+        self._async_openai = AsyncOpenAI
+
+    def _build_client(self, llm: LLMModelConfig) -> Any:
+        return self._async_openai(
+            api_key=llm.api_key,
+            base_url=llm.base_url,
+            timeout=float(llm.timeout_s),
+            max_retries=int(llm.max_retries),
+            default_headers=dict(llm.headers or {}),
             http_client=self.http.client,
         )
-
-    @override
-    def describe_model(self, name: str) -> OpenAIModelConfig:
-        if str(name) != str(self.config.name):
-            super().describe_model(name)
-            raise AssertionError("unreachable")
-        return self.config
 
     @overload
     async def _create(
@@ -126,9 +122,11 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        llm = self.config
+        llm = self.resolve_model_config(model, route_name=self.pop_route_name(kwargs))
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
+        client = self._build_client(llm)
+        provider_model = str(llm.model)
         response_schema, response_model = self.resolve_response_format(
             response_format,
             format_override=format_override,
@@ -139,7 +137,8 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
             and format_override is None
         ):
             pydantic_completion = await self._create_pydantic_completion(
-                model=model,
+                client=client,
+                model=provider_model,
                 messages=self._to_openai_messages(messages),
                 temperature=float(llm.temperature),
                 timeout=float(timeout_s or llm.timeout_s),
@@ -153,7 +152,8 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
                 parsed = response_model.model_validate_json(text)
             return ChatModelResult(text=text, data=parsed, usage=usage)
         completion = await self._create_completion(
-            model=model,
+            client=client,
+            model=provider_model,
             messages=self._to_openai_messages(
                 messages, response_model, llm.enable_structured
             ),
@@ -179,6 +179,7 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
     async def _create_pydantic_completion(
         self,
         *,
+        client: Any,
         model: str,
         messages: list[ChatCompletionMessageParam],
         temperature: float,
@@ -186,18 +187,22 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
         response_format: type[TModel],
         **kwargs: Any,
     ) -> ParsedChatCompletion[TModel]:
-        return await self.client.chat.completions.parse(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            timeout=timeout,
-            response_format=response_format,
-            **kwargs,
+        return cast(
+            "ParsedChatCompletion[TModel]",
+            await client.chat.completions.parse(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                timeout=timeout,
+                response_format=response_format,
+                **kwargs,
+            ),
         )
 
     async def _create_completion(
         self,
         *,
+        client: Any,
         model: str,
         messages: list[ChatCompletionMessageParam],
         temperature: float,
@@ -206,7 +211,7 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
         **kwargs: Any,
     ) -> ChatCompletion:
         if response_format is None:
-            response = await self.client.chat.completions.create(
+            response = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
@@ -214,7 +219,7 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
                 **kwargs,
             )
             return cast("ChatCompletion", response)
-        response = await self.client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,

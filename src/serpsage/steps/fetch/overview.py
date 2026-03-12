@@ -43,7 +43,6 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
             )
             return ctx
         profile = ctx.settings.fetch.overview
-        model_cfg = self.llm.describe_model(profile.use_model)
         schema = dict(req.json_schema) if isinstance(req.json_schema, dict) else None
         mode = "json" if schema is not None else "text"
         messages = self._build_messages(
@@ -79,10 +78,9 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
         try:
             if schema is None:
                 text_res = await self.llm.create(
-                    model=str(model_cfg.name),
+                    model=self.settings.fetch.overview.use_model,
                     messages=messages,
                     response_format=schema,
-                    timeout_s=float(model_cfg.timeout_s),
                     retries=retries,
                     retry_on=retry_on,
                 )
@@ -97,10 +95,9 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 for attempt_index in range(attempts):
                     try:
                         json_res = await self.llm.create(
-                            model=str(model_cfg.name),
+                            model=self.settings.fetch.overview.use_model,
                             messages=attempt_messages,
                             response_format=schema,
-                            timeout_s=float(model_cfg.timeout_s),
                             retries=0,
                         )
                         output_obj = _coerce_json_output(

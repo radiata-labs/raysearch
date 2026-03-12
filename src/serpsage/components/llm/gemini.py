@@ -7,7 +7,7 @@ from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
+from serpsage.components.llm.base import LLMClientBase, LLMConfig, LLMModelConfig
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -24,7 +24,7 @@ class _ModelDumpable(Protocol):
     def model_dump(self) -> object: ...
 
 
-class GeminiModelConfig(LLMModelConfig):
+class GeminiModelConfig(LLMConfig):
     __setting_family__ = "llm"
     __setting_name__ = "gemini"
 
@@ -36,12 +36,12 @@ class GeminiModelConfig(LLMModelConfig):
         *,
         env: dict[str, str],
     ) -> dict[str, Any]:
-        payload = dict(raw)
-        if not payload.get("api_key") and env.get("GEMINI_API_KEY"):
-            payload["api_key"] = env["GEMINI_API_KEY"]
-        if not payload.get("base_url") and env.get("GEMINI_BASE_URL"):
-            payload["base_url"] = env["GEMINI_BASE_URL"]
-        return payload
+        return cls.inject_model_env(
+            raw,
+            env=env,
+            api_key_env="GEMINI_API_KEY",
+            base_url_env="GEMINI_BASE_URL",
+        )
 
 
 class GeminiClient(LLMClientBase[GeminiModelConfig]):
@@ -53,24 +53,20 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
             self._types = importlib.import_module("google.genai.types")
         except ImportError as exc:
             raise RuntimeError("google-genai is required for GeminiClient") from exc
-        timeout_ms = max(1, int(float(self.config.timeout_s) * 1000))
-        attempts = max(1, int(self.config.max_retries) + 1)
-        self.client = genai.Client(
-            api_key=self.config.api_key,
+        self._client_cls = genai.Client
+
+    def _build_client(self, llm: LLMModelConfig) -> Any:
+        timeout_ms = max(1, int(float(llm.timeout_s) * 1000))
+        attempts = max(1, int(llm.max_retries) + 1)
+        return self._client_cls(
+            api_key=llm.api_key,
             http_options=self._types.HttpOptions(
-                base_url=self.config.base_url,
-                headers=dict(self.config.headers or {}),
+                base_url=llm.base_url,
+                headers=dict(llm.headers or {}),
                 timeout=timeout_ms,
                 retry_options=self._types.HttpRetryOptions(attempts=attempts),
             ),
         )
-
-    @override
-    def describe_model(self, name: str) -> GeminiModelConfig:
-        if str(name) != str(self.config.name):
-            super().describe_model(name)
-            raise AssertionError("unreachable")
-        return self.config
 
     @overload
     async def _create(
@@ -116,9 +112,11 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        llm = self.config
+        llm = self.resolve_model_config(model, route_name=self.pop_route_name(kwargs))
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
+        client = self._build_client(llm)
+        provider_model = str(llm.model)
         response_schema, response_model = self.resolve_response_format(
             response_format,
             format_override=format_override,
@@ -135,8 +133,8 @@ class GeminiClient(LLMClientBase[GeminiModelConfig]):
             enable_structured=bool(llm.enable_structured),
         )
         config = self._merge_config_kwargs(config=config, kwargs=kwargs)
-        response = await self.client.aio.models.generate_content(
-            model=model,
+        response = await client.aio.models.generate_content(
+            model=provider_model,
             contents=contents,
             config=config,
         )

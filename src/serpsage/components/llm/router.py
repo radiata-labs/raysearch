@@ -11,7 +11,7 @@ from serpsage.components.base import (
 )
 from serpsage.components.llm.base import (
     LLMClientBase,
-    LLMModelConfig,
+    LLMConfig,
 )
 from serpsage.dependencies import Depends
 from serpsage.models.components.llm import (
@@ -39,24 +39,20 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
         *,
         routes: tuple[object, ...] = Depends(LLM_ROUTES_TOKEN),
     ) -> None:
-        route_clients = cast("tuple[LLMClientBase[LLMModelConfig], ...]", routes)
-        self.routes: dict[str, tuple[LLMClientBase[LLMModelConfig], str]] = {}
+        route_clients = cast("tuple[LLMClientBase[Any], ...]", routes)
+        self.routes: dict[str, tuple[LLMClientBase[LLMConfig], str]] = {}
         for client in route_clients:
-            model_cfg = client.describe_model(client.config.name)
-            if not model_cfg.api_key:
-                continue
-            if model_cfg.name in self.routes:
-                raise ValueError(f"duplicate llm route `{model_cfg.name}`")
-            self.routes[model_cfg.name] = (client, model_cfg.model)
-
-    @override
-    def describe_model(self, name: str) -> LLMModelConfig:
-        route = self.routes.get(str(name))
-        if route is None:
-            super().describe_model(name)
-            raise AssertionError("unreachable")
-        client, _ = route
-        return client.describe_model(name)
+            for model_cfg in client.configured_models():
+                if not model_cfg.api_key:
+                    continue
+                route_name = str(model_cfg.name).strip()
+                if not route_name:
+                    raise ValueError(
+                        f"{type(client).__name__} contains a model route without a name"
+                    )
+                if route_name in self.routes:
+                    raise ValueError(f"duplicate llm route `{route_name}`")
+                self.routes[route_name] = (client, str(model_cfg.model))
 
     @overload
     async def _create(
@@ -69,6 +65,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
+
     @overload
     async def _create(
         self,
@@ -80,6 +77,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
+
     @overload
     async def _create(
         self,
@@ -91,6 +89,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
+
     @override
     async def _create(
         self,
@@ -130,6 +129,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
                     response_format=None,
                     format_override=None,
                     timeout_s=timeout_s,
+                    _route_name=route_key,
                     **kwargs,
                 )
             elif isinstance(response_format, dict):
@@ -139,6 +139,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
                     response_format=response_format,
                     format_override=None,
                     timeout_s=timeout_s,
+                    _route_name=route_key,
                     **kwargs,
                 )
             elif isinstance(response_format, type) and issubclass(
@@ -150,6 +151,7 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
                     response_format=response_format,
                     format_override=format_override,
                     timeout_s=timeout_s,
+                    _route_name=route_key,
                     **kwargs,
                 )
             else:

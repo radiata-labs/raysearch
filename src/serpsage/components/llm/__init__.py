@@ -1,3 +1,3 @@
-from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
+from serpsage.components.llm.base import LLMClientBase, LLMConfig
 
-__all__ = ["LLMClientBase", "LLMModelConfig"]
+__all__ = ["LLMClientBase", "LLMConfig"]

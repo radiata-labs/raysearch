@@ -8,7 +8,7 @@ from typing_extensions import override
 
 from pydantic import BaseModel
 
-from serpsage.components.llm.base import LLMClientBase, LLMModelConfig
+from serpsage.components.llm.base import LLMClientBase, LLMConfig
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -20,7 +20,7 @@ from serpsage.models.components.llm import (
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
-class DashScopeModelConfig(LLMModelConfig):
+class DashScopeModelConfig(LLMConfig):
     __setting_family__ = "llm"
     __setting_name__ = "dashscope"
 
@@ -32,12 +32,12 @@ class DashScopeModelConfig(LLMModelConfig):
         *,
         env: dict[str, str],
     ) -> dict[str, Any]:
-        payload = dict(raw)
-        if not payload.get("api_key") and env.get("DASHSCOPE_API_KEY"):
-            payload["api_key"] = env["DASHSCOPE_API_KEY"]
-        if not payload.get("base_url") and env.get("DASHSCOPE_BASE_URL"):
-            payload["base_url"] = env["DASHSCOPE_BASE_URL"]
-        return payload
+        return cls.inject_model_env(
+            raw,
+            env=env,
+            api_key_env="DASHSCOPE_API_KEY",
+            base_url_env="DASHSCOPE_BASE_URL",
+        )
 
 
 class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
@@ -55,14 +55,6 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
             raise RuntimeError("dashscope is required for DashScopeClient") from exc
         self._generation_api = generation_mod.AioGeneration
         self._message_type = response_mod.Message
-        self._api_key = self.config.api_key
-
-    @override
-    def describe_model(self, name: str) -> DashScopeModelConfig:
-        if str(name) != str(self.config.name):
-            super().describe_model(name)
-            raise AssertionError("unreachable")
-        return self.config
 
     @overload
     async def _create(
@@ -108,9 +100,10 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
-        llm = self.config
+        llm = self.resolve_model_config(model, route_name=self.pop_route_name(kwargs))
         if not llm.api_key:
             raise RuntimeError("missing LLM api_key")
+        provider_model = str(llm.model)
         response_schema, response_model = self.resolve_response_format(
             response_format,
             format_override=format_override,
@@ -128,11 +121,12 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
                 enable_structured=bool(llm.enable_structured),
             )
         response = await self._async_generation_call(
-            model=model,
+            model=provider_model,
             messages=request_messages,
             temperature=float(llm.temperature),
             timeout=timeout_ms,
             result_format="message",
+            api_key=str(llm.api_key),
             **kwargs,
         )
         text = self._extract_text(response)
@@ -154,10 +148,9 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
         temperature: float,
         timeout: int,
         result_format: str,
+        api_key: str,
         **kwargs: Any,
     ) -> Any:
-        if not self._api_key:
-            raise RuntimeError("missing LLM api_key")
         message_objects = [
             self._message_type(role=msg["role"], content=msg["content"])
             for msg in messages
@@ -168,7 +161,7 @@ class DashScopeClient(LLMClientBase[DashScopeModelConfig]):
             temperature=temperature,
             timeout=timeout,
             result_format=result_format,
-            api_key=self._api_key,
+            api_key=api_key,
             **kwargs,
         )
         if inspect.isasyncgen(response):

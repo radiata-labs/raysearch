@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Generic, TypeAlias, cast, overload
 from typing_extensions import TypeVar
 
@@ -40,6 +40,91 @@ class LLMModelConfig(ComponentConfigBase):
     enable_structured: bool = True
 
 
+class LLMConfig(ComponentConfigBase):
+    models: list[LLMModelConfig] = Field(default_factory=list)
+
+    @classmethod
+    def normalize_models_payload(cls, raw: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(raw)
+        raw_models = payload.get("models")
+        if isinstance(raw_models, list):
+            payload["models"] = [
+                cls._normalize_model_payload(item) for item in raw_models
+            ]
+            return payload
+        legacy_model = cls._extract_legacy_model_payload(payload)
+        if legacy_model is not None:
+            payload["models"] = [legacy_model]
+        return payload
+
+    @classmethod
+    def inject_model_env(
+        cls,
+        raw: dict[str, Any],
+        *,
+        env: dict[str, str],
+        api_key_env: str = "",
+        base_url_env: str = "",
+    ) -> dict[str, Any]:
+        payload = cls.normalize_models_payload(raw)
+        raw_models = payload.get("models")
+        if not isinstance(raw_models, list):
+            return payload
+        models: list[dict[str, Any]] = []
+        for item in raw_models:
+            model_payload = cls._normalize_model_payload(item)
+            if (
+                api_key_env
+                and not model_payload.get("api_key")
+                and env.get(api_key_env)
+            ):
+                model_payload["api_key"] = env[api_key_env]
+            if (
+                base_url_env
+                and not model_payload.get("base_url")
+                and env.get(base_url_env)
+            ):
+                model_payload["base_url"] = env[base_url_env]
+            models.append(model_payload)
+        payload["models"] = models
+        return payload
+
+    @staticmethod
+    def _normalize_model_payload(item: object) -> dict[str, Any]:
+        if isinstance(item, LLMModelConfig):
+            return item.model_dump(mode="python")
+        if isinstance(item, BaseModel):
+            return item.model_dump(mode="python")
+        if isinstance(item, Mapping):
+            return dict(item)
+        raise TypeError("llm models entries must be mappings")
+
+    @classmethod
+    def _extract_legacy_model_payload(
+        cls,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        legacy_fields = (
+            "name",
+            "base_url",
+            "api_key",
+            "model",
+            "timeout_s",
+            "max_retries",
+            "temperature",
+            "headers",
+            "enable_structured",
+        )
+        if not any(field in payload for field in legacy_fields):
+            return None
+        model_payload: dict[str, Any] = {}
+        for field in legacy_fields:
+            if field not in payload:
+                continue
+            model_payload[field] = payload.pop(field)
+        return model_payload
+
+
 LLMConfigT = TypeVar(
     "LLMConfigT",
     bound=ComponentConfigBase,
@@ -50,8 +135,52 @@ LLMConfigT = TypeVar(
 class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
     __di_contract__ = True
 
-    def describe_model(self, name: str) -> LLMModelConfig:
-        raise ValueError(f"llm model `{name}` is not available")
+    def configured_models(self) -> tuple[LLMModelConfig, ...]:
+        models = getattr(self.config, "models", ()) or ()
+        return tuple(model for model in models if isinstance(model, LLMModelConfig))
+
+    def resolve_model_config(
+        self,
+        model: str,
+        *,
+        route_name: str | None = None,
+    ) -> LLMModelConfig:
+        configured = self.configured_models()
+        if not configured:
+            raise RuntimeError(
+                f"{type(self).__name__} requires at least one configured llm model"
+            )
+        normalized_route = str(route_name or "").strip()
+        if normalized_route:
+            for item in configured:
+                if str(item.name).strip() == normalized_route:
+                    return item
+        normalized_model = str(model or "").strip()
+        if normalized_model:
+            for item in configured:
+                if normalized_model in {
+                    str(item.name).strip(),
+                    str(item.model).strip(),
+                }:
+                    return item
+        if len(configured) == 1:
+            return configured[0]
+        available = ", ".join(
+            f"{str(item.name).strip()}->{str(item.model).strip()}"
+            for item in configured
+        )
+        raise RuntimeError(
+            f"llm model `{normalized_route or normalized_model}` is not configured "
+            f"for `{type(self).__name__}`; available routes: {available}"
+        )
+
+    @staticmethod
+    def pop_route_name(kwargs: dict[str, Any]) -> str | None:
+        route_name = kwargs.pop("_route_name", None)
+        if route_name is None:
+            return None
+        normalized = str(route_name).strip()
+        return normalized or None
 
     @overload
     async def _create(
@@ -88,6 +217,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...
+
     @abstractmethod
     async def _create(
         self,
@@ -298,6 +428,7 @@ Here is the output schema:
 
 __all__ = [
     "LLMClientBase",
+    "LLMConfig",
     "LLMModelConfig",
     "RetryOn",
 ]
