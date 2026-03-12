@@ -7,7 +7,7 @@ from typing import Any, Generic
 from typing_extensions import TypeVar, override
 
 import anyio
-from pydantic import Field, field_validator
+from pydantic import field_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.crawl import CrawlResult
@@ -17,79 +17,16 @@ _NESTED_INFLIGHT_BYPASS: ContextVar[bool] = ContextVar(
 )
 
 
-class CrawlRetrySettings(ComponentConfigBase):
-    max_attempts: int = 3
-    delay_ms: int = 200
-
-
-class CrawlRenderSettings(ComponentConfigBase):
-    js_concurrency: int = 12
-    nav_timeout_ms: int = 8_000
-    block_resources: bool = True
-    readiness_poll_ms: int = 150
-    readiness_stable_rounds: int = 2
-    post_ready_wait_ms: int = 120
-
-    @field_validator("js_concurrency")
-    @classmethod
-    def _validate_js_concurrency(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("js_concurrency must be >= 1")
-        return value
-
-    @field_validator(
-        "readiness_poll_ms", "readiness_stable_rounds", "post_ready_wait_ms"
-    )
-    @classmethod
-    def _validate_render_timing(cls, value: int) -> int:
-        if value < 0:
-            raise ValueError("render timing settings must be >= 0")
-        return value
-
-
-def _default_blocked_markers() -> list[str]:
-    return [
-        "cloudflare",
-        "just a moment",
-        "verify you are human",
-        "access denied",
-        "please enable javascript",
-        "security check",
-        "checking your browser",
-    ]
-
-
-class CrawlQualitySettings(ComponentConfigBase):
-    min_text_chars: int = 100
-    script_ratio_threshold: float = 0.35
-    quality_score_threshold: float = 0.15
-    blocked_markers: list[str] = Field(default_factory=_default_blocked_markers)
-
-
-class CrawlAutoSettings(ComponentConfigBase):
-    scout_bytes: int = 48_000
-    route_memory_size: int = 4096
-    direct_route_min_samples: int = 3
-    direct_playwright_cost_ratio: float = 0.78
-    direct_playwright_min_useful: float = 0.72
-    learning_rate: float = 0.22
-
-
-class CrawlConfigBase(ComponentConfigBase):
+class CrawlerConfigBase(ComponentConfigBase):
+    timeout_s: float = 2.0
     inflight_enabled: bool = True
     inflight_timeout_s: float = 60.0
-    timeout_s: float = 2.0
-    follow_redirects: bool = True
-    user_agent: str = "serpsage-bot/4.0"
-    auto: CrawlAutoSettings = Field(default_factory=CrawlAutoSettings)
-    render: CrawlRenderSettings = Field(default_factory=CrawlRenderSettings)
-    quality: CrawlQualitySettings = Field(default_factory=CrawlQualitySettings)
 
-    @field_validator("inflight_timeout_s")
+    @field_validator("timeout_s", "inflight_timeout_s")
     @classmethod
-    def _validate_inflight_timeout_s(cls, value: float) -> float:
+    def _validate_positive_timeout(cls, value: float) -> float:
         if float(value) <= 0:
-            raise ValueError("inflight_timeout_s must be > 0")
+            raise ValueError("crawler timeouts must be > 0")
         return float(value)
 
 
@@ -102,8 +39,8 @@ class _InFlightEntry:
 
 CrawlerConfigT = TypeVar(
     "CrawlerConfigT",
-    bound=CrawlConfigBase,
-    default=CrawlConfigBase,
+    bound=CrawlerConfigBase,
+    default=CrawlerConfigBase,
 )
 
 
@@ -211,7 +148,7 @@ class CrawlerBase(ComponentBase[CrawlerConfigT], ABC, Generic[CrawlerConfigT]):
         token = _NESTED_INFLIGHT_BYPASS.set(True)
         try:
             with anyio.fail_after(timeout_s):
-                return await self._acrawl_inner(url=url, timeout_s=timeout_s)
+                return await self._acrawl(url=url, timeout_s=timeout_s)
         finally:
             _NESTED_INFLIGHT_BYPASS.reset(token)
 
@@ -222,12 +159,12 @@ class CrawlerBase(ComponentBase[CrawlerConfigT], ABC, Generic[CrawlerConfigT]):
         timeout_s: float | None,
     ) -> CrawlResult:
         if timeout_s is None:
-            return await self._acrawl_inner(url=url, timeout_s=timeout_s)
+            return await self._acrawl(url=url, timeout_s=timeout_s)
         with anyio.fail_after(float(timeout_s)):
-            return await self._acrawl_inner(url=url, timeout_s=timeout_s)
+            return await self._acrawl(url=url, timeout_s=timeout_s)
 
     @abstractmethod
-    async def _acrawl_inner(
+    async def _acrawl(
         self,
         *,
         url: str,
@@ -237,11 +174,7 @@ class CrawlerBase(ComponentBase[CrawlerConfigT], ABC, Generic[CrawlerConfigT]):
 
 
 __all__ = [
-    "CrawlAutoSettings",
-    "CrawlConfigBase",
-    "CrawlerConfigT",
     "CrawlerBase",
-    "CrawlQualitySettings",
-    "CrawlRenderSettings",
-    "CrawlRetrySettings",
+    "CrawlerConfigBase",
+    "CrawlerConfigT",
 ]

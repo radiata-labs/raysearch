@@ -1,3 +1,3 @@
-from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
+from serpsage.components.crawl.base import CrawlerBase, CrawlerConfigBase
 
-__all__ = ["CrawlConfigBase", "CrawlerBase"]
+__all__ = ["CrawlerBase", "CrawlerConfigBase"]

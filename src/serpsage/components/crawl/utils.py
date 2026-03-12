@@ -99,6 +99,18 @@ class ContentAnalysis:
     html_signals: HtmlSignals | None = None
 
 
+def default_blocked_markers() -> list[str]:
+    return [
+        "cloudflare",
+        "just a moment",
+        "verify you are human",
+        "access denied",
+        "please enable javascript",
+        "security check",
+        "checking your browser",
+    ]
+
+
 def get_random_user_agent() -> str:
     """Return a random real browser User-Agent string."""
     return random.choice(USER_AGENTS)
@@ -517,6 +529,7 @@ __all__ = [
     "DEFAULT_USER_AGENT",
     "HtmlSignals",
     "USER_AGENTS",
+    "default_blocked_markers",
     "analyze_content",
     "blocked_marker_hit",
     "browser_headers",

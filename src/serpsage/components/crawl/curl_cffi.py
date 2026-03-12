@@ -5,16 +5,19 @@ from typing import TYPE_CHECKING, Any, cast
 from typing_extensions import override
 
 import anyio
+from pydantic import Field, field_validator
 
+from serpsage.components.base import ComponentConfigBase
 from serpsage.components.crawl.base import (
-    CrawlConfigBase,
     CrawlerBase,
-    CrawlRetrySettings,
+    CrawlerConfigBase,
 )
 from serpsage.components.crawl.utils import (
+    DEFAULT_USER_AGENT,
     analyze_content,
     browser_headers,
     classify_content_kind,
+    default_blocked_markers,
     get_delay_s,
     parse_retry_after_s,
 )
@@ -46,9 +49,25 @@ class CurlProgressiveResult:
     bytes_read: int
 
 
-class CurlCffiCrawlerConfig(CrawlConfigBase):
+class CurlRetrySettings(ComponentConfigBase):
+    max_attempts: int = 3
+    delay_ms: int = 200
+
+
+class CurlCffiCrawlerConfig(CrawlerConfigBase):
     __setting_family__ = "crawl"
     __setting_name__ = "curl_cffi"
+    follow_redirects: bool = True
+    user_agent: str = DEFAULT_USER_AGENT
+    blocked_markers: list[str] = Field(default_factory=default_blocked_markers)
+
+    @field_validator("user_agent")
+    @classmethod
+    def _normalize_user_agent(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            return DEFAULT_USER_AGENT
+        return normalized
 
 
 class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
@@ -65,7 +84,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
             self._session = CurlSessionFactory()
 
     @override
-    async def _acrawl_inner(
+    async def _acrawl(
         self,
         *,
         url: str,
@@ -103,7 +122,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
         self,
         *,
         url: str,
-        retry: CrawlRetrySettings | None = None,
+        retry: CurlRetrySettings | None = None,
         timeout_s: float | None = None,
     ) -> CrawlAttempt:
         progressive = await self.crawl_progressive_attempt(
@@ -119,7 +138,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
         self,
         *,
         url: str,
-        retry: CrawlRetrySettings | None = None,
+        retry: CurlRetrySettings | None = None,
         timeout_s: float | None = None,
         scout_bytes: int | None,
         continue_predicate: Callable[[CrawlAttempt], bool] | None,
@@ -284,7 +303,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
             content=content,
             content_type=content_type,
             url=url,
-            markers=tuple(self.config.quality.blocked_markers),
+            markers=tuple(self.config.blocked_markers),
         )
         attempt_chain = ["curl_cffi"]
         if not finished:
@@ -328,4 +347,5 @@ __all__ = [
     "CurlCffiCrawler",
     "CurlCffiCrawlerConfig",
     "CurlProgressiveResult",
+    "CurlRetrySettings",
 ]

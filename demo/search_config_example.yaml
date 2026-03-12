@@ -54,40 +54,26 @@ components:
       timeout_s: 10.0
       inflight_enabled: true
       inflight_timeout_s: 60.0
-      follow_redirects: true
-      user_agent: serpsage-bot/4.0
-      auto:
-        scout_bytes: 48000
-        route_memory_size: 4096
-        direct_route_min_samples: 3
-        direct_playwright_cost_ratio: 0.78
-        direct_playwright_min_useful: 0.72
-        learning_rate: 0.22
-      render:
-        js_concurrency: 12
-        nav_timeout_ms: 8000
-        block_resources: true
-        readiness_poll_ms: 150
-        readiness_stable_rounds: 2
-        post_ready_wait_ms: 120
-      quality:
-        min_text_chars: 100
-        script_ratio_threshold: 0.35
-        quality_score_threshold: 0.15
-        blocked_markers:
-          - cloudflare
-          - just a moment
-          - verify you are human
-          - access denied
-          - please enable javascript
-          - security check
-          - checking your browser
+      scout_bytes: 48000
+      min_text_chars: 100
+      script_ratio_threshold: 0.35
+      quality_score_threshold: 0.15
     curl_cffi:
       enabled: true
       timeout_s: 10.0
+      follow_redirects: true
+      user_agent: serpsage-bot/4.0
     playwright:
       enabled: true
       timeout_s: 20.0
+      user_agent: serpsage-bot/4.0
+      js_concurrency: 12
+      nav_timeout_ms: 8000
+      block_resources: true
+      readiness_poll_ms: 150
+      readiness_stable_rounds: 2
+      post_ready_wait_ms: 120
+      ready_text_chars: 100
 
   extract:
     default: auto

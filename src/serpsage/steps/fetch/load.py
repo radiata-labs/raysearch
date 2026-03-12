@@ -10,7 +10,7 @@ from typing_extensions import override
 from serpsage.components.cache import CacheBase
 from serpsage.components.cache.base import CacheConfigBase
 from serpsage.components.crawl import CrawlerBase
-from serpsage.components.crawl.base import CrawlConfigBase
+from serpsage.components.crawl.base import CrawlerConfigBase
 from serpsage.dependencies import Depends
 from serpsage.models.app.response import FetchErrorTag
 from serpsage.models.components.crawl import CrawlResult
@@ -41,7 +41,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             return ctx
         mode = str(ctx.page.crawl_mode or "fallback")
         default_crawl_cfg = self.components.resolve_default_config(
-            "crawl", expected_type=CrawlConfigBase
+            "crawl", expected_type=CrawlerConfigBase
         )
         default_cache_cfg = self.components.resolve_default_config(
             "cache", expected_type=CacheConfigBase

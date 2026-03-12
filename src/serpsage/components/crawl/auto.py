@@ -7,11 +7,12 @@ from typing import Any
 from typing_extensions import override
 from urllib.parse import urlparse
 
-from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
+from pydantic import field_validator, model_validator
+
+from serpsage.components.crawl.base import CrawlerBase, CrawlerConfigBase
 from serpsage.components.crawl.curl_cffi import CurlCffiCrawler
 from serpsage.components.crawl.playwright import PlaywrightCrawler
 from serpsage.components.crawl.utils import (
-    blocked_marker_hit,
     has_nextjs_signals,
     has_spa_signals,
     normalize_route_key,
@@ -23,6 +24,11 @@ from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 _MIN_BYTES = 32
 _BLOCK_STATUSES = {401, 403, 429}
 _MIN_SUCCESS_EPS = 0.15
+_AUTO_ROUTE_MEMORY_SIZE = 4096
+_AUTO_DIRECT_ROUTE_MIN_SAMPLES = 3
+_AUTO_DIRECT_PLAYWRIGHT_COST_RATIO = 0.78
+_AUTO_DIRECT_PLAYWRIGHT_MIN_USEFUL = 0.72
+_AUTO_LEARNING_RATE = 0.22
 
 
 @dataclass(slots=True)
@@ -53,9 +59,29 @@ class _RouteMemory:
     last_used_ts: float = 0.0
 
 
-class AutoCrawlerConfig(CrawlConfigBase):
+class AutoCrawlerConfig(CrawlerConfigBase):
     __setting_family__ = "crawl"
     __setting_name__ = "auto"
+
+    scout_bytes: int = 48_000
+    min_text_chars: int = 100
+    script_ratio_threshold: float = 0.35
+    quality_score_threshold: float = 0.15
+
+    @field_validator("scout_bytes", "min_text_chars")
+    @classmethod
+    def _validate_positive_int(cls, value: int) -> int:
+        if int(value) <= 0:
+            raise ValueError("auto crawler integer settings must be > 0")
+        return int(value)
+
+    @model_validator(mode="after")
+    def _validate_thresholds(self) -> AutoCrawlerConfig:
+        if not 0.0 <= float(self.script_ratio_threshold) <= 1.0:
+            raise ValueError("script_ratio_threshold must be between 0 and 1")
+        if not 0.0 <= float(self.quality_score_threshold) <= 1.0:
+            raise ValueError("quality_score_threshold must be between 0 and 1")
+        return self
 
 
 class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
@@ -70,19 +96,11 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         self.route_memory: OrderedDict[str, _RouteMemory] = OrderedDict()
 
     @override
-    async def _acrawl_inner(
-        self,
-        *,
-        url: str,
-        timeout_s: float | None = None,
-    ) -> CrawlResult:
-        return await self._acrawl(url=url, timeout_s=timeout_s)
-
     async def _acrawl(
         self,
         *,
         url: str,
-        timeout_s: float | None,
+        timeout_s: float | None = None,
     ) -> CrawlResult:
         host = urlparse(url).netloc.lower()
         await self.rate_limiter.acquire(host=host)
@@ -133,7 +151,7 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
                 direct_attempt = None
             if direct_attempt is not None:
                 return direct_attempt
-        scout_bytes = int(self.config.auto.scout_bytes)
+        scout_bytes = int(self.config.scout_bytes)
         curl_started = time.monotonic()
         progressive = await self.curl.crawl_progressive_attempt(
             url=url,
@@ -187,15 +205,12 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         )
 
     def _choose_direct_backend(self, route_memory: _RouteMemory) -> str | None:
-        auto_cfg = self.config.auto
-        if route_memory.playwright.samples < int(auto_cfg.direct_route_min_samples):
+        if route_memory.playwright.samples < _AUTO_DIRECT_ROUTE_MIN_SAMPLES:
             return None
-        if route_memory.playwright.useful_ema < float(
-            auto_cfg.direct_playwright_min_useful
-        ):
+        if route_memory.playwright.useful_ema < _AUTO_DIRECT_PLAYWRIGHT_MIN_USEFUL:
             return None
         if route_memory.playwright.score() > (
-            route_memory.curl.score() * float(auto_cfg.direct_playwright_cost_ratio)
+            route_memory.curl.score() * _AUTO_DIRECT_PLAYWRIGHT_COST_RATIO
         ):
             return None
         return "playwright"
@@ -210,24 +225,22 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
             return False
         if attempt.content_kind != "html":
             return True
-        quality = self.config.quality
-        low_text = int(attempt.text_chars or 0) < int(quality.min_text_chars)
+        low_text = int(attempt.text_chars or 0) < int(self.config.min_text_chars)
         js_heavy = float(attempt.script_ratio or 0.0) >= float(
-            quality.script_ratio_threshold
+            self.config.script_ratio_threshold
         )
         nextjs = has_nextjs_signals(bytes(attempt.content or b""))
         spa = has_spa_signals(bytes(attempt.content or b""))
         curl_score, _ = self._content_quality_score(attempt)
         route_prefers_playwright = bool(
-            route_memory.playwright.samples
-            >= int(self.config.auto.direct_route_min_samples)
+            route_memory.playwright.samples >= _AUTO_DIRECT_ROUTE_MIN_SAMPLES
             and route_memory.playwright.score() < route_memory.curl.score()
         )
         if spa and (low_text or js_heavy):
             return False
         if nextjs and low_text:
             return False
-        if js_heavy and curl_score < float(quality.quality_score_threshold):
+        if js_heavy and curl_score < float(self.config.quality_score_threshold):
             return False
         return not (route_prefers_playwright and curl_score < 0.55)
 
@@ -236,9 +249,7 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
             return True
         if attempt.content_kind != "html":
             return False
-        return int(attempt.text_chars or 0) >= (
-            int(self.config.quality.min_text_chars) * 6
-        )
+        return int(attempt.text_chars or 0) >= (int(self.config.min_text_chars) * 6)
 
     def _playwright_reason(self, attempt: CrawlAttempt) -> str:
         if self._is_blocked(attempt):
@@ -248,7 +259,7 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
                 return "spa"
             if has_nextjs_signals(bytes(attempt.content or b"")):
                 return "nextjs_low_text"
-            if int(attempt.text_chars or 0) < int(self.config.quality.min_text_chars):
+            if int(attempt.text_chars or 0) < int(self.config.min_text_chars):
                 return "low_text"
         return "curl_nonperfect_fallback"
 
@@ -295,7 +306,7 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
             memory = _RouteMemory()
         memory.last_used_ts = time.monotonic()
         self.route_memory[route_key] = memory
-        max_items = max(8, int(self.config.auto.route_memory_size))
+        max_items = max(8, _AUTO_ROUTE_MEMORY_SIZE)
         while len(self.route_memory) > max_items:
             self.route_memory.popitem(last=False)
         return memory
@@ -310,7 +321,7 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
     ) -> None:
         memory = self._get_route_memory(route_key)
         stats = memory.playwright if backend == "playwright" else memory.curl
-        alpha = float(self.config.auto.learning_rate)
+        alpha = _AUTO_LEARNING_RATE
         success = (
             1.0 if attempt is not None and int(attempt.status_code or 0) >= 200 else 0.0
         )
@@ -356,19 +367,13 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         status = int(res.status_code or 0)
         if status in _BLOCK_STATUSES:
             return True
-        if blocked_marker_hit(
-            res.content,
-            markers=tuple(self.config.quality.blocked_markers or []),
-        ):
-            return True
         return bool(res.blocked)
 
     def _is_useful(self, res: CrawlAttempt) -> bool:
         score, _ = self._content_quality_score(res)
-        return score >= float(self.config.quality.quality_score_threshold)
+        return score >= float(self.config.quality_score_threshold)
 
     def _content_quality_score(self, res: CrawlAttempt) -> tuple[float, list[str]]:
-        quality = self.config.quality
         reasons: list[str] = []
         status = int(res.status_code or 0)
         content_len = len(res.content or b"")
@@ -388,8 +393,8 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         if res.content_kind == "html":
             text_ratio = min(
                 1.0,
-                max(0, text_chars - int(quality.min_text_chars))
-                / (1800 - int(quality.min_text_chars)),
+                max(0, text_chars - int(self.config.min_text_chars))
+                / (1800 - int(self.config.min_text_chars)),
             )
             score += text_ratio * 0.48
             if text_ratio < 0.3:

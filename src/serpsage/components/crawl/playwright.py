@@ -8,9 +8,14 @@ from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 import anyio
+from pydantic import Field, field_validator
 
-from serpsage.components.crawl.base import CrawlConfigBase, CrawlerBase
-from serpsage.components.crawl.utils import analyze_content
+from serpsage.components.crawl.base import CrawlerBase, CrawlerConfigBase
+from serpsage.components.crawl.utils import (
+    DEFAULT_USER_AGENT,
+    analyze_content,
+    default_blocked_markers,
+)
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 if TYPE_CHECKING:
@@ -68,9 +73,40 @@ Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
 """
 
 
-class PlaywrightCrawlerConfig(CrawlConfigBase):
+class PlaywrightCrawlerConfig(CrawlerConfigBase):
     __setting_family__ = "crawl"
     __setting_name__ = "playwright"
+    user_agent: str = DEFAULT_USER_AGENT
+    blocked_markers: list[str] = Field(default_factory=default_blocked_markers)
+    js_concurrency: int = 12
+    nav_timeout_ms: int = 8_000
+    block_resources: bool = True
+    readiness_poll_ms: int = 150
+    readiness_stable_rounds: int = 2
+    post_ready_wait_ms: int = 120
+    ready_text_chars: int = 100
+
+    @field_validator("user_agent")
+    @classmethod
+    def _normalize_user_agent(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            return DEFAULT_USER_AGENT
+        return normalized
+
+    @field_validator("js_concurrency", "readiness_stable_rounds", "ready_text_chars")
+    @classmethod
+    def _validate_positive_int(cls, value: int) -> int:
+        if int(value) < 1:
+            raise ValueError("playwright render integer settings must be >= 1")
+        return int(value)
+
+    @field_validator("nav_timeout_ms", "readiness_poll_ms", "post_ready_wait_ms")
+    @classmethod
+    def _validate_non_negative_int(cls, value: int) -> int:
+        if int(value) < 0:
+            raise ValueError("playwright render timing settings must be >= 0")
+        return int(value)
 
 
 class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
@@ -81,7 +117,7 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        self._sem = anyio.Semaphore(max(1, int(self.config.render.js_concurrency)))
+        self._sem = anyio.Semaphore(max(1, int(self.config.js_concurrency)))
 
     @override
     async def on_init(self) -> None:
@@ -128,7 +164,7 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
             self._pw = None
 
     @override
-    async def _acrawl_inner(
+    async def _acrawl(
         self,
         *,
         url: str,
@@ -158,7 +194,7 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
     ) -> CrawlAttempt:
         if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
-        timeout_ms = int(self.config.render.nav_timeout_ms)
+        timeout_ms = int(self.config.nav_timeout_ms)
         if timeout_s is not None:
             timeout_ms = min(timeout_ms, int(timeout_s * 1000))
         page = None
@@ -186,7 +222,7 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
             content=body,
             content_type=content_type,
             url=final_url,
-            markers=tuple(self.config.quality.blocked_markers),
+            markers=tuple(self.config.blocked_markers),
         )
         return CrawlAttempt(
             url=final_url,
@@ -210,7 +246,7 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
 
     async def _prepare_context(self, context: BrowserContext) -> None:
         await context.add_init_script(_STEALTH_INIT_SCRIPT)
-        if not bool(self.config.render.block_resources):
+        if not bool(self.config.block_resources):
             return
 
         async def route_handler(route: Route) -> None:
@@ -258,11 +294,11 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
         return status, final_url, headers
 
     async def _await_render_ready(self, *, page: Page, timeout_ms: int) -> None:
-        cfg = self.config.render
-        deadline = time.monotonic() + (float(timeout_ms) / 1000.0)
-        stable_rounds_needed = max(1, int(cfg.readiness_stable_rounds))
-        poll_s = max(0.05, float(cfg.readiness_poll_ms) / 1000.0)
-        min_text_chars = int(self.config.quality.min_text_chars)
+        cfg = self.config
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+        stable_rounds_needed = max(1, cfg.readiness_stable_rounds)
+        poll_s = max(0.05, cfg.readiness_poll_ms / 1000.0)
+        min_text_chars = cfg.ready_text_chars
         stable_rounds = 0
         last_signature: tuple[int, int, str] | None = None
         while time.monotonic() < deadline:
@@ -346,4 +382,8 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
         return 0
 
 
-__all__ = ["PLAYWRIGHT_AVAILABLE", "PlaywrightCrawler", "PlaywrightCrawlerConfig"]
+__all__ = [
+    "PLAYWRIGHT_AVAILABLE",
+    "PlaywrightCrawler",
+    "PlaywrightCrawlerConfig",
+]
