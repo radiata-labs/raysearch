@@ -9,7 +9,11 @@ import httpx
 from pydantic import field_validator
 
 from serpsage.components.http.base import HttpClientBase
-from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.provider.base import (
+    ProviderConfigBase,
+    ProviderMeta,
+    SearchProviderBase,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
     SearchProviderResult,
@@ -76,7 +80,16 @@ class GitHubProviderConfig(ProviderConfigBase):
         return payload
 
 
-class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
+class GitHubProvider(
+    SearchProviderBase[GitHubProviderConfig],
+    meta=ProviderMeta(
+        name="github",
+        website="https://github.com/",
+        description="Repository search across GitHub projects, maintainers, languages, and open source metadata.",
+        preference="Prefer repository names, library names, package identifiers, programming tools, frameworks, and code-focused technical queries.",
+        categories=["it", "repos"],
+    ),
+):
     http: HttpClientBase = Depends()
 
     @override

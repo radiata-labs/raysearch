@@ -5,6 +5,14 @@ from typing import Any, cast
 from typing_extensions import override
 
 from anyio import to_thread
+from pydantic import Field
+
+from serpsage.components.base import ComponentConfigBase
+from serpsage.components.rank.base import (
+    RankerBase,
+    RankMode,
+)
+from serpsage.utils import clean_whitespace
 
 try:
     from sentence_transformers import CrossEncoder as _ImportedCrossEncoder
@@ -15,12 +23,14 @@ except Exception:  # noqa: BLE001
     _CROSS_ENCODER_CTOR = None
     CROSS_ENCODER_AVAILABLE = False
 
-from serpsage.components.rank.base import (
-    RankCrossEncoderSettings,
-    RankerBase,
-    RankMode,
-)
-from serpsage.utils import clean_whitespace
+
+class RankCrossEncoderSettings(ComponentConfigBase):
+    __setting_family__ = "rank"
+    __setting_name__ = "cross_encoder"
+
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    batch_size: int = Field(default=16, ge=1)
+    max_length: int = Field(default=512, ge=1)
 
 
 def _sigmoid(value: float) -> float:
@@ -107,4 +117,4 @@ class CrossEncoderRanker(RankerBase[RankCrossEncoderSettings]):
         ]
 
 
-__all__ = ["CROSS_ENCODER_AVAILABLE", "CrossEncoderRanker"]
+__all__ = ["CROSS_ENCODER_AVAILABLE", "CrossEncoderRanker", "RankCrossEncoderSettings"]

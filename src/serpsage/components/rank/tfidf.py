@@ -6,9 +6,15 @@ from anyio import to_thread
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
 
-from serpsage.components.rank.base import RankerBase, RankMode, RankTfidfSettings
+from serpsage.components.base import ComponentConfigBase
+from serpsage.components.rank.base import RankerBase, RankMode
 from serpsage.tokenize import tokenize
 from serpsage.utils import normalize_text
+
+
+class RankTfidfSettings(ComponentConfigBase):
+    __setting_family__ = "rank"
+    __setting_name__ = "tfidf"
 
 
 def _analyze_text(text: str) -> list[str]:
@@ -64,4 +70,4 @@ class TfidfRanker(RankerBase[RankTfidfSettings]):
         return await to_thread.run_sync(_score_texts_sync, texts, query, query_tokens)
 
 
-__all__ = ["TfidfRanker"]
+__all__ = ["RankTfidfSettings", "TfidfRanker"]

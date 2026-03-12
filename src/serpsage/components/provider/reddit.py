@@ -9,7 +9,11 @@ import httpx
 from pydantic import field_validator
 
 from serpsage.components.http.base import HttpClientBase
-from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.provider.base import (
+    ProviderConfigBase,
+    ProviderMeta,
+    SearchProviderBase,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace
@@ -61,7 +65,16 @@ class RedditProviderConfig(ProviderConfigBase):
         return payload
 
 
-class RedditProvider(SearchProviderBase[RedditProviderConfig]):
+class RedditProvider(
+    SearchProviderBase[RedditProviderConfig],
+    meta=ProviderMeta(
+        name="reddit",
+        website="https://www.reddit.com/",
+        description="Community discussion search across Reddit posts, niche forums, and user-generated recommendations.",
+        preference="Prefer experience-driven queries, opinions, troubleshooting, comparisons, recommendations, and community discussion topics.",
+        categories=["social media"],
+    ),
+):
     http: HttpClientBase = Depends()
 
     @override

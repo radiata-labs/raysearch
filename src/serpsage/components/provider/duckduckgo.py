@@ -10,7 +10,11 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import field_validator
 
 from serpsage.components.http.base import HttpClientBase
-from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.provider.base import (
+    ProviderConfigBase,
+    ProviderMeta,
+    SearchProviderBase,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace
@@ -69,7 +73,16 @@ class DuckDuckGoProviderConfig(ProviderConfigBase):
         return payload
 
 
-class DuckDuckGoProvider(SearchProviderBase[DuckDuckGoProviderConfig]):
+class DuckDuckGoProvider(
+    SearchProviderBase[DuckDuckGoProviderConfig],
+    meta=ProviderMeta(
+        name="duckduckgo",
+        website="https://duckduckgo.com/",
+        description="General web search from DuckDuckGo with privacy-oriented results and lightweight HTML endpoints.",
+        preference="Prefer concise web queries, lightweight factual lookups, and general web searches that do not need provider-specific verticals.",
+        categories=["general", "web"],
+    ),
+):
     http: HttpClientBase = Depends()
 
     @override

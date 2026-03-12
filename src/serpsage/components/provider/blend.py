@@ -10,6 +10,7 @@ from pydantic import Field, field_validator
 from serpsage.components.provider.base import (
     PROVIDER_ROUTES_TOKEN,
     ProviderConfigBase,
+    ProviderMeta,
     SearchProviderBase,
 )
 from serpsage.components.rank.base import RankerBase
@@ -58,6 +59,8 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         for route in cast("tuple[SearchProviderBase[ProviderConfigBase], ...]", routes):
             name = route.config.name
             if name == "blend":
+                continue
+            if not isinstance(getattr(type(route), "meta", None), ProviderMeta):
                 continue
             if name in self._all_routes:
                 raise ValueError(f"duplicate provider route `{name}`")

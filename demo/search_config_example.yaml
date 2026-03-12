@@ -10,7 +10,10 @@ components:
       keepalive_expiry_s: 5.0
 
   provider:
-    default: arxiv
+    default: blend
+    blend:
+      enabled: true
+      include_sources: ["arxiv", "duckduckgo", "github", "google", "reddit", wikipedia"]
     github:
       enabled: true
       base_url: https://api.github.com/search/repositories
@@ -89,22 +92,11 @@ components:
     blend:
       enabled: true
       providers:
-        heuristic: 0.7
+        bm25: 0.3
         tfidf: 0.3
       rerank:
         retrieve_weight: 0.35
         cross_encoder_weight: 0.65
-    heuristic:
-      enabled: true
-      early_bonus: 1.15
-      unique_hit_weight: 6.0
-      count_weight: 1.5
-      intent_hit_weight: 5.0
-      max_count_per_token: 5
-      temperature: 1.0
-      min_items_for_sigmoid: 5
-      flat_spread_eps: 1.0e-9
-      z_clip: 8.0
     tfidf:
       enabled: true
     bm25:

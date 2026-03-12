@@ -13,6 +13,7 @@ from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import (
     GoogleSafeSearchKey,
     ProviderConfigBase,
+    ProviderMeta,
     SearchProviderBase,
 )
 from serpsage.dependencies import Depends
@@ -68,7 +69,16 @@ class GoogleProviderConfig(ProviderConfigBase):
         return payload
 
 
-class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
+class GoogleProvider(
+    SearchProviderBase[GoogleProviderConfig],
+    meta=ProviderMeta(
+        name="google",
+        website="https://www.google.com/",
+        description="General web search with broad public web coverage and strong relevance ranking.",
+        preference="Prefer broad natural-language web queries, current topics, products, brands, and open-ended exploratory searches.",
+        categories=["general", "web"],
+    ),
+):
     http: HttpClientBase = Depends()
 
     @override

@@ -4,15 +4,15 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import anyio
+from pydantic import Field, model_validator
 
+from serpsage.components.base import ComponentConfigBase
 from serpsage.components.rank.base import (
-    RankBlendSettings,
     RankerBase,
     RankMode,
 )
 from serpsage.components.rank.bm25 import Bm25Ranker
 from serpsage.components.rank.cross_encoder import CrossEncoderRanker
-from serpsage.components.rank.heuristic import HeuristicRanker
 from serpsage.components.rank.tfidf import TfidfRanker
 from serpsage.components.rank.utils import blend_weighted, rank_scales
 from serpsage.dependencies import Depends
@@ -21,8 +21,34 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+class RankBlendRerankSettings(ComponentConfigBase):
+    retrieve_weight: float = 0.35
+    cross_encoder_weight: float = 0.65
+
+    @model_validator(mode="after")
+    def _validate_weights(self) -> RankBlendRerankSettings:
+        if float(self.retrieve_weight) < 0:
+            raise ValueError("rank.blend.rerank.retrieve_weight must be >= 0")
+        if float(self.cross_encoder_weight) < 0:
+            raise ValueError("rank.blend.rerank.cross_encoder_weight must be >= 0")
+        if float(self.retrieve_weight) + float(self.cross_encoder_weight) <= 0:
+            raise ValueError("rank.blend.rerank weights must sum to a positive value")
+        return self
+
+
+def _default_rank_blend_providers() -> dict[str, float]:
+    return {"tfidf": 0.5, "bm25": 0.5}
+
+
+class RankBlendSettings(ComponentConfigBase):
+    __setting_family__ = "rank"
+    __setting_name__ = "blend"
+
+    providers: dict[str, float] = Field(default_factory=_default_rank_blend_providers)
+    rerank: RankBlendRerankSettings = Field(default_factory=RankBlendRerankSettings)
+
+
 class BlendRanker(RankerBase[RankBlendSettings]):
-    heuristic: HeuristicRanker = Depends()
     tfidf: TfidfRanker = Depends()
     bm25: Bm25Ranker = Depends()
     cross_encoder: CrossEncoderRanker = Depends()
@@ -35,11 +61,13 @@ class BlendRanker(RankerBase[RankBlendSettings]):
         }
         if raw.get("bm25") and not isinstance(self.bm25, Bm25Ranker):
             raw.pop("bm25", None)
+        if raw.get("tfidf") and not isinstance(self.tfidf, TfidfRanker):
+            raw.pop("tfidf", None)
         if not raw:
-            return {"heuristic": 1.0}
+            return {"tfidf": 1.0}
         total = sum(raw.values())
         if total <= 0:
-            return {"heuristic": 1.0}
+            return {"tfidf": 1.0}
         return {k: float(v) / total for k, v in raw.items()}
 
     def _rerank_weights(self) -> dict[str, float]:
@@ -70,22 +98,11 @@ class BlendRanker(RankerBase[RankBlendSettings]):
         if not texts:
             return []
         weights = self._provider_weights()
-        heur_w = float(weights.get("heuristic", 0.0))
         tfidf_w = float(weights.get("tfidf", 0.0))
         bm25_w = float(weights.get("bm25", 0.0))
         need_bm25 = bm25_w > 0 and isinstance(self.bm25, Bm25Ranker)
-        heur: list[float] | None = None
         tfidf: list[float] | None = None
         bm25_raw: list[float] | None = None
-
-        async def run_heuristic() -> None:
-            nonlocal heur
-            heur = await self.heuristic.score_texts(
-                texts,
-                query=query,
-                query_tokens=query_tokens,
-                mode="retrieve",
-            )
 
         async def run_bm25() -> None:
             nonlocal bm25_raw
@@ -106,21 +123,16 @@ class BlendRanker(RankerBase[RankBlendSettings]):
             )
 
         async with anyio.create_task_group() as tg:
-            if heur_w > 0:
-                tg.start_soon(run_heuristic)
-            else:
-                heur = [0.0] * len(texts)
             if tfidf_w > 0:
                 tg.start_soon(run_tfidf)
             else:
                 tfidf = [0.0] * len(texts)
             if need_bm25:
                 tg.start_soon(run_bm25)
-        heur = heur or [0.0] * len(texts)
         tfidf = tfidf or [0.0] * len(texts)
-        max_heur = max(heur) if heur else 0.0
-        anchor = float(max_heur) if float(max_heur) > 0 else 1.0
-        score_map: dict[str, list[float]] = {"heuristic": heur, "tfidf": tfidf}
+        max_tfidf = max(tfidf) if tfidf else 0.0
+        anchor = float(max_tfidf) if float(max_tfidf) > 0 else 1.0
+        score_map: dict[str, list[float]] = {"tfidf": tfidf}
         transforms: dict[str, Callable[[list[float]], list[float]]] = {}
         if need_bm25 and bm25_raw is not None:
             score_map["bm25"] = bm25_raw
@@ -168,4 +180,9 @@ class BlendRanker(RankerBase[RankBlendSettings]):
         )
 
 
-__all__ = ["BlendRanker", "blend_weighted"]
+__all__ = [
+    "BlendRanker",
+    "RankBlendRerankSettings",
+    "RankBlendSettings",
+    "blend_weighted",
+]

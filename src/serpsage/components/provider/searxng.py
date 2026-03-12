@@ -7,7 +7,11 @@ import httpx
 from pydantic import field_validator
 
 from serpsage.components.http.base import HttpClientBase
-from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.provider.base import (
+    ProviderConfigBase,
+    ProviderMeta,
+    SearchProviderBase,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace
@@ -59,7 +63,16 @@ class SearxngProviderConfig(ProviderConfigBase):
         return payload
 
 
-class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
+class SearxngProvider(
+    SearchProviderBase[SearxngProviderConfig],
+    meta=ProviderMeta(
+        name="searxng",
+        website="https://searxng.org/",
+        description="Meta-search through a SearXNG instance that can aggregate multiple external search engines.",
+        preference="Prefer broad web queries when a meta-search route is useful for mixed-source discovery across multiple engines.",
+        categories=["general", "web"],
+    ),
+):
     http: HttpClientBase = Depends()
 
     @override

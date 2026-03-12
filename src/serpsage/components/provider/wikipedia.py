@@ -8,7 +8,11 @@ import httpx
 from pydantic import field_validator
 
 from serpsage.components.http.base import HttpClientBase
-from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.provider.base import (
+    ProviderConfigBase,
+    ProviderMeta,
+    SearchProviderBase,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace, strip_html
@@ -83,7 +87,16 @@ class WikipediaProviderConfig(ProviderConfigBase):
         return payload
 
 
-class WikipediaProvider(SearchProviderBase[WikipediaProviderConfig]):
+class WikipediaProvider(
+    SearchProviderBase[WikipediaProviderConfig],
+    meta=ProviderMeta(
+        name="wikipedia",
+        website="https://www.wikipedia.org/",
+        description="Encyclopedia search for Wikipedia article titles, summaries, and multilingual reference pages.",
+        preference="Prefer entity-centric reference queries about people, places, events, concepts, organizations, and historical topics.",
+        categories=["infobox"],
+    ),
+):
     http: HttpClientBase = Depends()
 
     @override

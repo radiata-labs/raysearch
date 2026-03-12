@@ -10,7 +10,11 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import field_validator
 
 from serpsage.components.http.base import HttpClientBase
-from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
+from serpsage.components.provider.base import (
+    ProviderConfigBase,
+    ProviderMeta,
+    SearchProviderBase,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
     SearchProviderResult,
@@ -63,7 +67,16 @@ class ArxivProviderConfig(ProviderConfigBase):
         return payload
 
 
-class ArxivProvider(SearchProviderBase[ArxivProviderConfig]):
+class ArxivProvider(
+    SearchProviderBase[ArxivProviderConfig],
+    meta=ProviderMeta(
+        name="arxiv",
+        website="https://arxiv.org/",
+        description="Academic paper search across arXiv preprints in science, mathematics, and computer science.",
+        preference="Prefer research-style queries with technical terms, paper topics, methods, models, and scientific subject keywords.",
+        categories=["science", "scientific publications"],
+    ),
+):
     http: HttpClientBase = Depends()
 
     @override

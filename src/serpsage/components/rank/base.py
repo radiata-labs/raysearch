@@ -5,8 +5,6 @@ from abc import ABC, abstractmethod
 from typing import Generic, Literal
 from typing_extensions import TypeVar
 
-from pydantic import Field, model_validator
-
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 
 RankMode = Literal["retrieve", "rerank"]
@@ -15,67 +13,6 @@ RankConfigT = TypeVar(
     bound=ComponentConfigBase,
     default=ComponentConfigBase,
 )
-
-
-class HeuristicRankSettings(ComponentConfigBase):
-    __setting_family__ = "rank"
-    __setting_name__ = "heuristic"
-
-    early_bonus: float = 1.15
-    unique_hit_weight: float = 6.0
-    count_weight: float = 1.5
-    intent_hit_weight: float = 5.0
-    max_count_per_token: int = 5
-    temperature: float = 1.0
-    min_items_for_sigmoid: int = 5
-    flat_spread_eps: float = 1e-9
-    z_clip: float = 8.0
-
-
-class RankBm25Settings(ComponentConfigBase):
-    __setting_family__ = "rank"
-    __setting_name__ = "bm25"
-
-
-class RankTfidfSettings(ComponentConfigBase):
-    __setting_family__ = "rank"
-    __setting_name__ = "tfidf"
-
-
-class RankCrossEncoderSettings(ComponentConfigBase):
-    __setting_family__ = "rank"
-    __setting_name__ = "cross_encoder"
-
-    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    batch_size: int = Field(default=16, ge=1)
-    max_length: int = Field(default=512, ge=1)
-
-
-class RankBlendRerankSettings(ComponentConfigBase):
-    retrieve_weight: float = 0.35
-    cross_encoder_weight: float = 0.65
-
-    @model_validator(mode="after")
-    def _validate_weights(self) -> RankBlendRerankSettings:
-        if float(self.retrieve_weight) < 0:
-            raise ValueError("rank.blend.rerank.retrieve_weight must be >= 0")
-        if float(self.cross_encoder_weight) < 0:
-            raise ValueError("rank.blend.rerank.cross_encoder_weight must be >= 0")
-        if float(self.retrieve_weight) + float(self.cross_encoder_weight) <= 0:
-            raise ValueError("rank.blend.rerank weights must sum to a positive value")
-        return self
-
-
-def _default_rank_blend_providers() -> dict[str, float]:
-    return {"heuristic": 0.7, "tfidf": 0.3}
-
-
-class RankBlendSettings(ComponentConfigBase):
-    __setting_family__ = "rank"
-    __setting_name__ = "blend"
-
-    providers: dict[str, float] = Field(default_factory=_default_rank_blend_providers)
-    rerank: RankBlendRerankSettings = Field(default_factory=RankBlendRerankSettings)
 
 
 class RankerBase(ComponentBase[RankConfigT], ABC, Generic[RankConfigT]):
@@ -116,12 +53,6 @@ class RankerBase(ComponentBase[RankConfigT], ABC, Generic[RankConfigT]):
 
 
 __all__ = [
-    "HeuristicRankSettings",
-    "RankBlendRerankSettings",
-    "RankBlendSettings",
-    "RankBm25Settings",
-    "RankCrossEncoderSettings",
     "RankMode",
-    "RankTfidfSettings",
     "RankerBase",
 ]

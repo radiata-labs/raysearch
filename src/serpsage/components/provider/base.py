@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal
 from typing_extensions import TypeVar
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.provider import SearchProviderResult
@@ -45,6 +45,14 @@ class ProviderConfigBase(ComponentConfigBase):
         return self
 
 
+class ProviderMeta(BaseModel):
+    name: str
+    website: str
+    description: str
+    preference: str
+    categories: list[str]
+
+
 ProviderConfigT = TypeVar(
     "ProviderConfigT",
     bound=ProviderConfigBase,
@@ -53,6 +61,18 @@ ProviderConfigT = TypeVar(
 
 
 class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderConfigT]):
+    meta: ProviderMeta
+
+    def __init_subclass__(
+        cls,
+        meta: ProviderMeta | None = None,
+        config: type[ProviderConfigT] | None = None,
+        **_kwargs: Any,
+    ) -> None:
+        if meta is not None:
+            cls.meta = meta
+        return super().__init_subclass__(config, **_kwargs)
+
     async def asearch(
         self,
         *,
@@ -79,6 +99,7 @@ __all__ = [
     "GoogleSafeSearchKey",
     "PROVIDER_ROUTES_TOKEN",
     "ProviderConfigBase",
+    "ProviderMeta",
     "RetrySettings",
     "SearchProviderBase",
 ]

@@ -29,6 +29,7 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
                 "max_results": max_results,
             }
         )
+        ctx.provider_limit = ctx.provider_limit or max_results * 4
         ctx.deep = SearchDeepState()
         ctx.prefetch.urls = []
         ctx.prefetch.scores = {}
