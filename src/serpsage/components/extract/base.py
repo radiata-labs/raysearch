@@ -38,8 +38,6 @@ ExtractConfigT = TypeVar(
 
 
 class ExtractorBase(ComponentBase[ExtractConfigT], ABC, Generic[ExtractConfigT]):
-    __di_contract__ = True
-
     def _finalize_content(
         self,
         *,

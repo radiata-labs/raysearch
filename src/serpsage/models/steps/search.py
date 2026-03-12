@@ -19,7 +19,7 @@ from serpsage.models.steps.base import BaseStepContext
 from serpsage.settings.models import AppSettings
 from serpsage.utils import clean_whitespace
 
-_RESERVED_PROVIDER_KWARG_KEYS = {"query", "page", "language"}
+_RESERVED_PROVIDER_KWARG_KEYS = frozenset({"query", "limit", "locale"})
 
 
 class SearchQueryJob(MutableModel):
@@ -92,8 +92,8 @@ class SearchStepContext(BaseStepContext[SearchRequest, SearchResponse]):
     request: SearchRequest
     response: SearchResponse
     disable_internal_llm: bool = False
-    provider_page: int = 1
-    provider_language: str = ""
+    provider_limit: int | None = None
+    provider_locale: str = ""
     provider_extra_kwargs: dict[str, Any] = Field(default_factory=dict)
     deep: SearchDeepState = Field(default_factory=SearchDeepState)
     prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
@@ -101,31 +101,42 @@ class SearchStepContext(BaseStepContext[SearchRequest, SearchResponse]):
     rank: SearchRankState = Field(default_factory=SearchRankState)
     output: SearchOutputState = Field(default_factory=SearchOutputState)
 
-    @field_validator("provider_page")
+    @field_validator("provider_limit")
     @classmethod
-    def _validate_provider_page(cls, value: int) -> int:
+    def _validate_provider_limit(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
         if int(value) <= 0:
-            raise ValueError("provider_page must be > 0")
+            raise ValueError("provider_limit must be > 0")
         return int(value)
 
-    @field_validator("provider_language")
+    @field_validator("provider_locale")
     @classmethod
-    def _validate_provider_language(cls, value: str) -> str:
+    def _validate_provider_text(cls, value: str) -> str:
         return clean_whitespace(str(value or ""))
 
-    @field_validator("provider_extra_kwargs")
+    @field_validator("provider_extra_kwargs", mode="before")
     @classmethod
-    def _validate_provider_extra_kwargs(cls, value: dict[str, Any]) -> dict[str, Any]:
+    def _validate_provider_extra_kwargs(cls, value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise TypeError("provider_extra_kwargs must be a mapping")
         out: dict[str, Any] = {}
-        for raw_key, raw_value in dict(value or {}).items():
+        overlap: list[str] = []
+        for raw_key, raw_value in value.items():
             key = clean_whitespace(str(raw_key or ""))
             if not key:
                 continue
             if key.casefold() in _RESERVED_PROVIDER_KWARG_KEYS:
-                raise ValueError(
-                    f"provider_extra_kwargs must not override reserved key `{key}`"
-                )
+                overlap.append(key)
+                continue
             out[key] = raw_value
+        if overlap:
+            names = ", ".join(sorted(set(overlap)))
+            raise ValueError(
+                f"provider_extra_kwargs must not override reserved keys: {names}"
+            )
         return out
 
 

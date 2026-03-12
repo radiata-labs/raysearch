@@ -13,7 +13,6 @@ from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
-    SearchProviderResponse,
     SearchProviderResult,
 )
 from serpsage.models.components.telemetry import MeterPayload
@@ -55,7 +54,7 @@ class SearchStep(StepBase[SearchStepContext]):
         query_jobs = self._resolve_query_jobs(ctx=ctx, mode=mode)
         if not query_jobs:
             return ctx
-        provider_responses: list[SearchProviderResponse | None] = [
+        provider_responses: list[list[SearchProviderResult] | None] = [
             None for _ in query_jobs
         ]
         async with anyio.create_task_group() as tg:
@@ -66,7 +65,7 @@ class SearchStep(StepBase[SearchStepContext]):
         exclude_domains = list(req.exclude_domains or [])
         normalized_by_job: list[list[SearchNormalizedResult]] = []
         for response in provider_responses:
-            provider_results = response.results if response is not None else []
+            provider_results = response if response is not None else []
             normalized_by_job.append(
                 self._normalize_results(
                     provider_results,
@@ -198,15 +197,15 @@ class SearchStep(StepBase[SearchStepContext]):
         self,
         idx: int,
         query: str,
-        out: list[SearchProviderResponse | None],
+        out: list[list[SearchProviderResult] | None],
         ctx: SearchStepContext,
     ) -> None:
         try:
             out[idx] = await self.provider.asearch(
                 query=query,
-                page=int(ctx.provider_page),
-                language=str(ctx.provider_language or ""),
-                **dict(ctx.provider_extra_kwargs),
+                limit=ctx.provider_limit,
+                locale=str(ctx.provider_locale or ""),
+                **dict(ctx.provider_extra_kwargs or {}),
             )
             await self._emit_search_meter(
                 ctx=ctx,

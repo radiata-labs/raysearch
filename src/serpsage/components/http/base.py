@@ -29,8 +29,6 @@ HttpClientConfigT = TypeVar(
 
 
 class HttpClientBase(ComponentBase[HttpClientConfigT], ABC, Generic[HttpClientConfigT]):
-    __di_contract__ = True
-
     @property
     @abstractmethod
     def client(self) -> httpx.AsyncClient:

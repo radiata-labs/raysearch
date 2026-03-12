@@ -10,10 +10,7 @@ from pydantic import field_validator
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.dependencies import Depends
-from serpsage.models.components.provider import (
-    SearchProviderResponse,
-    SearchProviderResult,
-)
+from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace, strip_html
 
 _DEFAULT_WIKIPEDIA_SEARCH_URL = "https://{wiki_netloc}/w/rest.php/v1/search/title"
@@ -90,32 +87,33 @@ class WikipediaProvider(SearchProviderBase[WikipediaProviderConfig]):
     http: HttpClientBase = Depends()
 
     @override
-    async def asearch(
+    async def _asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
         cfg = self.config
         normalized_query = clean_whitespace(query)
-        normalized_language = clean_whitespace(language)
+        normalized_locale = clean_whitespace(locale)
         if not normalized_query:
             raise ValueError("query must not be empty")
 
         resolved = self._resolve_wiki_language(
-            normalized_language or cfg.default_language
+            normalized_locale or cfg.default_language
         )
         per_page = self._coerce_per_page(
-            kwargs.pop("limit", kwargs.pop("per_page", cfg.results_per_page))
+            limit if limit is not None else cfg.results_per_page
         )
+        offset = self._coerce_offset(kwargs.get("offset"))
+        exact_fallback = self._coerce_bool(kwargs.get("exact_fallback"), default=True)
         headers = self._build_headers(accept_language=resolved["accept_language"])
         search_params = self._build_search_params(
             query=normalized_query,
-            page=page,
+            offset=offset,
             per_page=per_page,
-            kwargs=kwargs,
         )
         search_url = self._format_template(
             str(cfg.base_url),
@@ -136,7 +134,7 @@ class WikipediaProvider(SearchProviderBase[WikipediaProviderConfig]):
             resolved=resolved,
             headers=headers,
         )
-        if not results and int(page) == 1:
+        if not results and int(offset) == 0 and exact_fallback:
             exact = await self._fetch_exact_summary(
                 query=normalized_query,
                 resolved=resolved,
@@ -144,27 +142,16 @@ class WikipediaProvider(SearchProviderBase[WikipediaProviderConfig]):
             )
             if exact is not None:
                 results = [exact]
-        total_hits = (
-            int(payload["total"])
-            if isinstance(payload, dict)
-            and isinstance(payload.get("total"), (int, float))
-            else None
+        _ = (
+            payload.get("total") if isinstance(payload, dict) else None,
+            str(resp.url),
+            resolved["wiki_netloc"],
+            resolved["wiki_tag"],
+            resolved["accept_language"],
+            normalized_locale or resolved["request_language"],
+            max(1, int(offset) // per_page + 1),
         )
-        return SearchProviderResponse(
-            provider_backend="wikipedia",
-            query=normalized_query,
-            page=int(page),
-            language=normalized_language or resolved["request_language"],
-            total_results=total_hits,
-            suggestions=[],
-            results=results,
-            metadata={
-                "request_url": str(resp.url),
-                "wiki_netloc": resolved["wiki_netloc"],
-                "wiki_language": resolved["wiki_tag"],
-                "accept_language": resolved["accept_language"],
-            },
-        )
+        return results[:per_page]
 
     def _build_headers(self, *, accept_language: str) -> dict[str, str]:
         cfg = self.config
@@ -179,20 +166,14 @@ class WikipediaProvider(SearchProviderBase[WikipediaProviderConfig]):
         self,
         *,
         query: str,
-        page: int,
+        offset: int,
         per_page: int,
-        kwargs: dict[str, Any],
     ) -> dict[str, str]:
         params: dict[str, str] = {
             "q": query,
             "limit": str(per_page),
-            "offset": str(max(0, (int(page) - 1) * per_page)),
+            "offset": str(max(0, int(offset))),
         }
-        for key, value in kwargs.items():
-            token = clean_whitespace(str(key or ""))
-            if not token or value is None:
-                continue
-            params[token] = str(value)
         return params
 
     async def _build_results(
@@ -316,32 +297,22 @@ class WikipediaProvider(SearchProviderBase[WikipediaProviderConfig]):
         description = clean_whitespace(str((summary or {}).get("description") or ""))
         extract = clean_whitespace(str((summary or {}).get("extract") or ""))
         snippet = extract or description or fallback_snippet
-        display_url = self._to_display_url(url)
-        metadata: dict[str, Any] = {
-            "wiki_netloc": resolved["wiki_netloc"],
-            "wiki_language": resolved["wiki_tag"],
-        }
-        page_id = raw.get("pageid")
-        if isinstance(page_id, (int, float)):
-            metadata["pageid"] = int(page_id)
-        elif isinstance(raw.get("id"), (int, float)):
-            metadata["pageid"] = int(raw["id"])
-        summary_type = clean_whitespace(str((summary or {}).get("type") or ""))
-        if summary_type:
-            metadata["page_type"] = summary_type
-        if description:
-            metadata["description"] = description
-        thumbnail = self._extract_thumbnail(summary)
-        if thumbnail:
-            metadata["thumbnail"] = thumbnail
+        _ = (
+            self._to_display_url(url),
+            resolved["wiki_netloc"],
+            resolved["wiki_tag"],
+            raw.get("pageid"),
+            raw.get("id"),
+            clean_whitespace(str((summary or {}).get("type") or "")),
+            description,
+            self._extract_thumbnail(summary),
+            position,
+        )
         return SearchProviderResult(
             url=url,
             title=display_title,
             snippet=snippet,
-            display_url=display_url,
-            source_engine="wikipedia",
-            position=position,
-            metadata=metadata,
+            engine=self.config.name,
         )
 
     def _extract_page_url(
@@ -479,6 +450,23 @@ class WikipediaProvider(SearchProviderBase[WikipediaProviderConfig]):
         except Exception:
             return int(self.config.results_per_page)
         return max(1, min(20, size))
+
+    def _coerce_offset(self, value: Any) -> int:
+        try:
+            offset = int(value)
+        except Exception:
+            return 0
+        return max(0, offset)
+
+    def _coerce_bool(self, value: Any, *, default: bool) -> bool:
+        if value is None:
+            return default
+        token = clean_whitespace(str(value)).casefold()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+        return bool(value)
 
 
 __all__ = ["WikipediaProvider", "WikipediaProviderConfig"]

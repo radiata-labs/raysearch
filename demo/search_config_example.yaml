@@ -10,7 +10,7 @@ components:
       keepalive_expiry_s: 5.0
 
   provider:
-    default: reddit
+    default: arxiv
     github:
       enabled: true
       base_url: https://api.github.com/search/repositories
@@ -43,6 +43,9 @@ components:
     duckduckgo:
       enabled: true
       base_url: https://html.duckduckgo.com/html
+      allow_redirects: false
+    arxiv:
+      enabled: true
 
   crawl:
     default: auto
@@ -121,7 +124,7 @@ components:
     bm25:
       enabled: true
     cross_encoder:
-      enabled: true
+      enabled: false
       model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
       batch_size: 16
       max_length: 512

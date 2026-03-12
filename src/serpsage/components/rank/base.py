@@ -79,7 +79,6 @@ class RankBlendSettings(ComponentConfigBase):
 
 
 class RankerBase(ComponentBase[RankConfigT], ABC, Generic[RankConfigT]):
-    __di_contract__ = True
     _warned_mode_fallbacks: set[tuple[str, str]] = set()
 
     def _resolve_mode(

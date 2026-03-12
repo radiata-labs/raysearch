@@ -11,10 +11,7 @@ from pydantic import field_validator
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.dependencies import Depends
-from serpsage.models.components.provider import (
-    SearchProviderResponse,
-    SearchProviderResult,
-)
+from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace
 
 _DEFAULT_REDDIT_BASE_URL = "https://www.reddit.com/search.json"
@@ -68,44 +65,29 @@ class RedditProvider(SearchProviderBase[RedditProviderConfig]):
     http: HttpClientBase = Depends()
 
     @override
-    async def asearch(
+    async def _asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
         cfg = self.config
         normalized_query = clean_whitespace(query)
-        normalized_language = clean_whitespace(language)
         if not normalized_query:
             raise ValueError("query must not be empty")
 
-        extra = dict(kwargs)
-        after = clean_whitespace(str(extra.pop("after", "") or ""))
-        if int(page) > 1 and not after:
-            return SearchProviderResponse(
-                provider_backend="reddit",
-                query=normalized_query,
-                page=int(page),
-                language=normalized_language,
-                results=[],
-                metadata={
-                    "request_url": str(cfg.base_url),
-                    "reddit_domain": str(cfg.base_url),
-                    "skip_reason": "reddit pagination requires an `after` token",
-                },
-            )
-
         per_page = self._coerce_per_page(
-            extra.pop("limit", extra.pop("per_page", cfg.results_per_page))
+            limit if limit is not None else cfg.results_per_page
         )
+        after = clean_whitespace(str(kwargs.get("after") or ""))
         params = self._build_params(
             query=normalized_query,
             per_page=per_page,
             after=after,
-            extra=extra,
+            sort=kwargs.get("sort"),
+            time_range=kwargs.get("time_range"),
         )
         headers = dict(cfg.headers or {})
         headers["Accept"] = "application/json"
@@ -122,32 +104,22 @@ class RedditProvider(SearchProviderBase[RedditProviderConfig]):
         listing = payload.get("data") if isinstance(payload, dict) else {}
         raw_posts = listing.get("children") if isinstance(listing, dict) else []
         results = self._parse_results(raw_posts if isinstance(raw_posts, list) else [])
-        total_results = (
+        _ = (
             int(listing["dist"])
             if isinstance(listing, dict)
             and isinstance(listing.get("dist"), (int, float))
-            else None
+            else None,
+            str(resp.url),
+            str(cfg.base_url),
+            clean_whitespace(str(listing.get("after") or ""))
+            if isinstance(listing, dict)
+            else "",
+            clean_whitespace(str(listing.get("before") or ""))
+            if isinstance(listing, dict)
+            else "",
+            locale,
         )
-        metadata: dict[str, Any] = {
-            "request_url": str(resp.url),
-            "reddit_domain": str(cfg.base_url),
-        }
-        if isinstance(listing, dict):
-            after_token = clean_whitespace(str(listing.get("after") or ""))
-            before_token = clean_whitespace(str(listing.get("before") or ""))
-            if after_token:
-                metadata["after"] = after_token
-            if before_token:
-                metadata["before"] = before_token
-        return SearchProviderResponse(
-            provider_backend="reddit",
-            query=normalized_query,
-            page=int(page),
-            language=normalized_language,
-            total_results=total_results,
-            results=results,
-            metadata=metadata,
-        )
+        return results[:per_page]
 
     def _build_params(
         self,
@@ -155,7 +127,8 @@ class RedditProvider(SearchProviderBase[RedditProviderConfig]):
         query: str,
         per_page: int,
         after: str,
-        extra: dict[str, Any],
+        sort: Any,
+        time_range: Any,
     ) -> dict[str, str]:
         params: dict[str, str] = {
             "q": query,
@@ -163,11 +136,12 @@ class RedditProvider(SearchProviderBase[RedditProviderConfig]):
         }
         if after:
             params["after"] = after
-        for key, value in extra.items():
-            token = clean_whitespace(str(key or ""))
-            if not token or value is None:
-                continue
-            params[token] = str(value)
+        normalized_sort = clean_whitespace(str(sort or "")).casefold()
+        if normalized_sort in {"relevance", "hot", "top", "new", "comments"}:
+            params["sort"] = normalized_sort
+        normalized_time_range = clean_whitespace(str(time_range or "")).casefold()
+        if normalized_time_range in {"hour", "day", "week", "month", "year", "all"}:
+            params["t"] = normalized_time_range
         return params
 
     def _parse_results(
@@ -182,29 +156,27 @@ class RedditProvider(SearchProviderBase[RedditProviderConfig]):
             data = wrapper.get("data")
             if not isinstance(data, dict):
                 continue
-            item = self._build_result(data)
+            item, has_thumbnail = self._build_result(data)
             if item is None:
                 continue
             key = item.url.casefold()
             if key in seen_urls:
                 continue
             seen_urls.add(key)
-            if bool(item.metadata.get("thumbnail")):
+            if has_thumbnail:
                 image_results.append(item)
             else:
                 text_results.append(item)
-        ordered = image_results + text_results
-        for index, item in enumerate(ordered, start=1):
-            item.position = index
-        return ordered
+        return image_results + text_results
 
-    def _build_result(self, data: dict[str, Any]) -> SearchProviderResult | None:
+    def _build_result(
+        self, data: dict[str, Any]
+    ) -> tuple[SearchProviderResult | None, bool]:
         permalink = clean_whitespace(str(data.get("permalink") or ""))
         title = clean_whitespace(str(data.get("title") or ""))
         if not permalink or not title:
-            return None
+            return None, False
         url = urljoin("https://www.reddit.com/", permalink)
-        metadata: dict[str, Any] = {}
         thumbnail = self._valid_thumbnail(data.get("thumbnail"))
         created = self._parse_created_utc(data.get("created_utc"))
         selftext = self._truncate_text(
@@ -219,35 +191,23 @@ class RedditProvider(SearchProviderBase[RedditProviderConfig]):
             snippet_parts.append(domain)
         if not snippet_parts and external_url and external_url != url:
             snippet_parts.append(external_url)
-        if thumbnail:
-            metadata["thumbnail"] = thumbnail
-        if external_url:
-            metadata["external_url"] = external_url
-        if created:
-            metadata["published_date"] = created
-        if subreddit:
-            metadata["subreddit"] = subreddit
-        if author:
-            metadata["author"] = author
-        if domain:
-            metadata["domain"] = domain
-        score = data.get("score")
-        if isinstance(score, (int, float)):
-            metadata["popularity"] = int(score)
-        comments = data.get("num_comments")
-        if isinstance(comments, (int, float)):
-            metadata["comments_count"] = int(comments)
-        over_18 = data.get("over_18")
-        if isinstance(over_18, bool):
-            metadata["nsfw"] = over_18
+        _ = (
+            thumbnail,
+            external_url,
+            created,
+            author,
+            domain,
+            data.get("score"),
+            data.get("num_comments"),
+            data.get("over_18"),
+            self._display_url(url),
+        )
         return SearchProviderResult(
             url=url,
             title=title,
             snippet=" / ".join(snippet_parts),
-            display_url=self._display_url(url),
-            source_engine="reddit",
-            metadata=metadata,
-        )
+            engine=self.config.name,
+        ), bool(thumbnail)
 
     def _valid_thumbnail(self, value: Any) -> str:
         thumbnail = clean_whitespace(str(value or ""))

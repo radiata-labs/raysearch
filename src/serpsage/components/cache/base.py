@@ -19,8 +19,6 @@ CacheConfigT = TypeVar(
 
 
 class CacheBase(ComponentBase[CacheConfigT], ABC, Generic[CacheConfigT]):
-    __di_contract__ = True
-
     @abstractmethod
     async def aget(self, *, namespace: str, key: str) -> bytes | None:
         raise NotImplementedError

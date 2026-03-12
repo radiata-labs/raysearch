@@ -12,7 +12,6 @@ from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
-    SearchProviderResponse,
     SearchProviderResult,
 )
 from serpsage.utils import clean_whitespace
@@ -81,24 +80,27 @@ class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
     http: HttpClientBase = Depends()
 
     @override
-    async def asearch(
+    async def _asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
         cfg = self.config
         normalized_query = clean_whitespace(query)
-        normalized_language = clean_whitespace(language)
         if not normalized_query:
             raise ValueError("query must not be empty")
 
-        extra = dict(kwargs)
-        sort = clean_whitespace(str(extra.pop("sort", cfg.sort) or "")) or cfg.sort
-        order = clean_whitespace(str(extra.pop("order", cfg.order) or "")) or cfg.order
-        per_page = self._coerce_per_page(extra.pop("per_page", cfg.results_per_page))
+        sort = clean_whitespace(str(kwargs.get("sort") or cfg.sort or "")) or cfg.sort
+        order = (
+            clean_whitespace(str(kwargs.get("order") or cfg.order or "")) or cfg.order
+        )
+        per_page = self._coerce_per_page(
+            limit if limit is not None else cfg.results_per_page
+        )
+        page = self._coerce_page(kwargs.get("page"))
         headers = dict(cfg.headers or {})
         headers["Accept"] = str(cfg.accept_header or _DEFAULT_GITHUB_ACCEPT)
         headers["User-Agent"] = str(cfg.user_agent or _DEFAULT_GITHUB_USER_AGENT)
@@ -116,7 +118,6 @@ class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
                 per_page=per_page,
                 sort=sort,
                 order=order,
-                extra=extra,
             )
             resp = await self.http.client.get(
                 str(cfg.base_url),
@@ -135,7 +136,7 @@ class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
         items = payload.get("items", [])
         results: list[SearchProviderResult] = []
         if isinstance(items, list):
-            for index, raw in enumerate(items, start=1):
+            for raw in items:
                 if not isinstance(raw, dict):
                     continue
                 url = clean_whitespace(str(raw.get("html_url") or ""))
@@ -157,69 +158,46 @@ class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
                     spdx_id = clean_whitespace(str(license_info.get("spdx_id") or ""))
                     if spdx_id and spdx_id != "NOASSERTION":
                         license_url = f"https://spdx.org/licenses/{spdx_id}.html"
-                metadata = {
-                    "thumbnail": clean_whitespace(
+                _ = (
+                    clean_whitespace(
                         str((raw.get("owner") or {}).get("avatar_url") or "")
                     ),
-                    "package_name": clean_whitespace(str(raw.get("name") or "")),
-                    "maintainer": clean_whitespace(
-                        str((raw.get("owner") or {}).get("login") or "")
-                    ),
-                    "published_date": self._parse_github_datetime(
+                    clean_whitespace(str(raw.get("name") or "")),
+                    clean_whitespace(str((raw.get("owner") or {}).get("login") or "")),
+                    self._parse_github_datetime(
                         raw.get("updated_at") or raw.get("created_at")
                     ),
-                    "tags": (
-                        [clean_whitespace(str(tag)) for tag in raw.get("topics", [])]
-                        if isinstance(raw.get("topics"), list)
-                        else []
-                    ),
-                    "popularity": raw.get("stargazers_count"),
-                    "license_name": license_name,
-                    "license_url": license_url,
-                    "homepage": clean_whitespace(str(raw.get("homepage") or "")),
-                    "source_code_url": clean_whitespace(
-                        str(raw.get("clone_url") or "")
-                    ),
-                    "default_branch": clean_whitespace(
-                        str(raw.get("default_branch") or "")
-                    ),
-                    "forks_count": raw.get("forks_count"),
-                    "open_issues_count": raw.get("open_issues_count"),
-                    "watchers_count": raw.get("watchers_count"),
-                }
+                    [clean_whitespace(str(tag)) for tag in raw.get("topics", [])]
+                    if isinstance(raw.get("topics"), list)
+                    else [],
+                    raw.get("stargazers_count"),
+                    license_name,
+                    license_url,
+                    clean_whitespace(str(raw.get("homepage") or "")),
+                    clean_whitespace(str(raw.get("clone_url") or "")),
+                    clean_whitespace(str(raw.get("default_branch") or "")),
+                    raw.get("forks_count"),
+                    raw.get("open_issues_count"),
+                    raw.get("watchers_count"),
+                )
                 results.append(
                     SearchProviderResult(
                         url=url,
                         title=title,
                         snippet=snippet,
-                        display_url=clean_whitespace(str(raw.get("full_name") or "")),
-                        source_engine="github",
-                        position=index,
-                        metadata={
-                            key: value
-                            for key, value in metadata.items()
-                            if self._keep_metadata_value(value)
-                        },
+                        engine=self.config.name,
                     )
                 )
 
-        total_count = payload.get("total_count")
-        return SearchProviderResponse(
-            provider_backend="github",
-            query=normalized_query,
-            page=int(page),
-            language=normalized_language,
-            total_results=(
-                int(total_count) if isinstance(total_count, (int, float)) else None
-            ),
-            results=results,
-            metadata={
-                "request_url": final_url,
-                "github_domain": str(cfg.base_url),
-                "incomplete_results": bool(payload.get("incomplete_results")),
-                "effective_query": used_query,
-            },
+        _ = (
+            payload.get("total_count"),
+            final_url,
+            bool(payload.get("incomplete_results")),
+            used_query,
+            int(page),
+            locale,
         )
+        return results[:per_page]
 
     def _build_params(
         self,
@@ -229,7 +207,6 @@ class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
         per_page: int,
         sort: str,
         order: str,
-        extra: dict[str, Any],
     ) -> dict[str, str]:
         params: dict[str, str] = {
             "q": query,
@@ -238,11 +215,6 @@ class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
             "page": str(max(1, int(page))),
             "per_page": str(per_page),
         }
-        for key, value in extra.items():
-            token = clean_whitespace(str(key or ""))
-            if not token or value is None:
-                continue
-            params[token] = str(value)
         return params
 
     def _candidate_queries(self, query: str) -> list[str]:
@@ -276,8 +248,12 @@ class GitHubProvider(SearchProviderBase[GitHubProviderConfig]):
             return int(self.config.results_per_page)
         return max(1, min(100, size))
 
-    def _keep_metadata_value(self, value: Any) -> bool:
-        return value is not None and value not in ("", [])
+    def _coerce_page(self, value: Any) -> int:
+        try:
+            page = int(value)
+        except Exception:
+            return 1
+        return max(1, page)
 
     def _parse_github_datetime(self, value: Any) -> str:
         token = clean_whitespace(str(value or ""))

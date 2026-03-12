@@ -16,13 +16,9 @@ from serpsage.components.provider.base import (
     SearchProviderBase,
 )
 from serpsage.dependencies import Depends
-from serpsage.models.components.provider import (
-    SearchProviderResponse,
-    SearchProviderResult,
-)
+from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace
 
-_GOOGLE_TIME_RANGE_MAP = {"day": "d", "week": "w", "month": "m", "year": "y"}
 _GOOGLE_BLOCK_MARKERS = (
     "unusual traffic",
     "sorry.google.com",
@@ -76,24 +72,32 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
     http: HttpClientBase = Depends()
 
     @override
-    async def asearch(
+    async def _asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
         normalized_query = clean_whitespace(query)
-        normalized_language = clean_whitespace(language)
+        normalized_locale = clean_whitespace(locale)
         if not normalized_query:
             raise ValueError("query must not be empty")
+        start = self._coerce_start(kwargs.get("start"))
+        page_size = self._coerce_page_size(limit)
+        safe = self._resolve_safe(kwargs.get("safe"))
+        country = self._resolve_country(kwargs.get("country"))
+        time_range = self._resolve_time_range(kwargs.get("time_range"))
 
         request = self._build_request(
             query=normalized_query,
-            page=page,
-            language=normalized_language,
-            kwargs=kwargs,
+            limit=page_size,
+            locale=normalized_locale,
+            start=start,
+            safe=safe,
+            country=country,
+            time_range=time_range,
         )
         resp = await self.http.client.get(
             request["url"],
@@ -104,57 +108,39 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
         )
         resp.raise_for_status()
         self._raise_if_blocked(resp)
-        results, suggestions = self._parse_search_results(
+        results, _suggestions = self._parse_search_results(
             resp.text,
             base_url=str(resp.url),
         )
-        return SearchProviderResponse(
-            provider_backend="google",
-            query=normalized_query,
-            page=int(page),
-            language=normalized_language,
-            suggestions=suggestions,
-            results=results,
-            metadata={
-                "request_url": str(resp.url),
-                "google_domain": str(request["base_url"]),
-            },
-        )
+        _ = (locale, request, resp, start)
+        return self._trim_results(results, limit=page_size)
 
     def _build_request(
         self,
         *,
         query: str,
-        page: int,
-        language: str,
-        kwargs: dict[str, Any],
+        limit: int | None,
+        locale: str,
+        start: int,
+        safe: str,
+        country: str,
+        time_range: str,
     ) -> dict[str, Any]:
-        cfg = self.config
-        extra = dict(kwargs)
-        safe = clean_whitespace(str(extra.pop("safe", cfg.safe) or "")).casefold()
-        time_range = clean_whitespace(str(extra.pop("time_range", "") or "")).casefold()
-        country = clean_whitespace(str(extra.pop("country", cfg.country) or "")).upper()
         google_info = self._get_google_info(
-            language=language,
-            default_country=country or "US",
+            locale=locale,
+            default_country=country,
         )
-        start = max(0, (int(page) - 1) * 10)
+        page_size = max(1, min(100, int(limit))) if limit is not None else 10
         query_params: dict[str, str | int] = {
             "q": query,
             **google_info["params"],
             "filter": "0",
-            "start": start,
+            "start": max(0, int(start)),
+            "num": page_size,
         }
-        for key, value in extra.items():
-            token = clean_whitespace(str(key or ""))
-            if not token or value is None:
-                continue
-            query_params[token] = str(value)
+        if time_range:
+            query_params["tbs"] = f"qdr:{time_range}"
         query_url = str(google_info["base_url"]) + "?" + urlencode(query_params)
-        if time_range in _GOOGLE_TIME_RANGE_MAP:
-            query_url += "&" + urlencode(
-                {"tbs": "qdr:" + _GOOGLE_TIME_RANGE_MAP[time_range]}
-            )
         if safe in {"medium", "high"}:
             query_url += "&" + urlencode({"safe": safe})
         return {
@@ -167,11 +153,11 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
     def _get_google_info(
         self,
         *,
-        language: str,
+        locale: str,
         default_country: str,
     ) -> dict[str, Any]:
         cfg = self.config
-        locale = clean_whitespace(language).replace("_", "-")
+        locale = clean_whitespace(locale).replace("_", "-")
         region_in_locale = False
         if not locale or locale == "all":
             locale = "en"
@@ -184,7 +170,7 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
         lr = f"lang_{lang}"
         if region_in_locale and lang == "zh":
             lr = f"lang_{lang}-{country}"
-        if clean_whitespace(language).casefold() == "all":
+        if clean_whitespace(locale).casefold() == "all":
             lr = ""
         lang_code = lr.split("_")[-1] if lr else lang
         base_url = clean_whitespace(str(cfg.base_url or _DEFAULT_GOOGLE_BASE_URL))
@@ -237,21 +223,17 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
             if key in seen_urls:
                 continue
             snippet = self._extract_snippet(block)
-            display_url = self._extract_display_url(block)
-            metadata: dict[str, Any] = {}
-            thumbnail = self._extract_thumbnail(block, data_image_map)
-            if thumbnail:
-                metadata["thumbnail"] = thumbnail
+            _ = (
+                self._extract_display_url(block),
+                self._extract_thumbnail(block, data_image_map),
+            )
             seen_urls.add(key)
             results.append(
                 SearchProviderResult(
                     url=resolved_url,
                     title=title,
                     snippet=snippet,
-                    display_url=display_url,
-                    source_engine="google",
-                    position=len(results) + 1,
-                    metadata=metadata,
+                    engine=self.config.name,
                 )
             )
         for anchor in soup.select(_GOOGLE_SUGGESTION_SELECTOR):
@@ -370,6 +352,49 @@ class GoogleProvider(SearchProviderBase[GoogleProviderConfig]):
     def _google_user_agent(self) -> str:
         configured = clean_whitespace(str(self.config.user_agent or ""))
         return configured or _DEFAULT_GOOGLE_USER_AGENT
+
+    def _resolve_safe(self, value: Any) -> str:
+        token = clean_whitespace(str(value or self.config.safe or "")).casefold()
+        if token in {"medium", "high"}:
+            return token
+        return "off"
+
+    def _resolve_country(self, value: Any) -> str:
+        token = clean_whitespace(str(value or self.config.country or "")).upper()
+        if len(token) == 2:
+            return token
+        return "US"
+
+    def _resolve_time_range(self, value: Any) -> str:
+        token = clean_whitespace(str(value or "")).casefold()
+        return {
+            "day": "d",
+            "week": "w",
+            "month": "m",
+            "year": "y",
+        }.get(token, "")
+
+    def _coerce_start(self, value: Any) -> int:
+        try:
+            start = int(value)
+        except Exception:
+            return 0
+        return max(0, start)
+
+    def _coerce_page_size(self, value: int | None) -> int:
+        if value is None:
+            return 10
+        return max(1, min(100, int(value)))
+
+    def _trim_results(
+        self,
+        values: list[SearchProviderResult],
+        *,
+        limit: int | None,
+    ) -> list[SearchProviderResult]:
+        if limit is None:
+            return values
+        return values[: max(1, int(limit))]
 
     def _dedupe_text(self, values: list[str]) -> list[str]:
         out: list[str] = []

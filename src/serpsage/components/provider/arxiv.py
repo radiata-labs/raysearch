@@ -13,7 +13,6 @@ from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import (
-    SearchProviderResponse,
     SearchProviderResult,
 )
 from serpsage.utils import clean_whitespace
@@ -68,34 +67,34 @@ class ArxivProvider(SearchProviderBase[ArxivProviderConfig]):
     http: HttpClientBase = Depends()
 
     @override
-    async def asearch(
+    async def _asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
         cfg = self.config
         normalized_query = clean_whitespace(query)
-        normalized_language = clean_whitespace(language)
         if not normalized_query:
             raise ValueError("query must not be empty")
 
-        extra = dict(kwargs)
         search_prefix = (
-            clean_whitespace(str(extra.pop("search_prefix", cfg.search_prefix) or ""))
+            clean_whitespace(
+                str(kwargs.get("search_prefix") or cfg.search_prefix or "")
+            )
             or "all"
         )
         per_page = self._coerce_per_page(
-            extra.pop("max_results", extra.pop("per_page", cfg.results_per_page))
+            limit if limit is not None else cfg.results_per_page
         )
+        start = self._coerce_start(kwargs.get("start"))
         params = self._build_params(
             query=normalized_query,
             search_prefix=search_prefix,
-            page=page,
+            start=start,
             per_page=per_page,
-            extra=extra,
         )
         headers = dict(cfg.headers or {})
         headers["Accept"] = "application/atom+xml, application/xml;q=0.9, */*;q=0.8"
@@ -109,39 +108,30 @@ class ArxivProvider(SearchProviderBase[ArxivProviderConfig]):
         )
         resp.raise_for_status()
         total_results, results = self._parse_feed(resp.content)
-        return SearchProviderResponse(
-            provider_backend="arxiv",
-            query=normalized_query,
-            page=int(page),
-            language=normalized_language,
-            total_results=total_results,
-            results=results,
-            metadata={
-                "request_url": str(resp.url),
-                "arxiv_domain": str(cfg.base_url),
-                "search_prefix": search_prefix,
-            },
+        _ = (
+            total_results,
+            str(resp.url),
+            str(cfg.base_url),
+            search_prefix,
+            int(start),
+            locale,
+            max(1, int(start) // per_page + 1),
         )
+        return results[:per_page]
 
     def _build_params(
         self,
         *,
         query: str,
         search_prefix: str,
-        page: int,
+        start: int,
         per_page: int,
-        extra: dict[str, Any],
     ) -> dict[str, str]:
         params: dict[str, str] = {
             "search_query": f"{search_prefix}:{query}",
-            "start": str(max(0, (int(page) - 1) * per_page)),
+            "start": str(max(0, int(start))),
             "max_results": str(per_page),
         }
-        for key, value in extra.items():
-            token = clean_whitespace(str(key or ""))
-            if not token or value is None:
-                continue
-            params[token] = str(value)
         return params
 
     def _parse_feed(
@@ -204,29 +194,22 @@ class ArxivProvider(SearchProviderBase[ArxivProviderConfig]):
             pdf_url = clean_whitespace(str(node.get("href") or ""))
             if pdf_url:
                 break
-        metadata: dict[str, Any] = {}
-        if published:
-            metadata["published_date"] = published
-        if doi:
-            metadata["doi"] = doi
-        if authors:
-            metadata["authors"] = authors
-        if journal:
-            metadata["journal"] = journal
-        if tags:
-            metadata["tags"] = tags
-        if comments:
-            metadata["comments"] = comments
-        if pdf_url:
-            metadata["pdf_url"] = pdf_url
+        _ = (
+            published,
+            doi,
+            authors,
+            journal,
+            tags,
+            comments,
+            pdf_url,
+            self._display_url(url),
+            position,
+        )
         return SearchProviderResult(
             url=url,
             title=title,
             snippet=summary,
-            display_url=self._display_url(url),
-            source_engine="arxiv",
-            position=position,
-            metadata=metadata,
+            engine=self.config.name,
         )
 
     def _find_first(self, node: BeautifulSoup | Tag, *names: str) -> Tag | None:
@@ -263,6 +246,13 @@ class ArxivProvider(SearchProviderBase[ArxivProviderConfig]):
         except Exception:
             return int(self.config.results_per_page)
         return max(1, min(_MAX_ARXIV_RESULTS_PER_PAGE, size))
+
+    def _coerce_start(self, value: Any) -> int:
+        try:
+            start = int(value)
+        except Exception:
+            return 0
+        return max(0, start)
 
 
 __all__ = ["ArxivProvider", "ArxivProviderConfig"]

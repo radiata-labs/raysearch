@@ -108,8 +108,6 @@ CrawlerConfigT = TypeVar(
 
 
 class CrawlerBase(ComponentBase[CrawlerConfigT], ABC, Generic[CrawlerConfigT]):
-    __di_contract__ = True
-
     def __init__(self) -> None:
         self._inflight_lock = anyio.Lock()
         self._inflight_pool: dict[str, _InFlightEntry] = {}

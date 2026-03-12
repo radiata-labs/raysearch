@@ -9,10 +9,7 @@ from pydantic import field_validator
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.dependencies import Depends
-from serpsage.models.components.provider import (
-    SearchProviderResponse,
-    SearchProviderResult,
-)
+from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace
 
 _DEFAULT_SEARXNG_BASE_URL = "https://searx.be/search"
@@ -66,26 +63,24 @@ class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
     http: HttpClientBase = Depends()
 
     @override
-    async def asearch(
+    async def _asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
         cfg = self.config
         if not query or not str(query).strip():
             raise ValueError("query must not be empty")
         payload: dict[str, str] = {"q": str(query), "format": "json"}
-        if page > 1:
-            payload["pageno"] = str(int(page))
-        if language:
-            payload["language"] = str(language)
-        for key, value in kwargs.items():
-            if value is None:
-                continue
-            payload[str(key)] = str(value)
+        page_size = max(1, int(limit)) if limit is not None else None
+        if page_size is not None:
+            payload["limit"] = str(page_size)
+        if locale:
+            payload["language"] = str(locale)
+        self._merge_extra_payload(payload=payload, extra=kwargs)
         headers = dict(cfg.headers or {})
         if cfg.user_agent:
             headers.setdefault("User-Agent", str(cfg.user_agent))
@@ -103,7 +98,7 @@ class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
         raw_results = data.get("results", [])
         results: list[SearchProviderResult] = []
         if isinstance(raw_results, list):
-            for index, raw in enumerate(raw_results, start=1):
+            for raw in raw_results:
                 if not isinstance(raw, dict):
                     continue
                 url = clean_whitespace(str(raw.get("url") or ""))
@@ -112,43 +107,71 @@ class SearxngProvider(SearchProviderBase[SearxngProviderConfig]):
                 snippet = raw.get("content")
                 if snippet is None:
                     snippet = raw.get("description")
-                metadata = {
-                    key: value
-                    for key, value in raw.items()
-                    if key not in {"url", "title", "content", "description", "engine"}
-                }
+                _ = (
+                    raw.get("pretty_url"),
+                    raw.get("engine"),
+                    {
+                        key: value
+                        for key, value in raw.items()
+                        if key
+                        not in {"url", "title", "content", "description", "engine"}
+                    },
+                )
                 results.append(
                     SearchProviderResult(
                         url=url,
                         title=str(raw.get("title") or ""),
                         snippet=str(snippet or ""),
-                        display_url=str(raw.get("pretty_url") or ""),
-                        source_engine=str(raw.get("engine") or ""),
-                        position=index,
-                        metadata=metadata,
+                        engine=self.config.name,
                     )
                 )
-        total_results = data.get("number_of_results")
-        return SearchProviderResponse(
-            provider_backend="searxng",
-            query=str(query),
-            page=int(page),
-            language=str(language or ""),
-            total_results=(
-                int(total_results) if isinstance(total_results, (int, float)) else None
-            ),
-            suggestions=(
-                list(data.get("suggestions"))
-                if isinstance(data.get("suggestions"), list)
-                else []
-            ),
-            results=results,
-            metadata={
+        _ = (
+            data.get("number_of_results"),
+            data.get("suggestions"),
+            self._coerce_page(payload.get("pageno")),
+            locale,
+            {
                 key: value
                 for key, value in data.items()
                 if key not in {"results", "number_of_results", "suggestions"}
             },
         )
+        return results[:page_size] if page_size is not None else results
+
+    def _merge_extra_payload(
+        self,
+        *,
+        payload: dict[str, str],
+        extra: dict[str, Any],
+    ) -> None:
+        allowed_keys = {
+            "categories",
+            "engines",
+            "pageno",
+            "safesearch",
+            "time_range",
+        }
+        for key in allowed_keys:
+            raw_value = extra.get(key)
+            if raw_value is None:
+                continue
+            if isinstance(raw_value, (list, tuple, set)):
+                token = ",".join(
+                    clean_whitespace(str(item or ""))
+                    for item in raw_value
+                    if clean_whitespace(str(item or ""))
+                )
+            else:
+                token = clean_whitespace(str(raw_value or ""))
+            if token:
+                payload[key] = token
+
+    def _coerce_page(self, value: Any) -> int:
+        try:
+            page = int(value)
+        except Exception:
+            return 1
+        return max(1, page)
 
 
 __all__ = ["SearxngProvider", "SearxngProviderConfig"]

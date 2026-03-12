@@ -7,7 +7,7 @@ from typing_extensions import TypeVar
 from pydantic import Field, field_validator, model_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
-from serpsage.models.components.provider import SearchProviderResponse
+from serpsage.models.components.provider import SearchProviderResult
 
 GoogleSafeSearchKey = Literal["off", "medium", "high"]
 
@@ -24,6 +24,10 @@ class ProviderConfigBase(ComponentConfigBase):
     headers: dict[str, str] = Field(default_factory=dict)
     cookies: dict[str, str] = Field(default_factory=dict)
     retry: RetrySettings = Field(default_factory=RetrySettings)
+
+    @property
+    def name(self) -> str:
+        return self.__setting_name__
 
     @field_validator("base_url")
     @classmethod
@@ -48,17 +52,25 @@ ProviderConfigT = TypeVar(
 
 
 class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderConfigT]):
-    __di_contract__ = True
-
-    @abstractmethod
     async def asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
+        return await self._asearch(query=query, limit=limit, locale=locale, **kwargs)
+
+    @abstractmethod
+    async def _asearch(
+        self,
+        *,
+        query: str,
+        limit: int | None = None,
+        locale: str = "",
+        **kwargs: Any,
+    ) -> list[SearchProviderResult]:
         raise NotImplementedError
 
 

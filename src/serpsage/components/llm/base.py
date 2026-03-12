@@ -133,8 +133,6 @@ LLMConfigT = TypeVar(
 
 
 class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
-    __di_contract__ = True
-
     def configured_models(self) -> tuple[LLMModelConfig, ...]:
         models = getattr(self.config, "models", ()) or ()
         return tuple(model for model in models if isinstance(model, LLMModelConfig))

@@ -12,18 +12,9 @@ from pydantic import field_validator
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import ProviderConfigBase, SearchProviderBase
 from serpsage.dependencies import Depends
-from serpsage.models.components.provider import (
-    SearchProviderResponse,
-    SearchProviderResult,
-)
+from serpsage.models.components.provider import SearchProviderResult
 from serpsage.utils import clean_whitespace
 
-_DDG_TIME_RANGE_MAP = {
-    "day": "d",
-    "week": "w",
-    "month": "m",
-    "year": "y",
-}
 _DDG_BLOCK_MARKERS = (
     "challenge-form",
     "anomaly.js",
@@ -82,46 +73,28 @@ class DuckDuckGoProvider(SearchProviderBase[DuckDuckGoProviderConfig]):
     http: HttpClientBase = Depends()
 
     @override
-    async def asearch(
+    async def _asearch(
         self,
         *,
         query: str,
-        page: int = 1,
-        language: str = "",
+        limit: int | None = None,
+        locale: str = "",
         **kwargs: Any,
-    ) -> SearchProviderResponse:
+    ) -> list[SearchProviderResult]:
         cfg = self.config
         normalized_query = clean_whitespace(query)
-        normalized_language = clean_whitespace(language)
         if not normalized_query:
             raise ValueError("query must not be empty")
         if len(normalized_query) >= 500:
-            return self._empty_response(
-                query=normalized_query,
-                page=page,
-                language=normalized_language,
-                metadata={"skip_reason": "duckduckgo query length must be < 500"},
-            )
-
-        locale = normalized_language.replace("_", "-").lower()
-        if int(page) > 1 and locale.startswith("zh"):
-            return self._empty_response(
-                query=normalized_query,
-                page=page,
-                language=normalized_language,
-                metadata={
-                    "skip_reason": "duckduckgo follow-up pages are unavailable for zh locales"
-                },
-            )
+            return []
 
         headers = self._build_headers()
         request_params = self._build_request_params(
             query=normalized_query,
-            page=page,
-            kwargs=kwargs,
+            region=kwargs.get("region"),
+            time_range=kwargs.get("time_range"),
         )
         request_base_url = self._request_base_url()
-        metadata: dict[str, Any]
         try:
             resp = await self.http.client.get(
                 request_base_url,
@@ -132,51 +105,45 @@ class DuckDuckGoProvider(SearchProviderBase[DuckDuckGoProviderConfig]):
             )
             resp.raise_for_status()
             self._raise_if_blocked(resp)
-            results, suggestions, answer = self._parse_search_results(
+            results, _suggestions, _answer = self._parse_search_results(
                 resp.text,
                 base_url=request_base_url,
             )
-            metadata = {
-                "request_url": str(resp.url),
-                "duckduckgo_domain": request_base_url,
-            }
             if not results:
                 (
                     results,
-                    suggestions,
-                    answer,
-                    fallback_metadata,
+                    _suggestions,
+                    _answer,
+                    _fallback_metadata,
                 ) = await self._search_via_jina_mirror(query=normalized_query)
-                metadata.update(fallback_metadata)
         except Exception:
-            results, suggestions, answer, metadata = await self._search_via_jina_mirror(
-                query=normalized_query
-            )
-        if request_params:
-            metadata["request_params"] = dict(request_params)
-        if answer:
-            metadata["instant_answer"] = answer
-        return SearchProviderResponse(
-            provider_backend="duckduckgo",
-            query=normalized_query,
-            page=int(page),
-            language=normalized_language,
-            suggestions=suggestions,
-            results=results,
-            metadata=metadata,
-        )
+            (
+                results,
+                _suggestions,
+                _answer,
+                _metadata,
+            ) = await self._search_via_jina_mirror(query=normalized_query)
+        _ = (locale, request_params)
+        return self._trim_results(results, limit=limit)
 
     def _build_request_params(
         self,
         *,
         query: str,
-        page: int,
-        kwargs: dict[str, Any],
+        region: Any,
+        time_range: Any,
     ) -> dict[str, str]:
-        _ = kwargs
-        if int(page) > 1:
-            raise RuntimeError("duckduckgo provider currently supports only page 1")
-        return {"q": self._quote_bangs(query)}
+        params: dict[str, str] = {"q": self._quote_bangs(query)}
+        normalized_region = clean_whitespace(
+            str(region or self.config.region or "")
+        ).lower()
+        if normalized_region and normalized_region != "all":
+            params["kl"] = normalized_region
+        normalized_time_range = clean_whitespace(str(time_range or "")).casefold()
+        time_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
+        if normalized_time_range in time_map:
+            params["df"] = time_map[normalized_time_range]
+        return params
 
     def _build_headers(self) -> dict[str, str]:
         cfg = self.config
@@ -255,9 +222,7 @@ class DuckDuckGoProvider(SearchProviderBase[DuckDuckGoProviderConfig]):
                     url=resolved_url,
                     title=title,
                     snippet=snippet,
-                    display_url=self._extract_display_url(block),
-                    source_engine="duckduckgo",
-                    position=len(results) + 1,
+                    engine=self.config.name,
                 )
             )
         return (
@@ -393,8 +358,7 @@ class DuckDuckGoProvider(SearchProviderBase[DuckDuckGoProviderConfig]):
                     url=resolved_url,
                     title=clean_whitespace(match.group("title")),
                     snippet=clean_whitespace(match.group("snippet")),
-                    source_engine="duckduckgo",
-                    position=len(results) + 1,
+                    engine=self.config.name,
                 )
             )
         return results
@@ -420,27 +384,19 @@ class DuckDuckGoProvider(SearchProviderBase[DuckDuckGoProviderConfig]):
             parts.append(token)
         return " ".join(parts)
 
-    def _empty_response(
-        self,
-        *,
-        query: str,
-        page: int,
-        language: str,
-        metadata: dict[str, Any],
-    ) -> SearchProviderResponse:
-        return SearchProviderResponse(
-            provider_backend="duckduckgo",
-            query=query,
-            page=int(page),
-            language=language,
-            results=[],
-            suggestions=[],
-            metadata=dict(metadata),
-        )
-
     def _is_ddg_host(self, host: str) -> bool:
         normalized = clean_whitespace(host).lower()
         return normalized == "duckduckgo.com" or normalized.endswith(".duckduckgo.com")
+
+    def _trim_results(
+        self,
+        values: list[SearchProviderResult],
+        *,
+        limit: int | None,
+    ) -> list[SearchProviderResult]:
+        if limit is None:
+            return values
+        return values[: max(1, int(limit))]
 
 
 __all__ = ["DuckDuckGoProvider", "DuckDuckGoProviderConfig"]

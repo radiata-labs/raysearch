@@ -18,8 +18,6 @@ TelemetryEmitterConfigT = TypeVar("TelemetryEmitterConfigT", bound=ComponentConf
 
 
 class EventSinkBase(ComponentBase[EventSinkConfigT], ABC, Generic[EventSinkConfigT]):
-    __di_contract__ = True
-
     @abstractmethod
     async def emit(self, *, event: EventEnvelope) -> None:
         raise NotImplementedError
@@ -28,8 +26,6 @@ class EventSinkBase(ComponentBase[EventSinkConfigT], ABC, Generic[EventSinkConfi
 class TelemetryEmitterBase(
     ComponentBase[TelemetryEmitterConfigT], ABC, Generic[TelemetryEmitterConfigT]
 ):
-    __di_contract__ = True
-
     @abstractmethod
     async def emit_event(self, *, event: EventEnvelope) -> None:
         raise NotImplementedError
