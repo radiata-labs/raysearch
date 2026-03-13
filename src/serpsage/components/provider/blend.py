@@ -103,14 +103,17 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         async def run_one(
             index: int, provider: SearchProviderBase[ProviderConfigBase]
         ) -> None:
-            outputs[index] = await provider._asearch(
-                query=normalized_query,
-                limit=limit,
-                locale=locale,
-                start_published_date=start_published_date,
-                end_published_date=end_published_date,
-                **provider_kwargs,
-            )
+            try:
+                outputs[index] = await provider.asearch(
+                    query=normalized_query,
+                    limit=limit,
+                    locale=locale,
+                    start_published_date=start_published_date,
+                    end_published_date=end_published_date,
+                    **provider_kwargs,
+                )
+            except Exception:
+                outputs[index] = None
 
         async with anyio.create_task_group() as tg:
             for index, provider in enumerate(selected):

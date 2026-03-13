@@ -6,8 +6,8 @@ components:
       proxy: http://127.0.0.1:7890
       trust_env: true
       max_connections: 100
-      max_keepalive_connections: 20
-      keepalive_expiry_s: 5.0
+      max_keepalive_connections: 50
+      keepalive_expiry_s: 20.0
 
   provider:
     default: google
@@ -134,6 +134,15 @@ components:
           temperature: 0.0
           headers: {}
           enable_structured: true
+        - name: kimi-k2.5
+          base_url: https://coding.dashscope.aliyuncs.com/v1
+          api_key: sk-sp-896f874fbb1e432f84733214e0c38297
+          model: kimi-k2.5
+          timeout_s: 600.0
+          max_retries: 2
+          temperature: 0.0
+          headers: {}
+          enable_structured: true
     gemini:
       enabled: true
       models:
@@ -142,18 +151,6 @@ components:
           api_key: null
           model: gemini-3-flash-preview
           timeout_s: 60.0
-          max_retries: 2
-          temperature: 0.0
-          headers: {}
-          enable_structured: true
-    dashscope:
-      enabled: true
-      models:
-        - name: kimi-k2.5
-          base_url: null
-          api_key: null
-          model: kimi-k2.5
-          timeout_s: 600.0
           max_retries: 2
           temperature: 0.0
           headers: {}
@@ -221,7 +218,7 @@ fetch:
     title_boost_alpha: 0.35
   overview:
     use_model: gpt-4.1-mini
-    max_abstract_chars: 900
+    max_abstract_chars: 2000
     cache_ttl_s: 0
     self_heal_retries: 1
     force_language: auto
@@ -299,7 +296,7 @@ research:
     explore_links_per_page: 16
 
 runner:
-  search_limit: 8
-  fetch_limit: 24
-  child_fetch_limit: 24
+  search_limit: 24
+  fetch_limit: 48
+  child_fetch_limit: 48
   queue_size: 256

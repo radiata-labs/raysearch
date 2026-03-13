@@ -38,7 +38,7 @@ if __name__ == "__main__":
 
     t1 = time.time()
     out = anyio.run(
-        main, "Is using qwen code plan better than buying qwen token?", False, None
+        main, "What is keepalive in http?", False, None
     )
     t2 = time.time()
     print(out["answer_result"])
