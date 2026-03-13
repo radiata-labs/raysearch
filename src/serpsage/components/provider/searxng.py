@@ -82,6 +82,8 @@ class SearxngProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         cfg = self.config
@@ -93,7 +95,13 @@ class SearxngProvider(
             payload["limit"] = str(page_size)
         if locale:
             payload["language"] = str(locale)
-        self._merge_extra_payload(payload=payload, extra=kwargs)
+        effective_kwargs = dict(kwargs)
+        if not clean_whitespace(str(effective_kwargs.get("time_range") or "")):
+            effective_kwargs["time_range"] = self._relative_time_range_from_bounds(
+                start_published_date=start_published_date,
+                end_published_date=end_published_date,
+            )
+        self._merge_extra_payload(payload=payload, extra=effective_kwargs)
         headers = dict(cfg.headers or {})
         if cfg.user_agent:
             headers.setdefault("User-Agent", str(cfg.user_agent))
@@ -143,6 +151,8 @@ class SearxngProvider(
             data.get("suggestions"),
             self._coerce_page(payload.get("pageno")),
             locale,
+            start_published_date,
+            end_published_date,
             {
                 key: value
                 for key, value in data.items()

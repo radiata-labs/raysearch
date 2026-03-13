@@ -86,6 +86,8 @@ class ArxivProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         cfg = self.config
@@ -128,6 +130,8 @@ class ArxivProvider(
             search_prefix,
             int(start),
             locale,
+            start_published_date,
+            end_published_date,
             max(1, int(start) // per_page + 1),
         )
         return results[:per_page]

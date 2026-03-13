@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from serpsage.models.steps.search import SearchFetchedCandidate
 
 
-class SearchRankStep(StepBase[SearchStepContext]):
+class SearchRerankStep(StepBase[SearchStepContext]):
     ranker: RankerBase = Depends()
 
     @override
@@ -45,10 +45,8 @@ class SearchRankStep(StepBase[SearchStepContext]):
             filtered_count=int(stats.filtered_count),
             sum_page_score=float(stats.sum_page_score),
             sum_context_score=float(stats.sum_context_score),
-            sum_prefetch_score=float(stats.sum_prefetch_score),
             has_sort_feature=bool(options.has_sort_feature),
             use_context_score=bool(options.use_context_score),
-            use_prefetch_score=bool(options.use_prefetch_score),
             max_results=int(options.max_results),
             context_scores=dict(context_scores),
         )
@@ -81,7 +79,6 @@ class SearchRankStep(StepBase[SearchStepContext]):
             query_tokens=query_tokens,
             context_query_tokens=context_query_tokens,
             use_context_score=bool(ctx.plan.rank_by_context),
-            use_prefetch_score=bool(ctx.plan.rank_by_prefetch),
             context_docs_limit=int(ctx.plan.context_docs_limit),
             context_doc_min_chars=int(ctx.plan.context_doc_min_chars),
             max_results=int(ctx.plan.max_results),
@@ -142,6 +139,12 @@ class SearchRankStep(StepBase[SearchStepContext]):
             query_tokens=options.query_tokens,
             enabled=bool(options.content_enabled),
         )
+        abstract_scores = await self._batch_score_abstracts(
+            candidates=ready,
+            query=ctx.request.query,
+            query_tokens=options.context_query_tokens or options.query_tokens,
+            enabled=bool(options.abstracts_enabled),
+        )
         context_scores = await self._batch_score_context(
             ctx=ctx,
             candidates=ready,
@@ -153,12 +156,13 @@ class SearchRankStep(StepBase[SearchStepContext]):
         for idx, scoped in enumerate(ready):
             candidate = scoped.candidate
             page_scores = [
-                self._score_page_with_prefetched_content(
+                self._score_page_signals(
                     content_text=scoped.main_text,
                     content_score=float(content_scores.get((idx, -1), 0.0)),
-                    abstract_scores=[
-                        float(x) for x in list(candidate.result.abstract_scores)
-                    ],
+                    abstract_text=self._merge_abstracts_text(
+                        candidate.result.abstracts
+                    ),
+                    abstract_score=float(abstract_scores.get((idx, -1), 0.0)),
                     overview_scores=[
                         float(x) for x in list(candidate.main_overview_scores)
                     ],
@@ -169,14 +173,15 @@ class SearchRankStep(StepBase[SearchStepContext]):
             ]
             for sub_idx, (
                 content_text,
-                abstract_scores,
+                abstracts,
                 overview_scores,
             ) in enumerate(scoped.subpage_inputs):
                 page_scores.append(
-                    self._score_page_with_prefetched_content(
+                    self._score_page_signals(
                         content_text=content_text,
                         content_score=float(content_scores.get((idx, sub_idx), 0.0)),
-                        abstract_scores=abstract_scores,
+                        abstract_text=self._merge_abstracts_text(abstracts),
+                        abstract_score=float(abstract_scores.get((idx, sub_idx), 0.0)),
                         overview_scores=overview_scores,
                         content_enabled=bool(options.content_enabled),
                         abstracts_enabled=bool(options.abstracts_enabled),
@@ -187,14 +192,11 @@ class SearchRankStep(StepBase[SearchStepContext]):
                 max(page_scores, default=0.0) if options.has_sort_feature else 0.0
             )
             context_score = float(context_scores.get(idx, 0.0))
-            prefetch_score = float(ctx.retrieval.scores.get(candidate.result.url, 0.0))
             final_score = self._combine_scores(
                 page_score=page_score,
                 context_score=context_score,
-                prefetch_score=prefetch_score,
                 has_sort_feature=bool(options.has_sort_feature),
                 use_context_score=bool(options.use_context_score),
-                use_prefetch_score=bool(options.use_prefetch_score),
             )
             if options.use_context_score:
                 context_scores_by_url[candidate.result.url] = float(context_score)
@@ -204,12 +206,10 @@ class SearchRankStep(StepBase[SearchStepContext]):
                 result=candidate.result,
                 page_score=float(page_score),
                 context_score=float(context_score),
-                prefetch_score=float(prefetch_score),
             )
             ranked.append(item)
             stats.sum_page_score += float(item.page_score)
             stats.sum_context_score += float(item.context_score)
-            stats.sum_prefetch_score += float(item.prefetch_score)
         return ranked, stats, context_scores_by_url
 
     async def _batch_score_content(
@@ -233,6 +233,43 @@ class SearchRankStep(StepBase[SearchStepContext]):
                     continue
                 keys.append((idx, sub_idx))
                 texts.append(content_text)
+        if not texts:
+            return {}
+        scores = await self.ranker.score_texts(
+            texts,
+            query=query,
+            query_tokens=query_tokens,
+        )
+        return {
+            key: (float(scores[i]) if i < len(scores) else 0.0)
+            for i, key in enumerate(keys)
+        }
+
+    async def _batch_score_abstracts(
+        self,
+        *,
+        candidates: list[SearchCandidateForScoring],
+        query: str,
+        query_tokens: list[str],
+        enabled: bool,
+    ) -> dict[tuple[int, int], float]:
+        if not enabled:
+            return {}
+        texts: list[str] = []
+        keys: list[tuple[int, int]] = []
+        for idx, scoped in enumerate(candidates):
+            main_abstract_text = self._merge_abstracts_text(
+                scoped.candidate.result.abstracts
+            )
+            if main_abstract_text:
+                keys.append((idx, -1))
+                texts.append(main_abstract_text)
+            for sub_idx, (_, abstracts, _) in enumerate(scoped.subpage_inputs):
+                abstract_text = self._merge_abstracts_text(abstracts)
+                if not abstract_text:
+                    continue
+                keys.append((idx, sub_idx))
+                texts.append(abstract_text)
         if not texts:
             return {}
         scores = await self.ranker.score_texts(
@@ -287,13 +324,13 @@ class SearchRankStep(StepBase[SearchStepContext]):
 
     def _collect_subpage_inputs(
         self, candidate: SearchFetchedCandidate
-    ) -> list[tuple[str, list[float], list[float]]]:
+    ) -> list[tuple[str, list[str], list[float]]]:
         subpage_count = max(
             len(candidate.result.subpages),
             len(candidate.subpage_abstract_texts),
             len(candidate.subpages_overview_scores),
         )
-        out: list[tuple[str, list[float], list[float]]] = []
+        out: list[tuple[str, list[str], list[float]]] = []
         for sub_idx in range(subpage_count):
             subpage = (
                 candidate.result.subpages[sub_idx]
@@ -307,10 +344,8 @@ class SearchRankStep(StepBase[SearchStepContext]):
                     else ""
                 )
             )
-            abstract_scores = (
-                [float(x) for x in list(subpage.abstract_scores)]
-                if subpage is not None
-                else []
+            abstracts = (
+                [str(x) for x in list(subpage.abstracts)] if subpage is not None else []
             )
             overview_scores = (
                 [
@@ -320,7 +355,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
                 if sub_idx < len(candidate.subpages_overview_scores)
                 else []
             )
-            out.append((content_text, abstract_scores, overview_scores))
+            out.append((content_text, abstracts, overview_scores))
         return out
 
     def _collect_context_docs(
@@ -396,12 +431,13 @@ class SearchRankStep(StepBase[SearchStepContext]):
         seen.add(key)
         docs.append(normalized)
 
-    def _score_page_with_prefetched_content(
+    def _score_page_signals(
         self,
         *,
         content_text: str,
         content_score: float,
-        abstract_scores: list[float],
+        abstract_text: str,
+        abstract_score: float,
         overview_scores: list[float],
         content_enabled: bool,
         abstracts_enabled: bool,
@@ -409,7 +445,7 @@ class SearchRankStep(StepBase[SearchStepContext]):
     ) -> float:
         if content_enabled and not content_text:
             return 0.0
-        if abstracts_enabled and not abstract_scores:
+        if abstracts_enabled and not abstract_text:
             return 0.0
         if overview_enabled and not overview_scores:
             return 0.0
@@ -417,12 +453,26 @@ class SearchRankStep(StepBase[SearchStepContext]):
         if content_enabled:
             parts.append(float(content_score))
         if abstracts_enabled:
-            parts.append(self._average_scores(abstract_scores))
+            parts.append(float(abstract_score))
         if overview_enabled:
             parts.append(self._average_scores(overview_scores))
         if not parts:
             return 0.0
         return float(sum(parts) / len(parts))
+
+    def _merge_abstracts_text(self, abstracts: list[str]) -> str:
+        parts: list[str] = []
+        seen: set[str] = set()
+        for raw in abstracts:
+            text = clean_whitespace(str(raw or ""))
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            parts.append(text)
+        return "\n".join(parts)
 
     def _average_scores(self, scores: list[float]) -> float:
         values = [float(x) for x in scores]
@@ -435,18 +485,14 @@ class SearchRankStep(StepBase[SearchStepContext]):
         *,
         page_score: float,
         context_score: float,
-        prefetch_score: float,
         has_sort_feature: bool,
         use_context_score: bool,
-        use_prefetch_score: bool,
     ) -> float:
         parts: list[float] = []
         if has_sort_feature:
             parts.append(float(page_score))
         if use_context_score:
             parts.append(float(context_score))
-        if use_prefetch_score:
-            parts.append(float(prefetch_score))
         if not parts:
             return 0.0
         return float(sum(parts) / len(parts))
@@ -467,4 +513,4 @@ class SearchRankStep(StepBase[SearchStepContext]):
         return not (exclude_text and any(needle in haystack for needle in exclude_text))
 
 
-__all__ = ["SearchRankStep"]
+__all__ = ["SearchRerankStep"]

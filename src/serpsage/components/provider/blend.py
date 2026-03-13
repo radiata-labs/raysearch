@@ -77,6 +77,8 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         normalized_query = clean_whitespace(query)
@@ -105,6 +107,8 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
                 query=normalized_query,
                 limit=limit,
                 locale=locale,
+                start_published_date=start_published_date,
+                end_published_date=end_published_date,
                 **provider_kwargs,
             )
 

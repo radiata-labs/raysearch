@@ -6,7 +6,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from serpsage.models.app.base import BaseRequest
-from serpsage.utils import clean_whitespace
+from serpsage.utils import (
+    clean_whitespace,
+    normalize_iso8601_string,
+    parse_iso8601_datetime,
+)
 
 SearchMode = Literal["fast", "auto", "deep"]
 ResearchSearchMode = Literal["research-fast", "research", "research-pro"]
@@ -280,6 +284,8 @@ class SearchRequest(BaseRequest):
     additional_queries: list[str] | None = None
     mode: SearchMode = "auto"
     max_results: int | None = None
+    start_published_date: str | None = None
+    end_published_date: str | None = None
     include_domains: list[str] | None = None
     exclude_domains: list[str] | None = None
     include_text: list[str] | None = None
@@ -298,6 +304,13 @@ class SearchRequest(BaseRequest):
     @classmethod
     def _validate_additional_queries(cls, value: list[str] | None) -> list[str] | None:
         return _normalize_string_list(value)
+
+    @field_validator("start_published_date", "end_published_date")
+    @classmethod
+    def _validate_published_date_bounds(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_iso8601_string(value)
 
     @field_validator("include_domains", "exclude_domains")
     @classmethod
@@ -347,6 +360,10 @@ class SearchRequest(BaseRequest):
                 "include_domains and exclude_domains must not overlap: "
                 + ", ".join(overlap)
             )
+        start_at = parse_iso8601_datetime(str(self.start_published_date or ""))
+        end_at = parse_iso8601_datetime(str(self.end_published_date or ""))
+        if start_at is not None and end_at is not None and start_at > end_at:
+            raise ValueError("start_published_date must be <= end_published_date")
         return self
 
 

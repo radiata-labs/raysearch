@@ -87,7 +87,7 @@ from serpsage.steps.search import (
     SearchFinalizeStep,
     SearchOptimizeStep,
     SearchPrepareStep,
-    SearchRankStep,
+    SearchRerankStep,
     SearchStep,
 )
 
@@ -369,7 +369,7 @@ class Engine(WorkUnit):
                 SearchExpandStep,
                 SearchStep,
                 SearchFetchStep,
-                SearchRankStep,
+                SearchRerankStep,
                 SearchFinalizeStep,
             ),
             kind="search",

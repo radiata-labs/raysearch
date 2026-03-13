@@ -19,7 +19,7 @@ from serpsage.steps.search import (
     SearchFetchStep,
     SearchFinalizeStep,
     SearchPrepareStep,
-    SearchRankStep,
+    SearchRerankStep,
     SearchStep,
 )
 
@@ -42,7 +42,7 @@ __all__ = [
     "ResearchThemeStep",
     "SearchExpandStep",
     "SearchFinalizeStep",
-    "SearchRankStep",
+    "SearchRerankStep",
     "SearchPrepareStep",
     "SearchFetchStep",
     "SearchStepContext",

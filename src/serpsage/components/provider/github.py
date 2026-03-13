@@ -99,6 +99,8 @@ class GitHubProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         cfg = self.config
@@ -120,13 +122,21 @@ class GitHubProvider(
         if cfg.api_key:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
             headers.setdefault("X-GitHub-Api-Version", "2022-11-28")
+        start_date, end_date = self._coarse_published_date_bounds(
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+        )
 
         payload: dict[str, Any] = {}
         final_url = str(cfg.base_url)
         used_query = normalized_query
         for candidate_query in self._candidate_queries(normalized_query):
             params = self._build_params(
-                query=candidate_query,
+                query=self._apply_created_date_qualifiers(
+                    query=candidate_query,
+                    start_date=start_date,
+                    end_date=end_date,
+                ),
                 page=page,
                 per_page=per_page,
                 sort=sort,
@@ -209,6 +219,8 @@ class GitHubProvider(
             used_query,
             int(page),
             locale,
+            start_published_date,
+            end_published_date,
         )
         return results[:per_page]
 
@@ -229,6 +241,20 @@ class GitHubProvider(
             "per_page": str(per_page),
         }
         return params
+
+    def _apply_created_date_qualifiers(
+        self,
+        *,
+        query: str,
+        start_date: str,
+        end_date: str,
+    ) -> str:
+        parts = [clean_whitespace(query)]
+        if start_date:
+            parts.append(f"created:>={start_date}")
+        if end_date:
+            parts.append(f"created:<{end_date}")
+        return " ".join(part for part in parts if part)
 
     def _candidate_queries(self, query: str) -> list[str]:
         primary = clean_whitespace(query)

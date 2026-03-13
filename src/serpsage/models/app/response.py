@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from serpsage.models.app.base import BaseResponse
+from serpsage.utils import normalize_iso8601_string
 
 FetchErrorTag = Literal[
     "CRAWL_NOT_FOUND",
@@ -34,6 +42,11 @@ class FetchSubpagesResult(BaseModel):
     abstracts: list[str]
     abstract_scores: list[float]
     overview: str | object | None = None
+
+    @field_validator("published_date")
+    @classmethod
+    def _validate_published_date(cls, value: str) -> str:
+        return normalize_iso8601_string(value, allow_blank=True)
 
     @model_validator(mode="after")
     def _validate_abstract_alignment(self) -> FetchSubpagesResult:

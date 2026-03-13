@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from contextlib import suppress
 from typing_extensions import override
 from urllib.parse import urlparse
@@ -8,7 +7,6 @@ from urllib.parse import urlparse
 import anyio
 
 from serpsage.components.provider.base import SearchProviderBase
-from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.models.components.telemetry import MeterPayload
@@ -16,24 +14,20 @@ from serpsage.models.steps.search import (
     SearchCanonicalBucket,
     SearchNormalizedResult,
     SearchQueryJob,
-    SearchScoredHit,
     SearchSnippetContext,
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
-from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import canonicalize_url, clean_whitespace, strip_html
 
 
 class SearchStep(StepBase[SearchStepContext]):
     provider: SearchProviderBase = Depends()
-    ranker: RankerBase = Depends()
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         if bool(ctx.plan.aborted):
             ctx.retrieval.urls = []
-            ctx.retrieval.scores = {}
             ctx.retrieval.snippet_context = {}
             ctx.retrieval.query_hit_stats = {}
             ctx.fetch.candidates = []
@@ -48,7 +42,6 @@ class SearchStep(StepBase[SearchStepContext]):
         async with anyio.create_task_group() as tg:
             for idx, job in enumerate(query_jobs):
                 tg.start_soon(self._run_query, idx, job.query, provider_responses, ctx)
-        query_tokens = tokenize_for_query(ctx.request.query)
         include_domains = list(ctx.request.include_domains or [])
         exclude_domains = list(ctx.request.exclude_domains or [])
         normalized_by_job: list[list[SearchNormalizedResult]] = []
@@ -61,109 +54,65 @@ class SearchStep(StepBase[SearchStepContext]):
                     exclude_domains=exclude_domains,
                 )
             )
-        scored_hits: list[SearchScoredHit] = []
-        docs: list[str] = []
-        next_order = 0
-        for idx, normalized in enumerate(normalized_by_job):
-            for item in normalized:
-                docs.append(f"{item.title} {item.title} {item.snippet}".strip())
-                scored_hits.append(
-                    SearchScoredHit(
-                        job_index=idx,
-                        order=next_order,
-                        item=item,
-                    )
-                )
-                next_order += 1
-        base_scores: list[float] = []
-        if docs:
-            base_scores = await self.ranker.score_texts(
-                docs,
-                query=ctx.request.query,
-                query_tokens=query_tokens,
-            )
         canonical_buckets = self._collect_canonical_buckets(
             query_jobs=query_jobs,
-            scored_hits=scored_hits,
-            base_scores=base_scores,
+            normalized_by_job=normalized_by_job,
         )
         snippets_by_url: dict[str, dict[str, SearchSnippetContext]] = {}
         query_hit_stats: dict[str, int] = {}
-        ranked_with_prefetch: list[tuple[str, float, int]] = []
         for bucket in canonical_buckets.values():
             url = bucket.representative_url
-            order = int(bucket.representative_order)
-            query_hit_count = int(len(bucket.hit_indexes))
             snippets_by_url[url] = dict(bucket.snippets_by_source)
-            query_hit_stats[url] = query_hit_count
-            base_score = self._fuse_prefetch_score(
-                hit_scores=list(bucket.hit_scores),
-                hit_query_count=query_hit_count,
-                total_query_jobs=len(query_jobs),
-            )
-            ranked_with_prefetch.append((url, float(base_score), order))
+            query_hit_stats[url] = int(len(bucket.hit_indexes))
         ctx.retrieval.snippet_context = self._finalize_snippet_context(snippets_by_url)
         ctx.retrieval.query_hit_stats = dict(query_hit_stats)
-        ranked = sorted(ranked_with_prefetch, key=lambda item: (-item[1], item[2]))
         ctx.retrieval.urls = [
-            url for url, _, _ in ranked[: int(ctx.plan.prefetch_limit)]
+            bucket.representative_url
+            for bucket in list(canonical_buckets.values())[
+                : int(ctx.plan.prefetch_limit)
+            ]
         ]
-        ctx.retrieval.scores = {url: float(score) for url, score, _ in ranked}
         return ctx
 
     def _collect_canonical_buckets(
         self,
         *,
         query_jobs: list[SearchQueryJob],
-        scored_hits: list[SearchScoredHit],
-        base_scores: list[float],
+        normalized_by_job: list[list[SearchNormalizedResult]],
     ) -> dict[str, SearchCanonicalBucket]:
         buckets: dict[str, SearchCanonicalBucket] = {}
-        for score_idx, hit in enumerate(scored_hits):
-            if hit.job_index >= len(query_jobs):
+        next_order = 0
+        for job_index, normalized in enumerate(normalized_by_job):
+            if job_index >= len(query_jobs):
                 continue
-            job = query_jobs[hit.job_index]
-            score = (
-                float(base_scores[score_idx]) if score_idx < len(base_scores) else 0.0
-            )
-            canonical_url = str(hit.item.canonical_url or hit.item.url)
-            bucket = buckets.get(canonical_url)
-            if bucket is None:
-                bucket = SearchCanonicalBucket(
-                    representative_url=str(hit.item.url),
-                    representative_order=int(hit.order),
-                    representative_score=float(score),
-                )
-                buckets[canonical_url] = bucket
-            bucket.hit_indexes.add(int(hit.job_index))
-            bucket.hit_scores.append(float(score))
-            if float(score) > float(bucket.representative_score) or (
-                float(score) == float(bucket.representative_score)
-                and int(hit.order) < int(bucket.representative_order)
-            ):
-                bucket.representative_score = float(score)
-                bucket.representative_url = str(hit.item.url)
-                bucket.representative_order = int(hit.order)
-            snippet_text = self._pick_snippet(hit.item)
-            if not snippet_text:
-                continue
-            source_key = str(job.source)
-            current = bucket.snippets_by_source.get(source_key)
-            if (
-                current is None
-                or float(score) > float(current.score)
-                or (
-                    float(score) == float(current.score)
-                    and int(hit.order) < int(current.order)
-                )
-            ):
-                bucket.snippets_by_source[source_key] = SearchSnippetContext(
-                    snippet=snippet_text,
-                    source_query=job.query,
-                    source_type=job.source,
-                    score=float(score),
-                    order=int(hit.order),
-                )
+            job = query_jobs[job_index]
+            for item in normalized:
+                current_order = int(next_order)
+                next_order += 1
+                canonical_url = str(item.canonical_url or item.url)
+                bucket = buckets.get(canonical_url)
+                if bucket is None:
+                    bucket = SearchCanonicalBucket(
+                        representative_url=str(item.url),
+                        representative_order=current_order,
+                    )
+                    buckets[canonical_url] = bucket
+                bucket.hit_indexes.add(job_index)
+                if current_order < int(bucket.representative_order):
+                    bucket.representative_url = str(item.url)
+                    bucket.representative_order = current_order
+                snippet_text = self._pick_snippet(item)
+                if not snippet_text:
+                    continue
+                source_key = str(job.source)
+                current = bucket.snippets_by_source.get(source_key)
+                if current is None or current_order < int(current.order):
+                    bucket.snippets_by_source[source_key] = SearchSnippetContext(
+                        snippet=snippet_text,
+                        source_query=job.query,
+                        source_type=job.source,
+                        order=current_order,
+                    )
         return buckets
 
     async def _run_query(
@@ -178,6 +127,8 @@ class SearchStep(StepBase[SearchStepContext]):
                 query=query,
                 limit=ctx.runtime.provider_limit,
                 locale=str(ctx.runtime.provider_locale or ""),
+                start_published_date=ctx.request.start_published_date,
+                end_published_date=ctx.request.end_published_date,
                 **dict(ctx.runtime.provider_extra_kwargs or {}),
             )
             await self._emit_search_meter(
@@ -244,33 +195,6 @@ class SearchStep(StepBase[SearchStepContext]):
                 ),
             )
 
-    def _fuse_prefetch_score(
-        self,
-        *,
-        hit_scores: list[float],
-        hit_query_count: int,
-        total_query_jobs: int,
-    ) -> float:
-        ordered_scores = sorted((float(x) for x in hit_scores), reverse=True)
-        if not ordered_scores:
-            return 0.0
-        if int(total_query_jobs) <= 1:
-            return float(ordered_scores[0])
-        mean_score = float(sum(ordered_scores) / len(ordered_scores))
-        coverage = self._coverage_signal(
-            hit_query_count=hit_query_count,
-            total_query_jobs=total_query_jobs,
-        )
-        signals = [mean_score, coverage]
-        return float(sum(signals) / len(signals))
-
-    def _coverage_signal(self, *, hit_query_count: int, total_query_jobs: int) -> float:
-        safe_hit = max(0, int(hit_query_count))
-        safe_total = max(1, int(total_query_jobs))
-        if safe_total <= 1:
-            return 1.0
-        return float(math.log1p(float(safe_hit)) / math.log1p(float(safe_total)))
-
     def _pick_snippet(self, item: SearchNormalizedResult) -> str:
         snippet = clean_whitespace(item.snippet)
         if snippet:
@@ -283,7 +207,7 @@ class SearchStep(StepBase[SearchStepContext]):
         out: dict[str, list[SearchSnippetContext]] = {}
         for url, grouped in values.items():
             selected = list(grouped.values())
-            selected.sort(key=lambda item: (-float(item.score), int(item.order)))
+            selected.sort(key=lambda item: int(item.order))
             out[url] = selected
         return out
 

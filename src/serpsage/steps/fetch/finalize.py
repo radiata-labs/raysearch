@@ -5,6 +5,7 @@ from typing_extensions import override
 from serpsage.models.app.response import FetchResultItem
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
+from serpsage.utils import normalize_iso8601_string
 
 
 class FetchFinalizeStep(StepBase[FetchStepContext]):
@@ -52,7 +53,9 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         ctx.result = FetchResultItem(
             url=ctx.url,
             title=str(ctx.page.doc.meta.title or ""),
-            published_date=str(ctx.page.doc.meta.published_date or ""),
+            published_date=_normalize_published_date(
+                str(ctx.page.doc.meta.published_date or "")
+            ),
             author=str(ctx.page.doc.meta.author or ""),
             image=str(ctx.page.doc.meta.image or ""),
             favicon=str(ctx.page.doc.meta.favicon or ""),
@@ -68,6 +71,13 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             **others_result,
         )
         return ctx
+
+
+def _normalize_published_date(value: str) -> str:
+    try:
+        return normalize_iso8601_string(value, allow_blank=True)
+    except ValueError:
+        return ""
 
 
 __all__ = ["FetchFinalizeStep"]

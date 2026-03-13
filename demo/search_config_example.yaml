@@ -10,7 +10,7 @@ components:
       keepalive_expiry_s: 5.0
 
   provider:
-    default: blend
+    default: google
     blend:
       enabled: true
       include_sources: ["arxiv", "duckduckgo", "github", "google", "reddit", wikipedia"]
@@ -184,19 +184,17 @@ search:
   modes:
     fast:
       max_extra_queries: 0
-      prefetch_multiplier: 1.0
+      prefetch_multiplier: 1.5
       prefetch_max_urls: 16
       context_docs_limit: 0
       context_doc_min_chars: 0
-      rank_by_prefetch: false
       rank_by_context: false
     auto:
       max_extra_queries: 1
-      prefetch_multiplier: 2.0
+      prefetch_multiplier: 2.25
       prefetch_max_urls: 32
       context_docs_limit: 0
       context_doc_min_chars: 0
-      rank_by_prefetch: true
       rank_by_context: false
     deep:
       max_extra_queries: 6
@@ -204,7 +202,6 @@ search:
       prefetch_max_urls: 48
       context_docs_limit: 18
       context_doc_min_chars: 16
-      rank_by_prefetch: true
       rank_by_context: true
 
 fetch:

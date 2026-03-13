@@ -67,7 +67,6 @@ class SearchModeSettings(SettingModel):
     prefetch_max_urls: int = 16
     context_docs_limit: int = 0
     context_doc_min_chars: int = 0
-    rank_by_prefetch: bool = False
     rank_by_context: bool = False
 
     @model_validator(mode="after")
@@ -100,7 +99,6 @@ def _default_search_fast_mode() -> SearchModeSettings:
         prefetch_max_urls=16,
         context_docs_limit=0,
         context_doc_min_chars=0,
-        rank_by_prefetch=False,
         rank_by_context=False,
     )
 
@@ -112,7 +110,6 @@ def _default_search_auto_mode() -> SearchModeSettings:
         prefetch_max_urls=32,
         context_docs_limit=0,
         context_doc_min_chars=0,
-        rank_by_prefetch=True,
         rank_by_context=False,
     )
 
@@ -124,7 +121,6 @@ def _default_search_deep_mode() -> SearchModeSettings:
         prefetch_max_urls=48,
         context_docs_limit=18,
         context_doc_min_chars=16,
-        rank_by_prefetch=True,
         rank_by_context=True,
     )
 

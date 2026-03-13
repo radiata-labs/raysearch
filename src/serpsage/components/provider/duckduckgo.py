@@ -92,6 +92,8 @@ class DuckDuckGoProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         cfg = self.config
@@ -102,10 +104,16 @@ class DuckDuckGoProvider(
             return []
 
         headers = self._build_headers()
+        resolved_time_range = clean_whitespace(str(kwargs.get("time_range") or ""))
+        if not resolved_time_range:
+            resolved_time_range = self._relative_time_range_from_bounds(
+                start_published_date=start_published_date,
+                end_published_date=end_published_date,
+            )
         request_params = self._build_request_params(
             query=normalized_query,
             region=kwargs.get("region"),
-            time_range=kwargs.get("time_range"),
+            time_range=resolved_time_range,
         )
         request_base_url = self._request_base_url()
         try:
@@ -136,7 +144,7 @@ class DuckDuckGoProvider(
                 _answer,
                 _metadata,
             ) = await self._search_via_jina_mirror(query=normalized_query)
-        _ = (locale, request_params)
+        _ = (locale, request_params, start_published_date, end_published_date)
         return self._trim_results(results, limit=limit)
 
     def _build_request_params(

@@ -84,6 +84,8 @@ class RedditProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         cfg = self.config
@@ -95,12 +97,18 @@ class RedditProvider(
             limit if limit is not None else cfg.results_per_page
         )
         after = clean_whitespace(str(kwargs.get("after") or ""))
+        resolved_time_range = clean_whitespace(str(kwargs.get("time_range") or ""))
+        if not resolved_time_range:
+            resolved_time_range = self._relative_time_range_from_bounds(
+                start_published_date=start_published_date,
+                end_published_date=end_published_date,
+            )
         params = self._build_params(
             query=normalized_query,
             per_page=per_page,
             after=after,
             sort=kwargs.get("sort"),
-            time_range=kwargs.get("time_range"),
+            time_range=resolved_time_range,
         )
         headers = dict(cfg.headers or {})
         headers["Accept"] = "application/json"
@@ -131,6 +139,8 @@ class RedditProvider(
             if isinstance(listing, dict)
             else "",
             locale,
+            start_published_date,
+            end_published_date,
         )
         return results[:per_page]
 

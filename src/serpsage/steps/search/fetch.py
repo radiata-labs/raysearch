@@ -8,6 +8,7 @@ from serpsage.models.app.response import FetchResponse
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.search import SearchFetchedCandidate, SearchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
+from serpsage.utils import clean_whitespace, published_date_in_range
 
 
 class SearchFetchStep(StepBase[SearchStepContext]):
@@ -107,6 +108,11 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                     ],
                 )
             )
+        fetched_candidates = self._filter_candidates_by_published_date(
+            candidates=fetched_candidates,
+            start_published_date=ctx.request.start_published_date,
+            end_published_date=ctx.request.end_published_date,
+        )
         ctx.fetch.candidates = fetched_candidates
         ctx.output.results = [candidate.result for candidate in fetched_candidates]
         return ctx
@@ -123,6 +129,27 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             overview=template.overview,
             others=template.others,
         )
+
+    def _filter_candidates_by_published_date(
+        self,
+        *,
+        candidates: list[SearchFetchedCandidate],
+        start_published_date: str | None,
+        end_published_date: str | None,
+    ) -> list[SearchFetchedCandidate]:
+        if not clean_whitespace(
+            str(start_published_date or "")
+        ) and not clean_whitespace(str(end_published_date or "")):
+            return candidates
+        return [
+            candidate
+            for candidate in candidates
+            if published_date_in_range(
+                candidate.result.published_date,
+                start_published_date=str(start_published_date or ""),
+                end_published_date=str(end_published_date or ""),
+            )
+        ]
 
 
 def _derive_subpage_links_limit(main_links_limit: int | None) -> int | None:

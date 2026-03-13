@@ -48,7 +48,6 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
             prefetch_limit=int(prefetch_limit),
             context_docs_limit=int(profile.context_docs_limit),
             context_doc_min_chars=int(profile.context_doc_min_chars),
-            rank_by_prefetch=bool(profile.rank_by_prefetch),
             rank_by_context=bool(profile.rank_by_context),
             optimize_query=mode != "fast",
             optimized_query=query,

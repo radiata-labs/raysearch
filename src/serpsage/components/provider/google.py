@@ -88,6 +88,8 @@ class GoogleProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         normalized_query = clean_whitespace(query)
@@ -99,6 +101,10 @@ class GoogleProvider(
         safe = self._resolve_safe(kwargs.get("safe"))
         country = self._resolve_country(kwargs.get("country"))
         time_range = self._resolve_time_range(kwargs.get("time_range"))
+        start_date, end_date = self._coarse_published_date_bounds(
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+        )
 
         request = self._build_request(
             query=normalized_query,
@@ -108,6 +114,8 @@ class GoogleProvider(
             safe=safe,
             country=country,
             time_range=time_range,
+            start_date=start_date,
+            end_date=end_date,
         )
         resp = await self.http.client.get(
             request["url"],
@@ -122,7 +130,7 @@ class GoogleProvider(
             resp.text,
             base_url=str(resp.url),
         )
-        _ = (locale, request, resp, start)
+        _ = (locale, request, resp, start, start_published_date, end_published_date)
         return self._trim_results(results, limit=page_size)
 
     def _build_request(
@@ -135,6 +143,8 @@ class GoogleProvider(
         safe: str,
         country: str,
         time_range: str,
+        start_date: str,
+        end_date: str,
     ) -> dict[str, Any]:
         google_info = self._get_google_info(
             locale=locale,
@@ -148,7 +158,15 @@ class GoogleProvider(
             "start": max(0, int(start)),
             "num": page_size,
         }
-        if time_range:
+        tbs_value = self._resolve_google_tbs(
+            time_range=time_range,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if tbs_value:
+            query_params["source"] = "lnt"
+            query_params["tbs"] = tbs_value
+        if time_range and "tbs" not in query_params:
             query_params["tbs"] = f"qdr:{time_range}"
         query_url = str(google_info["base_url"]) + "?" + urlencode(query_params)
         if safe in {"medium", "high"}:
@@ -204,6 +222,40 @@ class GoogleProvider(
             "country": country,
             "language": lr,
         }
+
+    def _resolve_google_tbs(
+        self,
+        *,
+        time_range: str,
+        start_date: str,
+        end_date: str,
+    ) -> str:
+        if start_date or end_date:
+            return self._build_custom_date_tbs(
+                start_date=start_date,
+                end_date=end_date,
+            )
+        if time_range:
+            return f"qdr:{time_range}"
+        return ""
+
+    def _build_custom_date_tbs(self, *, start_date: str, end_date: str) -> str:
+        return ",".join(
+            [
+                "cdr:1",
+                f"cd_min:{self._format_google_date(start_date) or 'x'}",
+                f"cd_max:{self._format_google_date(end_date) or 'x'}",
+            ]
+        )
+
+    def _format_google_date(self, value: str) -> str:
+        token = clean_whitespace(value)
+        if len(token) != 10 or token.count("-") != 2:
+            return ""
+        year, month, day = token.split("-", 2)
+        if not year or not month or not day:
+            return ""
+        return f"{int(month)}/{int(day)}/{year}"
 
     def _parse_search_results(
         self,

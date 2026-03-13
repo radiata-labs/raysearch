@@ -48,13 +48,9 @@ if __name__ == "__main__":
     out = anyio.run(
         main,
         [
-            "https://github.com/ollama/ollama",
-            "https://www.reddit.com/r/singularity/comments/1qoojio/open_source_kimik25_is_now_beating_claude_opus_45/",
-            "https://github.com/voipmonitor/rtx6kpro",
-            "https://github.com/userFRM/kimi-code-mcp",
-            "https://modelscope.cn/models/moonshotai/Kimi-K2.5",
+            "https://doi.org/10.48550/arXiv.2603.10031",
         ],
-        None,
+        "kimi-k2.5",
         False,
     )
     print(out["fetch_result"])

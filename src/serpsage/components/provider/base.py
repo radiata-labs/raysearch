@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, Literal
 from typing_extensions import TypeVar
 
@@ -8,6 +9,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
 from serpsage.models.components.provider import SearchProviderResult
+from serpsage.utils import (
+    clean_whitespace,
+    iso8601_end_date_exclusive,
+    iso8601_start_date_floor,
+    normalize_iso8601_string,
+    parse_iso8601_datetime,
+)
 
 GoogleSafeSearchKey = Literal["off", "medium", "high"]
 PROVIDER_ROUTES_TOKEN = "component.provider_routes"  # noqa: S105
@@ -79,9 +87,20 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
-        return await self._asearch(query=query, limit=limit, locale=locale, **kwargs)
+        normalized_start = self._normalize_published_date_bound(start_published_date)
+        normalized_end = self._normalize_published_date_bound(end_published_date)
+        return await self._asearch(
+            query=query,
+            limit=limit,
+            locale=locale,
+            start_published_date=normalized_start,
+            end_published_date=normalized_end,
+            **kwargs,
+        )
 
     @abstractmethod
     async def _asearch(
@@ -90,9 +109,62 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         raise NotImplementedError
+
+    def _normalize_published_date_bound(self, value: str | None) -> str:
+        token = clean_whitespace(str(value or ""))
+        if not token:
+            return ""
+        return normalize_iso8601_string(token)
+
+    def _coarse_published_date_bounds(
+        self,
+        *,
+        start_published_date: str | None,
+        end_published_date: str | None,
+    ) -> tuple[str, str]:
+        start_value = self._normalize_published_date_bound(start_published_date)
+        end_value = self._normalize_published_date_bound(end_published_date)
+        if not start_value and not end_value:
+            return "", ""
+        return (
+            iso8601_start_date_floor(start_value),
+            iso8601_end_date_exclusive(end_value),
+        )
+
+    def _relative_time_range_from_bounds(
+        self,
+        *,
+        start_published_date: str | None,
+        end_published_date: str | None,
+    ) -> str:
+        start_value = clean_whitespace(str(start_published_date or ""))
+        if not start_value:
+            return ""
+        start_at = parse_iso8601_datetime(start_value)
+        if start_at is None:
+            return ""
+        end_value = clean_whitespace(str(end_published_date or ""))
+        end_at = parse_iso8601_datetime(end_value) if end_value else None
+        now_utc = datetime.now(UTC)
+        effective_end = end_at or now_utc
+        if effective_end < start_at:
+            return ""
+        windows = (
+            ("day", timedelta(days=1)),
+            ("week", timedelta(days=7)),
+            ("month", timedelta(days=31)),
+            ("year", timedelta(days=366)),
+        )
+        for name, width in windows:
+            window_start = now_utc - width
+            if start_at >= window_start and effective_end >= window_start:
+                return name
+        return ""
 
 
 __all__ = [

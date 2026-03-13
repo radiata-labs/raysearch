@@ -23,11 +23,7 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
             ranked = self._build_fallback_candidates(ctx)
         ranked = self._sort_candidates(
             ranked,
-            enable_sort=bool(
-                ctx.rank.has_sort_feature
-                or ctx.rank.use_context_score
-                or ctx.rank.use_prefetch_score
-            ),
+            enable_sort=bool(ctx.rank.has_sort_feature or ctx.rank.use_context_score),
         )
         max_results = self._resolve_max_results(ctx)
         ctx.output.results = [item.result for item in ranked[:max_results]]

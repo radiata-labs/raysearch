@@ -106,6 +106,8 @@ class WikipediaProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        start_published_date: str | None = None,
+        end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         cfg = self.config
@@ -162,6 +164,8 @@ class WikipediaProvider(
             resolved["wiki_tag"],
             resolved["accept_language"],
             normalized_locale or resolved["request_language"],
+            start_published_date,
+            end_published_date,
             max(1, int(offset) // per_page + 1),
         )
         return results[:per_page]

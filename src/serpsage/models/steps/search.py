@@ -11,7 +11,15 @@ from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.utils import clean_whitespace
 
-_RESERVED_PROVIDER_KWARG_KEYS = frozenset({"query", "limit", "locale"})
+_RESERVED_PROVIDER_KWARG_KEYS = frozenset(
+    {
+        "query",
+        "limit",
+        "locale",
+        "start_published_date",
+        "end_published_date",
+    }
+)
 
 
 class SearchQueryJob(MutableModel):
@@ -28,7 +36,6 @@ class SearchSnippetContext(MutableModel):
     snippet: str
     source_query: str
     source_type: Literal["primary", "manual", "rule", "llm"]
-    score: float = 0.0
     order: int = 0
 
 
@@ -84,7 +91,6 @@ class SearchPlanState(MutableModel):
     prefetch_limit: int = 1
     context_docs_limit: int = 0
     context_doc_min_chars: int = 0
-    rank_by_prefetch: bool = False
     rank_by_context: bool = False
     optimize_query: bool = False
     optimized_query: str = ""
@@ -109,7 +115,6 @@ class SearchPlanState(MutableModel):
 
 class SearchRetrievalState(MutableModel):
     urls: list[str] = Field(default_factory=list)
-    scores: dict[str, float] = Field(default_factory=dict)
     snippet_context: dict[str, list[SearchSnippetContext]] = Field(default_factory=dict)
     query_hit_stats: dict[str, int] = Field(default_factory=dict)
 
@@ -120,7 +125,6 @@ class SearchRankedCandidate(MutableModel):
     order: int = 0
     page_score: float = 0.0
     context_score: float = 0.0
-    prefetch_score: float = 0.0
 
 
 class SearchRankState(MutableModel):
@@ -128,10 +132,8 @@ class SearchRankState(MutableModel):
     filtered_count: int = 0
     sum_page_score: float = 0.0
     sum_context_score: float = 0.0
-    sum_prefetch_score: float = 0.0
     has_sort_feature: bool = False
     use_context_score: bool = False
-    use_prefetch_score: bool = False
     max_results: int = 1
     context_scores: dict[str, float] = Field(default_factory=dict)
 
@@ -172,18 +174,10 @@ class SearchNormalizedResult(MutableModel):
     snippet: str = ""
 
 
-class SearchScoredHit(MutableModel):
-    job_index: int
-    order: int
-    item: SearchNormalizedResult
-
-
 class SearchCanonicalBucket(MutableModel):
     representative_url: str
     representative_order: int
-    representative_score: float
     hit_indexes: set[int] = Field(default_factory=set)
-    hit_scores: list[float] = Field(default_factory=list)
     snippets_by_source: dict[str, SearchSnippetContext] = Field(default_factory=dict)
 
 
@@ -197,7 +191,6 @@ class SearchRankOptions(MutableModel):
     query_tokens: list[str] = Field(default_factory=list)
     context_query_tokens: list[str] = Field(default_factory=list)
     use_context_score: bool
-    use_prefetch_score: bool
     context_docs_limit: int
     context_doc_min_chars: int
     max_results: int
@@ -207,14 +200,13 @@ class SearchRankStats(MutableModel):
     filtered_count: int = 0
     sum_page_score: float = 0.0
     sum_context_score: float = 0.0
-    sum_prefetch_score: float = 0.0
 
 
 class SearchCandidateForScoring(MutableModel):
     order: int
     candidate: SearchFetchedCandidate
     main_text: str = ""
-    subpage_inputs: list[tuple[str, list[float], list[float]]] = Field(
+    subpage_inputs: list[tuple[str, list[str], list[float]]] = Field(
         default_factory=list
     )
 
@@ -243,7 +235,6 @@ __all__ = [
     "SearchRankStats",
     "SearchRetrievalState",
     "SearchRuntimeState",
-    "SearchScoredHit",
     "SearchSnippetContext",
     "SearchStepContext",
 ]
