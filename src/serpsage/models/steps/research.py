@@ -10,7 +10,6 @@ from serpsage.models.base import MutableModel
 from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.models.steps.search import SearchFetchedCandidate
-from serpsage.settings.models import AppSettings
 
 ReportStyle = Literal["decision", "explainer", "execution"]
 RoundAction = Literal["search", "explore"]
@@ -437,7 +436,6 @@ class ResearchResult(MutableModel):
 
 
 class ResearchStepContext(BaseStepContext[ResearchRequest, ResearchResponse]):
-    settings: AppSettings
     request: ResearchRequest
     response: ResearchResponse
     task: ResearchTask = Field(default_factory=ResearchTask)

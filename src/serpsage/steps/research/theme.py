@@ -43,7 +43,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )

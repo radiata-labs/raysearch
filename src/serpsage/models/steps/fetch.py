@@ -24,7 +24,6 @@ from serpsage.models.components.extract import (
     ExtractSpec,
 )
 from serpsage.models.steps.base import BaseStepContext
-from serpsage.settings.models import AppSettings
 
 
 class PreparedPassage(MutableModel):
@@ -98,7 +97,6 @@ class FetchRelatedState(MutableModel):
 
 
 class FetchStepContext(BaseStepContext[FetchRequest, FetchResponse]):
-    settings: AppSettings
     request: FetchRequest
     response: FetchResponse
     url: str

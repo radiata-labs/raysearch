@@ -427,7 +427,6 @@ class Engine(WorkUnit):
             attrs={"request_kind": "search"},
         )
         ctx = SearchStepContext(
-            settings=self.settings,
             request=req,
             request_id=request_id,
             response=SearchResponse(
@@ -495,7 +494,6 @@ class Engine(WorkUnit):
             contexts: list[FetchStepContext] = []
             for idx, url in enumerate(req.urls):
                 fetch_ctx = FetchStepContext(
-                    settings=self.settings,
                     request=req,
                     request_id=request_id,
                     response=FetchResponse(
@@ -611,7 +609,6 @@ class Engine(WorkUnit):
             attrs={"request_kind": "answer"},
         )
         ctx = AnswerStepContext(
-            settings=self.settings,
             request=req,
             request_id=request_id,
             response=AnswerResponse(
@@ -687,7 +684,6 @@ class Engine(WorkUnit):
             attrs={"request_kind": "research"},
         )
         ctx = ResearchStepContext(
-            settings=self.settings,
             request=req,
             request_id=request_id,
             response=ResearchResponse(

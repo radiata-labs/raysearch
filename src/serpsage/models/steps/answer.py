@@ -15,7 +15,6 @@ from serpsage.models.app.response import (
 )
 from serpsage.models.base import MutableModel, UnvalidatedModel
 from serpsage.models.steps.base import BaseStepContext
-from serpsage.settings.models import AppSettings
 
 
 class AnswerPlanPayload(UnvalidatedModel):
@@ -86,7 +85,6 @@ class AnswerOutputState(MutableModel):
 
 
 class AnswerStepContext(BaseStepContext[AnswerRequest, AnswerResponse]):
-    settings: AppSettings
     request: AnswerRequest
     response: AnswerResponse
     plan: AnswerPlanState = Field(default_factory=AnswerPlanState)

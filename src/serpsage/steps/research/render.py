@@ -128,7 +128,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> RenderArchitectOutput:
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="synthesize",
             fallback=self.settings.answer.generate.use_model,
         )
@@ -168,7 +168,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> list[str]:
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
@@ -276,7 +276,7 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> None:
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="synthesize",
             fallback=self.settings.answer.generate.use_model,
         )

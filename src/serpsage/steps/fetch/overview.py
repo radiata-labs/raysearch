@@ -42,7 +42,7 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 },
             )
             return ctx
-        profile = ctx.settings.fetch.overview
+        profile = self.settings.fetch.overview
         schema = dict(req.json_schema) if isinstance(req.json_schema, dict) else None
         mode = "json" if schema is not None else "text"
         messages = self._build_messages(

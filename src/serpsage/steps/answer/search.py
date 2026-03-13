@@ -15,7 +15,7 @@ from serpsage.models.steps.answer import (
     AnswerSubQuestionPlan,
     AnswerSubSearchState,
 )
-from serpsage.models.steps.search import SearchStepContext
+from serpsage.models.steps.search import SearchRuntimeState, SearchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.utils import clean_whitespace
 
@@ -45,14 +45,13 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         ctx.search.search_mode = _FIXED_SEARCH_MODE
         search_contexts = [
             SearchStepContext(
-                settings=ctx.settings,
                 request=req,
                 response=SearchResponse(
                     request_id=ctx.request_id,
                     search_mode=req.mode,
                     results=[],
                 ),
-                disable_internal_llm=True,
+                runtime=SearchRuntimeState(disable_internal_llm=True),
                 request_id=ctx.request_id,
             )
             for req in requests

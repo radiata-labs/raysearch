@@ -65,7 +65,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         child_link_limit = int(ctx.related.subpages.candidate_limit or 0)
         if child_link_limit <= 0:
             child_link_limit = 8
-        fetch_cfg = ctx.settings.fetch
+        fetch_cfg = self.settings.fetch
         child_link_limit = min(
             int(fetch_cfg.extract.link_max_count),
             max(1, int(child_link_limit)),
@@ -80,7 +80,6 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                 }
             )
             child_ctx = FetchStepContext(
-                settings=ctx.settings,
                 request=child_request,
                 request_id=ctx.request_id,
                 response=FetchResponse(

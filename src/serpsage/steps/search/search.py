@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import math
-import re
 from contextlib import suppress
-from typing import Literal
 from typing_extensions import override
 from urllib.parse import urlparse
 
@@ -12,9 +10,7 @@ import anyio
 from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
-from serpsage.models.components.provider import (
-    SearchProviderResult,
-)
+from serpsage.models.components.provider import SearchProviderResult
 from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.search import (
     SearchCanonicalBucket,
@@ -28,12 +24,6 @@ from serpsage.steps.base import StepBase
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import canonicalize_url, clean_whitespace, strip_html
 
-_AUTO_RULE_QUERY_WEIGHT = 0.35
-_AUTO_PREFETCH_MULTIPLIER = 1.6
-_AUTO_PREFETCH_EXTRA_CAP = 8
-_MAX_SNIPPET_CONTEXT_PER_URL = 3
-_RE_CJK_TOKEN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]")
-
 
 class SearchStep(StepBase[SearchStepContext]):
     provider: SearchProviderBase = Depends()
@@ -41,15 +31,15 @@ class SearchStep(StepBase[SearchStepContext]):
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
-        if bool(ctx.deep.aborted):
-            ctx.prefetch.urls = []
-            ctx.prefetch.scores = {}
+        if bool(ctx.plan.aborted):
+            ctx.retrieval.urls = []
+            ctx.retrieval.scores = {}
+            ctx.retrieval.snippet_context = {}
+            ctx.retrieval.query_hit_stats = {}
             ctx.fetch.candidates = []
             ctx.output.results = []
             return ctx
-        req = ctx.request
-        mode = self._normalize_mode(req.mode)
-        query_jobs = self._resolve_query_jobs(ctx=ctx, mode=mode)
+        query_jobs: list[SearchQueryJob] = list(ctx.plan.query_jobs or [])
         if not query_jobs:
             return ctx
         provider_responses: list[list[SearchProviderResult] | None] = [
@@ -58,9 +48,9 @@ class SearchStep(StepBase[SearchStepContext]):
         async with anyio.create_task_group() as tg:
             for idx, job in enumerate(query_jobs):
                 tg.start_soon(self._run_query, idx, job.query, provider_responses, ctx)
-        query_tokens = tokenize_for_query(req.query)
-        include_domains = list(req.include_domains or [])
-        exclude_domains = list(req.exclude_domains or [])
+        query_tokens = tokenize_for_query(ctx.request.query)
+        include_domains = list(ctx.request.include_domains or [])
+        exclude_domains = list(ctx.request.exclude_domains or [])
         normalized_by_job: list[list[SearchNormalizedResult]] = []
         for response in provider_responses:
             provider_results = response if response is not None else []
@@ -89,7 +79,7 @@ class SearchStep(StepBase[SearchStepContext]):
         if docs:
             base_scores = await self.ranker.score_texts(
                 docs,
-                query=req.query,
+                query=ctx.request.query,
                 query_tokens=query_tokens,
             )
         canonical_buckets = self._collect_canonical_buckets(
@@ -99,11 +89,6 @@ class SearchStep(StepBase[SearchStepContext]):
         )
         snippets_by_url: dict[str, dict[str, SearchSnippetContext]] = {}
         query_hit_stats: dict[str, int] = {}
-        coverage_bonus_weight = (
-            float(self.settings.search.deep.coverage_bonus_weight)
-            if mode == "deep" and bool(self.settings.search.deep.enabled)
-            else 0.0
-        )
         ranked_with_prefetch: list[tuple[str, float, int]] = []
         for bucket in canonical_buckets.values():
             url = bucket.representative_url
@@ -112,27 +97,18 @@ class SearchStep(StepBase[SearchStepContext]):
             snippets_by_url[url] = dict(bucket.snippets_by_source)
             query_hit_stats[url] = query_hit_count
             base_score = self._fuse_prefetch_score(
-                mode=mode,
                 hit_scores=list(bucket.hit_scores),
                 hit_query_count=query_hit_count,
                 total_query_jobs=len(query_jobs),
             )
-            bonus = (
-                float(coverage_bonus_weight * math.log1p(float(query_hit_count)))
-                if coverage_bonus_weight > 0
-                else 0.0
-            )
-            ranked_with_prefetch.append((url, float(base_score + bonus), order))
-        ctx.deep.snippet_context = self._finalize_snippet_context(snippets_by_url)
-        ctx.deep.query_hit_stats = dict(query_hit_stats)
-        max_results = int(req.max_results or self.settings.search.max_results)
-        prefetch_limit = self._resolve_prefetch_limit(
-            mode=mode,
-            max_results=max_results,
-        )
+            ranked_with_prefetch.append((url, float(base_score), order))
+        ctx.retrieval.snippet_context = self._finalize_snippet_context(snippets_by_url)
+        ctx.retrieval.query_hit_stats = dict(query_hit_stats)
         ranked = sorted(ranked_with_prefetch, key=lambda item: (-item[1], item[2]))
-        ctx.prefetch.urls = [url for url, _, _ in ranked[:prefetch_limit]]
-        ctx.prefetch.scores = {url: float(score) for url, score, _ in ranked}
+        ctx.retrieval.urls = [
+            url for url, _, _ in ranked[: int(ctx.plan.prefetch_limit)]
+        ]
+        ctx.retrieval.scores = {url: float(score) for url, score, _ in ranked}
         return ctx
 
     def _collect_canonical_buckets(
@@ -150,23 +126,22 @@ class SearchStep(StepBase[SearchStepContext]):
             score = (
                 float(base_scores[score_idx]) if score_idx < len(base_scores) else 0.0
             )
-            weighted_score = float(score * float(job.weight))
             canonical_url = str(hit.item.canonical_url or hit.item.url)
             bucket = buckets.get(canonical_url)
             if bucket is None:
                 bucket = SearchCanonicalBucket(
                     representative_url=str(hit.item.url),
                     representative_order=int(hit.order),
-                    representative_score=float(weighted_score),
+                    representative_score=float(score),
                 )
                 buckets[canonical_url] = bucket
             bucket.hit_indexes.add(int(hit.job_index))
-            bucket.hit_scores.append(float(weighted_score))
-            if weighted_score > float(bucket.representative_score) or (
-                weighted_score == float(bucket.representative_score)
+            bucket.hit_scores.append(float(score))
+            if float(score) > float(bucket.representative_score) or (
+                float(score) == float(bucket.representative_score)
                 and int(hit.order) < int(bucket.representative_order)
             ):
-                bucket.representative_score = float(weighted_score)
+                bucket.representative_score = float(score)
                 bucket.representative_url = str(hit.item.url)
                 bucket.representative_order = int(hit.order)
             snippet_text = self._pick_snippet(hit.item)
@@ -176,9 +151,9 @@ class SearchStep(StepBase[SearchStepContext]):
             current = bucket.snippets_by_source.get(source_key)
             if (
                 current is None
-                or weighted_score > float(current.score)
+                or float(score) > float(current.score)
                 or (
-                    weighted_score == float(current.score)
+                    float(score) == float(current.score)
                     and int(hit.order) < int(current.order)
                 )
             ):
@@ -186,7 +161,7 @@ class SearchStep(StepBase[SearchStepContext]):
                     snippet=snippet_text,
                     source_query=job.query,
                     source_type=job.source,
-                    score=float(weighted_score),
+                    score=float(score),
                     order=int(hit.order),
                 )
         return buckets
@@ -201,9 +176,9 @@ class SearchStep(StepBase[SearchStepContext]):
         try:
             out[idx] = await self.provider.asearch(
                 query=query,
-                limit=ctx.provider_limit,
-                locale=str(ctx.provider_locale or ""),
-                **dict(ctx.provider_extra_kwargs or {}),
+                limit=ctx.runtime.provider_limit,
+                locale=str(ctx.runtime.provider_locale or ""),
+                **dict(ctx.runtime.provider_extra_kwargs or {}),
             )
             await self._emit_search_meter(
                 ctx=ctx,
@@ -258,7 +233,7 @@ class SearchStep(StepBase[SearchStepContext]):
                 ),
                 attrs={
                     "query": query,
-                    "mode": str(ctx.request.mode),
+                    "mode": str(ctx.plan.mode),
                     "provider_backend": provider_backend,
                 },
                 meter=MeterPayload(
@@ -269,121 +244,9 @@ class SearchStep(StepBase[SearchStepContext]):
                 ),
             )
 
-    def _resolve_query_jobs(
-        self,
-        *,
-        ctx: SearchStepContext,
-        mode: Literal["fast", "auto", "deep"],
-    ) -> list[SearchQueryJob]:
-        req = ctx.request
-        if mode == "deep" and list(ctx.deep.query_jobs or []):
-            return list(ctx.deep.query_jobs)
-        return self._build_query_jobs(
-            query=req.query,
-            mode=mode,
-            additional_queries=list(req.additional_queries or []),
-        )
-
-    def _build_query_jobs(
-        self,
-        *,
-        query: str,
-        mode: Literal["fast", "auto", "deep"],
-        additional_queries: list[str],
-    ) -> list[SearchQueryJob]:
-        normalized_query = clean_whitespace(query)
-        jobs: list[SearchQueryJob] = [
-            SearchQueryJob(query=normalized_query, weight=1.0, source="primary")
-        ]
-        seen = {normalized_query.casefold()}
-        if mode == "auto":
-            rule_query = self._build_auto_rule_query(query=normalized_query)
-            if rule_query and rule_query.casefold() not in seen:
-                seen.add(rule_query.casefold())
-                jobs.append(
-                    SearchQueryJob(
-                        query=rule_query,
-                        weight=float(_AUTO_RULE_QUERY_WEIGHT),
-                        source="rule",
-                    )
-                )
-            return jobs
-        if mode != "deep":
-            return jobs
-        weight = float(self.settings.search.additional_query_score_weight)
-        for raw in additional_queries:
-            item = clean_whitespace(str(raw or ""))
-            if not item:
-                continue
-            key = item.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            jobs.append(SearchQueryJob(query=item, weight=weight, source="manual"))
-        return jobs
-
-    def _build_auto_rule_query(self, *, query: str) -> str:
-        tokens = tokenize_for_query(query)
-        seen: set[str] = set()
-        compact_tokens: list[str] = []
-        has_cjk = self._contains_cjk(text=query)
-        for raw in tokens:
-            token = clean_whitespace(str(raw or ""))
-            if not token:
-                continue
-            key = token.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            if has_cjk and self._is_cjk_token(token):
-                if len(token) < 2:
-                    continue
-            else:
-                if token.isdigit() and len(token) != 4:
-                    continue
-                if not token.isdigit() and len(token) < 3:
-                    continue
-            compact_tokens.append(token)
-            if len(compact_tokens) >= 5:
-                break
-        candidate = clean_whitespace(" ".join(compact_tokens))
-        if not candidate:
-            return ""
-        if len(compact_tokens) < 2:
-            return ""
-        if has_cjk:
-            if sum(len(tok) for tok in compact_tokens) < 4:
-                return ""
-        elif sum(len(tok) for tok in compact_tokens) < 8:
-            return ""
-        if candidate.casefold() == clean_whitespace(query).casefold():
-            return ""
-        return candidate
-
-    def _resolve_prefetch_limit(
-        self,
-        *,
-        mode: Literal["fast", "auto", "deep"],
-        max_results: int,
-    ) -> int:
-        if mode == "fast":
-            return max(1, int(max_results))
-        if mode == "auto":
-            desired = int(
-                math.ceil(float(max_results) * float(_AUTO_PREFETCH_MULTIPLIER))
-            )
-            capped = min(desired, int(max_results) + int(_AUTO_PREFETCH_EXTRA_CAP))
-            return max(1, capped)
-        if not bool(self.settings.search.deep.enabled):
-            return max(1, int(max_results))
-        cfg = self.settings.search.deep
-        desired = int(math.ceil(float(max_results) * float(cfg.prefetch_multiplier)))
-        return max(1, min(int(cfg.prefetch_max_urls), desired))
-
     def _fuse_prefetch_score(
         self,
         *,
-        mode: Literal["fast", "auto", "deep"],
         hit_scores: list[float],
         hit_query_count: int,
         total_query_jobs: int,
@@ -391,29 +254,22 @@ class SearchStep(StepBase[SearchStepContext]):
         ordered_scores = sorted((float(x) for x in hit_scores), reverse=True)
         if not ordered_scores:
             return 0.0
-        max_score = float(ordered_scores[0])
+        if int(total_query_jobs) <= 1:
+            return float(ordered_scores[0])
+        mean_score = float(sum(ordered_scores) / len(ordered_scores))
         coverage = self._coverage_signal(
             hit_query_count=hit_query_count,
             total_query_jobs=total_query_jobs,
         )
-        if mode == "fast":
-            return max_score
-        if mode == "auto":
-            top2_mean = self._mean_top_k(ordered_scores, k=2)
-            return float(0.65 * max_score + 0.20 * top2_mean + 0.15 * coverage)
-        top3_mean = self._mean_top_k(ordered_scores, k=3)
-        return float(0.50 * max_score + 0.20 * top3_mean + 0.30 * coverage)
+        signals = [mean_score, coverage]
+        return float(sum(signals) / len(signals))
 
     def _coverage_signal(self, *, hit_query_count: int, total_query_jobs: int) -> float:
         safe_hit = max(0, int(hit_query_count))
         safe_total = max(1, int(total_query_jobs))
+        if safe_total <= 1:
+            return 1.0
         return float(math.log1p(float(safe_hit)) / math.log1p(float(safe_total)))
-
-    def _mean_top_k(self, values: list[float], *, k: int) -> float:
-        top_k = list(values[: max(1, int(k))])
-        if not top_k:
-            return 0.0
-        return float(sum(top_k) / len(top_k))
 
     def _pick_snippet(self, item: SearchNormalizedResult) -> str:
         snippet = clean_whitespace(item.snippet)
@@ -428,7 +284,7 @@ class SearchStep(StepBase[SearchStepContext]):
         for url, grouped in values.items():
             selected = list(grouped.values())
             selected.sort(key=lambda item: (-float(item.score), int(item.order)))
-            out[url] = selected[: int(_MAX_SNIPPET_CONTEXT_PER_URL)]
+            out[url] = selected
         return out
 
     def _normalize_results(
@@ -499,18 +355,6 @@ class SearchStep(StepBase[SearchStepContext]):
         return normalized_domain == normalized_token or normalized_domain.endswith(
             f".{normalized_token}"
         )
-
-    def _is_cjk_token(self, token: str) -> bool:
-        return bool(_RE_CJK_TOKEN.search(token))
-
-    def _contains_cjk(self, *, text: str) -> bool:
-        return bool(_RE_CJK_TOKEN.search(text))
-
-    def _normalize_mode(self, value: object) -> Literal["fast", "auto", "deep"]:
-        token = clean_whitespace(str(value or "")).casefold()
-        if token in {"fast", "auto", "deep"}:
-            return token  # type: ignore[return-value]
-        return "auto"
 
 
 __all__ = ["SearchStep"]

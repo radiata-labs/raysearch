@@ -132,7 +132,7 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         markdown = str(
             ctx.page.doc.content.abstract_text or ctx.page.doc.content.markdown or ""
         )
-        cfg = ctx.settings.fetch.abstract
+        cfg = self.settings.fetch.abstract
         prepared = self._extract_abstracts(
             markdown=markdown,
             min_abstract_tokens=int(cfg.min_abstract_tokens),

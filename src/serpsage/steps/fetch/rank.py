@@ -46,7 +46,7 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             return ctx
         abstracts_query = ""
         raw_scored = []
-        fetch_cfg = ctx.settings.fetch
+        fetch_cfg = self.settings.fetch
         if abstracts_req is not None:
             abstracts_query = _resolve_effective_query(
                 requested_query=abstracts_req.query,

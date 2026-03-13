@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from serpsage.models.steps.research import ResearchStepContext
+from serpsage.settings.models import AppSettings
 from serpsage.utils import clean_whitespace
 
 
 def resolve_research_model(
     *,
-    ctx: ResearchStepContext,
+    settings: AppSettings,
     stage: str,
     fallback: str,
 ) -> str:
-    model_settings = ctx.settings.research.models
+    model_settings = settings.research.models
     stage_to_model = {
         "plan": model_settings.plan,
         "link_select": model_settings.link_select,

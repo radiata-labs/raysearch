@@ -17,12 +17,9 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
-        mode = self._normalize_mode(ctx.request.mode)
-        disable_internal_llm = bool(ctx.disable_internal_llm)
-        optimize_enabled = mode in {"auto", "deep"}
-        if disable_internal_llm:
+        if bool(ctx.runtime.disable_internal_llm):
             return ctx
-        if not optimize_enabled:
+        if not bool(ctx.plan.optimize_query):
             return ctx
         query = clean_whitespace(str(ctx.request.query or ""))
         if not query:
@@ -30,7 +27,9 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         try:
             optimized = await self._optimize_query(
-                query=query, now_utc=now_utc, mode=mode
+                query=query,
+                now_utc=now_utc,
+                mode=ctx.plan.mode,
             )
         except Exception as exc:  # noqa: BLE001
             await self.emit_tracking_event(
@@ -42,7 +41,7 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
                 error_type=type(exc).__name__,
                 attrs={
                     "request_id": ctx.request_id,
-                    "mode": mode,
+                    "mode": ctx.plan.mode,
                     "query": query,
                     "message": str(exc),
                 },
@@ -53,8 +52,8 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
             if optimized.optimize_query and optimized.search_query
             else query
         )
-        query_changed = optimized_query != query
-        if query_changed:
+        ctx.plan.optimized_query = optimized_query
+        if optimized_query != query:
             ctx.request = ctx.request.model_copy(update={"query": optimized_query})
         return ctx
 
@@ -172,22 +171,14 @@ class SearchOptimizeStep(StepBase[SearchStepContext]):
             query_language=query_language,
         )
 
-    def _normalize_mode(self, value: object) -> Literal["fast", "auto", "deep"]:
-        token = clean_whitespace(str(value or "")).casefold()
-        if token in {"fast", "auto", "deep"}:
-            return token  # type: ignore[return-value]
-        return "auto"
-
     def _try_parse_json_value(self, text: str) -> object:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Try to extract JSON from text, but validate the extracted substring
             start = text.find("{")
             end = text.rfind("}")
             if 0 <= start < end:
                 candidate = text[start : end + 1]
-                # Validate minimum structure before parsing
                 if candidate.count("{") == candidate.count("}"):
                     return json.loads(candidate)
             raise

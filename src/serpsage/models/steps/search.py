@@ -2,21 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from serpsage.models.app.request import (
-    SearchRequest,
-)
-from serpsage.models.app.response import (
-    FetchResultItem,
-    SearchResponse,
-)
+from serpsage.models.app.request import SearchRequest
+from serpsage.models.app.response import FetchResultItem, SearchResponse
 from serpsage.models.base import MutableModel
-from serpsage.models.components.extract import (
-    ExtractRef,
-)
+from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.base import BaseStepContext
-from serpsage.settings.models import AppSettings
 from serpsage.utils import clean_whitespace
 
 _RESERVED_PROVIDER_KWARG_KEYS = frozenset({"query", "limit", "locale"})
@@ -24,13 +16,11 @@ _RESERVED_PROVIDER_KWARG_KEYS = frozenset({"query", "limit", "locale"})
 
 class SearchQueryJob(MutableModel):
     query: str
-    weight: float = 1.0
     source: Literal["primary", "manual", "rule", "llm"] = "primary"
 
 
 class SearchQueryCandidate(MutableModel):
     query: str
-    weight: float = 1.0
     source: Literal["primary", "manual", "rule", "llm"] = "primary"
 
 
@@ -42,64 +32,11 @@ class SearchSnippetContext(MutableModel):
     order: int = 0
 
 
-class SearchDeepState(MutableModel):
-    aborted: bool = False
-    abort_reason: str = ""
-    query_jobs: list[SearchQueryJob] = Field(default_factory=list)
-    snippet_context: dict[str, list[SearchSnippetContext]] = Field(default_factory=dict)
-    query_hit_stats: dict[str, int] = Field(default_factory=dict)
-    context_scores: dict[str, float] = Field(default_factory=dict)
-
-
-class SearchPrefetchState(MutableModel):
-    urls: list[str] = Field(default_factory=list)
-    scores: dict[str, float] = Field(default_factory=dict)
-
-
-class SearchFetchState(MutableModel):
-    candidates: list[SearchFetchedCandidate] = Field(default_factory=list)
-
-
-class SearchRankedCandidate(MutableModel):
-    result: FetchResultItem
-    final_score: float = 0.0
-    order: int = 0
-    page_score: float = 0.0
-    context_score: float = 0.0
-    prefetch_score: float = 0.0
-
-
-class SearchRankState(MutableModel):
-    candidates: list[SearchRankedCandidate] = Field(default_factory=list)
-    filtered_count: int = 0
-    sum_page_score: float = 0.0
-    sum_context_score: float = 0.0
-    sum_prefetch_score: float = 0.0
-    deep_enabled: bool = False
-    has_sort_feature: bool = False
-    max_results: int = 1
-    page_weight: float = 1.0
-    context_weight: float = 0.0
-    prefetch_weight: float = 0.0
-
-
-class SearchOutputState(MutableModel):
-    results: list[FetchResultItem] = Field(default_factory=list)
-
-
-class SearchStepContext(BaseStepContext[SearchRequest, SearchResponse]):
-    settings: AppSettings
-    request: SearchRequest
-    response: SearchResponse
+class SearchRuntimeState(MutableModel):
     disable_internal_llm: bool = False
     provider_limit: int | None = None
     provider_locale: str = ""
     provider_extra_kwargs: dict[str, Any] = Field(default_factory=dict)
-    deep: SearchDeepState = Field(default_factory=SearchDeepState)
-    prefetch: SearchPrefetchState = Field(default_factory=SearchPrefetchState)
-    fetch: SearchFetchState = Field(default_factory=SearchFetchState)
-    rank: SearchRankState = Field(default_factory=SearchRankState)
-    output: SearchOutputState = Field(default_factory=SearchOutputState)
 
     @field_validator("provider_limit")
     @classmethod
@@ -140,6 +77,69 @@ class SearchStepContext(BaseStepContext[SearchRequest, SearchResponse]):
         return out
 
 
+class SearchPlanState(MutableModel):
+    mode: Literal["fast", "auto", "deep"] = "auto"
+    max_results: int = 1
+    max_extra_queries: int = 0
+    prefetch_limit: int = 1
+    context_docs_limit: int = 0
+    context_doc_min_chars: int = 0
+    rank_by_prefetch: bool = False
+    rank_by_context: bool = False
+    optimize_query: bool = False
+    optimized_query: str = ""
+    aborted: bool = False
+    abort_reason: str = ""
+    query_jobs: list[SearchQueryJob] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> SearchPlanState:
+        if int(self.max_results) <= 0:
+            raise ValueError("max_results must be > 0")
+        if int(self.max_extra_queries) < 0:
+            raise ValueError("max_extra_queries must be >= 0")
+        if int(self.prefetch_limit) <= 0:
+            raise ValueError("prefetch_limit must be > 0")
+        if int(self.context_docs_limit) < 0:
+            raise ValueError("context_docs_limit must be >= 0")
+        if int(self.context_doc_min_chars) < 0:
+            raise ValueError("context_doc_min_chars must be >= 0")
+        return self
+
+
+class SearchRetrievalState(MutableModel):
+    urls: list[str] = Field(default_factory=list)
+    scores: dict[str, float] = Field(default_factory=dict)
+    snippet_context: dict[str, list[SearchSnippetContext]] = Field(default_factory=dict)
+    query_hit_stats: dict[str, int] = Field(default_factory=dict)
+
+
+class SearchRankedCandidate(MutableModel):
+    result: FetchResultItem
+    final_score: float = 0.0
+    order: int = 0
+    page_score: float = 0.0
+    context_score: float = 0.0
+    prefetch_score: float = 0.0
+
+
+class SearchRankState(MutableModel):
+    candidates: list[SearchRankedCandidate] = Field(default_factory=list)
+    filtered_count: int = 0
+    sum_page_score: float = 0.0
+    sum_context_score: float = 0.0
+    sum_prefetch_score: float = 0.0
+    has_sort_feature: bool = False
+    use_context_score: bool = False
+    use_prefetch_score: bool = False
+    max_results: int = 1
+    context_scores: dict[str, float] = Field(default_factory=dict)
+
+
+class SearchOutputState(MutableModel):
+    results: list[FetchResultItem] = Field(default_factory=list)
+
+
 class SearchFetchedCandidate(MutableModel):
     result: FetchResultItem
     links: list[ExtractRef] = Field(default_factory=list)
@@ -148,6 +148,21 @@ class SearchFetchedCandidate(MutableModel):
     subpage_abstract_texts: list[str] = Field(default_factory=list)
     main_overview_scores: list[float] = Field(default_factory=list)
     subpages_overview_scores: list[list[float]] = Field(default_factory=list)
+
+
+class SearchFetchState(MutableModel):
+    candidates: list[SearchFetchedCandidate] = Field(default_factory=list)
+
+
+class SearchStepContext(BaseStepContext[SearchRequest, SearchResponse]):
+    request: SearchRequest
+    response: SearchResponse
+    runtime: SearchRuntimeState = Field(default_factory=SearchRuntimeState)
+    plan: SearchPlanState = Field(default_factory=SearchPlanState)
+    retrieval: SearchRetrievalState = Field(default_factory=SearchRetrievalState)
+    fetch: SearchFetchState = Field(default_factory=SearchFetchState)
+    rank: SearchRankState = Field(default_factory=SearchRankState)
+    output: SearchOutputState = Field(default_factory=SearchOutputState)
 
 
 class SearchNormalizedResult(MutableModel):
@@ -181,13 +196,11 @@ class SearchRankOptions(MutableModel):
     exclude_text: list[str] = Field(default_factory=list)
     query_tokens: list[str] = Field(default_factory=list)
     context_query_tokens: list[str] = Field(default_factory=list)
-    deep_enabled: bool
+    use_context_score: bool
+    use_prefetch_score: bool
     context_docs_limit: int
     context_doc_min_chars: int
     max_results: int
-    page_weight: float
-    context_weight: float
-    prefetch_weight: float
 
 
 class SearchRankStats(MutableModel):
@@ -216,19 +229,20 @@ class SearchOptimizedQuery(MutableModel):
 __all__ = [
     "SearchCandidateForScoring",
     "SearchCanonicalBucket",
-    "SearchDeepState",
     "SearchFetchState",
     "SearchFetchedCandidate",
     "SearchNormalizedResult",
     "SearchOptimizedQuery",
+    "SearchOutputState",
+    "SearchPlanState",
     "SearchQueryCandidate",
+    "SearchQueryJob",
     "SearchRankedCandidate",
     "SearchRankOptions",
     "SearchRankState",
     "SearchRankStats",
-    "SearchQueryJob",
-    "SearchOutputState",
-    "SearchPrefetchState",
+    "SearchRetrievalState",
+    "SearchRuntimeState",
     "SearchScoredHit",
     "SearchSnippetContext",
     "SearchStepContext",

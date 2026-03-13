@@ -73,7 +73,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         )
         ctx.run.current.context_source_ids = [item.source_id for item in sources]
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="overview",
             fallback=self.settings.answer.generate.use_model,
         )

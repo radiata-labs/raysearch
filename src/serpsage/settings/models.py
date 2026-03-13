@@ -4,9 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-_FINAL_WEIGHT_SUM_TARGET = 1.0
-_WEIGHT_SUM_EPS = 1e-6
-
 
 class SettingModel(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -51,77 +48,106 @@ class FetchSettings(SettingModel):
     overview: FetchOverviewSettings = Field(default_factory=FetchOverviewSettings)
 
 
-class SearchDeepSettings(SettingModel):
+class SearchExpansionSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-    enabled: bool = True
-    max_expanded_queries: int = 6
-    rule_max_queries: int = 4
-    llm_max_queries: int = 3
-    prefetch_multiplier: float = 3.0
-    prefetch_max_urls: int = 48
-    manual_query_score_weight: float = 0.8
-    rule_query_score_weight: float = 0.75
-    llm_query_score_weight: float = 0.85
-    coverage_bonus_weight: float = 0.08
-    final_page_weight: float = 0.55
-    final_context_weight: float = 0.30
-    final_prefetch_weight: float = 0.15
-    expansion_model: str = ""
-    expansion_timeout_s: float = 20.0
+    llm_model: str = ""
+    llm_timeout_s: float = 20.0
 
     @model_validator(mode="after")
-    def _validate_ranges(self) -> SearchDeepSettings:
-        if int(self.max_expanded_queries) < 0:
-            raise ValueError("search.deep.max_expanded_queries must be >= 0")
-        if int(self.rule_max_queries) < 0:
-            raise ValueError("search.deep.rule_max_queries must be >= 0")
-        if int(self.llm_max_queries) < 0:
-            raise ValueError("search.deep.llm_max_queries must be >= 0")
-        if float(self.prefetch_multiplier) < 1.0:
-            raise ValueError("search.deep.prefetch_multiplier must be >= 1.0")
-        if int(self.prefetch_max_urls) <= 0:
-            raise ValueError("search.deep.prefetch_max_urls must be > 0")
-        if float(self.manual_query_score_weight) < 0:
-            raise ValueError("search.deep.manual_query_score_weight must be >= 0")
-        if float(self.rule_query_score_weight) < 0:
-            raise ValueError("search.deep.rule_query_score_weight must be >= 0")
-        if float(self.llm_query_score_weight) < 0:
-            raise ValueError("search.deep.llm_query_score_weight must be >= 0")
-        if float(self.coverage_bonus_weight) < 0:
-            raise ValueError("search.deep.coverage_bonus_weight must be >= 0")
-        if float(self.final_page_weight) < 0:
-            raise ValueError("search.deep.final_page_weight must be >= 0")
-        if float(self.final_context_weight) < 0:
-            raise ValueError("search.deep.final_context_weight must be >= 0")
-        if float(self.final_prefetch_weight) < 0:
-            raise ValueError("search.deep.final_prefetch_weight must be >= 0")
-        weight_sum = (
-            float(self.final_page_weight)
-            + float(self.final_context_weight)
-            + float(self.final_prefetch_weight)
-        )
-        if abs(weight_sum - _FINAL_WEIGHT_SUM_TARGET) > _WEIGHT_SUM_EPS:
-            raise ValueError(
-                "search.deep final weights must sum to 1.0 "
-                "(final_page_weight + final_context_weight + final_prefetch_weight)"
-            )
-        if float(self.expansion_timeout_s) <= 0:
-            raise ValueError("search.deep.expansion_timeout_s must be > 0")
+    def _validate_ranges(self) -> SearchExpansionSettings:
+        if float(self.llm_timeout_s) <= 0:
+            raise ValueError("search.expansion.llm_timeout_s must be > 0")
         return self
+
+
+class SearchModeSettings(SettingModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    max_extra_queries: int = 0
+    prefetch_multiplier: float = 1.0
+    prefetch_max_urls: int = 16
+    context_docs_limit: int = 0
+    context_doc_min_chars: int = 0
+    rank_by_prefetch: bool = False
+    rank_by_context: bool = False
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> SearchModeSettings:
+        if int(self.max_extra_queries) < 0:
+            raise ValueError("search mode max_extra_queries must be >= 0")
+        if float(self.prefetch_multiplier) < 1.0:
+            raise ValueError("search mode prefetch_multiplier must be >= 1.0")
+        if int(self.prefetch_max_urls) <= 0:
+            raise ValueError("search mode prefetch_max_urls must be > 0")
+        if int(self.context_docs_limit) < 0:
+            raise ValueError("search mode context_docs_limit must be >= 0")
+        if int(self.context_doc_min_chars) < 0:
+            raise ValueError("search mode context_doc_min_chars must be >= 0")
+        if bool(self.rank_by_context) and int(self.context_docs_limit) <= 0:
+            raise ValueError(
+                "search mode context_docs_limit must be > 0 when rank_by_context=true"
+            )
+        if not bool(self.rank_by_context) and int(self.context_doc_min_chars) > 0:
+            raise ValueError(
+                "search mode context_doc_min_chars requires rank_by_context=true"
+            )
+        return self
+
+
+def _default_search_fast_mode() -> SearchModeSettings:
+    return SearchModeSettings(
+        max_extra_queries=0,
+        prefetch_multiplier=1.0,
+        prefetch_max_urls=16,
+        context_docs_limit=0,
+        context_doc_min_chars=0,
+        rank_by_prefetch=False,
+        rank_by_context=False,
+    )
+
+
+def _default_search_auto_mode() -> SearchModeSettings:
+    return SearchModeSettings(
+        max_extra_queries=1,
+        prefetch_multiplier=2.0,
+        prefetch_max_urls=32,
+        context_docs_limit=0,
+        context_doc_min_chars=0,
+        rank_by_prefetch=True,
+        rank_by_context=False,
+    )
+
+
+def _default_search_deep_mode() -> SearchModeSettings:
+    return SearchModeSettings(
+        max_extra_queries=6,
+        prefetch_multiplier=3.0,
+        prefetch_max_urls=48,
+        context_docs_limit=18,
+        context_doc_min_chars=16,
+        rank_by_prefetch=True,
+        rank_by_context=True,
+    )
+
+
+class SearchModeProfilesSettings(SettingModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    fast: SearchModeSettings = Field(default_factory=_default_search_fast_mode)
+    auto: SearchModeSettings = Field(default_factory=_default_search_auto_mode)
+    deep: SearchModeSettings = Field(default_factory=_default_search_deep_mode)
 
 
 class SearchSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_results: int = 16
-    additional_query_score_weight: float = 0.8
-    deep: SearchDeepSettings = Field(default_factory=SearchDeepSettings)
+    expansion: SearchExpansionSettings = Field(default_factory=SearchExpansionSettings)
+    modes: SearchModeProfilesSettings = Field(
+        default_factory=SearchModeProfilesSettings
+    )
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> SearchSettings:
         if int(self.max_results) <= 0:
             raise ValueError("search.max_results must be > 0")
-        if float(self.additional_query_score_weight) <= 0:
-            raise ValueError("search.additional_query_score_weight must be > 0")
         return self
 
 
@@ -408,6 +434,8 @@ __all__ = [
     "ResearchModelsSettings",
     "ResearchSettings",
     "RunnerSettings",
-    "SearchDeepSettings",
+    "SearchExpansionSettings",
+    "SearchModeProfilesSettings",
+    "SearchModeSettings",
     "SearchSettings",
 ]

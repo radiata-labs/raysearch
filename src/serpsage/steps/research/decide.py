@@ -199,7 +199,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         ctx: ResearchStepContext,
     ) -> ResearchDecideSignalPayload:
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )

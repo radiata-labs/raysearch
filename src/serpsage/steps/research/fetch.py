@@ -398,12 +398,12 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
             max_links=max_links,
         )
         fallback_model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="link_select",
             fallback=fallback_model,
         )
@@ -678,7 +678,7 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         urls: list[str],
     ) -> list[FetchStepContext]:
         max_chars = ctx.run.limits.fetch_page_max_chars
-        fetch_cfg = ctx.settings.fetch
+        fetch_cfg = self.settings.fetch
         main_links_limit = max(1, int(fetch_cfg.extract.link_max_count))
         request = FetchRequest(
             urls=list(urls),
@@ -703,7 +703,6 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
         )
         for index, url in enumerate(urls):
             fetch_ctx = FetchStepContext(
-                settings=ctx.settings,
                 request=request.model_copy(update={"urls": [url]}),
                 response=FetchResponse(
                     request_id=(

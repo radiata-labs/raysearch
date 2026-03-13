@@ -23,6 +23,7 @@ from serpsage.models.steps.research import (
 )
 from serpsage.models.steps.search import (
     SearchFetchedCandidate,
+    SearchRuntimeState,
     SearchStepContext,
 )
 from serpsage.steps.base import RunnerBase, StepBase
@@ -117,7 +118,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         jobs = jobs[:executable_jobs]
         if not jobs:
             return ctx
-        fetch_cfg = ctx.settings.fetch
+        fetch_cfg = self.settings.fetch
         main_links_limit = max(1, int(fetch_cfg.extract.link_max_count))
         contexts: list[SearchStepContext] = []
         for idx, job in enumerate(jobs):
@@ -138,7 +139,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             )
             contexts.append(
                 SearchStepContext(
-                    settings=ctx.settings,
                     request=req,
                     response=SearchResponse(
                         request_id=(
@@ -147,7 +147,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                         search_mode=req.mode,
                         results=[],
                     ),
-                    disable_internal_llm=True,
+                    runtime=SearchRuntimeState(disable_internal_llm=True),
                     request_id=f"{ctx.request_id}:research:{ctx.run.current.round_index}:{idx}",
                 )
             )

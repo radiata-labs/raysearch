@@ -178,23 +178,34 @@ components:
 
 search:
   max_results: 16
-  additional_query_score_weight: 0.8
-  deep:
-    enabled: true
-    max_expanded_queries: 6
-    rule_max_queries: 4
-    llm_max_queries: 3
-    prefetch_multiplier: 3.0
-    prefetch_max_urls: 48
-    manual_query_score_weight: 0.8
-    rule_query_score_weight: 0.75
-    llm_query_score_weight: 0.85
-    coverage_bonus_weight: 0.08
-    final_page_weight: 0.55
-    final_context_weight: 0.30
-    final_prefetch_weight: 0.15
-    expansion_model: gpt-4.1-mini
-    expansion_timeout_s: 20.0
+  expansion:
+    llm_model: gpt-4.1-mini
+    llm_timeout_s: 20.0
+  modes:
+    fast:
+      max_extra_queries: 0
+      prefetch_multiplier: 1.0
+      prefetch_max_urls: 16
+      context_docs_limit: 0
+      context_doc_min_chars: 0
+      rank_by_prefetch: false
+      rank_by_context: false
+    auto:
+      max_extra_queries: 1
+      prefetch_multiplier: 2.0
+      prefetch_max_urls: 32
+      context_docs_limit: 0
+      context_doc_min_chars: 0
+      rank_by_prefetch: true
+      rank_by_context: false
+    deep:
+      max_extra_queries: 6
+      prefetch_multiplier: 3.0
+      prefetch_max_urls: 48
+      context_docs_limit: 18
+      context_doc_min_chars: 16
+      rank_by_prefetch: true
+      rank_by_context: true
 
 fetch:
   extract:

@@ -55,7 +55,7 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
         )
         source_ids = [item.source_id for item in selected_sources]
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="content",
             fallback=self.settings.answer.generate.use_model,
         )

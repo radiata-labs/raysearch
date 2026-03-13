@@ -114,7 +114,7 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
         ctx.analysis.overview.request = overview_request
         ctx.analysis.overview.ranked = []
         ctx.analysis.overview.output = None
-        fetch_cfg = ctx.settings.fetch
+        fetch_cfg = self.settings.fetch
         subpages_enabled = False
         subpages_limit = 0
         subpages_keywords: list[str] = []

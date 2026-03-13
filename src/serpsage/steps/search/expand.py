@@ -8,7 +8,6 @@ from typing_extensions import override
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.search import (
-    SearchDeepState,
     SearchQueryCandidate,
     SearchQueryJob,
     SearchStepContext,
@@ -19,9 +18,7 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-_JACCARD_SIMILARITY_THRESHOLD = 0.92
-_MANUAL_SOURCE_CAP = 8
-_RULE_SOURCE_CAP = 8
+
 _RE_CJK = re.compile(r"[\u4e00-\u9fff]")
 _RE_KANA = re.compile(r"[\u3040-\u30ff]")
 _RE_VERSION_LIKE_TOKEN = re.compile(r"(?i)^[a-z]*\d+(?:[._-]\d+)+(?:[a-z0-9._-]*)$")
@@ -42,64 +39,54 @@ class SearchExpandStep(StepBase[SearchStepContext]):
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
-        """Build deep-search query jobs from primary/manual/rule/LLM variants.
-        Args:
-            ctx: Search pipeline context containing request and deep state.
-        Returns:
-            Updated context with `deep.query_jobs` populated for deep mode.
-        """
-        ctx.deep = SearchDeepState()
-        req = ctx.request
-        if not self._is_deep_enabled(req_mode=str(req.mode or "auto")):
-            return ctx
-        primary_query = clean_whitespace(str(req.query or ""))
-        if not primary_query:
-            await self._abort_empty_query(ctx=ctx, raw_query=req.query)
-            return ctx
-        deep_cfg = self.settings.search.deep
-        manual_queries = self._get_manual_queries(
-            req_additional_queries=req.additional_queries
+        ctx.plan.aborted = False
+        ctx.plan.abort_reason = ""
+        ctx.plan.query_jobs = []
+        primary_query = clean_whitespace(str(ctx.request.query or ""))
+        ctx.plan.optimized_query = clean_whitespace(
+            str(ctx.plan.optimized_query or primary_query)
         )
-        disable_internal_llm = bool(ctx.disable_internal_llm)
-        if disable_internal_llm:
-            llm_queries: list[str] = []
-        else:
+        if not primary_query:
+            await self._abort_empty_query(ctx=ctx, raw_query=ctx.request.query)
+            return ctx
+        max_extra_queries = max(0, int(ctx.plan.max_extra_queries))
+        if max_extra_queries <= 0:
+            ctx.plan.query_jobs = [
+                SearchQueryJob(query=primary_query, source="primary")
+            ]
+            return ctx
+        manual_queries = (
+            self._normalize_queries(list(ctx.request.additional_queries or []))
+            if ctx.plan.mode == "deep"
+            else []
+        )
+        rule_queries = self._build_rule_queries(query=primary_query)
+        if (
+            ctx.plan.mode == "deep"
+            and max_extra_queries > 0
+            and not bool(ctx.runtime.disable_internal_llm)
+        ):
             llm_queries = await self._collect_llm_queries(
                 ctx=ctx,
                 query=primary_query,
-                max_queries=int(deep_cfg.llm_max_queries),
-                timeout_s=float(deep_cfg.expansion_timeout_s),
+                max_queries=max_extra_queries,
             )
-        rule_queries = self._build_rule_queries(
-            query=primary_query,
-            max_queries=int(deep_cfg.rule_max_queries),
-        )
-        query_jobs = self._merge_query_jobs(
+        else:
+            llm_queries = []
+        ctx.plan.query_jobs = self._merge_query_jobs(
             primary_query=primary_query,
             manual_queries=manual_queries,
             rule_queries=rule_queries,
             llm_queries=llm_queries,
-            max_expanded_queries=int(deep_cfg.max_expanded_queries),
-            manual_weight=float(deep_cfg.manual_query_score_weight),
-            rule_weight=float(deep_cfg.rule_query_score_weight),
-            llm_weight=float(deep_cfg.llm_query_score_weight),
+            max_extra_queries=max_extra_queries,
         )
-        ctx.deep.query_jobs = query_jobs
         return ctx
-
-    def _is_deep_enabled(self, *, req_mode: str) -> bool:
-        return req_mode == "deep" and bool(self.settings.search.deep.enabled)
-
-    def _get_manual_queries(
-        self, *, req_additional_queries: list[str] | None
-    ) -> list[str]:
-        return self._normalize_queries(list(req_additional_queries or []))
 
     async def _abort_empty_query(
         self, *, ctx: SearchStepContext, raw_query: object
     ) -> None:
-        ctx.deep.aborted = True
-        ctx.deep.abort_reason = "empty query"
+        ctx.plan.aborted = True
+        ctx.plan.abort_reason = "empty query"
         await self.emit_tracking_event(
             event_name="search.expand.error",
             request_id=ctx.request_id,
@@ -118,17 +105,16 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         ctx: SearchStepContext,
         query: str,
         max_queries: int,
-        timeout_s: float,
     ) -> list[str]:
-        llm_limit = max(0, int(max_queries))
-        if llm_limit <= 0:
+        if max_queries <= 0:
             return []
         model_name = self._resolve_expansion_model()
+        timeout_s = float(self.settings.search.expansion.llm_timeout_s)
         try:
             return await self._expand_with_llm(
                 query=query,
                 model_name=model_name,
-                max_queries=llm_limit,
+                max_queries=max_queries,
                 timeout_s=timeout_s,
             )
         except Exception as exc:  # noqa: BLE001
@@ -150,7 +136,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
 
     def _resolve_expansion_model(self) -> str:
         model_name = clean_whitespace(
-            str(self.settings.search.deep.expansion_model or "")
+            str(self.settings.search.expansion.llm_model or "")
         )
         if model_name:
             return model_name
@@ -220,9 +206,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             raise TypeError("query expansion output must contain array field `queries`")
         return self._normalize_queries(raw_queries)[: max(0, int(max_queries))]
 
-    def _build_rule_queries(self, *, query: str, max_queries: int) -> list[str]:
-        if max_queries <= 0:
-            return []
+    def _build_rule_queries(self, *, query: str) -> list[str]:
         normalized = clean_whitespace(query)
         if not normalized:
             return []
@@ -233,7 +217,7 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             tokens=tokens,
             language=language,
         )
-        return self._normalize_queries(variants)[:max_queries]
+        return self._normalize_queries(variants)
 
     def _build_rule_variants(
         self,
@@ -263,27 +247,21 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         manual_queries: list[str],
         rule_queries: list[str],
         llm_queries: list[str],
-        max_expanded_queries: int,
-        manual_weight: float,
-        rule_weight: float,
-        llm_weight: float,
+        max_extra_queries: int,
     ) -> list[SearchQueryJob]:
         candidates = self._build_query_candidates(
             primary_query=primary_query,
             manual_queries=manual_queries,
             rule_queries=rule_queries,
             llm_queries=llm_queries,
-            manual_weight=manual_weight,
-            rule_weight=rule_weight,
-            llm_weight=llm_weight,
         )
         jobs = self._dedupe_candidates(
             candidates=candidates,
-            max_expanded_queries=max_expanded_queries,
+            max_extra_queries=max_extra_queries,
         )
         if jobs:
             return jobs
-        return [SearchQueryJob(query=primary_query, weight=1.0, source="primary")]
+        return [SearchQueryJob(query=primary_query, source="primary")]
 
     def _build_query_candidates(
         self,
@@ -292,24 +270,18 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         manual_queries: list[str],
         rule_queries: list[str],
         llm_queries: list[str],
-        manual_weight: float,
-        rule_weight: float,
-        llm_weight: float,
     ) -> list[SearchQueryCandidate]:
         candidates: list[SearchQueryCandidate] = [
-            SearchQueryCandidate(query=primary_query, weight=1.0, source="primary")
+            SearchQueryCandidate(query=primary_query, source="primary")
         ]
         candidates.extend(
-            SearchQueryCandidate(query=item, weight=manual_weight, source="manual")
-            for item in manual_queries
+            SearchQueryCandidate(query=item, source="manual") for item in manual_queries
         )
         candidates.extend(
-            SearchQueryCandidate(query=item, weight=rule_weight, source="rule")
-            for item in rule_queries
+            SearchQueryCandidate(query=item, source="rule") for item in rule_queries
         )
         candidates.extend(
-            SearchQueryCandidate(query=item, weight=llm_weight, source="llm")
-            for item in llm_queries
+            SearchQueryCandidate(query=item, source="llm") for item in llm_queries
         )
         return candidates
 
@@ -317,14 +289,13 @@ class SearchExpandStep(StepBase[SearchStepContext]):
         self,
         *,
         candidates: list[SearchQueryCandidate],
-        max_expanded_queries: int,
+        max_extra_queries: int,
     ) -> list[SearchQueryJob]:
-        limit = max(0, int(max_expanded_queries))
+        limit = max(0, int(max_extra_queries))
         exact_seen: set[str] = set()
-        kept_token_sets: list[set[str]] = []
+        token_signatures: set[tuple[str, ...]] = set()
         jobs: list[SearchQueryJob] = []
         additional_count = 0
-        source_counts: dict[str, int] = {"manual": 0, "rule": 0, "llm": 0}
         for item in candidates:
             query = clean_whitespace(item.query)
             if not query:
@@ -334,41 +305,25 @@ class SearchExpandStep(StepBase[SearchStepContext]):
                 continue
             if item.source != "primary" and additional_count >= limit:
                 continue
-            if (
-                item.source == "manual"
-                and source_counts["manual"] >= _MANUAL_SOURCE_CAP
-            ):
-                continue
-            if item.source == "rule" and source_counts["rule"] >= _RULE_SOURCE_CAP:
-                continue
-            token_set = set(tokenize_for_query(query))
-            if self._is_near_duplicate(token_set, kept_token_sets):
+            signature = self._build_token_signature(query)
+            if signature and signature in token_signatures:
                 continue
             exact_seen.add(key)
-            kept_token_sets.append(token_set)
+            if signature:
+                token_signatures.add(signature)
             jobs.append(
                 SearchQueryJob(
                     query=query,
-                    weight=float(max(0.0, item.weight)),
                     source=self._normalize_source(item.source),
                 )
             )
             if item.source != "primary":
                 additional_count += 1
-                if item.source in source_counts:
-                    source_counts[item.source] += 1
         return jobs
 
-    def _is_near_duplicate(
-        self, token_set: set[str], kept_token_sets: list[set[str]]
-    ) -> bool:
-        if not token_set:
-            return False
-        return any(
-            self._jaccard_similarity(token_set, prev) >= _JACCARD_SIMILARITY_THRESHOLD
-            for prev in kept_token_sets
-            if prev
-        )
+    def _build_token_signature(self, query: str) -> tuple[str, ...]:
+        tokens = sorted({token for token in tokenize_for_query(query) if token})
+        return tuple(tokens)
 
     def _normalize_source(
         self, source: str
@@ -395,12 +350,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             out.append(query)
         return out
 
-    def _jaccard_similarity(self, left: set[str], right: set[str]) -> float:
-        union_size = len(left | right)
-        if union_size <= 0:
-            return 1.0
-        return float(len(left & right) / union_size)
-
     def _detect_language(self, text: str) -> str:
         if _RE_KANA.search(text):
             return "ja"
@@ -424,8 +373,6 @@ class SearchExpandStep(StepBase[SearchStepContext]):
 
     def _build_compact_variant(self, *, tokens: list[str], language: str) -> str:
         if language == "ja":
-            # Sudachi/jieba mixed tokenization can split Japanese words unnaturally.
-            # Skip compact rewrite for Japanese to avoid malformed queries.
             return ""
         seen: set[str] = set()
         kept: list[str] = []
@@ -443,19 +390,18 @@ class SearchExpandStep(StepBase[SearchStepContext]):
             else:
                 if self._is_version_like_token(token):
                     kept.append(token)
-                    if len(kept) >= 4:
-                        break
                     continue
                 if token.isdigit() and len(token) != 4:
                     continue
                 if not token.isdigit() and len(token) < 3:
                     continue
             kept.append(token)
-            if len(kept) >= 4:
-                break
         if len(kept) < 2:
             return ""
-        return " ".join(kept)
+        compact = clean_whitespace(" ".join(kept))
+        if compact.casefold() == clean_whitespace(" ".join(tokens)).casefold():
+            return ""
+        return compact
 
     def _is_version_like_token(self, token: str) -> bool:
         return bool(_RE_VERSION_LIKE_TOKEN.fullmatch(token))

@@ -47,7 +47,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
     ) -> None:
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="markdown",
             fallback=self.settings.answer.generate.use_model,
         )
@@ -219,7 +219,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         return (
             await self.llm.create(
                 model=resolve_research_model(
-                    ctx=ctx,
+                    settings=self.settings,
                     stage="overview",
                     fallback=self.settings.answer.generate.use_model,
                 ),

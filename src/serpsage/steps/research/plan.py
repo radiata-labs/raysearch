@@ -60,7 +60,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             core_question=core_question,
         )
         model = resolve_research_model(
-            ctx=ctx,
+            settings=self.settings,
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )

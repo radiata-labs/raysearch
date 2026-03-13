@@ -187,7 +187,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             }
         )
         track = ResearchStepContext(
-            settings=root.settings,
             request=request,
             request_id=f"{root.request_id}:track:{card.question_id}",
             response=ResearchResponse(

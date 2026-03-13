@@ -15,12 +15,11 @@ class SearchFetchStep(StepBase[SearchStepContext]):
 
     @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
-        if bool(ctx.deep.aborted):
+        if bool(ctx.plan.aborted):
             ctx.fetch.candidates = []
             ctx.output.results = []
             return ctx
-        urls = list(ctx.prefetch.urls or [])
-        print(urls)
+        urls = list(ctx.retrieval.urls or [])
         if not urls:
             ctx.fetch.candidates = []
             ctx.output.results = []
@@ -34,7 +33,6 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                 else None
             )
             fetch_ctx = FetchStepContext(
-                settings=ctx.settings,
                 request=req,
                 request_id=ctx.request_id,
                 response=FetchResponse(
