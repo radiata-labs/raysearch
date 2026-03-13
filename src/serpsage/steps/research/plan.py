@@ -4,6 +4,11 @@ from datetime import UTC, datetime
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.provider.blend import (
+    build_engine_selection_context,
+    resolve_engine_selection_routes,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
     PlanOutputPayload,
@@ -13,6 +18,7 @@ from serpsage.models.steps.research import (
     ResearchStepContext,
     RoundAction,
 )
+from serpsage.models.steps.search import QuerySourceSpec
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_plan_prompt_messages
 from serpsage.steps.research.schema import build_plan_schema
@@ -21,6 +27,7 @@ from serpsage.steps.research.utils import resolve_research_model
 
 class ResearchPlanStep(StepBase[ResearchStepContext]):
     llm: LLMClientBase = Depends()
+    provider: SearchProviderBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -59,6 +66,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             next_queries=ctx.run.next_queries,
             core_question=core_question,
         )
+        routes = resolve_engine_selection_routes(
+            settings=self.settings,
+            subsystem="research",
+            provider=self.provider,
+        )
+        engine_selection_context = build_engine_selection_context(routes=routes)
         model = resolve_research_model(
             settings=self.settings,
             stage="plan",
@@ -77,9 +90,10 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                     core_question=core_question,
                     now_utc=now_utc,
                     last_round_candidates=last_round_candidates,
+                    engine_selection_context=engine_selection_context,
                 ),
                 response_format=PlanOutputPayload,
-                format_override=build_plan_schema(),
+                format_override=build_plan_schema(select_engines=bool(routes)),
                 retries=self.settings.research.llm_self_heal_retries,
             )
         except Exception as exc:  # noqa: BLE001
@@ -148,16 +162,16 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     def _build_candidate_queries(
         self,
         *,
-        next_queries: list[str],
+        next_queries: list[QuerySourceSpec],
         core_question: str,
-    ) -> list[str]:
-        ordered = [*next_queries, core_question]
-        seen: set[str] = set()
-        result: list[str] = []
+    ) -> list[QuerySourceSpec]:
+        ordered = [*next_queries, QuerySourceSpec(query=core_question)]
+        seen: set[tuple[str, tuple[str, ...]]] = set()
+        result: list[QuerySourceSpec] = []
         for item in ordered:
-            if not item:
+            if not item.query:
                 continue
-            key = item.casefold()
+            key = (item.query.casefold(), tuple(item.include_sources))
             if key in seen:
                 continue
             seen.add(key)

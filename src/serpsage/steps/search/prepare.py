@@ -5,6 +5,7 @@ from typing import Literal, cast
 from typing_extensions import override
 
 from serpsage.models.steps.search import (
+    QuerySourceSpec,
     SearchFetchState,
     SearchOutputState,
     SearchPlanState,
@@ -23,16 +24,16 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         query = clean_whitespace(ctx.request.query or "")
         mode = self._normalize_mode(ctx.request.mode)
         max_results = (
-            int(ctx.request.max_results)
+            ctx.request.max_results
             if ctx.request.max_results is not None
-            else int(self.settings.search.max_results)
+            else self.settings.search.max_results
         )
-        max_results = max(1, int(max_results))
+        max_results = max(1, max_results)
         profile = self._resolve_mode_settings(mode=mode)
         prefetch_limit = self._resolve_prefetch_limit(
             max_results=max_results,
-            prefetch_multiplier=float(profile.prefetch_multiplier),
-            prefetch_max_urls=int(profile.prefetch_max_urls),
+            prefetch_multiplier=profile.prefetch_multiplier,
+            prefetch_max_urls=profile.prefetch_max_urls,
         )
         ctx.request = ctx.request.model_copy(
             update={
@@ -44,16 +45,21 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         ctx.plan = SearchPlanState(
             mode=mode,
             max_results=max_results,
-            max_extra_queries=int(profile.max_extra_queries),
-            prefetch_limit=int(prefetch_limit),
-            context_docs_limit=int(profile.context_docs_limit),
-            context_doc_min_chars=int(profile.context_doc_min_chars),
-            rank_by_context=bool(profile.rank_by_context),
-            optimize_query=mode != "fast",
-            optimized_query=query,
+            max_extra_queries=profile.max_extra_queries,
+            prefetch_limit=prefetch_limit,
+            context_docs_limit=profile.context_docs_limit,
+            context_doc_min_chars=profile.context_doc_min_chars,
+            rank_by_context=profile.rank_by_context,
         )
-        ctx.runtime.provider_limit = int(
-            ctx.runtime.provider_limit or max(max_results, prefetch_limit)
+        if not ctx.runtime.engine_selection_subsystem:
+            ctx.runtime.engine_selection_subsystem = "search"
+        if not ctx.runtime.additional_queries and ctx.request.additional_queries:
+            ctx.runtime.additional_queries = [
+                QuerySourceSpec(query=item) for item in ctx.request.additional_queries
+            ]
+        ctx.runtime.provider_limit = ctx.runtime.provider_limit or max(
+            max_results,
+            prefetch_limit,
         )
         ctx.retrieval = SearchRetrievalState()
         ctx.fetch = SearchFetchState()
@@ -76,9 +82,9 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         prefetch_multiplier: float,
         prefetch_max_urls: int,
     ) -> int:
-        desired = int(math.ceil(float(max_results) * float(prefetch_multiplier)))
-        limited = min(int(prefetch_max_urls), desired)
-        return max(1, int(max_results), limited)
+        desired = math.ceil(max_results * prefetch_multiplier)
+        limited = min(prefetch_max_urls, desired)
+        return max(1, max_results, limited)
 
     def _normalize_mode(self, value: object) -> Literal["fast", "auto", "deep"]:
         token = clean_whitespace(str(value or "")).casefold()

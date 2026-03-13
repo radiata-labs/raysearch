@@ -135,6 +135,7 @@ class SearchModeProfilesSettings(SettingModel):
 class SearchSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     max_results: int = 16
+    select_engines: bool = False
     expansion: SearchExpansionSettings = Field(default_factory=SearchExpansionSettings)
     modes: SearchModeProfilesSettings = Field(
         default_factory=SearchModeProfilesSettings
@@ -165,6 +166,7 @@ class AnswerGenerateSettings(AnswerStageSettings):
 
 class AnswerSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    select_engines: bool = False
     plan: AnswerStageSettings = Field(default_factory=AnswerStageSettings)
     generate: AnswerGenerateSettings = Field(default_factory=AnswerGenerateSettings)
 
@@ -308,6 +310,7 @@ class ResearchSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     tool_max_attempts: int = 3
     llm_self_heal_retries: int = 2
+    select_engines: bool = False
     models: ResearchModelsSettings = Field(default_factory=ResearchModelsSettings)
     research_fast: ResearchModeSettings = Field(
         default_factory=_default_research_fast_mode

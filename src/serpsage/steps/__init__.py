@@ -15,10 +15,10 @@ from serpsage.steps.research import (
     ResearchThemeStep,
 )
 from serpsage.steps.search import (
-    SearchExpandStep,
     SearchFetchStep,
     SearchFinalizeStep,
     SearchPrepareStep,
+    SearchQueryPlanStep,
     SearchRerankStep,
     SearchStep,
 )
@@ -40,7 +40,7 @@ __all__ = [
     "ResearchPrepareStep",
     "ResearchSubreportStep",
     "ResearchThemeStep",
-    "SearchExpandStep",
+    "SearchQueryPlanStep",
     "SearchFinalizeStep",
     "SearchRerankStep",
     "SearchPrepareStep",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 from typing_extensions import override
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 import httpx
 from pydantic import field_validator
@@ -15,7 +15,7 @@ from serpsage.components.provider.base import (
 )
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
-from serpsage.utils import clean_whitespace, strip_html
+from serpsage.utils import clean_whitespace, normalize_iso8601_string, strip_html
 
 _DEFAULT_WIKIPEDIA_SEARCH_URL = "https://{wiki_netloc}/w/rest.php/v1/search/title"
 _DEFAULT_WIKIPEDIA_SUMMARY_URL = (
@@ -112,44 +112,43 @@ class WikipediaProvider(
     ) -> list[SearchProviderResult]:
         cfg = self.config
         normalized_query = clean_whitespace(query)
-        normalized_locale = clean_whitespace(locale)
         if not normalized_query:
             raise ValueError("query must not be empty")
 
         resolved = self._resolve_wiki_language(
-            normalized_locale or cfg.default_language
+            clean_whitespace(locale) or cfg.default_language
         )
         per_page = self._coerce_per_page(
             limit if limit is not None else cfg.results_per_page
         )
         offset = self._coerce_offset(kwargs.get("offset"))
-        exact_fallback = self._coerce_bool(kwargs.get("exact_fallback"), default=True)
         headers = self._build_headers(accept_language=resolved["accept_language"])
-        search_params = self._build_search_params(
-            query=normalized_query,
-            offset=offset,
-            per_page=per_page,
-        )
-        search_url = self._format_template(
-            str(cfg.base_url),
-            wiki_netloc=resolved["wiki_netloc"],
-        )
         resp = await self.http.client.get(
-            search_url,
-            params=search_params,
+            self._format_template(
+                str(cfg.base_url),
+                wiki_netloc=resolved["wiki_netloc"],
+            ),
+            params=self._build_search_params(
+                query=normalized_query,
+                offset=offset,
+                per_page=per_page,
+            ),
             headers=headers,
             timeout=httpx.Timeout(cfg.timeout_s),
             follow_redirects=bool(cfg.allow_redirects),
         )
         resp.raise_for_status()
         payload = resp.json()
-        raw_hits = payload.get("pages") if isinstance(payload, dict) else []
         results = await self._build_results(
-            hits=raw_hits if isinstance(raw_hits, list) else [],
+            hits=payload.get("pages") if isinstance(payload, dict) else None,
             resolved=resolved,
             headers=headers,
         )
-        if not results and int(offset) == 0 and exact_fallback:
+        if (
+            not results
+            and int(offset) == 0
+            and self._coerce_bool(kwargs.get("exact_fallback"), default=True)
+        ):
             exact = await self._fetch_exact_summary(
                 query=normalized_query,
                 resolved=resolved,
@@ -157,24 +156,20 @@ class WikipediaProvider(
             )
             if exact is not None:
                 results = [exact]
-        _ = (
-            payload.get("total") if isinstance(payload, dict) else None,
-            str(resp.url),
-            resolved["wiki_netloc"],
-            resolved["wiki_tag"],
-            resolved["accept_language"],
-            normalized_locale or resolved["request_language"],
-            start_published_date,
-            end_published_date,
-            max(1, int(offset) // per_page + 1),
+        results = self._filter_results_by_published_date(
+            results=results,
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+            include_undated=True,
         )
         return results[:per_page]
 
     def _build_headers(self, *, accept_language: str) -> dict[str, str]:
-        cfg = self.config
-        headers = dict(cfg.headers or {})
+        headers = dict(self.config.headers or {})
         headers["Accept"] = "application/json"
-        headers["User-Agent"] = str(cfg.user_agent or _DEFAULT_WIKIPEDIA_USER_AGENT)
+        headers["User-Agent"] = str(
+            self.config.user_agent or _DEFAULT_WIKIPEDIA_USER_AGENT
+        )
         if accept_language:
             headers["Accept-Language"] = accept_language
         return headers
@@ -186,31 +181,27 @@ class WikipediaProvider(
         offset: int,
         per_page: int,
     ) -> dict[str, str]:
-        params: dict[str, str] = {
+        return {
             "q": query,
             "limit": str(per_page),
             "offset": str(max(0, int(offset))),
         }
-        return params
 
     async def _build_results(
         self,
         *,
-        hits: list[dict[str, Any]],
+        hits: Any,
         resolved: dict[str, str],
         headers: dict[str, str],
     ) -> list[SearchProviderResult]:
         results: list[SearchProviderResult] = []
         seen_urls: set[str] = set()
-        for raw in hits:
+        for raw in hits if isinstance(hits, list) else []:
             if not isinstance(raw, dict):
                 continue
             title = clean_whitespace(str(raw.get("title") or ""))
             if not title:
                 continue
-            fallback_snippet = clean_whitespace(
-                strip_html(str(raw.get("excerpt") or raw.get("description") or ""))
-            )
             summary = await self._fetch_summary(
                 title=title,
                 resolved=resolved,
@@ -221,8 +212,9 @@ class WikipediaProvider(
                 summary=summary,
                 resolved=resolved,
                 fallback_title=title,
-                fallback_snippet=fallback_snippet,
-                position=len(results) + 1,
+                fallback_snippet=clean_whitespace(
+                    strip_html(str(raw.get("excerpt") or raw.get("description") or ""))
+                ),
             )
             if item is None:
                 continue
@@ -256,7 +248,6 @@ class WikipediaProvider(
             resolved=resolved,
             fallback_title=title,
             fallback_snippet="",
-            position=1,
         )
 
     async def _fetch_summary(
@@ -266,13 +257,12 @@ class WikipediaProvider(
         resolved: dict[str, str],
         headers: dict[str, str],
     ) -> dict[str, Any] | None:
-        summary_url = self._format_template(
-            self.config.summary_url_template,
-            wiki_netloc=resolved["wiki_netloc"],
-            title=self._quote_summary_title(title),
-        )
         resp = await self.http.client.get(
-            summary_url,
+            self._format_template(
+                self.config.summary_url_template,
+                wiki_netloc=resolved["wiki_netloc"],
+                title=self._quote_summary_title(title),
+            ),
             headers=headers,
             timeout=httpx.Timeout(self.config.timeout_s),
             follow_redirects=bool(self.config.allow_redirects),
@@ -301,35 +291,27 @@ class WikipediaProvider(
         resolved: dict[str, str],
         fallback_title: str,
         fallback_snippet: str,
-        position: int,
     ) -> SearchProviderResult | None:
         url = self._extract_page_url(
-            summary, resolved=resolved, fallback_title=fallback_title
+            summary,
+            resolved=resolved,
+            fallback_title=fallback_title,
         )
         if not url:
             return None
-        display_title = self._extract_display_title(
-            summary, fallback_title=fallback_title
-        )
-        description = clean_whitespace(str((summary or {}).get("description") or ""))
-        extract = clean_whitespace(str((summary or {}).get("extract") or ""))
-        snippet = extract or description or fallback_snippet
-        _ = (
-            self._to_display_url(url),
-            resolved["wiki_netloc"],
-            resolved["wiki_tag"],
-            raw.get("pageid"),
-            raw.get("id"),
-            clean_whitespace(str((summary or {}).get("type") or "")),
-            description,
-            self._extract_thumbnail(summary),
-            position,
-        )
         return SearchProviderResult(
             url=url,
-            title=display_title,
-            snippet=snippet,
+            title=self._extract_display_title(
+                summary,
+                fallback_title=fallback_title,
+            ),
+            snippet=(
+                clean_whitespace(str((summary or {}).get("extract") or ""))
+                or clean_whitespace(str((summary or {}).get("description") or ""))
+                or fallback_snippet
+            ),
             engine=self.config.name,
+            published_date=self._parse_published_date(raw=raw, summary=summary),
         )
 
     def _extract_page_url(
@@ -364,17 +346,28 @@ class WikipediaProvider(
         title = clean_whitespace(str((summary or {}).get("title") or ""))
         return title or fallback_title
 
-    def _extract_thumbnail(self, summary: dict[str, Any] | None) -> str:
-        thumbnail = (summary or {}).get("thumbnail") or {}
-        if isinstance(thumbnail, dict):
-            source = clean_whitespace(str(thumbnail.get("source") or ""))
-            if source:
-                return source
-        original = (summary or {}).get("originalimage") or {}
-        if isinstance(original, dict):
-            source = clean_whitespace(str(original.get("source") or ""))
-            if source:
-                return source
+    def _parse_published_date(
+        self,
+        *,
+        raw: dict[str, Any],
+        summary: dict[str, Any] | None,
+    ) -> str:
+        for source in (summary or {}, raw):
+            for key in (
+                "timestamp",
+                "rev_timestamp",
+                "published_date",
+                "published",
+                "updated_at",
+                "date",
+            ):
+                token = clean_whitespace(str(source.get(key) or ""))
+                if not token:
+                    continue
+                try:
+                    return normalize_iso8601_string(token)
+                except ValueError:
+                    continue
         return ""
 
     def _resolve_wiki_language(self, value: str) -> dict[str, str]:
@@ -384,10 +377,9 @@ class WikipediaProvider(
             requested = clean_whitespace(self.config.default_language or "en") or "en"
             normalized = requested.casefold()
         wiki_tag = self._wiki_tag_for_locale(normalized)
-        accept_language = self._canonical_accept_language(requested or wiki_tag)
         return {
             "request_language": requested or wiki_tag,
-            "accept_language": accept_language,
+            "accept_language": self._canonical_accept_language(requested or wiki_tag),
             "wiki_tag": wiki_tag,
             "wiki_netloc": f"{wiki_tag}.wikipedia.org",
         }
@@ -404,9 +396,7 @@ class WikipediaProvider(
         if normalized in _WIKI_SPECIAL_TAGS:
             return normalized
         parts = [part for part in normalized.split("-") if part]
-        if not parts:
-            return "en"
-        return parts[0]
+        return parts[0] if parts else "en"
 
     def _canonical_accept_language(self, value: str) -> str:
         token = clean_whitespace(value).replace("_", "-")
@@ -419,8 +409,8 @@ class WikipediaProvider(
         for item in parts[1:]:
             if len(item) == 2:
                 normalized_parts.append(item.upper())
-                continue
-            normalized_parts.append(item.title())
+            else:
+                normalized_parts.append(item.title())
         return "-".join(normalized_parts)
 
     def _normalize_exact_title(self, value: str) -> str:
@@ -445,12 +435,6 @@ class WikipediaProvider(
         title: str = "",
     ) -> str:
         return str(template).format(wiki_netloc=wiki_netloc, title=title)
-
-    def _to_display_url(self, url: str) -> str:
-        parsed = urlparse(url)
-        host = clean_whitespace(parsed.netloc)
-        path = clean_whitespace(parsed.path)
-        return clean_whitespace(f"{host}{path}")
 
     def _is_invalid_title_error(self, payload: Any) -> bool:
         if not isinstance(payload, dict):

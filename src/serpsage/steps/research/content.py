@@ -4,6 +4,11 @@ from datetime import UTC, datetime
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.provider.blend import (
+    build_engine_selection_context,
+    resolve_engine_selection_routes,
+)
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
@@ -11,6 +16,7 @@ from serpsage.models.steps.research import (
     ContentOutputPayload,
     ResearchStepContext,
 )
+from serpsage.models.steps.search import QuerySourceSpec
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_content_prompt_messages
 from serpsage.steps.research.rank import rerank_research_sources
@@ -22,6 +28,7 @@ from serpsage.steps.research.utils import resolve_research_model
 class ResearchContentStep(StepBase[ResearchStepContext]):
     llm: LLMClientBase = Depends()
     ranker: RankerBase = Depends()
+    provider: SearchProviderBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -59,6 +66,12 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             stage="content",
             fallback=self.settings.answer.generate.use_model,
         )
+        routes = resolve_engine_selection_routes(
+            settings=self.settings,
+            subsystem="research",
+            provider=self.provider,
+        )
+        engine_selection_context = build_engine_selection_context(routes=routes)
         try:
             chat_result = await self.llm.create(
                 model=model,
@@ -67,10 +80,12 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                     selected_sources=selected_sources,
                     source_ids=source_ids,
                     now_utc=now_utc,
+                    engine_selection_context=engine_selection_context,
                 ),
                 response_format=ContentOutputPayload,
                 format_override=build_content_schema(
-                    max_queries=ctx.run.limits.max_queries_per_round
+                    max_queries=ctx.run.limits.max_queries_per_round,
+                    select_engines=bool(routes),
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
@@ -157,14 +172,17 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
     def _merge_preserving_order(
         self,
         *,
-        left: list[str],
-        right: list[str],
+        left: list[QuerySourceSpec],
+        right: list[QuerySourceSpec],
         limit: int,
-    ) -> list[str]:
-        seen: set[str] = set()
-        merged: list[str] = []
+    ) -> list[QuerySourceSpec]:
+        seen: set[tuple[str, tuple[str, ...]]] = set()
+        merged: list[QuerySourceSpec] = []
         for item in [*left, *right]:
-            key = item.casefold()
+            key = (
+                item.query.casefold(),
+                tuple(item.include_sources),
+            )
             if key in seen:
                 continue
             seen.add(key)

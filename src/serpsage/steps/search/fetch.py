@@ -8,7 +8,11 @@ from serpsage.models.app.response import FetchResponse
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.search import SearchFetchedCandidate, SearchStepContext
 from serpsage.steps.base import RunnerBase, StepBase
-from serpsage.utils import clean_whitespace, published_date_in_range
+from serpsage.utils import (
+    clean_whitespace,
+    pick_earliest_published_date,
+    published_date_in_range,
+)
 
 
 class SearchFetchStep(StepBase[SearchStepContext]):
@@ -73,6 +77,17 @@ class SearchFetchStep(StepBase[SearchStepContext]):
                     },
                 )
                 continue
+            provider_published_date = clean_whitespace(
+                ctx.retrieval.published_dates.get(str(item.url), "")
+            )
+            result = item.result.model_copy(
+                update={
+                    "published_date": pick_earliest_published_date(
+                        provider_published_date,
+                        item.result.published_date,
+                    )
+                }
+            )
             main_abstract_text = (
                 str(item.page.doc.content.abstract_text or "")
                 if item.page.doc is not None
@@ -84,7 +99,7 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             ]
             fetched_candidates.append(
                 SearchFetchedCandidate(
-                    result=item.result,
+                    result=result,
                     links=(
                         list(item.page.doc.refs.links)
                         if item.page.doc is not None

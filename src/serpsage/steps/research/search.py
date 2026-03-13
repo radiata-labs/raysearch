@@ -22,6 +22,7 @@ from serpsage.models.steps.research import (
     ResearchStepContext,
 )
 from serpsage.models.steps.search import (
+    QuerySourceSpec,
     SearchFetchedCandidate,
     SearchRuntimeState,
     SearchStepContext,
@@ -126,7 +127,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             subpages_request = (
                 FetchSubpagesRequest(
                     max_subpages=max_subpages,
-                    subpage_keywords=job.query,
+                    subpage_keywords=job.query.query,
                 )
                 if max_subpages > 0
                 else None
@@ -147,7 +148,15 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                         search_mode=req.mode,
                         results=[],
                     ),
-                    runtime=SearchRuntimeState(disable_internal_llm=True),
+                    runtime=SearchRuntimeState(
+                        disable_internal_llm=True,
+                        engine_selection_subsystem="research",
+                        query=job.query.model_copy(deep=True),
+                        additional_queries=[
+                            item.model_copy(deep=True)
+                            for item in list(job.additional_queries or [])
+                        ],
+                    ),
                     request_id=f"{ctx.request_id}:research:{ctx.run.current.round_index}:{idx}",
                 )
             )
@@ -200,9 +209,9 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         main_links_limit: int,
     ) -> SearchRequest:
         return SearchRequest(
-            query=query_job.query,
+            query=query_job.query.query,
             additional_queries=(
-                list(query_job.additional_queries or [])
+                [item.query for item in list(query_job.additional_queries or [])]
                 if query_job.mode == "deep"
                 else None
             ),
@@ -733,12 +742,13 @@ def source_authority_score(source: ResearchSource) -> float:
 
 def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
     tokens: set[str] = set()
-    values = list(ctx.run.next_queries)
+    values: list[QuerySourceSpec | str] = list(ctx.run.next_queries)
     if ctx.run.current is not None:
         values.extend(ctx.run.current.queries)
     values.append(ctx.task.question)
     for value in values:
-        for token in _TOKEN_PATTERN.findall(value.casefold()):
+        query = value.query if isinstance(value, QuerySourceSpec) else value
+        for token in _TOKEN_PATTERN.findall(query.casefold()):
             if len(token) < 2:
                 continue
             tokens.add(token)

@@ -15,6 +15,7 @@ from serpsage.utils import (
     iso8601_start_date_floor,
     normalize_iso8601_string,
     parse_iso8601_datetime,
+    published_date_in_range,
 )
 
 GoogleSafeSearchKey = Literal["off", "medium", "high"]
@@ -165,6 +166,49 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
             if start_at >= window_start and effective_end >= window_start:
                 return name
         return ""
+
+    def _filter_results_by_published_date(
+        self,
+        *,
+        results: list[SearchProviderResult],
+        start_published_date: str | None,
+        end_published_date: str | None,
+        include_undated: bool = False,
+    ) -> list[SearchProviderResult]:
+        start_value = self._normalize_published_date_bound(start_published_date)
+        end_value = self._normalize_published_date_bound(end_published_date)
+        if not start_value and not end_value:
+            return results
+        filtered: list[SearchProviderResult] = []
+        for item in results:
+            published_date = self._normalize_published_date_bound(item.published_date)
+            if not published_date:
+                if include_undated:
+                    filtered.append(item)
+                continue
+            if not published_date_in_range(
+                published_date,
+                start_published_date=start_value,
+                end_published_date=end_value,
+            ):
+                continue
+            if published_date == item.published_date:
+                filtered.append(item)
+                continue
+            filtered.append(item.model_copy(update={"published_date": published_date}))
+        return filtered
+
+    def _initial_dated_fetch_limit(
+        self,
+        *,
+        target_limit: int,
+        max_limit: int,
+        multiplier: int = 2,
+    ) -> int:
+        target = max(1, int(target_limit))
+        cap = max(1, int(max_limit))
+        factor = max(1, int(multiplier))
+        return min(cap, max(target, target * factor))
 
 
 __all__ = [

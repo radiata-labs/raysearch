@@ -4,6 +4,11 @@ from datetime import UTC, datetime
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.provider.blend import (
+    build_engine_selection_context,
+    resolve_engine_selection_routes,
+)
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
@@ -29,6 +34,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
 
     llm: LLMClientBase = Depends()
     ranker: RankerBase = Depends()
+    provider: SearchProviderBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -77,6 +83,12 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             stage="overview",
             fallback=self.settings.answer.generate.use_model,
         )
+        routes = resolve_engine_selection_routes(
+            settings=self.settings,
+            subsystem="research",
+            provider=self.provider,
+        )
+        engine_selection_context = build_engine_selection_context(routes=routes)
         try:
             chat_result = await self.llm.create(
                 model=model,
@@ -84,10 +96,12 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                     ctx=ctx,
                     sources=sources,
                     now_utc=now_utc,
+                    engine_selection_context=engine_selection_context,
                 ),
                 response_format=OverviewOutputPayload,
                 format_override=build_overview_schema(
-                    max_queries=ctx.run.limits.max_queries_per_round
+                    max_queries=ctx.run.limits.max_queries_per_round,
+                    select_engines=bool(routes),
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )

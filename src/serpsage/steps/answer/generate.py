@@ -17,6 +17,7 @@ from serpsage.models.steps.answer import (
     PromptSource,
     QuestionPromptContext,
 )
+from serpsage.models.steps.search import QuerySourceSpec
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
@@ -166,7 +167,11 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         out: list[AnswerSubSearchState] = []
         for item in list(ctx.search.sub_searches or []):
             question = clean_whitespace(str(item.question or ""))
-            search_query = clean_whitespace(str(item.search_query or question))
+            search_query = (
+                item.search_query.model_copy(deep=True)
+                if item.search_query is not None
+                else QuerySourceSpec(query=question)
+            )
             if not question or not search_query:
                 continue
             out.append(
@@ -190,7 +195,7 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
         return [
             AnswerSubSearchState(
                 question=fallback_question,
-                search_query=fallback_question,
+                search_query=QuerySourceSpec(query=fallback_question),
                 request=(
                     ctx.search.request.model_copy(deep=True)
                     if ctx.search.request is not None

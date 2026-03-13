@@ -15,7 +15,11 @@ from serpsage.models.steps.answer import (
     AnswerSubQuestionPlan,
     AnswerSubSearchState,
 )
-from serpsage.models.steps.search import SearchRuntimeState, SearchStepContext
+from serpsage.models.steps.search import (
+    QuerySourceSpec,
+    SearchRuntimeState,
+    SearchStepContext,
+)
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.utils import clean_whitespace
 
@@ -43,19 +47,30 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             return ctx
         ctx.search.request = requests[0].model_copy(deep=True)
         ctx.search.search_mode = _FIXED_SEARCH_MODE
-        search_contexts = [
-            SearchStepContext(
-                request=req,
-                response=SearchResponse(
-                    request_id=ctx.request_id,
-                    search_mode=req.mode,
-                    results=[],
-                ),
-                runtime=SearchRuntimeState(disable_internal_llm=True),
-                request_id=ctx.request_id,
+        search_contexts: list[SearchStepContext] = []
+        for idx, req in enumerate(requests):
+            sub_question = sub_questions[idx]
+            search_query = (
+                sub_question.search_query.model_copy(deep=True)
+                if sub_question.search_query is not None
+                else QuerySourceSpec(query=sub_question.question)
             )
-            for req in requests
-        ]
+            search_contexts.append(
+                SearchStepContext(
+                    request=req,
+                    response=SearchResponse(
+                        request_id=ctx.request_id,
+                        search_mode=req.mode,
+                        results=[],
+                    ),
+                    runtime=SearchRuntimeState(
+                        disable_internal_llm=True,
+                        engine_selection_subsystem="answer",
+                        query=search_query,
+                    ),
+                    request_id=ctx.request_id,
+                )
+            )
         try:
             search_contexts = await self.search_runner.run_batch(search_contexts)
         except Exception as exc:  # noqa: BLE001
@@ -111,33 +126,45 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         out: list[AnswerSubQuestionPlan] = []
         for item in list(ctx.plan.sub_questions or []):
             question = clean_whitespace(str(item.question or ""))
-            search_query = clean_whitespace(str(item.search_query or question))
+            search_query = item.search_query or QuerySourceSpec(query=question)
             if not question or not search_query:
                 continue
             out.append(
-                AnswerSubQuestionPlan(question=question, search_query=search_query)
+                AnswerSubQuestionPlan(
+                    question=question,
+                    search_query=search_query.model_copy(deep=True),
+                )
             )
             if len(out) >= _MAX_SUB_QUESTIONS:
                 break
         if out:
             return out
-        fallback = clean_whitespace(str(ctx.plan.search_query or ctx.request.query))
+        fallback = clean_whitespace(
+            (ctx.plan.search_query.query if ctx.plan.search_query is not None else "")
+            or ctx.request.query
+        )
         if not fallback:
             return []
-        return [AnswerSubQuestionPlan(question=fallback, search_query=fallback)]
+        return [
+            AnswerSubQuestionPlan(
+                question=fallback,
+                search_query=QuerySourceSpec(query=fallback),
+            )
+        ]
 
     def _build_search_request(
-        self, *, ctx: AnswerStepContext, query: str
+        self, *, ctx: AnswerStepContext, query: QuerySourceSpec | None
     ) -> SearchRequest:
+        query_text = query.query if query is not None else ""
         return SearchRequest(
-            query=query,
+            query=query_text,
             mode=_FIXED_SEARCH_MODE,
             max_results=_FIXED_MAX_RESULTS,
             additional_queries=None,
             fetchs=SearchFetchRequest(
                 content=bool(ctx.request.content),
                 abstracts=FetchAbstractsRequest(
-                    query=query,
+                    query=query_text,
                     max_chars=_FIXED_ABSTRACT_MAX_CHARS,
                 ),
                 subpages=None,

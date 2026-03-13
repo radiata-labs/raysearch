@@ -7,6 +7,9 @@ from urllib.parse import urlparse
 import anyio
 
 from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.provider.blend import (
+    resolve_engine_selection_routes,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.models.components.telemetry import MeterPayload
@@ -18,7 +21,12 @@ from serpsage.models.steps.search import (
     SearchStepContext,
 )
 from serpsage.steps.base import StepBase
-from serpsage.utils import canonicalize_url, clean_whitespace, strip_html
+from serpsage.utils import (
+    canonicalize_url,
+    clean_whitespace,
+    pick_earliest_published_date,
+    strip_html,
+)
 
 
 class SearchStep(StepBase[SearchStepContext]):
@@ -28,6 +36,7 @@ class SearchStep(StepBase[SearchStepContext]):
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         if bool(ctx.plan.aborted):
             ctx.retrieval.urls = []
+            ctx.retrieval.published_dates = {}
             ctx.retrieval.snippet_context = {}
             ctx.retrieval.query_hit_stats = {}
             ctx.fetch.candidates = []
@@ -41,7 +50,13 @@ class SearchStep(StepBase[SearchStepContext]):
         ]
         async with anyio.create_task_group() as tg:
             for idx, job in enumerate(query_jobs):
-                tg.start_soon(self._run_query, idx, job.query, provider_responses, ctx)
+                tg.start_soon(
+                    self._run_query,
+                    idx,
+                    job.query.query,
+                    provider_responses,
+                    ctx,
+                )
         include_domains = list(ctx.request.include_domains or [])
         exclude_domains = list(ctx.request.exclude_domains or [])
         normalized_by_job: list[list[SearchNormalizedResult]] = []
@@ -66,6 +81,11 @@ class SearchStep(StepBase[SearchStepContext]):
             query_hit_stats[url] = int(len(bucket.hit_indexes))
         ctx.retrieval.snippet_context = self._finalize_snippet_context(snippets_by_url)
         ctx.retrieval.query_hit_stats = dict(query_hit_stats)
+        ctx.retrieval.published_dates = {
+            bucket.representative_url: bucket.published_date
+            for bucket in canonical_buckets.values()
+            if bucket.published_date
+        }
         ctx.retrieval.urls = [
             bucket.representative_url
             for bucket in list(canonical_buckets.values())[
@@ -95,12 +115,17 @@ class SearchStep(StepBase[SearchStepContext]):
                     bucket = SearchCanonicalBucket(
                         representative_url=str(item.url),
                         representative_order=current_order,
+                        published_date=str(item.published_date or ""),
                     )
                     buckets[canonical_url] = bucket
                 bucket.hit_indexes.add(job_index)
                 if current_order < int(bucket.representative_order):
                     bucket.representative_url = str(item.url)
                     bucket.representative_order = current_order
+                bucket.published_date = pick_earliest_published_date(
+                    bucket.published_date,
+                    item.published_date,
+                )
                 snippet_text = self._pick_snippet(item)
                 if not snippet_text:
                     continue
@@ -109,7 +134,7 @@ class SearchStep(StepBase[SearchStepContext]):
                 if current is None or current_order < int(current.order):
                     bucket.snippets_by_source[source_key] = SearchSnippetContext(
                         snippet=snippet_text,
-                        source_query=job.query,
+                        source_query=job.query.query,
                         source_type=job.source,
                         order=current_order,
                     )
@@ -123,13 +148,24 @@ class SearchStep(StepBase[SearchStepContext]):
         ctx: SearchStepContext,
     ) -> None:
         try:
+            kwargs = dict(ctx.runtime.provider_extra_kwargs or {})
+            subsystem = ctx.runtime.engine_selection_subsystem or "search"
+            if resolve_engine_selection_routes(
+                settings=self.settings,
+                subsystem=subsystem,
+                provider=self.provider,
+            ):
+                if idx < len(ctx.plan.query_jobs):
+                    kwargs["include_sources"] = list(
+                        ctx.plan.query_jobs[idx].query.include_sources
+                    )
             out[idx] = await self.provider.asearch(
                 query=query,
                 limit=ctx.runtime.provider_limit,
                 locale=str(ctx.runtime.provider_locale or ""),
                 start_published_date=ctx.request.start_published_date,
                 end_published_date=ctx.request.end_published_date,
-                **dict(ctx.runtime.provider_extra_kwargs or {}),
+                **kwargs,
             )
             await self._emit_search_meter(
                 ctx=ctx,
@@ -239,6 +275,7 @@ class SearchStep(StepBase[SearchStepContext]):
                     canonical_url=canonical_url,
                     title=title,
                     snippet=snippet,
+                    published_date=clean_whitespace(raw.published_date),
                 )
             )
         return out

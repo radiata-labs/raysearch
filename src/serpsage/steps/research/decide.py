@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.provider.blend import (
+    build_engine_selection_context,
+    resolve_engine_selection_routes,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
     ResearchDecideSignalPayload,
@@ -10,6 +15,7 @@ from serpsage.models.steps.research import (
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_decide_prompt_messages
+from serpsage.steps.research.schema import build_decide_schema
 from serpsage.steps.research.utils import resolve_research_model
 
 
@@ -17,6 +23,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
     _LOW_GAIN_THRESHOLD = 0.05
 
     llm: LLMClientBase = Depends()
+    provider: SearchProviderBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -95,7 +102,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         conflict_objectives = [
             f"conflict:{item}" for item in unresolved_conflict_topics
         ]
-        query_objectives = [f"query:{item}" for item in next_queries]
+        query_objectives = [f"query:{item.query}" for item in next_queries]
         remaining_objectives = self._merge_preserving_order(
             [
                 *gap_objectives,
@@ -203,11 +210,24 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             stage="plan",
             fallback=self.settings.answer.plan.use_model,
         )
+        routes = resolve_engine_selection_routes(
+            settings=self.settings,
+            subsystem="research",
+            provider=self.provider,
+        )
+        engine_selection_context = build_engine_selection_context(routes=routes)
         try:
             result = await self.llm.create(
                 model=model,
-                messages=build_decide_prompt_messages(ctx=ctx),
+                messages=build_decide_prompt_messages(
+                    ctx=ctx,
+                    engine_selection_context=engine_selection_context,
+                ),
                 response_format=ResearchDecideSignalPayload,
+                format_override=build_decide_schema(
+                    max_queries=ctx.run.limits.max_queries_per_round,
+                    select_engines=bool(routes),
+                ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
         except Exception as exc:  # noqa: BLE001

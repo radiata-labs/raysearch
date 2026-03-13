@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from typing_extensions import override
 
 import anyio
@@ -18,6 +18,9 @@ from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import canonicalize_url, clean_whitespace
+
+if TYPE_CHECKING:
+    from serpsage.settings.models import AppSettings
 
 
 def _normalize_source_names(value: object) -> set[str]:
@@ -60,7 +63,7 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
             name = route.config.name
             if name == "blend":
                 continue
-            if not isinstance(getattr(type(route), "meta", None), ProviderMeta):
+            if not isinstance(getattr(route, "meta", None), ProviderMeta):
                 continue
             if name in self._all_routes:
                 raise ValueError(f"duplicate provider route `{name}`")
@@ -177,4 +180,57 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         return tuple(selected)
 
 
-__all__ = ["BlendProvider", "BlendProviderConfig"]
+def resolve_engine_selection_routes(
+    *,
+    settings: AppSettings,
+    subsystem: Literal["search", "research", "answer"],
+    provider: SearchProviderBase[ProviderConfigBase],
+) -> tuple[ProviderMeta, ...]:
+    subsystem_settings = getattr(settings, subsystem, None)
+    if not bool(getattr(subsystem_settings, "select_engines", False)):
+        return ()
+    if str(getattr(provider.config, "name", "") or "") != "blend":
+        return ()
+    raw_get_routes = getattr(provider, "get_routes", None)
+    if not callable(raw_get_routes):
+        return ()
+    out: list[ProviderMeta] = []
+    for route in cast(
+        "tuple[SearchProviderBase[ProviderConfigBase], ...]", raw_get_routes()
+    ):
+        meta = getattr(route, "meta", None)
+        if isinstance(meta, ProviderMeta):
+            out.append(meta)
+    return tuple(out)
+
+
+def build_engine_selection_context(*, routes: tuple[ProviderMeta, ...]) -> str:
+    if not routes:
+        return ""
+    return "\n".join(
+        [
+            "ENGINE_SELECTION_BASE_CONTEXT:",
+            "- You are choosing include_sources for BlendProvider on a per-query basis.",
+            "- include_sources is a set-like list of engine names. Use names exactly as listed.",
+            "- include_sources=[] is the preferred default for generic discovery because it keeps Blend default all-open routing.",
+            "- Restrict include_sources only when the query clearly benefits from targeted evidence routes.",
+            "- If the query needs general web coverage, prefer multiple general engines or [].",
+            "- Choose engines using both description and preference: description tells you what the engine covers, preference tells you what query shape it handles best.",
+            "- Prefer the smallest engine set that still matches the evidence need; do not add engines with overlapping value unless broader recall is clearly useful.",
+            "- If you are unsure which engine subset is best, keep include_sources empty.",
+            "ENGINE_CATALOG:",
+            *[
+                f"- {meta.name}: description={meta.description}; preference={meta.preference}; "
+                f"categories={', '.join(meta.categories)}; website={meta.website}"
+                for meta in routes
+            ],
+        ]
+    )
+
+
+__all__ = [
+    "BlendProvider",
+    "BlendProviderConfig",
+    "build_engine_selection_context",
+    "resolve_engine_selection_routes",
+]

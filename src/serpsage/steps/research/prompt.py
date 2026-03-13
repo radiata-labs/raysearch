@@ -20,6 +20,7 @@ from serpsage.models.steps.research import (
     TaskComplexity,
     TaskIntent,
 )
+from serpsage.models.steps.search import QuerySourceSpec
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -1530,10 +1531,11 @@ def build_theme_prompt_messages(
     now_utc: datetime,
     card_cap: int,
     report_style: ReportStyle,
+    engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
     budget = ctx.run.limits
     mode_depth = ctx.run.limits
-    return _build_theme_messages(
+    messages = _build_theme_messages(
         theme=ctx.request.themes,
         search_mode=ctx.request.search_mode,
         mode_depth_profile=mode_depth.mode_key,
@@ -1545,15 +1547,29 @@ def build_theme_prompt_messages(
         card_cap=card_cap,
         hinted_style=report_style,
     )
+    if engine_selection_context:
+        messages[-1]["content"] = messages[-1]["content"].replace(
+            "- seed_queries (string[])",
+            "- seed_queries ({query, include_sources}[])",
+        )
+        messages[-1]["content"] += (
+            "\n\nENGINE_SELECTION_OUTPUT_RULES:\n"
+            "- seed_queries must use objects with query and include_sources.\n"
+            "- Prefer include_sources=[] unless a seed query clearly benefits from a targeted evidence route.\n"
+            "- Within one question card, prefer seed_queries that explore different source combinations when that improves coverage.\n\n"
+            f"{engine_selection_context}"
+        )
+    return messages
 
 
 def build_plan_prompt_messages(
     *,
     ctx: ResearchStepContext,
-    candidate_queries: list[str],
+    candidate_queries: list[QuerySourceSpec],
     core_question: str,
     now_utc: datetime,
     last_round_candidates: list[ResearchLinkCandidate],
+    engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
     budget = ctx.run.limits
     mode_depth = ctx.run.limits
@@ -1565,7 +1581,7 @@ def build_plan_prompt_messages(
         max_pages=max(1, mode_depth.explore_target_pages_per_round),
         max_links_per_page=6,
     )
-    return _build_plan_messages(
+    messages = _build_plan_messages(
         theme=ctx.request.themes,
         core_question=core_question,
         report_style=theme_plan.report_style,
@@ -1597,6 +1613,26 @@ def build_plan_prompt_messages(
         explore_links_per_page=mode_depth.explore_links_per_page,
         last_round_link_candidates_markdown=last_round_candidates_markdown,
     )
+    if engine_selection_context:
+        messages[-1]["content"] = (
+            messages[-1]["content"]
+            .replace(
+                '- "search_jobs": [{ "query": "..." }]',
+                '- "search_jobs": [{ "query": {"query": "...", "include_sources": []}, "additional_queries": [] }]',
+            )
+            .replace(
+                "- query: one concrete query string, not a prose explanation.",
+                "- query: one concrete query object with query and include_sources; query must be a concrete search string, not a prose explanation.",
+            )
+        )
+        messages[-1]["content"] += (
+            "\n\nENGINE_SELECTION_OUTPUT_RULES:\n"
+            "- query and additional_queries must use objects with query and include_sources.\n"
+            "- Keep include_sources=[] as the default unless narrower routing clearly improves evidence quality.\n"
+            "- Use routing differences only when they create genuinely different retrieval paths.\n\n"
+            f"{engine_selection_context}"
+        )
+    return messages
 
 
 def build_link_picker_prompt_messages(
@@ -1629,10 +1665,11 @@ def build_overview_prompt_messages(
     ctx: ResearchStepContext,
     sources: list[ResearchSource],
     now_utc: datetime,
+    engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
     theme_plan = _theme_plan_from_task(ctx.task)
     output_language = theme_plan.output_language
-    return _build_overview_messages(
+    messages = _build_overview_messages(
         theme=ctx.request.themes,
         core_question=theme_plan.core_question,
         report_style=theme_plan.report_style,
@@ -1647,6 +1684,15 @@ def build_overview_prompt_messages(
         required_entities=list(theme_plan.required_entities),
         source_overview_packet=build_overview_packet(sources=sources),
     )
+    if engine_selection_context:
+        messages[-1]["content"] += (
+            "\n\nENGINE_SELECTION_OUTPUT_RULES:\n"
+            "- next_queries must use objects with query and include_sources.\n"
+            "- Prefer include_sources=[] unless a follow-up query clearly needs a targeted evidence route.\n"
+            "- Only restrict engines when that directly addresses a missing evidence type or freshness gap.\n\n"
+            f"{engine_selection_context}"
+        )
+    return messages
 
 
 def build_content_prompt_messages(
@@ -1655,13 +1701,14 @@ def build_content_prompt_messages(
     selected_sources: list[ResearchSource],
     source_ids: list[int],
     now_utc: datetime,
+    engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
     overview_review = ctx.run.current.overview_review if ctx.run.current else None
     if overview_review is None:
         raise ValueError("content prompt requires overview review")
     theme_plan = _theme_plan_from_task(ctx.task)
     output_language = theme_plan.output_language
-    return _build_content_messages(
+    messages = _build_content_messages(
         theme=ctx.request.themes,
         core_question=theme_plan.core_question,
         report_style=theme_plan.report_style,
@@ -1679,16 +1726,26 @@ def build_content_prompt_messages(
             source_ids=source_ids,
         ),
     )
+    if engine_selection_context:
+        messages[-1]["content"] += (
+            "\n\nENGINE_SELECTION_OUTPUT_RULES:\n"
+            "- next_queries must use objects with query and include_sources.\n"
+            "- Prefer include_sources=[] unless unresolved conflicts or remaining gaps clearly require targeted routing.\n"
+            "- Route only when it strengthens conflict resolution or fills a specific evidence gap.\n\n"
+            f"{engine_selection_context}"
+        )
+    return messages
 
 
 def build_decide_prompt_messages(
     *,
     ctx: ResearchStepContext,
+    engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
     round_state = ctx.run.current
     if round_state is None:
         return []
-    return _build_decide_signal_messages(
+    messages = _build_decide_signal_messages(
         core_question=ctx.task.question,
         mode_depth_profile=ctx.run.limits.mode_key,
         confidence=round_state.confidence,
@@ -1707,6 +1764,15 @@ def build_decide_prompt_messages(
             ctx.run.limits.max_fetch_calls - ctx.run.fetch_calls,
         ),
     )
+    if engine_selection_context:
+        messages[-1]["content"] += (
+            "\n\nENGINE_SELECTION_OUTPUT_RULES:\n"
+            "- next_queries must use objects with query and include_sources.\n"
+            "- Prefer include_sources=[] unless the next step clearly needs a specific evidence route.\n"
+            "- Keep routing conservative; if uncertainty is high, leave include_sources empty.\n\n"
+            f"{engine_selection_context}"
+        )
+    return messages
 
 
 def build_track_orchestrator_prompt_messages(
@@ -2066,10 +2132,22 @@ def _normalize_scalar_text(value: str) -> str:
     return value
 
 
-def _render_markdown_bullets(values: Iterable[str], *, indent: str = "") -> list[str]:
+def _render_markdown_bullets(
+    values: Iterable[str | QuerySourceSpec], *, indent: str = ""
+) -> list[str]:
     out: list[str] = []
     for item in values:
-        token = normalize_block_text(item)
+        token = (
+            item.query
+            + (
+                f" [include_sources: {', '.join(item.include_sources)}]"
+                if item.include_sources
+                else ""
+            )
+            if isinstance(item, QuerySourceSpec)
+            else item
+        )
+        token = normalize_block_text(token)
         if not token:
             continue
         if "\n" not in token:
@@ -2256,7 +2334,7 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
     return "\n".join(lines).strip()
 
 
-def render_queries_markdown(queries: list[str]) -> str:
+def render_queries_markdown(queries: Iterable[str | QuerySourceSpec]) -> str:
     lines = _render_markdown_bullets(queries)
     if not lines:
         return "- (none)"
@@ -2485,18 +2563,10 @@ def build_subreport_context_packet_markdown(
             )
             if round_state.queries:
                 lines.append("- Queries:")
-                for query in round_state.queries[:8]:
-                    token = query
-                    if not token:
-                        continue
-                    if "\n" not in token:
-                        lines.append(f"  - {token}")
-                        continue
-                    lines.extend(
-                        ["  -", "    ```text"]
-                        + [f"    {line}" for line in token.split("\n")]
-                        + ["    ```"]
-                    )
+                lines.extend(
+                    _render_markdown_bullets(round_state.queries[:8], indent="  ")
+                    or _NONE_BULLET
+                )
             else:
                 lines.append("- Queries: (none)")
     else:

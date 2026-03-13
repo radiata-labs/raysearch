@@ -103,56 +103,54 @@ class DuckDuckGoProvider(
         if len(normalized_query) >= 500:
             return []
 
-        headers = self._build_headers()
-        resolved_time_range = clean_whitespace(str(kwargs.get("time_range") or ""))
-        if not resolved_time_range:
-            resolved_time_range = self._relative_time_range_from_bounds(
-                start_published_date=start_published_date,
-                end_published_date=end_published_date,
-            )
+        request_base_url = self._request_base_url()
         request_params = self._build_request_params(
             query=normalized_query,
             region=kwargs.get("region"),
-            time_range=resolved_time_range,
+            time_range=self._resolve_time_range(
+                runtime_value=kwargs.get("time_range"),
+                start_published_date=start_published_date,
+                end_published_date=end_published_date,
+            ),
         )
-        request_base_url = self._request_base_url()
         try:
             resp = await self.http.client.get(
                 request_base_url,
                 params=request_params,
-                headers=headers,
+                headers=self._build_headers(),
                 timeout=httpx.Timeout(cfg.timeout_s),
                 follow_redirects=bool(cfg.allow_redirects),
             )
             resp.raise_for_status()
             self._raise_if_blocked(resp)
-            results, _suggestions, _answer = self._parse_search_results(
-                resp.text,
-                base_url=request_base_url,
-            )
+            results = self._parse_search_results(resp.text, base_url=request_base_url)
             if not results:
-                (
-                    results,
-                    _suggestions,
-                    _answer,
-                    _fallback_metadata,
-                ) = await self._search_via_jina_mirror(query=normalized_query)
+                results = await self._search_via_jina_mirror(query=normalized_query)
         except Exception:
-            (
-                results,
-                _suggestions,
-                _answer,
-                _metadata,
-            ) = await self._search_via_jina_mirror(query=normalized_query)
-        _ = (locale, request_params, start_published_date, end_published_date)
+            results = await self._search_via_jina_mirror(query=normalized_query)
         return self._trim_results(results, limit=limit)
+
+    def _resolve_time_range(
+        self,
+        *,
+        runtime_value: Any,
+        start_published_date: str | None,
+        end_published_date: str | None,
+    ) -> str:
+        token = clean_whitespace(str(runtime_value or "")).casefold()
+        if token:
+            return token
+        return self._relative_time_range_from_bounds(
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+        )
 
     def _build_request_params(
         self,
         *,
         query: str,
         region: Any,
-        time_range: Any,
+        time_range: str,
     ) -> dict[str, str]:
         params: dict[str, str] = {"q": self._quote_bangs(query)}
         normalized_region = clean_whitespace(
@@ -160,16 +158,14 @@ class DuckDuckGoProvider(
         ).lower()
         if normalized_region and normalized_region != "all":
             params["kl"] = normalized_region
-        normalized_time_range = clean_whitespace(str(time_range or "")).casefold()
         time_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
-        if normalized_time_range in time_map:
-            params["df"] = time_map[normalized_time_range]
+        if time_range in time_map:
+            params["df"] = time_map[time_range]
         return params
 
     def _build_headers(self) -> dict[str, str]:
-        cfg = self.config
-        headers = dict(cfg.headers or {})
-        headers["User-Agent"] = str(cfg.user_agent or _DEFAULT_DDG_USER_AGENT)
+        headers = dict(self.config.headers or {})
+        headers["User-Agent"] = str(self.config.user_agent or _DEFAULT_DDG_USER_AGENT)
         headers.setdefault(
             "Accept",
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -189,32 +185,21 @@ class DuckDuckGoProvider(
         self,
         *,
         query: str,
-    ) -> tuple[list[SearchProviderResult], list[str], str, dict[str, Any]]:
-        mirror_url = _DDG_JINA_LITE_URL + "?q=" + quote_plus(query)
+    ) -> list[SearchProviderResult]:
         resp = await self.http.client.get(
-            mirror_url,
+            _DDG_JINA_LITE_URL + "?q=" + quote_plus(query),
             timeout=httpx.Timeout(self.config.timeout_s),
             follow_redirects=bool(self.config.allow_redirects),
         )
         resp.raise_for_status()
-        results = self._parse_jina_lite_results(resp.text)
-        return (
-            results,
-            [],
-            "",
-            {
-                "request_url": str(resp.url),
-                "duckduckgo_domain": mirror_url,
-                "fallback_backend": "jina_ai_lite_mirror",
-            },
-        )
+        return self._parse_jina_lite_results(resp.text)
 
     def _parse_search_results(
         self,
         raw_html: str,
         *,
         base_url: str,
-    ) -> tuple[list[SearchProviderResult], list[str], str]:
+    ) -> list[SearchProviderResult]:
         soup = BeautifulSoup(raw_html, "html.parser")
         results: list[SearchProviderResult] = []
         seen_urls: set[str] = set()
@@ -246,11 +231,7 @@ class DuckDuckGoProvider(
                     engine=self.config.name,
                 )
             )
-        return (
-            results,
-            self._extract_suggestions(soup),
-            self._extract_instant_answer(soup),
-        )
+        return results
 
     def _iter_result_blocks(self, soup: BeautifulSoup) -> list[Tag]:
         out: list[Tag] = []
@@ -286,53 +267,6 @@ class DuckDuckGoProvider(
                 return snippet
         return ""
 
-    def _extract_display_url(self, block: Tag) -> str:
-        for selector in ("span.result__url", "a.result__url", "cite"):
-            node = block.select_one(selector)
-            if node is None:
-                continue
-            value = clean_whitespace(node.get_text(" ", strip=True))
-            if value:
-                return value
-        return ""
-
-    def _extract_suggestions(self, soup: BeautifulSoup) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for selector in (
-            "div.message--spelling a",
-            "div.msg--spelling a",
-            "a.search__didyoumean",
-        ):
-            for anchor in soup.select(selector):
-                if not isinstance(anchor, Tag):
-                    continue
-                value = clean_whitespace(anchor.get_text(" ", strip=True))
-                if not value:
-                    continue
-                key = value.casefold()
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append(value)
-        return out
-
-    def _extract_instant_answer(self, soup: BeautifulSoup) -> str:
-        node = soup.select_one("div#zero_click_abstract")
-        if node is None:
-            return ""
-        answer = clean_whitespace(node.get_text(" ", strip=True))
-        if not answer:
-            return ""
-        text = answer.casefold()
-        if (
-            "your ip address is" in text
-            or "your user agent:" in text
-            or "url decoded:" in text
-        ):
-            return ""
-        return answer
-
     def _resolve_result_url(self, raw_href: str, *, base_url: str) -> str:
         href = clean_whitespace(raw_href)
         if not href:
@@ -348,9 +282,7 @@ class DuckDuckGoProvider(
                 return ""
             absolute = urljoin(base_url, href)
             parsed = urlparse(absolute)
-        if parsed.scheme not in {"http", "https"}:
-            return ""
-        if self._is_ddg_host(parsed.netloc):
+        if parsed.scheme not in {"http", "https"} or self._is_ddg_host(parsed.netloc):
             return ""
         return absolute
 

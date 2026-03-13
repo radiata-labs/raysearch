@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 from typing_extensions import override
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
@@ -29,15 +28,12 @@ _GOOGLE_BLOCK_MARKERS = (
 )
 _GOOGLE_RESULT_SELECTORS = ("div.MjjYud", "div.g")
 _GOOGLE_SNIPPET_SELECTORS = ('[data-sncf="1"]',)
-_GOOGLE_SUGGESTION_SELECTOR = "div.ouy7Mc a"
 _DEFAULT_GOOGLE_BASE_URL = "https://www.google.com/search"
 _DEFAULT_GOOGLE_USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RQ3A.210905.001; wv) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 "
     "Chrome/120.0.0.0 Mobile Safari/537.36 GSA/14.48.26.29.arm64"
 )
-_RE_DATA_IMAGE = re.compile(r'"(dimg_[^"]*)"[^;]*;(data:image[^;]*;[^;]*);')
-_RE_DATA_IMAGE_END = re.compile(r'"(dimg_[^"]*)"[^;]*;(data:image[^;]*;[^;]*)$')
 
 
 class GoogleProviderConfig(ProviderConfigBase):
@@ -93,27 +89,22 @@ class GoogleProvider(
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         normalized_query = clean_whitespace(query)
-        normalized_locale = clean_whitespace(locale)
         if not normalized_query:
             raise ValueError("query must not be empty")
-        start = self._coerce_start(kwargs.get("start"))
+
         page_size = self._coerce_page_size(limit)
-        safe = self._resolve_safe(kwargs.get("safe"))
-        country = self._resolve_country(kwargs.get("country"))
-        time_range = self._resolve_time_range(kwargs.get("time_range"))
         start_date, end_date = self._coarse_published_date_bounds(
             start_published_date=start_published_date,
             end_published_date=end_published_date,
         )
-
         request = self._build_request(
             query=normalized_query,
             limit=page_size,
-            locale=normalized_locale,
-            start=start,
-            safe=safe,
-            country=country,
-            time_range=time_range,
+            locale=clean_whitespace(locale),
+            start=self._coerce_start(kwargs.get("start")),
+            safe=self._resolve_safe(kwargs.get("safe")),
+            country=self._resolve_country(kwargs.get("country")),
+            time_range=self._resolve_time_range(kwargs.get("time_range")),
             start_date=start_date,
             end_date=end_date,
         )
@@ -126,12 +117,10 @@ class GoogleProvider(
         )
         resp.raise_for_status()
         self._raise_if_blocked(resp)
-        results, _suggestions = self._parse_search_results(
-            resp.text,
-            base_url=str(resp.url),
+        return self._trim_results(
+            self._parse_search_results(resp.text, base_url=str(resp.url)),
+            limit=page_size,
         )
-        _ = (locale, request, resp, start, start_published_date, end_published_date)
-        return self._trim_results(results, limit=page_size)
 
     def _build_request(
         self,
@@ -166,7 +155,7 @@ class GoogleProvider(
         if tbs_value:
             query_params["source"] = "lnt"
             query_params["tbs"] = tbs_value
-        if time_range and "tbs" not in query_params:
+        elif time_range:
             query_params["tbs"] = f"qdr:{time_range}"
         query_url = str(google_info["base_url"]) + "?" + urlencode(query_params)
         if safe in {"medium", "high"}:
@@ -175,7 +164,6 @@ class GoogleProvider(
             "url": query_url,
             "headers": google_info["headers"],
             "cookies": google_info["cookies"],
-            "base_url": google_info["base_url"],
         }
 
     def _get_google_info(
@@ -185,11 +173,11 @@ class GoogleProvider(
         default_country: str,
     ) -> dict[str, Any]:
         cfg = self.config
-        locale = clean_whitespace(locale).replace("_", "-")
+        requested_locale = clean_whitespace(locale).replace("_", "-")
         region_in_locale = False
-        if not locale or locale == "all":
-            locale = "en"
-        parts = [part for part in locale.split("-") if part]
+        if not requested_locale or requested_locale == "all":
+            requested_locale = "en"
+        parts = [part for part in requested_locale.split("-") if part]
         lang = clean_whitespace(parts[0]).lower() or "en"
         country = default_country or "US"
         if len(parts) > 1 and len(clean_whitespace(parts[-1])) == 2:
@@ -198,29 +186,22 @@ class GoogleProvider(
         lr = f"lang_{lang}"
         if region_in_locale and lang == "zh":
             lr = f"lang_{lang}-{country}"
-        if clean_whitespace(locale).casefold() == "all":
-            lr = ""
-        lang_code = lr.split("_")[-1] if lr else lang
-        base_url = clean_whitespace(str(cfg.base_url or _DEFAULT_GOOGLE_BASE_URL))
         headers = dict(cfg.headers or {})
         headers["Accept"] = "*/*"
         headers["User-Agent"] = self._google_user_agent()
         cookies = dict(cfg.cookies or {})
         cookies["CONSENT"] = "YES+"
-        params = {
-            "hl": f"{lang_code}-{country}",
-            "lr": lr,
-            "cr": f"country{country}" if region_in_locale else "",
-            "ie": "utf8",
-            "oe": "utf8",
-        }
         return {
-            "base_url": base_url,
-            "params": params,
+            "base_url": clean_whitespace(str(cfg.base_url or _DEFAULT_GOOGLE_BASE_URL)),
             "headers": headers,
             "cookies": cookies,
-            "country": country,
-            "language": lr,
+            "params": {
+                "hl": f"{lr.split('_')[-1] if lr else lang}-{country}",
+                "lr": "" if requested_locale.casefold() == "all" else lr,
+                "cr": f"country{country}" if region_in_locale else "",
+                "ie": "utf8",
+                "oe": "utf8",
+            },
         }
 
     def _resolve_google_tbs(
@@ -262,11 +243,9 @@ class GoogleProvider(
         raw_html: str,
         *,
         base_url: str,
-    ) -> tuple[list[SearchProviderResult], list[str]]:
+    ) -> list[SearchProviderResult]:
         soup = BeautifulSoup(raw_html, "html.parser")
-        data_image_map = self._parse_data_images(raw_html)
         results: list[SearchProviderResult] = []
-        suggestions: list[str] = []
         seen_urls: set[str] = set()
         for block in self._iter_result_blocks(soup):
             title = self._extract_title(block)
@@ -284,27 +263,16 @@ class GoogleProvider(
             key = resolved_url.casefold()
             if key in seen_urls:
                 continue
-            snippet = self._extract_snippet(block)
-            _ = (
-                self._extract_display_url(block),
-                self._extract_thumbnail(block, data_image_map),
-            )
             seen_urls.add(key)
             results.append(
                 SearchProviderResult(
                     url=resolved_url,
                     title=title,
-                    snippet=snippet,
+                    snippet=self._extract_snippet(block),
                     engine=self.config.name,
                 )
             )
-        for anchor in soup.select(_GOOGLE_SUGGESTION_SELECTOR):
-            if not isinstance(anchor, Tag):
-                continue
-            suggestion = clean_whitespace(anchor.get_text(" ", strip=True))
-            if suggestion:
-                suggestions.append(suggestion)
-        return results, self._dedupe_text(suggestions)
+        return results
 
     def _iter_result_blocks(self, soup: BeautifulSoup) -> list[Tag]:
         out: list[Tag] = []
@@ -345,43 +313,6 @@ class GoogleProvider(
                 break
         return clean_whitespace(" ".join(parts))
 
-    def _extract_display_url(self, block: Tag) -> str:
-        for selector in ("cite", "span.VuuXrf", "div.yuRUbf cite"):
-            node = block.select_one(selector)
-            if node is None:
-                continue
-            value = clean_whitespace(node.get_text(" ", strip=True))
-            if value:
-                return value
-        return ""
-
-    def _extract_thumbnail(
-        self,
-        block: Tag,
-        data_image_map: dict[str, str],
-    ) -> str:
-        image = block.select_one("img[src]")
-        if image is None:
-            return ""
-        src = clean_whitespace(str(image.get("src", "")))
-        if src.startswith("data:image"):
-            img_id = clean_whitespace(str(image.get("id", "")))
-            if img_id:
-                return clean_whitespace(data_image_map.get(img_id, src))
-        return src
-
-    def _parse_data_images(self, text: str) -> dict[str, str]:
-        data_image_map: dict[str, str] = {}
-        for img_id, data_image in _RE_DATA_IMAGE.findall(text):
-            end_pos = data_image.rfind("=")
-            if end_pos > 0:
-                data_image = data_image[: end_pos + 1]
-            data_image_map[img_id] = data_image
-        last = _RE_DATA_IMAGE_END.search(text)
-        if last is not None:
-            data_image_map[last.group(1)] = last.group(2)
-        return data_image_map
-
     def _resolve_result_url(self, raw_href: str, *, base_url: str) -> str:
         href = clean_whitespace(raw_href)
         if not href:
@@ -397,9 +328,9 @@ class GoogleProvider(
                 return ""
             absolute = urljoin(base_url, href)
             parsed = urlparse(absolute)
-        if parsed.scheme not in {"http", "https"}:
-            return ""
-        if self._is_google_host(parsed.netloc):
+        if parsed.scheme not in {"http", "https"} or self._is_google_host(
+            parsed.netloc
+        ):
             return ""
         return absolute
 
@@ -457,20 +388,6 @@ class GoogleProvider(
         if limit is None:
             return values
         return values[: max(1, int(limit))]
-
-    def _dedupe_text(self, values: list[str]) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            item = clean_whitespace(value)
-            if not item:
-                continue
-            key = item.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(item)
-        return out
 
     def _is_google_host(self, host: str) -> bool:
         normalized = clean_whitespace(host).lower()

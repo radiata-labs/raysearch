@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -22,42 +23,65 @@ _RESERVED_PROVIDER_KWARG_KEYS = frozenset(
 )
 
 
+class QuerySourceSpec(MutableModel):
+    query: str
+    include_sources: list[str] = Field(default_factory=list)
+
+    @field_validator("include_sources", mode="before")
+    @classmethod
+    def _validate_include_sources(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raw_items = [value]
+        elif isinstance(value, Iterable):
+            raw_items = list(value)
+        else:
+            raise TypeError("include_sources must be an iterable of strings")
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in raw_items:
+            token = clean_whitespace(str(raw or "")).casefold()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+        return out
+
+
 class SearchQueryJob(MutableModel):
-    query: str
-    source: Literal["primary", "manual", "rule", "llm"] = "primary"
-
-
-class SearchQueryCandidate(MutableModel):
-    query: str
-    source: Literal["primary", "manual", "rule", "llm"] = "primary"
+    query: QuerySourceSpec
+    source: Literal["primary", "manual", "llm"] = "primary"
 
 
 class SearchSnippetContext(MutableModel):
     snippet: str
     source_query: str
-    source_type: Literal["primary", "manual", "rule", "llm"]
+    source_type: Literal["primary", "manual", "llm"]
     order: int = 0
 
 
 class SearchRuntimeState(MutableModel):
     disable_internal_llm: bool = False
+    engine_selection_subsystem: Literal["", "search", "research", "answer"] = ""
     provider_limit: int | None = None
     provider_locale: str = ""
     provider_extra_kwargs: dict[str, Any] = Field(default_factory=dict)
+    additional_queries: list[QuerySourceSpec] = Field(default_factory=list)
 
     @field_validator("provider_limit")
     @classmethod
     def _validate_provider_limit(cls, value: int | None) -> int | None:
         if value is None:
             return None
-        if int(value) <= 0:
+        if value <= 0:
             raise ValueError("provider_limit must be > 0")
-        return int(value)
+        return value
 
     @field_validator("provider_locale")
     @classmethod
     def _validate_provider_text(cls, value: str) -> str:
-        return clean_whitespace(str(value or ""))
+        return clean_whitespace(value)
 
     @field_validator("provider_extra_kwargs", mode="before")
     @classmethod
@@ -92,29 +116,29 @@ class SearchPlanState(MutableModel):
     context_docs_limit: int = 0
     context_doc_min_chars: int = 0
     rank_by_context: bool = False
-    optimize_query: bool = False
-    optimized_query: str = ""
+    primary_query: QuerySourceSpec | None = None
     aborted: bool = False
     abort_reason: str = ""
     query_jobs: list[SearchQueryJob] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> SearchPlanState:
-        if int(self.max_results) <= 0:
+        if self.max_results <= 0:
             raise ValueError("max_results must be > 0")
-        if int(self.max_extra_queries) < 0:
+        if self.max_extra_queries < 0:
             raise ValueError("max_extra_queries must be >= 0")
-        if int(self.prefetch_limit) <= 0:
+        if self.prefetch_limit <= 0:
             raise ValueError("prefetch_limit must be > 0")
-        if int(self.context_docs_limit) < 0:
+        if self.context_docs_limit < 0:
             raise ValueError("context_docs_limit must be >= 0")
-        if int(self.context_doc_min_chars) < 0:
+        if self.context_doc_min_chars < 0:
             raise ValueError("context_doc_min_chars must be >= 0")
         return self
 
 
 class SearchRetrievalState(MutableModel):
     urls: list[str] = Field(default_factory=list)
+    published_dates: dict[str, str] = Field(default_factory=dict)
     snippet_context: dict[str, list[SearchSnippetContext]] = Field(default_factory=dict)
     query_hit_stats: dict[str, int] = Field(default_factory=dict)
 
@@ -172,11 +196,13 @@ class SearchNormalizedResult(MutableModel):
     canonical_url: str = ""
     title: str = ""
     snippet: str = ""
+    published_date: str = ""
 
 
 class SearchCanonicalBucket(MutableModel):
     representative_url: str
     representative_order: int
+    published_date: str = ""
     hit_indexes: set[int] = Field(default_factory=set)
     snippets_by_source: dict[str, SearchSnippetContext] = Field(default_factory=dict)
 
@@ -211,23 +237,15 @@ class SearchCandidateForScoring(MutableModel):
     )
 
 
-class SearchOptimizedQuery(MutableModel):
-    search_query: str
-    optimize_query: bool
-    freshness_intent: bool
-    query_language: str
-
-
 __all__ = [
     "SearchCandidateForScoring",
     "SearchCanonicalBucket",
     "SearchFetchState",
     "SearchFetchedCandidate",
     "SearchNormalizedResult",
-    "SearchOptimizedQuery",
     "SearchOutputState",
     "SearchPlanState",
-    "SearchQueryCandidate",
+    "QuerySourceSpec",
     "SearchQueryJob",
     "SearchRankedCandidate",
     "SearchRankOptions",

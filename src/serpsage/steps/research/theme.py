@@ -5,6 +5,11 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
+from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.provider.blend import (
+    build_engine_selection_context,
+    resolve_engine_selection_routes,
+)
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
     ResearchLimits,
@@ -38,6 +43,7 @@ _ADAPTIVE_DEPTH_FIELDS: tuple[str, ...] = (
 
 class ResearchThemeStep(StepBase[ResearchStepContext]):
     llm: LLMClientBase = Depends()
+    provider: SearchProviderBase = Depends()
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -48,6 +54,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             fallback=self.settings.answer.plan.use_model,
         )
         card_cap = max(1, ctx.run.limits.max_question_cards_effective)
+        routes = resolve_engine_selection_routes(
+            settings=self.settings,
+            subsystem="research",
+            provider=self.provider,
+        )
+        engine_selection_context = build_engine_selection_context(routes=routes)
         try:
             chat_result = await self.llm.create(
                 model=model,
@@ -56,9 +68,13 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                     now_utc=now_utc,
                     card_cap=card_cap,
                     report_style=ctx.task.style,
+                    engine_selection_context=engine_selection_context,
                 ),
                 response_format=ThemeOutputPayload,
-                format_override=build_theme_schema(card_cap=card_cap),
+                format_override=build_theme_schema(
+                    card_cap=card_cap,
+                    select_engines=bool(routes),
+                ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
         except Exception as exc:  # noqa: BLE001
@@ -183,7 +199,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 question_id=f"q{index}",
                 question=item.question,
                 priority=item.priority,
-                seed_queries=list(item.seed_queries),
+                seed_queries=[
+                    query.model_copy(deep=True) for query in list(item.seed_queries)
+                ],
                 evidence_focus=list(item.evidence_focus),
                 expected_gain=item.expected_gain,
             )

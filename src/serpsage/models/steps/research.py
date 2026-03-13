@@ -9,7 +9,7 @@ from serpsage.models.app.response import ResearchResponse
 from serpsage.models.base import MutableModel
 from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.base import BaseStepContext
-from serpsage.models.steps.search import SearchFetchedCandidate
+from serpsage.models.steps.search import QuerySourceSpec, SearchFetchedCandidate
 
 ReportStyle = Literal["decision", "explainer", "execution"]
 RoundAction = Literal["search", "explore"]
@@ -46,7 +46,7 @@ LooseText = Annotated[str, StringConstraints(strip_whitespace=True)]
 class ThemeQuestionCardPayload(MutableModel):
     question: NonEmptyText
     priority: int = Field(ge=1, le=5)
-    seed_queries: list[NonEmptyText] = Field(min_length=1, max_length=8)
+    seed_queries: list[QuerySourceSpec] = Field(min_length=1, max_length=8)
     evidence_focus: list[NonEmptyText] = Field(default_factory=list, max_length=8)
     expected_gain: NonEmptyText
 
@@ -66,7 +66,7 @@ class ResearchThemePlanCard(MutableModel):
     question_id: NonEmptyText
     question: NonEmptyText
     priority: int = Field(ge=1, le=5)
-    seed_queries: list[NonEmptyText] = Field(min_length=1)
+    seed_queries: list[QuerySourceSpec] = Field(min_length=1)
     evidence_focus: list[NonEmptyText] = Field(default_factory=list)
     expected_gain: NonEmptyText
 
@@ -86,10 +86,10 @@ class ResearchThemePlan(MutableModel):
 
 
 class PlanSearchJobPayload(MutableModel):
-    query: NonEmptyText
+    query: QuerySourceSpec
     intent: SearchJobIntent
     mode: SearchJobMode
-    additional_queries: list[NonEmptyText] = Field(max_length=8)
+    additional_queries: list[QuerySourceSpec] = Field(max_length=8)
 
 
 class PlanOutputPayload(MutableModel):
@@ -115,7 +115,7 @@ class OverviewOutputPayload(MutableModel):
     confidence: float = Field(ge=-1.0, le=1.0)
     need_content_source_ids: list[int] = Field(max_length=20)
     next_query_strategy: NonEmptyText
-    next_queries: list[NonEmptyText] = Field(max_length=8)
+    next_queries: list[QuerySourceSpec] = Field(max_length=8)
     stop: bool
 
 
@@ -133,7 +133,7 @@ class ContentOutputPayload(MutableModel):
     remaining_gaps: list[NonEmptyText] = Field(max_length=12)
     confidence_adjustment: float = Field(ge=-1.0, le=1.0)
     next_query_strategy: NonEmptyText
-    next_queries: list[NonEmptyText] = Field(max_length=8)
+    next_queries: list[QuerySourceSpec] = Field(max_length=8)
     stop: bool
 
 
@@ -183,7 +183,7 @@ class RenderArchitectOutput(MutableModel):
 class ResearchDecideSignalPayload(MutableModel):
     continue_research: bool
     high_yield_remaining: bool
-    next_queries: list[NonEmptyText] = Field(max_length=8)
+    next_queries: list[QuerySourceSpec] = Field(max_length=8)
     reason: LooseText = ""
 
 
@@ -274,17 +274,17 @@ class ResearchSource(MutableModel):
 
 
 class ResearchSearchJob(MutableModel):
-    query: NonEmptyText
+    query: QuerySourceSpec
     intent: SearchJobIntent = "coverage"
     mode: SearchJobMode = "auto"
-    additional_queries: list[NonEmptyText] = Field(default_factory=list)
+    additional_queries: list[QuerySourceSpec] = Field(default_factory=list)
 
 
 class ResearchQuestionCard(MutableModel):
     question_id: NonEmptyText
     question: NonEmptyText
     priority: int = Field(default=3, ge=1, le=5)
-    seed_queries: list[NonEmptyText] = Field(default_factory=list)
+    seed_queries: list[QuerySourceSpec] = Field(default_factory=list)
     evidence_focus: list[NonEmptyText] = Field(default_factory=list)
     expected_gain: str = ""
 
@@ -364,7 +364,7 @@ class ResearchRound(MutableModel):
     round_index: int = 0
     round_action: RoundAction = "search"
     query_strategy: str = ""
-    queries: list[str] = Field(default_factory=list)
+    queries: list[QuerySourceSpec] = Field(default_factory=list)
     search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
     explore_target_source_ids: list[int] = Field(default_factory=list)
     search_fetched_candidates: list[SearchFetchedCandidate] = Field(
@@ -374,7 +374,7 @@ class ResearchRound(MutableModel):
     overview_review: OverviewOutputPayload | None = None
     content_review: ContentOutputPayload | None = None
     need_content_source_ids: list[int] = Field(default_factory=list)
-    next_queries: list[str] = Field(default_factory=list)
+    next_queries: list[QuerySourceSpec] = Field(default_factory=list)
     result_count: int = 0
     new_source_ids: list[int] = Field(default_factory=list)
     fetched_source_ids: list[int] = Field(default_factory=list)
@@ -411,7 +411,7 @@ class ResearchRun(MutableModel):
     stop: bool = False
     stop_reason: str = ""
     round_index: int = 0
-    next_queries: list[str] = Field(default_factory=list)
+    next_queries: list[QuerySourceSpec] = Field(default_factory=list)
     link_candidates: list[ResearchLinkCandidate] = Field(default_factory=list)
     link_candidates_round: int = 0
     notes: list[str] = Field(default_factory=list)

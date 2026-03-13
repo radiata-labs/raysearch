@@ -14,7 +14,7 @@ from serpsage.components.provider.base import (
 )
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
-from serpsage.utils import clean_whitespace
+from serpsage.utils import clean_whitespace, normalize_iso8601_string
 
 _DEFAULT_SEARXNG_BASE_URL = "https://searx.be/search"
 
@@ -87,9 +87,11 @@ class SearxngProvider(
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         cfg = self.config
-        if not query or not str(query).strip():
+        normalized_query = clean_whitespace(query)
+        if not normalized_query:
             raise ValueError("query must not be empty")
-        payload: dict[str, str] = {"q": str(query), "format": "json"}
+
+        payload: dict[str, str] = {"q": normalized_query, "format": "json"}
         page_size = max(1, int(limit)) if limit is not None else None
         if page_size is not None:
             payload["limit"] = str(page_size)
@@ -102,64 +104,71 @@ class SearxngProvider(
                 end_published_date=end_published_date,
             )
         self._merge_extra_payload(payload=payload, extra=effective_kwargs)
-        headers = dict(cfg.headers or {})
-        if cfg.user_agent:
-            headers.setdefault("User-Agent", str(cfg.user_agent))
-        if cfg.api_key:
-            headers.setdefault("Authorization", f"Bearer {cfg.api_key}")
         resp = await self.http.client.get(
             cfg.base_url,
             params=payload,
-            headers=headers,
+            headers=self._build_headers(),
             timeout=httpx.Timeout(cfg.timeout_s),
             follow_redirects=bool(cfg.allow_redirects),
         )
         resp.raise_for_status()
         data = resp.json()
-        raw_results = data.get("results", [])
-        results: list[SearchProviderResult] = []
-        if isinstance(raw_results, list):
-            for raw in raw_results:
-                if not isinstance(raw, dict):
-                    continue
-                url = clean_whitespace(str(raw.get("url") or ""))
-                if not url:
-                    continue
-                snippet = raw.get("content")
-                if snippet is None:
-                    snippet = raw.get("description")
-                _ = (
-                    raw.get("pretty_url"),
-                    raw.get("engine"),
-                    {
-                        key: value
-                        for key, value in raw.items()
-                        if key
-                        not in {"url", "title", "content", "description", "engine"}
-                    },
-                )
-                results.append(
-                    SearchProviderResult(
-                        url=url,
-                        title=str(raw.get("title") or ""),
-                        snippet=str(snippet or ""),
-                        engine=self.config.name,
-                    )
-                )
-        _ = (
-            data.get("number_of_results"),
-            data.get("suggestions"),
-            self._coerce_page(payload.get("pageno")),
-            locale,
-            start_published_date,
-            end_published_date,
-            {
-                key: value
-                for key, value in data.items()
-                if key not in {"results", "number_of_results", "suggestions"}
-            },
+        results = self._parse_results(data.get("results"))
+        results = self._filter_results_by_published_date(
+            results=results,
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+            include_undated=True,
         )
         return results[:page_size] if page_size is not None else results
+
+    def _build_headers(self) -> dict[str, str]:
+        headers = dict(self.config.headers or {})
+        if self.config.user_agent:
+            headers.setdefault("User-Agent", str(self.config.user_agent))
+        if self.config.api_key:
+            headers.setdefault("Authorization", f"Bearer {self.config.api_key}")
+        return headers
+
+    def _parse_results(self, raw_results: Any) -> list[SearchProviderResult]:
+        results: list[SearchProviderResult] = []
+        for raw in raw_results if isinstance(raw_results, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            url = clean_whitespace(str(raw.get("url") or ""))
+            if not url:
+                continue
+            snippet = raw.get("content")
+            if snippet is None:
+                snippet = raw.get("description")
+            results.append(
+                SearchProviderResult(
+                    url=url,
+                    title=clean_whitespace(str(raw.get("title") or "")),
+                    snippet=clean_whitespace(str(snippet or "")),
+                    engine=self.config.name,
+                    published_date=self._parse_published_date(raw),
+                )
+            )
+        return results
+
+    def _parse_published_date(self, raw: dict[str, Any]) -> str:
+        for key in (
+            "publishedDate",
+            "published_date",
+            "published",
+            "pubdate",
+            "created_at",
+            "date",
+        ):
+            token = clean_whitespace(str(raw.get(key) or ""))
+            if not token:
+                continue
+            try:
+                return normalize_iso8601_string(token)
+            except ValueError:
+                continue
+        return ""
 
     def _merge_extra_payload(
         self,
@@ -188,13 +197,6 @@ class SearxngProvider(
                 token = clean_whitespace(str(raw_value or ""))
             if token:
                 payload[key] = token
-
-    def _coerce_page(self, value: Any) -> int:
-        try:
-            page = int(value)
-        except Exception:
-            return 1
-        return max(1, page)
 
 
 __all__ = ["SearxngProvider", "SearxngProviderConfig"]

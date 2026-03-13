@@ -29,7 +29,30 @@ def _non_empty_string_schema(*, description: str) -> dict[str, Any]:
     }
 
 
-def build_theme_schema(*, card_cap: int) -> dict[str, Any]:
+def _query_schema(*, description: str, select_engines: bool) -> dict[str, Any]:
+    if not select_engines:
+        return _non_empty_string_schema(description=description)
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["query", "include_sources"],
+        "description": description,
+        "properties": {
+            "query": _non_empty_string_schema(description="Search query text."),
+            "include_sources": {
+                "type": "array",
+                "description": "Blend engine names to include. Use [] for the default all-open route set.",
+                "items": _non_empty_string_schema(
+                    description="One engine name to include."
+                ),
+            },
+        },
+    }
+
+
+def build_theme_schema(
+    *, card_cap: int, select_engines: bool = False
+) -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -113,8 +136,9 @@ def build_theme_schema(*, card_cap: int) -> dict[str, Any]:
                             "minItems": 1,
                             "maxItems": 8,
                             "description": "High-recall starting queries for this card; avoid near-duplicates.",
-                            "items": _non_empty_string_schema(
-                                description="One seed query targeting a distinct evidence route."
+                            "items": _query_schema(
+                                description="One seed query targeting a distinct evidence route.",
+                                select_engines=select_engines,
                             ),
                         },
                         "evidence_focus": {
@@ -135,7 +159,7 @@ def build_theme_schema(*, card_cap: int) -> dict[str, Any]:
     }
 
 
-def build_plan_schema() -> dict[str, Any]:
+def build_plan_schema(*, select_engines: bool = False) -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -172,8 +196,9 @@ def build_plan_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                     "required": ["query", "intent", "mode", "additional_queries"],
                     "properties": {
-                        "query": _non_empty_string_schema(
-                            description="Primary search query for the job."
+                        "query": _query_schema(
+                            description="Primary search query for the job.",
+                            select_engines=select_engines,
                         ),
                         "intent": {
                             "type": "string",
@@ -189,8 +214,9 @@ def build_plan_schema() -> dict[str, Any]:
                             "type": "array",
                             "maxItems": 8,
                             "description": "Companion queries for adjacent evidence routes inside the same job.",
-                            "items": _non_empty_string_schema(
-                                description="One additional focused query."
+                            "items": _query_schema(
+                                description="One additional focused query.",
+                                select_engines=select_engines,
                             ),
                         },
                     },
@@ -200,7 +226,9 @@ def build_plan_schema() -> dict[str, Any]:
     }
 
 
-def build_overview_schema(*, max_queries: int) -> dict[str, Any]:
+def build_overview_schema(
+    *, max_queries: int, select_engines: bool = False
+) -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -298,8 +326,9 @@ def build_overview_schema(*, max_queries: int) -> dict[str, Any]:
                 "type": "array",
                 "maxItems": max(1, max_queries),
                 "description": "De-duplicated follow-up queries ordered by expected information gain.",
-                "items": _non_empty_string_schema(
-                    description="One focused follow-up query."
+                "items": _query_schema(
+                    description="One focused follow-up query.",
+                    select_engines=select_engines,
                 ),
             },
             "stop": {
@@ -310,7 +339,9 @@ def build_overview_schema(*, max_queries: int) -> dict[str, Any]:
     }
 
 
-def build_content_schema(*, max_queries: int) -> dict[str, Any]:
+def build_content_schema(
+    *, max_queries: int, select_engines: bool = False
+) -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -397,8 +428,9 @@ def build_content_schema(*, max_queries: int) -> dict[str, Any]:
                 "type": "array",
                 "maxItems": max(1, max_queries),
                 "description": "De-duplicated focused follow-up queries ordered by expected information gain.",
-                "items": _non_empty_string_schema(
-                    description="One focused follow-up query."
+                "items": _query_schema(
+                    description="One focused follow-up query.",
+                    select_engines=select_engines,
                 ),
             },
             "stop": {
@@ -424,6 +456,34 @@ def build_link_picker_schema() -> dict[str, object]:
             "reason": _non_empty_string_schema(
                 description="Brief explanation of why the selected links are highest-yield."
             ),
+        },
+    }
+
+
+def build_decide_schema(
+    *, max_queries: int, select_engines: bool = False
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "continue_research",
+            "high_yield_remaining",
+            "next_queries",
+            "reason",
+        ],
+        "properties": {
+            "continue_research": {"type": "boolean"},
+            "high_yield_remaining": {"type": "boolean"},
+            "next_queries": {
+                "type": "array",
+                "maxItems": max(1, max_queries),
+                "items": _query_schema(
+                    description="One focused next query.",
+                    select_engines=select_engines,
+                ),
+            },
+            "reason": {"type": "string"},
         },
     }
 
@@ -559,6 +619,7 @@ def build_subreport_update_schema(*, require_insight_card: bool) -> dict[str, ob
 
 __all__ = [
     "build_content_schema",
+    "build_decide_schema",
     "build_link_picker_schema",
     "build_overview_schema",
     "build_plan_schema",

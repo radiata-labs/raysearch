@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from typing import Any
 from typing_extensions import override
 
@@ -15,10 +14,8 @@ from serpsage.components.provider.base import (
     SearchProviderBase,
 )
 from serpsage.dependencies import Depends
-from serpsage.models.components.provider import (
-    SearchProviderResult,
-)
-from serpsage.utils import clean_whitespace
+from serpsage.models.components.provider import SearchProviderResult
+from serpsage.utils import clean_whitespace, normalize_iso8601_string
 
 _DEFAULT_GITHUB_BASE_URL = "https://api.github.com/search/repositories"
 _DEFAULT_GITHUB_ACCEPT = "application/vnd.github.preview.text-match+json"
@@ -108,28 +105,21 @@ class GitHubProvider(
         if not normalized_query:
             raise ValueError("query must not be empty")
 
-        sort = clean_whitespace(str(kwargs.get("sort") or cfg.sort or "")) or cfg.sort
-        order = (
-            clean_whitespace(str(kwargs.get("order") or cfg.order or "")) or cfg.order
-        )
+        headers = self._build_headers()
         per_page = self._coerce_per_page(
             limit if limit is not None else cfg.results_per_page
         )
         page = self._coerce_page(kwargs.get("page"))
-        headers = dict(cfg.headers or {})
-        headers["Accept"] = str(cfg.accept_header or _DEFAULT_GITHUB_ACCEPT)
-        headers["User-Agent"] = str(cfg.user_agent or _DEFAULT_GITHUB_USER_AGENT)
-        if cfg.api_key:
-            headers["Authorization"] = f"Bearer {cfg.api_key}"
-            headers.setdefault("X-GitHub-Api-Version", "2022-11-28")
+        sort = clean_whitespace(str(kwargs.get("sort") or cfg.sort or "")) or cfg.sort
+        order = (
+            clean_whitespace(str(kwargs.get("order") or cfg.order or "")) or cfg.order
+        )
         start_date, end_date = self._coarse_published_date_bounds(
             start_published_date=start_published_date,
             end_published_date=end_published_date,
         )
 
-        payload: dict[str, Any] = {}
-        final_url = str(cfg.base_url)
-        used_query = normalized_query
+        results: list[SearchProviderResult] = []
         for candidate_query in self._candidate_queries(normalized_query):
             params = self._build_params(
                 query=self._apply_created_date_qualifiers(
@@ -151,78 +141,49 @@ class GitHubProvider(
             )
             resp.raise_for_status()
             payload = resp.json()
-            final_url = str(resp.url)
-            used_query = candidate_query
-            items = payload.get("items", [])
-            if isinstance(items, list) and items:
+            results = self._parse_results(payload.get("items"))
+            if results:
                 break
-        items = payload.get("items", [])
-        results: list[SearchProviderResult] = []
-        if isinstance(items, list):
-            for raw in items:
-                if not isinstance(raw, dict):
-                    continue
-                url = clean_whitespace(str(raw.get("html_url") or ""))
-                if not url:
-                    continue
-                title = clean_whitespace(
-                    str(raw.get("full_name") or raw.get("name") or "")
-                )
-                description = clean_whitespace(str(raw.get("description") or ""))
-                repo_language = clean_whitespace(str(raw.get("language") or ""))
-                snippet = " / ".join(
-                    part for part in (repo_language, description) if part
-                )
-                license_info = raw.get("license") or {}
-                license_name = ""
-                license_url = ""
-                if isinstance(license_info, dict):
-                    license_name = clean_whitespace(str(license_info.get("name") or ""))
-                    spdx_id = clean_whitespace(str(license_info.get("spdx_id") or ""))
-                    if spdx_id and spdx_id != "NOASSERTION":
-                        license_url = f"https://spdx.org/licenses/{spdx_id}.html"
-                _ = (
-                    clean_whitespace(
-                        str((raw.get("owner") or {}).get("avatar_url") or "")
-                    ),
-                    clean_whitespace(str(raw.get("name") or "")),
-                    clean_whitespace(str((raw.get("owner") or {}).get("login") or "")),
-                    self._parse_github_datetime(
-                        raw.get("updated_at") or raw.get("created_at")
-                    ),
-                    [clean_whitespace(str(tag)) for tag in raw.get("topics", [])]
-                    if isinstance(raw.get("topics"), list)
-                    else [],
-                    raw.get("stargazers_count"),
-                    license_name,
-                    license_url,
-                    clean_whitespace(str(raw.get("homepage") or "")),
-                    clean_whitespace(str(raw.get("clone_url") or "")),
-                    clean_whitespace(str(raw.get("default_branch") or "")),
-                    raw.get("forks_count"),
-                    raw.get("open_issues_count"),
-                    raw.get("watchers_count"),
-                )
-                results.append(
-                    SearchProviderResult(
-                        url=url,
-                        title=title,
-                        snippet=snippet,
-                        engine=self.config.name,
-                    )
-                )
-
-        _ = (
-            payload.get("total_count"),
-            final_url,
-            bool(payload.get("incomplete_results")),
-            used_query,
-            int(page),
-            locale,
-            start_published_date,
-            end_published_date,
+        results = self._filter_results_by_published_date(
+            results=results,
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
         )
         return results[:per_page]
+
+    def _build_headers(self) -> dict[str, str]:
+        cfg = self.config
+        headers = dict(cfg.headers or {})
+        headers["Accept"] = str(cfg.accept_header or _DEFAULT_GITHUB_ACCEPT)
+        headers["User-Agent"] = str(cfg.user_agent or _DEFAULT_GITHUB_USER_AGENT)
+        if cfg.api_key:
+            headers["Authorization"] = f"Bearer {cfg.api_key}"
+            headers.setdefault("X-GitHub-Api-Version", "2022-11-28")
+        return headers
+
+    def _parse_results(self, items: Any) -> list[SearchProviderResult]:
+        results: list[SearchProviderResult] = []
+        for raw in items if isinstance(items, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            url = clean_whitespace(str(raw.get("html_url") or ""))
+            if not url:
+                continue
+            title = clean_whitespace(str(raw.get("full_name") or raw.get("name") or ""))
+            description = clean_whitespace(str(raw.get("description") or ""))
+            language = clean_whitespace(str(raw.get("language") or ""))
+            results.append(
+                SearchProviderResult(
+                    url=url,
+                    title=title,
+                    snippet=" / ".join(
+                        part for part in (language, description) if part
+                    ),
+                    engine=self.config.name,
+                    published_date=self._parse_published_date(raw.get("created_at")),
+                )
+            )
+        return results
 
     def _build_params(
         self,
@@ -233,14 +194,13 @@ class GitHubProvider(
         sort: str,
         order: str,
     ) -> dict[str, str]:
-        params: dict[str, str] = {
+        return {
             "q": query,
             "sort": sort,
             "order": order,
             "page": str(max(1, int(page))),
             "per_page": str(per_page),
         }
-        return params
 
     def _apply_created_date_qualifiers(
         self,
@@ -280,6 +240,15 @@ class GitHubProvider(
             out.append(candidate)
         return out
 
+    def _parse_published_date(self, value: Any) -> str:
+        token = clean_whitespace(str(value or ""))
+        if not token:
+            return ""
+        try:
+            return normalize_iso8601_string(token)
+        except ValueError:
+            return ""
+
     def _coerce_per_page(self, value: Any) -> int:
         try:
             size = int(value)
@@ -293,18 +262,6 @@ class GitHubProvider(
         except Exception:
             return 1
         return max(1, page)
-
-    def _parse_github_datetime(self, value: Any) -> str:
-        token = clean_whitespace(str(value or ""))
-        if not token:
-            return ""
-        try:
-            parsed = datetime.fromisoformat(token)
-        except ValueError:
-            return token
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return parsed.astimezone(UTC).isoformat()
 
 
 __all__ = ["GitHubProvider", "GitHubProviderConfig"]

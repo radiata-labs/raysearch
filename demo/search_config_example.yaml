@@ -10,7 +10,7 @@ components:
       keepalive_expiry_s: 20.0
 
   provider:
-    default: google
+    default: blend
     blend:
       enabled: true
       include_sources: ["arxiv", "duckduckgo", "github", "google", "reddit", wikipedia"]
@@ -175,6 +175,7 @@ components:
 
 search:
   max_results: 16
+  select_engines: true
   expansion:
     llm_model: gpt-4.1-mini
     llm_timeout_s: 20.0
@@ -224,6 +225,7 @@ fetch:
     force_language: auto
 
 answer:
+  select_engines: true
   plan:
     use_model: gpt-4.1-mini
   generate:
@@ -233,6 +235,7 @@ answer:
 research:
   tool_max_attempts: 3
   llm_self_heal_retries: 2
+  select_engines: true
   models:
     plan: kimi-k2.5
     link_select: ""

@@ -206,7 +206,9 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             stop=False,
             stop_reason="",
             round_index=0,
-            next_queries=list(card.seed_queries),
+            next_queries=[
+                query.model_copy(deep=True) for query in list(card.seed_queries)
+            ],
             link_candidates=[],
             link_candidates_round=0,
             notes=[f"Track initialized for question `{card.question_id}`."],

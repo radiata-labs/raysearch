@@ -82,11 +82,10 @@ from serpsage.steps.research import (
     ResearchThemeStep,
 )
 from serpsage.steps.search import (
-    SearchExpandStep,
     SearchFetchStep,
     SearchFinalizeStep,
-    SearchOptimizeStep,
     SearchPrepareStep,
+    SearchQueryPlanStep,
     SearchRerankStep,
     SearchStep,
 )
@@ -365,8 +364,7 @@ class Engine(WorkUnit):
             RunnerBase,
             steps=await solve_many(
                 SearchPrepareStep,
-                SearchOptimizeStep,
-                SearchExpandStep,
+                SearchQueryPlanStep,
                 SearchStep,
                 SearchFetchStep,
                 SearchRerankStep,

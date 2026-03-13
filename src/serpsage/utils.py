@@ -164,6 +164,34 @@ def published_date_in_range(
     return published_at <= end_at
 
 
+def pick_earliest_published_date(*values: str) -> str:
+    candidates: list[tuple[datetime, int, str]] = []
+    for raw_value in values:
+        token = clean_whitespace(str(raw_value or ""))
+        if not token:
+            continue
+        try:
+            normalized = normalize_iso8601_string(token)
+        except ValueError:
+            continue
+        parsed = parse_iso8601_datetime(normalized)
+        if parsed is None:
+            continue
+        precision = 1 if is_iso8601_date_only(normalized) else 2
+        candidates.append((parsed, precision, normalized))
+    if not candidates:
+        return ""
+    _, _, best_value = min(
+        candidates,
+        key=lambda item: (
+            item[0],
+            -item[1],
+            item[2],
+        ),
+    )
+    return best_value
+
+
 def _resolve_port(parsed: Any) -> int | None:
     try:
         value = parsed.port
@@ -189,6 +217,7 @@ __all__ = [
     "normalize_text",
     "normalize_iso8601_string",
     "parse_iso8601_datetime",
+    "pick_earliest_published_date",
     "published_date_in_range",
     "strip_html",
     "uniq_preserve_order",

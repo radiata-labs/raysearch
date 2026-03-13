@@ -22,6 +22,7 @@ _DEFAULT_REDDIT_BASE_URL = "https://www.reddit.com/search.json"
 _DEFAULT_REDDIT_USER_AGENT = "serpsage-reddit-provider/1.0"
 _DEFAULT_REDDIT_RESULTS_PER_PAGE = 25
 _MAX_REDDIT_RESULTS_PER_PAGE = 100
+_MAX_REDDIT_DATE_SCAN_PAGES = 5
 _REDDIT_INVALID_THUMBNAILS = {"", "default", "self", "nsfw", "spoiler", "image"}
 
 
@@ -96,53 +97,99 @@ class RedditProvider(
         per_page = self._coerce_per_page(
             limit if limit is not None else cfg.results_per_page
         )
+        headers = self._build_headers()
+        time_range = self._resolve_time_range(
+            runtime_value=kwargs.get("time_range"),
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+        )
         after = clean_whitespace(str(kwargs.get("after") or ""))
-        resolved_time_range = clean_whitespace(str(kwargs.get("time_range") or ""))
-        if not resolved_time_range:
-            resolved_time_range = self._relative_time_range_from_bounds(
+        should_backfill = bool(start_published_date or end_published_date)
+        max_pages = _MAX_REDDIT_DATE_SCAN_PAGES if should_backfill else 1
+        initial_fetch_size = (
+            self._initial_dated_fetch_limit(
+                target_limit=per_page,
+                max_limit=_MAX_REDDIT_RESULTS_PER_PAGE,
+            )
+            if should_backfill
+            else per_page
+        )
+        results: list[SearchProviderResult] = []
+        seen_urls: set[str] = set()
+
+        for page_index in range(max_pages):
+            fetch_size = initial_fetch_size if page_index == 0 else per_page
+            resp = await self.http.client.get(
+                str(cfg.base_url),
+                params=self._build_params(
+                    query=normalized_query,
+                    per_page=fetch_size,
+                    after=after,
+                    sort=kwargs.get("sort"),
+                    time_range=time_range,
+                ),
+                headers=headers,
+                timeout=httpx.Timeout(cfg.timeout_s),
+                follow_redirects=bool(cfg.allow_redirects),
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            listing = payload.get("data") if isinstance(payload, dict) else None
+            batch = self._parse_results(
+                listing.get("children") if isinstance(listing, dict) else []
+            )
+            batch = self._filter_results_by_published_date(
+                results=batch,
                 start_published_date=start_published_date,
                 end_published_date=end_published_date,
             )
-        params = self._build_params(
-            query=normalized_query,
-            per_page=per_page,
-            after=after,
-            sort=kwargs.get("sort"),
-            time_range=resolved_time_range,
-        )
-        headers = dict(cfg.headers or {})
-        headers["Accept"] = "application/json"
-        headers["User-Agent"] = str(cfg.user_agent or _DEFAULT_REDDIT_USER_AGENT)
-        resp = await self.http.client.get(
-            str(cfg.base_url),
-            params=params,
-            headers=headers,
-            timeout=httpx.Timeout(cfg.timeout_s),
-            follow_redirects=bool(cfg.allow_redirects),
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        listing = payload.get("data") if isinstance(payload, dict) else {}
-        raw_posts = listing.get("children") if isinstance(listing, dict) else []
-        results = self._parse_results(raw_posts if isinstance(raw_posts, list) else [])
-        _ = (
-            int(listing["dist"])
-            if isinstance(listing, dict)
-            and isinstance(listing.get("dist"), (int, float))
-            else None,
-            str(resp.url),
-            str(cfg.base_url),
-            clean_whitespace(str(listing.get("after") or ""))
-            if isinstance(listing, dict)
-            else "",
-            clean_whitespace(str(listing.get("before") or ""))
-            if isinstance(listing, dict)
-            else "",
-            locale,
-            start_published_date,
-            end_published_date,
-        )
+            for item in batch:
+                key = item.url.casefold()
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                results.append(item)
+            next_after = (
+                clean_whitespace(str(listing.get("after") or ""))
+                if isinstance(listing, dict)
+                else ""
+            )
+            raw_dist = listing.get("dist") if isinstance(listing, dict) else None
+            listing_count = (
+                int(raw_dist) if isinstance(raw_dist, (int, float)) else len(batch)
+            )
+            if (
+                len(results) >= per_page
+                or not next_after
+                or next_after == after
+                or listing_count < fetch_size
+            ):
+                break
+            after = next_after
         return results[:per_page]
+
+    def _build_headers(self) -> dict[str, str]:
+        headers = dict(self.config.headers or {})
+        headers["Accept"] = "application/json"
+        headers["User-Agent"] = str(
+            self.config.user_agent or _DEFAULT_REDDIT_USER_AGENT
+        )
+        return headers
+
+    def _resolve_time_range(
+        self,
+        *,
+        runtime_value: Any,
+        start_published_date: str | None,
+        end_published_date: str | None,
+    ) -> str:
+        token = clean_whitespace(str(runtime_value or "")).casefold()
+        if token:
+            return token
+        return self._relative_time_range_from_bounds(
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+        )
 
     def _build_params(
         self,
@@ -151,7 +198,7 @@ class RedditProvider(
         per_page: int,
         after: str,
         sort: Any,
-        time_range: Any,
+        time_range: str,
     ) -> dict[str, str]:
         params: dict[str, str] = {
             "q": query,
@@ -162,18 +209,15 @@ class RedditProvider(
         normalized_sort = clean_whitespace(str(sort or "")).casefold()
         if normalized_sort in {"relevance", "hot", "top", "new", "comments"}:
             params["sort"] = normalized_sort
-        normalized_time_range = clean_whitespace(str(time_range or "")).casefold()
-        if normalized_time_range in {"hour", "day", "week", "month", "year", "all"}:
-            params["t"] = normalized_time_range
+        if time_range in {"hour", "day", "week", "month", "year", "all"}:
+            params["t"] = time_range
         return params
 
-    def _parse_results(
-        self, raw_posts: list[dict[str, Any]]
-    ) -> list[SearchProviderResult]:
+    def _parse_results(self, raw_posts: Any) -> list[SearchProviderResult]:
         image_results: list[SearchProviderResult] = []
         text_results: list[SearchProviderResult] = []
         seen_urls: set[str] = set()
-        for wrapper in raw_posts:
+        for wrapper in raw_posts if isinstance(raw_posts, list) else []:
             if not isinstance(wrapper, dict):
                 continue
             data = wrapper.get("data")
@@ -193,44 +237,35 @@ class RedditProvider(
         return image_results + text_results
 
     def _build_result(
-        self, data: dict[str, Any]
+        self,
+        data: dict[str, Any],
     ) -> tuple[SearchProviderResult | None, bool]:
         permalink = clean_whitespace(str(data.get("permalink") or ""))
         title = clean_whitespace(str(data.get("title") or ""))
         if not permalink or not title:
             return None, False
         url = urljoin("https://www.reddit.com/", permalink)
-        thumbnail = self._valid_thumbnail(data.get("thumbnail"))
-        created = self._parse_created_utc(data.get("created_utc"))
         selftext = self._truncate_text(
             clean_whitespace(str(data.get("selftext") or ""))
         )
-        external_url = clean_whitespace(str(data.get("url") or ""))
         subreddit = clean_whitespace(str(data.get("subreddit_name_prefixed") or ""))
-        author = clean_whitespace(str(data.get("author") or ""))
         domain = clean_whitespace(str(data.get("domain") or ""))
+        external_url = clean_whitespace(str(data.get("url") or ""))
         snippet_parts = [part for part in (subreddit, selftext) if part]
         if not snippet_parts and domain:
             snippet_parts.append(domain)
         if not snippet_parts and external_url and external_url != url:
             snippet_parts.append(external_url)
-        _ = (
-            thumbnail,
-            external_url,
-            created,
-            author,
-            domain,
-            data.get("score"),
-            data.get("num_comments"),
-            data.get("over_18"),
-            self._display_url(url),
+        return (
+            SearchProviderResult(
+                url=url,
+                title=title,
+                snippet=" / ".join(snippet_parts),
+                engine=self.config.name,
+                published_date=self._parse_created_utc(data.get("created_utc")),
+            ),
+            bool(self._valid_thumbnail(data.get("thumbnail"))),
         )
-        return SearchProviderResult(
-            url=url,
-            title=title,
-            snippet=" / ".join(snippet_parts),
-            engine=self.config.name,
-        ), bool(thumbnail)
 
     def _valid_thumbnail(self, value: Any) -> str:
         thumbnail = clean_whitespace(str(value or ""))
@@ -255,12 +290,6 @@ class RedditProvider(
         if len(text) <= limit:
             return text
         return text[:limit].rstrip() + "..."
-
-    def _display_url(self, url: str) -> str:
-        parsed = urlparse(url)
-        host = clean_whitespace(parsed.netloc)
-        path = clean_whitespace(parsed.path)
-        return clean_whitespace(f"{host}{path}")
 
     def _coerce_per_page(self, value: Any) -> int:
         try:

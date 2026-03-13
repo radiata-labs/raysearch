@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from serpsage.models.app.request import (
     AnswerRequest,
@@ -15,13 +15,26 @@ from serpsage.models.app.response import (
 )
 from serpsage.models.base import MutableModel, UnvalidatedModel
 from serpsage.models.steps.base import BaseStepContext
+from serpsage.models.steps.search import QuerySourceSpec
+
+
+class AnswerSubQuestionPayload(UnvalidatedModel):
+    question: str
+    search_query: QuerySourceSpec
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_raw(cls, value: object) -> object:
+        if isinstance(value, str):
+            return {"question": value, "search_query": value}
+        return value
 
 
 class AnswerPlanPayload(UnvalidatedModel):
     answer_mode: Literal["direct", "summary"]
     freshness_intent: bool
     query_language: str
-    sub_questions: list[str]
+    sub_questions: list[AnswerSubQuestionPayload]
 
 
 class PageSource(MutableModel):
@@ -50,14 +63,14 @@ class QuestionPromptContext(MutableModel):
 
 class AnswerSubQuestionPlan(MutableModel):
     question: str = ""
-    search_query: str = ""
+    search_query: QuerySourceSpec | None = None
 
 
 class AnswerPlanState(MutableModel):
     answer_mode: str = "summary"
     freshness_intent: bool = False
     query_language: str = "same as query"
-    search_query: str = ""
+    search_query: QuerySourceSpec | None = None
     search_mode: str = "auto"
     max_results: int = 1
     additional_queries: list[str] | None = None
@@ -66,7 +79,7 @@ class AnswerPlanState(MutableModel):
 
 class AnswerSubSearchState(MutableModel):
     question: str = ""
-    search_query: str = ""
+    search_query: QuerySourceSpec | None = None
     request: SearchRequest | None = None
     search_mode: str = "auto"
     results: list[FetchResultItem] = Field(default_factory=list)
@@ -94,6 +107,7 @@ class AnswerStepContext(BaseStepContext[AnswerRequest, AnswerResponse]):
 
 __all__ = [
     "AnswerPlanPayload",
+    "AnswerSubQuestionPayload",
     "PageSource",
     "PromptSource",
     "QuestionPromptContext",
