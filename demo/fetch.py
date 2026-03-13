@@ -21,18 +21,18 @@ load_dotenv()
 
 
 async def main(
-    url: str,
+    urls: list[str],
     query: str | None = None,
     overview: bool = False,
 ) -> dict[str, Any]:
     req = FetchRequest(
-        urls=[url],
+        urls=urls,
         crawl_timeout=30,
         crawl_mode="fallback",
         content=FetchContentRequest(detail="full"),
         abstracts=FetchAbstractsRequest(query=query, max_chars=2000),
         overview=FetchOverviewRequest(query=query) if overview else False,
-        subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords="Speciale"),
+        subpages=FetchSubpagesRequest(max_subpages=2, subpage_keywords=query),
         others=FetchOthersRequest(max_links=5, max_image_links=5),
     )
     async with Engine.from_settings("demo/search_config_example.yaml") as engine:
@@ -47,7 +47,13 @@ async def main(
 if __name__ == "__main__":
     out = anyio.run(
         main,
-        "https://exa.ai/docs/reference/search-best-practices",
+        [
+            "https://github.com/ollama/ollama",
+            "https://www.reddit.com/r/singularity/comments/1qoojio/open_source_kimik25_is_now_beating_claude_opus_45/",
+            "https://github.com/voipmonitor/rtx6kpro",
+            "https://github.com/userFRM/kimi-code-mcp",
+            "https://modelscope.cn/models/moonshotai/Kimi-K2.5",
+        ],
         None,
         False,
     )

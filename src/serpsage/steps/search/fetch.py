@@ -20,6 +20,7 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             ctx.output.results = []
             return ctx
         urls = list(ctx.prefetch.urls or [])
+        print(urls)
         if not urls:
             ctx.fetch.candidates = []
             ctx.output.results = []

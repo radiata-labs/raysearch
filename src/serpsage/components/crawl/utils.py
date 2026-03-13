@@ -111,11 +111,6 @@ def default_blocked_markers() -> list[str]:
     ]
 
 
-def get_random_user_agent() -> str:
-    """Return a random real browser User-Agent string."""
-    return random.choice(USER_AGENTS)
-
-
 def browser_headers(
     *,
     profile: str | None = None,
@@ -126,7 +121,7 @@ def browser_headers(
     if user_agent is not None:
         ua = user_agent
     elif randomize:
-        ua = get_random_user_agent()
+        ua = random.choice(USER_AGENTS)
     else:
         ua = DEFAULT_USER_AGENT
     headers: dict[str, str] = {
@@ -189,6 +184,17 @@ def _normalize_path_segment(part: str) -> str:
     if len(token) > 40:
         return ":long"
     return token
+
+
+def is_reddit_thread_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = str(parsed.netloc or "").lower().removeprefix("www.")
+    if host not in {"reddit.com", "old.reddit.com"}:
+        return False
+    parts = [part for part in str(parsed.path or "").split("/") if part]
+    if len(parts) < 4:
+        return False
+    return parts[0] == "r" and parts[2] == "comments"
 
 
 def classify_content_kind(
@@ -439,25 +445,6 @@ def _collapse_whitespace(value: str) -> str:
     return _SPACE_RE.sub(" ", value).strip()
 
 
-def estimate_text_quality(
-    content: bytes, *, content_kind: str
-) -> tuple[int, float, float]:
-    content_type: str | None = None
-    if content_kind == "html":
-        content_type = "text/html"
-    elif content_kind == "text":
-        content_type = "text/plain"
-    elif content_kind == "pdf":
-        content_type = "application/pdf"
-    analysis = analyze_content(
-        content=content,
-        content_type=content_type,
-        url="https://content.local",
-        markers=None,
-    )
-    return analysis.text_chars, analysis.content_score, analysis.script_ratio
-
-
 def has_spa_signals(content: bytes) -> bool:
     sample = content[:80_000].decode("utf-8", errors="ignore")
     return bool(_SPA_RE.search(sample))
@@ -528,18 +515,16 @@ __all__ = [
     "ContentAnalysis",
     "DEFAULT_USER_AGENT",
     "HtmlSignals",
-    "USER_AGENTS",
     "default_blocked_markers",
     "analyze_content",
     "blocked_marker_hit",
     "browser_headers",
     "classify_content_kind",
-    "estimate_text_quality",
     "extract_html_signals",
     "get_delay_s",
-    "get_random_user_agent",
     "has_nextjs_signals",
     "has_spa_signals",
+    "is_reddit_thread_url",
     "normalize_route_key",
     "parse_retry_after_s",
 ]

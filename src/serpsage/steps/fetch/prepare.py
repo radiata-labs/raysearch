@@ -14,6 +14,22 @@ from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import clean_whitespace
 
+_DETAIL_SECTION_ORDER: tuple[ExtractContentTag, ...] = (
+    "metadata",
+    "header",
+    "navigation",
+    "banner",
+    "body",
+    "sidebar",
+    "footer",
+)
+
+_DETAIL_SECTIONS: dict[str, tuple[ExtractContentTag, ...]] = {
+    "concise": ("metadata", "body"),
+    "standard": ("metadata", "header", "body"),
+    "full": _DETAIL_SECTION_ORDER,
+}
+
 
 class FetchPrepareStep(StepBase[FetchStepContext]):
     @override
@@ -152,19 +168,22 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
 
 
 def _resolve_sections(content_request: FetchContentRequest) -> list[ExtractContentTag]:
-    selected: list[ExtractContentTag]
     if content_request.include_tags:
-        selected = cast("list[ExtractContentTag]", list(content_request.include_tags))
+        selected = [
+            "metadata",
+            *cast("list[ExtractContentTag]", list(content_request.include_tags)),
+        ]
     else:
-        selected = cast(
-            "list[ExtractContentTag]",
-            ["body", "sidebar"] if content_request.detail == "full" else ["body"],
+        selected = list(
+            _DETAIL_SECTIONS.get(content_request.detail, ("metadata", "body"))
         )
-    excluded = set(content_request.exclude_tags)
+    excluded = {item for item in content_request.exclude_tags if item != "metadata"}
     out: list[ExtractContentTag] = []
-    for item in selected:
-        if item in excluded:
+    seen: set[ExtractContentTag] = set()
+    for item in _DETAIL_SECTION_ORDER:
+        if item not in selected or item in excluded or item in seen:
             continue
+        seen.add(item)
         out.append(item)
     return out
 

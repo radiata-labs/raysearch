@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html as html_lib
+import json
 import re
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Literal, cast
@@ -44,6 +45,20 @@ class HtmlExtractorConfig(ExtractConfigBase):
 
 
 class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
+    _DETAIL_DEFAULT_TAGS: ClassVar[dict[str, tuple[ExtractContentTag, ...]]] = {
+        "concise": ("metadata", "body"),
+        "standard": ("metadata", "header", "body"),
+        "full": (
+            "metadata",
+            "header",
+            "navigation",
+            "banner",
+            "body",
+            "sidebar",
+            "footer",
+        ),
+    }
+
     @dataclass(slots=True)
     class Profile:
         max_markdown_chars: int
@@ -69,6 +84,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
         author: str = ""
         image: str = ""
         markdown: str = ""
+        engine: str = "trafilatura"
 
     @dataclass(slots=True)
     class RenderBundle:
@@ -228,12 +244,14 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             )
         raw_html = decoded[: self._profile.max_html_chars]
         snapshot = self._snapshot(raw_html=raw_html, base_url=url)
-        extracted = self._extract_trafilatura(
+        selected_tags = self._resolve_tags(options)
+        extracted = self._extract_primary(
             raw_html=raw_html,
+            snapshot=snapshot,
             url=url,
             max_chars=self._profile.max_markdown_chars,
+            preserve_html_tags=bool(options.keep_html),
         )
-        selected_tags = self._resolve_tags(options)
         rendered = self._render_document(
             snapshot=snapshot,
             extracted=extracted,
@@ -245,11 +263,6 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             markdown=rendered.markdown,
             max_chars=self._profile.max_markdown_chars,
         )
-        markdown = self._prepend_title(
-            markdown=markdown,
-            title=extracted.title,
-            include_html_tags=bool(options.keep_html),
-        )
         self._assert_nonempty(markdown=markdown)
         include_secondary = "sidebar" in selected_tags
         stats = self._stats(
@@ -257,6 +270,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             body_markdown=extracted.markdown,
             secondary_markdown=rendered.secondary_markdown,
             render_stats=rendered.stats,
+            primary_engine=extracted.engine,
             detail=options.detail,
             include_secondary=include_secondary,
             selected_tags=selected_tags,
@@ -276,7 +290,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
                         self._links(
                             snapshot=snapshot,
                             base_url=url,
-                            include_secondary=include_secondary,
+                            include_secondary=True,
                         )
                         if collect_links
                         else []
@@ -285,7 +299,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
                         self._images(
                             snapshot=snapshot,
                             base_url=url,
-                            include_secondary=include_secondary,
+                            include_secondary=True,
                         )
                         if collect_images
                         else []
@@ -349,11 +363,15 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             link_keep_hash=bool(cfg.link_keep_hash),
         )
 
-    @classmethod
-    def _resolve_tags(cls, options: ExtractSpec) -> set[ExtractContentTag]:
+    def _resolve_tags(self, options: ExtractSpec) -> set[ExtractContentTag]:
         if options.sections:
-            return cast("set[ExtractContentTag]", set(options.sections))
-        return {"body", "sidebar"} if options.detail == "full" else {"body"}
+            selected = set(options.sections)
+        else:
+            selected = set(
+                self._DETAIL_DEFAULT_TAGS.get(options.detail, ("metadata", "body"))
+            )
+        selected.add("metadata")
+        return selected
 
     @classmethod
     def _snapshot(cls, *, raw_html: str, base_url: str) -> Snapshot:
@@ -434,9 +452,49 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             favicon=cls._favicon(tree=tree, base_url=base_url),
         )
 
-    @classmethod
+    def _extract_primary(
+        self,
+        *,
+        raw_html: str,
+        snapshot: Snapshot,
+        url: str,
+        max_chars: int,
+        preserve_html_tags: bool,
+    ) -> TrafilaturaResult:
+        extracted: HtmlExtractor.TrafilaturaResult | None = None
+        failure: ValueError | None = None
+        try:
+            extracted = self._extract_trafilatura(
+                raw_html=raw_html,
+                url=url,
+                max_chars=max_chars,
+            )
+        except ValueError as exc:
+            failure = exc
+        if extracted is None:
+            extracted = self._extract_dom_fallback(
+                snapshot=snapshot,
+                url=url,
+                max_chars=max_chars,
+                preserve_html_tags=preserve_html_tags,
+            )
+        if extracted is None:
+            extracted = self._extract_script_fallback(
+                raw_html=raw_html,
+                url=url,
+                max_chars=max_chars,
+                preserve_html_tags=preserve_html_tags,
+            )
+        if extracted is None:
+            raise failure or ValueError("html extraction produced no primary content")
+        return self._fill_missing_metadata(
+            extracted=extracted,
+            snapshot=snapshot,
+            url=url,
+        )
+
     def _extract_trafilatura(
-        cls,
+        self,
         *,
         raw_html: str,
         url: str,
@@ -472,13 +530,323 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
         if not markdown:
             raise ValueError("trafilatura bare_extraction returned empty markdown")
         image = clean_whitespace(str(payload.get("image") or ""))
-        return cls.TrafilaturaResult(
+        return self.TrafilaturaResult(
             title=clean_whitespace(str(payload.get("title") or "")),
             published_date=clean_whitespace(str(payload.get("date") or "")),
             author=clean_whitespace(str(payload.get("author") or "")),
             image=urljoin(url, image) if image else "",
             markdown=markdown,
+            engine="trafilatura",
         )
+
+    def _extract_dom_fallback(
+        self,
+        *,
+        snapshot: Snapshot,
+        url: str,
+        max_chars: int,
+        preserve_html_tags: bool,
+    ) -> TrafilaturaResult | None:
+        fragments = [
+            fragment for fragment in snapshot.semantic_html.get("body", []) if fragment
+        ]
+        body_html = (
+            str(snapshot.tree.body.html or "") if snapshot.tree.body is not None else ""
+        )
+        if body_html:
+            fragments.append(body_html)
+        best_markdown = ""
+        best_score = 0.0
+        for fragment in fragments:
+            markdown, _ = self._render_fragment(
+                fragment_html=fragment,
+                base_url=url,
+                preserve_html_tags=preserve_html_tags,
+            )
+            markdown = finalize_markdown(markdown=markdown, max_chars=max_chars)
+            score = self._content_score(markdown_to_text(markdown))
+            if score <= best_score:
+                continue
+            best_markdown = markdown
+            best_score = score
+        if best_score <= 0.0:
+            return None
+        return self.TrafilaturaResult(markdown=best_markdown, engine="dom_fallback")
+
+    def _extract_script_fallback(
+        self,
+        *,
+        raw_html: str,
+        url: str,
+        max_chars: int,
+        preserve_html_tags: bool,
+    ) -> TrafilaturaResult | None:
+        best_markdown = ""
+        best_score = 0.0
+        for candidate in self._script_candidates(raw_html):
+            markdown = self._script_candidate_markdown(
+                candidate=candidate,
+                url=url,
+                max_chars=max_chars,
+                preserve_html_tags=preserve_html_tags,
+            )
+            if not markdown:
+                continue
+            score = self._content_score(markdown_to_text(markdown))
+            if score <= best_score:
+                continue
+            best_markdown = markdown
+            best_score = score
+        if best_score <= 0.0:
+            return None
+        return self.TrafilaturaResult(markdown=best_markdown, engine="script_fallback")
+
+    def _script_candidates(self, raw_html: str) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for script in re.findall(
+            r"<script[^>]*>(.*?)</script>", raw_html, flags=re.DOTALL | re.IGNORECASE
+        ):
+            string_literals = [
+                match.group("body")
+                for match in re.finditer(
+                    r'"(?P<body>(?:\\.|[^"\\]){120,})"',
+                    script,
+                    flags=re.DOTALL,
+                )
+            ]
+            string_literals.extend(
+                match.group("body")
+                for match in re.finditer(
+                    r"'(?P<body>(?:\\.|[^'\\]){120,})'",
+                    script,
+                    flags=re.DOTALL,
+                )
+            )
+            for literal in string_literals:
+                decoded = self._decode_js_string(literal)
+                if not decoded:
+                    continue
+                if decoded.startswith(("{", "[")):
+                    out.extend(self._json_script_candidates(decoded))
+                    continue
+                text = clean_whitespace(decoded)
+                if text and text not in seen:
+                    seen.add(text)
+                    out.append(text)
+        return [item for item in out if self._content_score(item) > 0.0]
+
+    def _json_script_candidates(self, payload_text: str) -> list[str]:
+        try:
+            payload = json.loads(payload_text)
+        except Exception:
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+
+        def visit(value: Any, key: str = "") -> None:
+            if isinstance(value, dict):
+                for child_key, child_value in value.items():
+                    visit(child_value, str(child_key).lower())
+                return
+            if isinstance(value, list):
+                for child in value:
+                    visit(child, key)
+                return
+            if not isinstance(value, str):
+                return
+            text = clean_whitespace(self._decode_js_string(value))
+            if not text or text in seen:
+                return
+            score = self._content_score(text, key=key)
+            if score <= 0.0:
+                return
+            seen.add(text)
+            out.append(text)
+
+        visit(payload)
+        return out
+
+    def _script_candidate_markdown(
+        self,
+        *,
+        candidate: str,
+        url: str,
+        max_chars: int,
+        preserve_html_tags: bool,
+    ) -> str:
+        normalized = clean_whitespace(candidate)
+        if not normalized:
+            return ""
+        if "<" in normalized and ">" in normalized:
+            markdown, _ = self._render_fragment(
+                fragment_html=normalized,
+                base_url=url,
+                preserve_html_tags=preserve_html_tags,
+            )
+            return finalize_markdown(markdown=markdown, max_chars=max_chars)
+        return finalize_markdown(markdown=normalized, max_chars=max_chars)
+
+    def _decode_js_string(self, value: str) -> str:
+        decoded = value
+        for _ in range(2):
+            try:
+                next_value = bytes(decoded, "utf-8").decode("unicode_escape")
+            except Exception:
+                break
+            if next_value == decoded:
+                break
+            decoded = next_value
+        return html_lib.unescape(decoded)
+
+    def _content_score_legacy(self, text: str, *, key: str = "") -> float:
+        normalized = clean_whitespace(text)
+        if len(normalized) < 80:
+            return 0.0
+        lowered = normalized.casefold()
+        if lowered.startswith(
+            ("http://", "https://", "window.", "function ", "return ")
+        ):
+            return 0.0
+        if "data:image/" in lowered:
+            return 0.0
+        if len(set(normalized)) < 12:
+            return 0.0
+        punctuation = sum(1 for ch in normalized if ch in ",.!?;:，。！？；：")
+        spaces = normalized.count(" ")
+        url_hits = lowered.count("http://") + lowered.count("https://")
+        score = float(len(normalized))
+        score += punctuation * 6.0
+        score += spaces * 1.5
+        score -= url_hits * 80.0
+        if any(
+            token in key
+            for token in (
+                "summary",
+                "content",
+                "markdown",
+                "readme",
+                "body",
+                "description",
+                "detail",
+                "introduction",
+                "overview",
+            )
+        ):
+            score += 240.0
+        if any(
+            token in key
+            for token in ("license", "sha", "file", "avatar", "url", "path", "image")
+        ):
+            score -= 120.0
+        return max(0.0, score)
+
+    def _content_score(self, text: str, *, key: str = "") -> float:
+        normalized = clean_whitespace(text)
+        if len(normalized) < 80:
+            return 0.0
+        lowered = normalized.casefold()
+        if lowered.startswith(
+            ("http://", "https://", "window.", "function ", "return ")
+        ):
+            return 0.0
+        url_hits = lowered.count("http://") + lowered.count("https://")
+        punctuation = sum(1 for ch in normalized if ch in ",.!?;:，。！？；：")
+        spaces = normalized.count(" ")
+        if "data:image/" in lowered:
+            return 0.0
+        if url_hits > 0 and spaces < 8 and punctuation < 12:
+            return 0.0
+        if len(set(normalized)) < 12:
+            return 0.0
+        score = float(len(normalized))
+        score += punctuation * 6.0
+        score += spaces * 1.5
+        score -= url_hits * 80.0
+        if any(
+            token in key
+            for token in (
+                "summary",
+                "content",
+                "markdown",
+                "readme",
+                "body",
+                "description",
+                "detail",
+                "introduction",
+                "overview",
+            )
+        ):
+            score += 240.0
+        if any(
+            token in key
+            for token in ("license", "sha", "file", "avatar", "url", "path", "image")
+        ):
+            score -= 120.0
+        return max(0.0, score)
+
+    def _fill_missing_metadata(
+        self,
+        *,
+        extracted: TrafilaturaResult,
+        snapshot: Snapshot,
+        url: str,
+    ) -> TrafilaturaResult:
+        title = extracted.title or self._meta_content(
+            tree=snapshot.tree,
+            selectors=("meta[property='og:title']", "meta[name='title']", "title"),
+            attr="content",
+        )
+        if not title and snapshot.tree.css_first("title") is not None:
+            title = self._node_text(snapshot.tree.css_first("title"))
+        published_date = extracted.published_date or self._meta_content(
+            tree=snapshot.tree,
+            selectors=(
+                "meta[property='article:published_time']",
+                "meta[name='article:published_time']",
+                "meta[name='date']",
+            ),
+            attr="content",
+        )
+        author = extracted.author or self._meta_content(
+            tree=snapshot.tree,
+            selectors=("meta[name='author']", "meta[property='article:author']"),
+            attr="content",
+        )
+        image = extracted.image or self._meta_content(
+            tree=snapshot.tree,
+            selectors=("meta[property='og:image']", "meta[name='twitter:image']"),
+            attr="content",
+        )
+        return self.TrafilaturaResult(
+            title=clean_whitespace(title),
+            published_date=clean_whitespace(published_date),
+            author=clean_whitespace(author),
+            image=urljoin(url, image) if image else "",
+            markdown=extracted.markdown,
+            engine=extracted.engine,
+        )
+
+    def _meta_content(
+        self,
+        *,
+        tree: HTMLParser,
+        selectors: tuple[str, ...],
+        attr: str,
+    ) -> str:
+        for selector in selectors:
+            node = tree.css_first(selector)
+            if node is None:
+                continue
+            if attr == "content":
+                value = clean_whitespace(
+                    str(node.attributes.get("content", "")).strip()
+                )
+            else:
+                value = self._node_text(node)
+            if value:
+                return value
+        return ""
 
     @classmethod
     def _render_document(
@@ -643,7 +1011,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             return f"## Secondary Content\n\n{content}"
         return f"## {tag.capitalize()}\n\n{content}"
 
-    def _stats(
+    def _stats_legacy(
         self,
         *,
         markdown: str,
@@ -683,17 +1051,58 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             **{key: int(render_stats.get(key, 0)) for key in self._COUNT_KEYS},
         }
 
+    def _stats(
+        self,
+        *,
+        markdown: str,
+        body_markdown: str,
+        secondary_markdown: str,
+        render_stats: dict[str, int | float | str | bool],
+        primary_engine: str,
+        detail: Literal["concise", "standard", "full"],
+        include_secondary: bool,
+        selected_tags: set[ExtractContentTag],
+    ) -> dict[str, int | float | str | bool]:
+        text_value = markdown_to_text(markdown)
+        body_text = markdown_to_text(body_markdown)
+        secondary_text = markdown_to_text(secondary_markdown)
+        use_fragment_renderer = any(
+            tag in selected_tags
+            for tag in ("header", "navigation", "banner", "sidebar", "footer")
+        )
+        backend = (
+            f"{primary_engine}+html_to_markdown"
+            if use_fragment_renderer
+            else primary_engine
+        )
+        return {
+            "engine_chain": backend,
+            "content_detail": detail,
+            "include_secondary_content": include_secondary,
+            "selected_tags": ",".join(sorted(selected_tags)),
+            "markdown_chars": len(markdown),
+            "text_chars": len(text_value),
+            "primary_chars": len(body_text),
+            "secondary_chars": len(secondary_text) if include_secondary else 0,
+            "renderer_backend": backend,
+            "renderer_fallback_used": primary_engine != "trafilatura",
+            "renderer_text_recall_ratio": float(
+                render_stats.get("renderer_text_recall_ratio", 1.0)
+            )
+            if use_fragment_renderer
+            else 1.0,
+            **{key: int(render_stats.get(key, 0)) for key in self._COUNT_KEYS},
+        }
+
     def _warnings(
         self, *, primary_chars: int, text_chars: int, include_secondary: bool
     ) -> list[str]:
         warnings: list[str] = []
         if primary_chars < self._profile.min_primary_chars:
-            warnings.append("trafilatura low primary text")
+            warnings.append("primary content is short")
         if include_secondary:
             if text_chars < self._profile.min_total_chars_with_secondary:
                 warnings.append("extracted text is short with secondary content")
-        elif primary_chars < self._profile.min_primary_chars:
-            warnings.append("primary content is short")
         return warnings
 
     def _links(
