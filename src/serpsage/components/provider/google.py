@@ -1,3 +1,35 @@
+"""Google web search provider using the public search result HTML.
+
+This provider follows the common Google-engine pattern used in search stacks:
+
+- it builds Google search URLs with locale, country, and safesearch controls
+- it applies Google ``tbs`` date filters when date bounds are available
+- it detects consent, sorry, and unusual-traffic pages
+- it parses public search-result blocks and unwraps Google redirect links
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   google:
+     enabled: true
+     cookies:
+       CONSENT: "YES+"
+
+Notes
+=====
+
+- Google HTML structure is unstable, so result parsing is intentionally
+  defensive and selector-based.
+- Date filtering is translated into Google ``qdr`` or custom-date ``tbs``
+  arguments depending on the request.
+- Requests may still be blocked by Google despite consent cookies and a mobile
+  user agent.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,7 +42,6 @@ from pydantic import Field, field_validator
 
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.provider.base import (
-    GoogleSafeSearchKey,
     ProviderConfigBase,
     ProviderMeta,
     SearchProviderBase,
@@ -42,7 +73,6 @@ class GoogleProviderConfig(ProviderConfigBase):
 
     base_url: str = _DEFAULT_GOOGLE_BASE_URL
     user_agent: str = _DEFAULT_GOOGLE_USER_AGENT
-    safe: GoogleSafeSearchKey = "off"
     country: str = "US"
     cookies: dict[str, str] = Field(default_factory=lambda: {"CONSENT": "YES+"})
 
@@ -84,6 +114,7 @@ class GoogleProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,
@@ -102,7 +133,10 @@ class GoogleProvider(
             limit=page_size,
             locale=clean_whitespace(locale),
             start=self._coerce_start(kwargs.get("start")),
-            safe=self._resolve_safe(kwargs.get("safe")),
+            safe=self._resolve_safe(
+                value=kwargs.get("safe"),
+                moderation=moderation,
+            ),
             country=self._resolve_country(kwargs.get("country")),
             time_range=self._resolve_time_range(kwargs.get("time_range")),
             start_date=start_date,
@@ -346,11 +380,13 @@ class GoogleProvider(
         configured = clean_whitespace(str(self.config.user_agent or ""))
         return configured or _DEFAULT_GOOGLE_USER_AGENT
 
-    def _resolve_safe(self, value: Any) -> str:
-        token = clean_whitespace(str(value or self.config.safe or "")).casefold()
-        if token in {"medium", "high"}:
+    def _resolve_safe(self, value: Any, *, moderation: bool) -> str:
+        token = clean_whitespace(str(value or "")).casefold()
+        if token in {"medium", "high", "off"}:
             return token
-        return "off"
+        if not moderation:
+            return "off"
+        return "medium"
 
     def _resolve_country(self, value: Any) -> str:
         token = clean_whitespace(str(value or self.config.country or "")).upper()

@@ -1,3 +1,36 @@
+"""SearXNG meta-search provider for querying an upstream SearXNG instance.
+
+This provider is a thin adapter around the upstream SearXNG JSON API:
+
+- it sends queries to a configured SearXNG instance with ``format=json``
+- it forwards selected extra parameters such as engines, categories, and time
+  range
+- it normalizes heterogeneous upstream results into a shared result schema
+- it can optionally authenticate with a bearer token
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   searxng:
+     enabled: true
+     base_url: https://searx.be/search
+     allow_redirects: false
+
+Notes
+=====
+
+- This provider is useful when you want broad engine coverage without adding a
+  dedicated adapter for each upstream search engine.
+- SearXNG may return mixed result types and inconsistent date fields, so the
+  provider normalizes several possible published-date keys.
+- Extra request parameters are intentionally whitelisted to keep behavior
+  predictable.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -82,6 +115,7 @@ class SearxngProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,
@@ -98,6 +132,13 @@ class SearxngProvider(
         if locale:
             payload["language"] = str(locale)
         effective_kwargs = dict(kwargs)
+        effective_kwargs.setdefault(
+            "safesearch",
+            self._resolve_safesearch_value(
+                value=effective_kwargs.get("safesearch"),
+                moderation=moderation,
+            ),
+        )
         if not clean_whitespace(str(effective_kwargs.get("time_range") or "")):
             effective_kwargs["time_range"] = self._relative_time_range_from_bounds(
                 start_published_date=start_published_date,
@@ -197,6 +238,14 @@ class SearxngProvider(
                 token = clean_whitespace(str(raw_value or ""))
             if token:
                 payload[key] = token
+
+    def _resolve_safesearch_value(self, value: Any, *, moderation: bool) -> str:
+        token = clean_whitespace(str(value or ""))
+        if token in {"0", "1", "2"}:
+            return token
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        return "1" if moderation else "0"
 
 
 __all__ = ["SearxngProvider", "SearxngProviderConfig"]

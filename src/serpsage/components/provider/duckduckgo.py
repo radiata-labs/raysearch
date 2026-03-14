@@ -1,3 +1,37 @@
+"""DuckDuckGo web search provider using lightweight HTML entry points.
+
+This provider keeps the same operational ideas commonly used in DuckDuckGo
+adapters:
+
+- it prefers the HTML search endpoint over JS-heavy pages
+- it applies DuckDuckGo region and date filters when available
+- it detects challenge pages and falls back to a lightweight Jina mirror
+- it parses redirect wrappers to recover canonical result URLs
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   duckduckgo:
+     enabled: true
+     base_url: https://html.duckduckgo.com/html
+     allow_redirects: false
+     user_agent: serpsage-duckduckgo-provider/1.0
+     region: wt-wt
+
+Notes
+=====
+
+- DuckDuckGo frequently serves redirect wrapper URLs; this provider unwraps
+  them before emitting results.
+- The Jina fallback exists because the HTML endpoint can intermittently return
+  challenge pages or empty result pages.
+- Date filters are coarse and expressed through DuckDuckGo's ``df`` parameter.
+"""
+
 from __future__ import annotations
 
 import re
@@ -92,6 +126,7 @@ class DuckDuckGoProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,

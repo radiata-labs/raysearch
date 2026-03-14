@@ -17,6 +17,7 @@ _RESERVED_PROVIDER_KWARG_KEYS = frozenset(
         "query",
         "limit",
         "locale",
+        "moderation",
         "start_published_date",
         "end_published_date",
     }

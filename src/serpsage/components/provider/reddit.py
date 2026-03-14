@@ -1,3 +1,37 @@
+"""Reddit search provider backed by the public JSON listing endpoint.
+
+This provider follows the practical shape of a Reddit engine:
+
+- it queries ``/search.json`` and paginates through ``after`` cursors
+- it supports Reddit sort and coarse time-range controls
+- it parses post metadata into compact text-oriented search results
+- it can over-fetch and filter locally when date bounds are requested
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   reddit:
+     enabled: true
+     base_url: https://www.reddit.com/search.json
+     allow_redirects: true
+     user_agent: serpsage-reddit-provider/1.0
+     results_per_page: 25
+
+Notes
+=====
+
+- Reddit's public search is coarse and ranking-heavy, so the provider may scan
+  several pages when date bounds are supplied.
+- The provider emits the post permalink rather than an external outbound URL to
+  keep fetch behavior stable.
+- Thumbnail information is used only to bias ordering within a page, not as
+  part of the result schema.
+"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -85,6 +119,7 @@ class RedditProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,

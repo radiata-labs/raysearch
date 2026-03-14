@@ -1,3 +1,37 @@
+"""Wikipedia search provider based on the Wikimedia REST search APIs.
+
+This provider follows the expected shape of an encyclopedia search adapter:
+
+- it searches article titles through the Wikimedia REST search endpoint
+- it optionally expands results with page summaries from the summary endpoint
+- it supports per-locale Wikipedia domains with English as a fallback default
+- it extracts description and timestamp fields into normalized search results
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   wikipedia:
+     enabled: true
+     base_url: https://{wiki_netloc}/w/rest.php/v1/search/title
+     summary_url_template: https://{wiki_netloc}/api/rest_v1/page/summary/{title}
+     page_url_template: https://{wiki_netloc}/wiki/{title}
+     default_language: en
+     results_per_page: 5
+
+Notes
+=====
+
+- Wikipedia is especially strong for entities, topics, events, and reference
+  lookups rather than current news.
+- The provider uses REST endpoints instead of scraping article HTML.
+- When summary metadata includes timestamps, they are normalized into
+  ``published_date`` for downstream reuse.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -106,6 +140,7 @@ class WikipediaProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,

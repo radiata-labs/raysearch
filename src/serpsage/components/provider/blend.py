@@ -1,3 +1,34 @@
+"""Blend provider that fans out a query across multiple provider routes.
+
+Unlike the other modules in this package, Blend is a local meta-provider rather
+than an upstream search engine adapter:
+
+- it discovers enabled provider routes from dependency injection
+- it can include or exclude routes statically or per request
+- it merges duplicate URLs across providers
+- it reranks the merged result set through the configured ranker
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   blend:
+     enabled: true
+     include_sources: ["google", "duckduckgo", "wikipedia"]
+     exclude_sources: []
+
+Notes
+=====
+
+- Blend does not talk to an external endpoint directly.
+- It exists to combine provider strengths while preserving the shared
+  ``SearchProviderBase`` interface.
+- The final ordering is determined by local ranking, not provider order alone.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -80,6 +111,7 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,
@@ -111,6 +143,7 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
                     query=normalized_query,
                     limit=limit,
                     locale=locale,
+                    moderation=moderation,
                     start_published_date=start_published_date,
                     end_published_date=end_published_date,
                     **provider_kwargs,

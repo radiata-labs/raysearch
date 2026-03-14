@@ -1,3 +1,36 @@
+"""GitHub repository search provider backed by the official REST API.
+
+This provider mirrors the behavior expected from a repository-search adapter:
+
+- it queries the GitHub search repositories endpoint
+- it supports optional authenticated requests for better rate limits
+- it preserves GitHub sort and order controls
+- it can narrow by repository creation date when date bounds are provided
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   github:
+     enabled: true
+     base_url: https://api.github.com/search/repositories
+     sort: stars
+     order: desc
+     results_per_page: 10
+
+Notes
+=====
+
+- Auth is optional, but providing a token generally improves reliability.
+- The provider emits repository creation time as ``published_date`` because that
+  is the only stable publication-like timestamp exposed by the search response.
+- Query fallback logic tries progressively narrower tokens when a long natural
+  language query returns no repository hits.
+"""
+
 from __future__ import annotations
 
 import re
@@ -96,6 +129,7 @@ class GitHubProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,

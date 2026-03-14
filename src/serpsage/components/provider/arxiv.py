@@ -1,3 +1,36 @@
+"""arXiv search provider based on the public Atom API.
+
+This provider follows the same practical shape as an arXiv engine in a search
+stack:
+
+- it queries the public Atom feed endpoint
+- it supports configurable search prefixes such as ``all`` and ``ti``
+- it parses entry metadata from the returned XML feed
+- it can backfill across several pages when date filtering is requested
+
+Configuration
+=============
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   arxiv:
+     enabled: true
+     base_url: https://export.arxiv.org/api/query
+     user_agent: serpsage-arxiv-provider/1.0
+     search_prefix: all
+     results_per_page: 10
+
+Notes
+=====
+
+- arXiv returns Atom XML rather than JSON or HTML.
+- The provider uses ``published`` as its normalized ``published_date`` source.
+- When date bounds are present, the provider fetches a wider first page and then
+  filters locally to improve recall.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -83,6 +116,7 @@ class ArxivProvider(
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,

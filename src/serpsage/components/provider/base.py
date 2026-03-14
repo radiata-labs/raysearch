@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import Any, Generic, Literal
+from typing import Any, Generic
 from typing_extensions import TypeVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -18,7 +18,6 @@ from serpsage.utils import (
     published_date_in_range,
 )
 
-GoogleSafeSearchKey = Literal["off", "medium", "high"]
 PROVIDER_ROUTES_TOKEN = "component.provider_routes"  # noqa: S105
 
 
@@ -88,16 +87,19 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         normalized_start = self._normalize_published_date_bound(start_published_date)
         normalized_end = self._normalize_published_date_bound(end_published_date)
+        normalized_moderation = self._normalize_moderation_flag(moderation)
         return await self._asearch(
             query=query,
             limit=limit,
             locale=locale,
+            moderation=normalized_moderation,
             start_published_date=normalized_start,
             end_published_date=normalized_end,
             **kwargs,
@@ -110,11 +112,25 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
         query: str,
         limit: int | None = None,
         locale: str = "",
+        moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
         **kwargs: Any,
     ) -> list[SearchProviderResult]:
         raise NotImplementedError
+
+    def _normalize_moderation_flag(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            token = clean_whitespace(value).casefold()
+            if token in {"false", "0", "off", "no"}:
+                return False
+            if token in {"true", "1", "on", "yes"}:
+                return True
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return True
 
     def _normalize_published_date_bound(self, value: str | None) -> str:
         token = clean_whitespace(str(value or ""))
@@ -212,7 +228,6 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
 
 
 __all__ = [
-    "GoogleSafeSearchKey",
     "PROVIDER_ROUTES_TOKEN",
     "ProviderConfigBase",
     "ProviderMeta",

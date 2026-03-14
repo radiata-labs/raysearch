@@ -284,6 +284,7 @@ class SearchRequest(BaseRequest):
     additional_queries: list[str] | None = None
     mode: SearchMode = "auto"
     max_results: int | None = None
+    moderation: bool = True
     start_published_date: str | None = None
     end_published_date: str | None = None
     include_domains: list[str] | None = None

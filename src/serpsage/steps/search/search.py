@@ -163,6 +163,7 @@ class SearchStep(StepBase[SearchStepContext]):
                 query=query,
                 limit=ctx.runtime.provider_limit,
                 locale=str(ctx.runtime.provider_locale or ""),
+                moderation=bool(ctx.request.moderation),
                 start_published_date=ctx.request.start_published_date,
                 end_published_date=ctx.request.end_published_date,
                 **kwargs,
