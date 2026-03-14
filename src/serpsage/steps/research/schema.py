@@ -244,7 +244,6 @@ def build_overview_schema(
             "need_content_source_ids",
             "next_query_strategy",
             "next_queries",
-            "stop",
         ],
         "properties": {
             "findings": {
@@ -331,10 +330,6 @@ def build_overview_schema(
                     select_engines=select_engines,
                 ),
             },
-            "stop": {
-                "type": "boolean",
-                "description": "True only when the card can safely stop after this overview pass.",
-            },
         },
     }
 
@@ -355,7 +350,6 @@ def build_content_schema(
             "confidence_adjustment",
             "next_query_strategy",
             "next_queries",
-            "stop",
         ],
         "properties": {
             "resolved_findings": {
@@ -433,10 +427,6 @@ def build_content_schema(
                     select_engines=select_engines,
                 ),
             },
-            "stop": {
-                "type": "boolean",
-                "description": "True only when research can safely stop after content arbitration.",
-            },
         },
     }
 
@@ -445,7 +435,7 @@ def build_link_picker_schema() -> dict[str, object]:
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["selected_link_ids", "reason"],
+        "required": ["selected_link_ids"],
         "properties": {
             "selected_link_ids": {
                 "type": "array",
@@ -453,9 +443,6 @@ def build_link_picker_schema() -> dict[str, object]:
                 "description": "Chosen candidate link IDs ordered by usefulness.",
                 "items": {"type": "integer"},
             },
-            "reason": _non_empty_string_schema(
-                description="Brief explanation of why the selected links are highest-yield."
-            ),
         },
     }
 
@@ -468,13 +455,10 @@ def build_decide_schema(
         "additionalProperties": False,
         "required": [
             "continue_research",
-            "high_yield_remaining",
             "next_queries",
-            "reason",
         ],
         "properties": {
             "continue_research": {"type": "boolean"},
-            "high_yield_remaining": {"type": "boolean"},
             "next_queries": {
                 "type": "array",
                 "maxItems": max(1, max_queries),
@@ -592,12 +576,7 @@ def build_subreport_update_schema(*, require_insight_card: bool) -> dict[str, ob
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": [
-            "action",
-            "updated_subreport_markdown",
-            "updated_track_insight_card",
-            "summary",
-        ],
+        "required": ["action"],
         "properties": {
             "action": {
                 "type": "string",
@@ -609,9 +588,6 @@ def build_subreport_update_schema(*, require_insight_card: bool) -> dict[str, ob
                 "description": "Full revised markdown report when action=update; otherwise empty.",
             },
             "updated_track_insight_card": insight_card_schema,
-            "summary": _non_empty_string_schema(
-                description="Brief explanation of what changed or why no update was needed."
-            ),
         },
         "allOf": update_rules,
     }

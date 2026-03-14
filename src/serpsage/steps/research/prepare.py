@@ -42,8 +42,6 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
             max_fetch_calls=profile.max_fetch_calls,
             max_results_per_search=profile.max_results_per_search,
             max_queries_per_round=profile.max_queries_per_round,
-            stop_confidence=profile.stop_confidence,
-            min_coverage_ratio=profile.min_coverage_ratio,
             max_question_cards_effective=profile.max_question_cards_effective,
             min_rounds_per_track=profile.min_rounds_per_track,
             round_search_budget=profile.round_search_budget,

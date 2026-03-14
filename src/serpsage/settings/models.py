@@ -188,8 +188,6 @@ class ResearchModeSettings(SettingModel):
     max_fetch_calls: int = 24
     max_results_per_search: int = 6
     max_queries_per_round: int = 3
-    stop_confidence: float = 0.80
-    min_coverage_ratio: float = 0.80
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
     round_search_budget: int = 2
@@ -213,10 +211,6 @@ class ResearchModeSettings(SettingModel):
             raise ValueError("research mode max_results_per_search must be > 0")
         if int(self.max_queries_per_round) <= 0:
             raise ValueError("research mode max_queries_per_round must be > 0")
-        if not 0.0 <= float(self.stop_confidence) <= 1.0:
-            raise ValueError("research mode stop_confidence must be between 0 and 1")
-        if not 0.0 <= float(self.min_coverage_ratio) <= 1.0:
-            raise ValueError("research mode min_coverage_ratio must be between 0 and 1")
         if int(self.max_question_cards_effective) <= 0:
             raise ValueError("research mode max_question_cards_effective must be > 0")
         if int(self.min_rounds_per_track) <= 0:
@@ -247,8 +241,6 @@ def _default_research_fast_mode() -> ResearchModeSettings:
         max_fetch_calls=12,
         max_results_per_search=5,
         max_queries_per_round=3,
-        stop_confidence=0.72,
-        min_coverage_ratio=0.70,
         max_question_cards_effective=2,
         min_rounds_per_track=1,
         round_search_budget=2,
@@ -269,8 +261,6 @@ def _default_research_standard_mode() -> ResearchModeSettings:
         max_fetch_calls=24,
         max_results_per_search=8,
         max_queries_per_round=5,
-        stop_confidence=0.80,
-        min_coverage_ratio=0.80,
         max_question_cards_effective=4,
         min_rounds_per_track=2,
         round_search_budget=3,
@@ -291,8 +281,6 @@ def _default_research_pro_mode() -> ResearchModeSettings:
         max_fetch_calls=48,
         max_results_per_search=10,
         max_queries_per_round=6,
-        stop_confidence=0.86,
-        min_coverage_ratio=0.90,
         max_question_cards_effective=6,
         min_rounds_per_track=3,
         round_search_budget=4,

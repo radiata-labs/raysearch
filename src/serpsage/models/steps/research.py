@@ -116,7 +116,6 @@ class OverviewOutputPayload(MutableModel):
     need_content_source_ids: list[int] = Field(max_length=20)
     next_query_strategy: NonEmptyText
     next_queries: list[QuerySourceSpec] = Field(max_length=8)
-    stop: bool
 
 
 class ContentConflictPayload(MutableModel):
@@ -134,7 +133,6 @@ class ContentOutputPayload(MutableModel):
     confidence_adjustment: float = Field(ge=-1.0, le=1.0)
     next_query_strategy: NonEmptyText
     next_queries: list[QuerySourceSpec] = Field(max_length=8)
-    stop: bool
 
 
 class TrackInsightPointPayload(MutableModel):
@@ -160,7 +158,6 @@ class SubreportUpdatePayload(MutableModel):
     action: SubreportUpdateAction
     updated_subreport_markdown: str = ""
     updated_track_insight_card: TrackInsightCardPayload | None = None
-    summary: LooseText = ""
 
 
 class RenderArchitectSectionPlan(MutableModel):
@@ -182,14 +179,12 @@ class RenderArchitectOutput(MutableModel):
 
 class ResearchDecideSignalPayload(MutableModel):
     continue_research: bool
-    high_yield_remaining: bool
     next_queries: list[QuerySourceSpec] = Field(max_length=8)
     reason: LooseText = ""
 
 
 class ResearchLinkPickerPayload(MutableModel):
     selected_link_ids: list[int] = Field(default_factory=list, max_length=24)
-    reason: LooseText = ""
 
 
 class ResearchBudgetTierState(MutableModel):
@@ -313,8 +308,6 @@ class ResearchLimits(MutableModel):
     max_fetch_calls: int = 1
     max_results_per_search: int = 1
     max_queries_per_round: int = 1
-    stop_confidence: float = 0.80
-    min_coverage_ratio: float = 0.80
     max_question_cards_effective: int = 4
     min_rounds_per_track: int = 2
     round_search_budget: int = 2
@@ -392,9 +385,7 @@ class ResearchRound(MutableModel):
     unresolved_conflicts: int = 0
     unresolved_conflict_topics: list[str] = Field(default_factory=list)
     critical_gaps: int = 0
-    stop_ready: bool = False
     remaining_objectives: list[str] = Field(default_factory=list)
-    low_gain_streak: int = 0
     waiting_for_budget: bool = False
     waiting_reason: str = ""
     budget_tier_applied: ResearchBudgetTier = "base"

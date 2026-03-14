@@ -373,7 +373,6 @@ def _overview_field_contract() -> str:
         "- need_content_source_ids: choose sources that are high-impact, contradictory, authority-rich, or too important to judge from overview alone.\n"
         "- next_query_strategy: one short rationale for the next retrieval move.\n"
         "- next_queries: 0-4 preferred, ordered by gain; each query must reduce a concrete gap.\n"
-        "- stop=true only when the card already has enough evidence to answer safely without more search/content escalation.\n"
     )
 
 
@@ -387,7 +386,6 @@ def _content_field_contract() -> str:
         "- confidence_adjustment scale: +0.4 to +1.0 for major strengthening evidence, +0.1 to +0.39 for moderate strengthening, around 0 for little change, -0.1 to -0.39 for meaningful weakening, below -0.4 for severe contradiction or staleness.\n"
         "- next_query_strategy: one short rationale for what evidence should be pursued next, if any.\n"
         "- next_queries: 0-4 preferred, de-duplicated, and tightly scoped to unresolved gaps.\n"
-        "- stop=true only when additional search is unlikely to change the answer in a material way.\n"
     )
 
 
@@ -696,7 +694,7 @@ def _build_link_picker_messages(
         "3) De-prioritize navigation pages, login/signup, pricing, privacy/terms, marketing, and generic index pages.\n"
         "4) Keep selection strictly scoped to CORE_QUESTION.\n"
         "5) Select at most max_links_to_select IDs.\n"
-        "6) Return JSON only: selected_link_ids, reason.\n"
+        "6) Return JSON only: selected_link_ids.\n"
         "7) selected_link_ids must reference IDs from CANDIDATE_LINKS only.\n"
         "8) If no candidate is useful, return selected_link_ids as an empty array.\n"
     )
@@ -725,8 +723,7 @@ def _build_link_picker_messages(
                 f"{candidate_links_markdown}\n\n"
                 "Output JSON shape:\n"
                 "{\n"
-                '  "selected_link_ids": [1,2],\n'
-                '  "reason": "..."\n'
+                '  "selected_link_ids": [1,2]\n'
                 "}"
             ),
         },
@@ -949,7 +946,6 @@ def _build_decide_signal_messages(
     critical_gaps: int,
     missing_entities: list[str],
     remaining_objectives: list[str],
-    low_gain_streak: int,
     search_remaining: int,
     fetch_remaining: int,
 ) -> list[dict[str, str]]:
@@ -960,9 +956,13 @@ def _build_decide_signal_messages(
                 "Role: stop/continue advisor.\n"
                 "Mission: judge whether another round can still generate high-yield information.\n"
                 "Rules:\n"
-                "1) Continue only when expected gain is meaningful.\n"
-                "2) Prefer compact, non-overlapping next queries.\n"
-                "3) Output JSON only."
+                "1) Make the stop/continue call directly from the full context. Do not imitate a fixed numeric threshold.\n"
+                "2) Treat confidence, coverage, and low-gain signals as supporting evidence, not deterministic gates.\n"
+                "3) Continue only when expected gain is still meaningful.\n"
+                "4) Prefer compact, non-overlapping next queries.\n"
+                "5) If stopping, next_queries should usually be empty.\n"
+                "6) Omit reason when there is nothing useful to say.\n"
+                "7) Output JSON only."
             ),
         },
         {
@@ -976,8 +976,7 @@ def _build_decide_signal_messages(
                 f"- unresolved_conflicts={unresolved_conflicts}\n"
                 f"- critical_gaps={critical_gaps}\n"
                 f"- missing_entities={missing_entities}\n"
-                f"- remaining_objectives={remaining_objectives}\n"
-                f"- low_gain_streak={low_gain_streak}\n\n"
+                f"- remaining_objectives={remaining_objectives}\n\n"
                 "BUDGET_REMAINING:\n"
                 f"- search={search_remaining}\n"
                 f"- fetch={fetch_remaining}\n"
@@ -1221,16 +1220,16 @@ def _build_subreport_update_messages(
         "3) stop_after_update is allowed only when CURRENT_REPORT_MARKDOWN is non-empty and the current pass is not the initial draft.\n"
         "4) If action=update, updated_subreport_markdown must contain the full revised report.\n"
         "5) If action=no_update, keep updated_subreport_markdown empty.\n"
-        "6) If action=stop_after_update, keep updated_subreport_markdown empty and use summary to explain why the current report is sufficient after this pass.\n"
+        "6) If action=stop_after_update, keep updated_subreport_markdown empty.\n"
         "7) Keep prose strictly in TARGET_OUTPUT_LANGUAGE.\n"
         "8) Use NEW_EVIDENCE_CONTEXT plus CURRENT_REPORT_MARKDOWN only; do not invent new facts.\n"
         "9) Preserve high-value content from CURRENT_REPORT_MARKDOWN unless contradicted or superseded.\n"
         "10) track insight card is required when require_insight_card=true and action=update.\n"
-        "11) summary should briefly explain what changed or why no update is needed.\n"
-        "12) Choose action=update only when the new evidence materially improves correctness, clarity, or user utility.\n"
-        "13) Choose action=no_update when the new evidence is redundant or too weak to justify rewriting.\n"
-        "14) Choose action=stop_after_update only after at least one update pass and only when remaining evidence is unlikely to change the answer materially.\n"
-        "15) Never return partial markdown; updated_subreport_markdown must be the full revised report when action=update.\n"
+        "11) Choose action=update only when the new evidence materially improves correctness, clarity, or user utility.\n"
+        "12) Choose action=no_update when the new evidence is redundant or too weak to justify rewriting.\n"
+        "13) Choose action=stop_after_update only after at least one update pass and only when remaining evidence is unlikely to change the answer materially.\n"
+        "14) Never return partial markdown; updated_subreport_markdown must be the full revised report when action=update.\n"
+        "15) Omit updated_subreport_markdown and updated_track_insight_card when they do not apply to the chosen action.\n"
         f"{_track_insight_card_contract()}"
     )
     return [
@@ -1258,7 +1257,6 @@ def _build_subreport_update_messages(
                 "- update: revise the report because the new evidence materially changes quality or correctness.\n"
                 "- no_update: keep the current report because the new evidence is redundant, low-confidence, or immaterial.\n"
                 "- stop_after_update: end iterative updates because further unseen evidence is unlikely to change the answer materially.\n"
-                "- summary: 1-2 sentences; name the changed section or explain why no rewrite is justified.\n\n"
                 f"CURRENT_REPORT_MARKDOWN:\n{current_report_markdown or '(empty)'}\n\n"
                 f"NEW_EVIDENCE_CONTEXT:\n{context_packet_markdown}"
             ),
@@ -1754,7 +1752,6 @@ def build_decide_prompt_messages(
         critical_gaps=round_state.critical_gaps,
         missing_entities=list(round_state.missing_entities),
         remaining_objectives=list(round_state.remaining_objectives),
-        low_gain_streak=round_state.low_gain_streak,
         search_remaining=max(
             0,
             ctx.run.limits.max_search_calls - ctx.run.search_calls,
@@ -2294,7 +2291,6 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
         f"- Confidence: {float(review.confidence):.3f}",
         f"- Entity coverage complete: {review.entity_coverage_complete}",
         f"- Next query strategy: {_normalize_scalar_text(review.next_query_strategy) or 'n/a'}",
-        f"- Stop: {review.stop}",
         "- Findings:",
     ]
     lines.extend(_render_markdown_bullets(review.findings, indent="  ") or _NONE_BULLET)
@@ -2487,14 +2483,9 @@ def render_track_snapshot_markdown(track_map: dict[str, ResearchStepContext]) ->
                     else "- critical_gaps: 0"
                 ),
                 (
-                    f"- stop_ready: {latest.stop_ready}"
+                    f"- stop_reason: {latest.stop_reason or 'n/a'}"
                     if latest is not None
-                    else "- stop_ready: false"
-                ),
-                (
-                    f"- low_gain_streak: {latest.low_gain_streak}"
-                    if latest is not None
-                    else "- low_gain_streak: 0"
+                    else "- stop_reason: n/a"
                 ),
             ]
         )

@@ -178,7 +178,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             need_content_source_ids=[],
             next_query_strategy="coverage",
             next_queries=[],
-            stop=False,
         )
 
     def _resolve_need_content_source_ids(

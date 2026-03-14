@@ -151,7 +151,6 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             confidence_adjustment=0.0,
             next_query_strategy="coverage",
             next_queries=[],
-            stop=False,
         )
 
     def _merge_conflict_topics(

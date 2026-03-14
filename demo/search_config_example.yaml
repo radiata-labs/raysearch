@@ -281,8 +281,6 @@ research:
     max_fetch_calls: 48
     max_results_per_search: 5
     max_queries_per_round: 3
-    stop_confidence: 0.72
-    min_coverage_ratio: 0.70
     max_question_cards_effective: 2
     min_rounds_per_track: 1
     round_search_budget: 2
@@ -299,8 +297,6 @@ research:
     max_fetch_calls: 72
     max_results_per_search: 8
     max_queries_per_round: 5
-    stop_confidence: 0.80
-    min_coverage_ratio: 0.80
     max_question_cards_effective: 4
     min_rounds_per_track: 2
     round_search_budget: 3
@@ -317,8 +313,6 @@ research:
     max_fetch_calls: 120
     max_results_per_search: 10
     max_queries_per_round: 6
-    stop_confidence: 0.86
-    min_coverage_ratio: 0.90
     max_question_cards_effective: 6
     min_rounds_per_track: 3
     round_search_budget: 4
