@@ -21,6 +21,7 @@ FetchContentTag = Literal[
 CrawlMode = Literal["never", "fallback", "preferred", "always"]
 _LATIN_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff]")
+_ISO_COUNTRY_CODE_RE = re.compile(r"^[A-Za-z]{2}$")
 
 
 def _normalize_domain(value: str) -> str:
@@ -74,6 +75,13 @@ def _validate_json_schema(value: dict[str, Any] | None) -> dict[str, Any] | None
         raise ValueError("jsonschema dependency is required") from exc
     Draft202012Validator.check_schema(value)
     return value
+
+
+def _normalize_iso_country_code(value: str, *, field_name: str) -> str:
+    token = clean_whitespace(str(value or "")).upper()
+    if not _ISO_COUNTRY_CODE_RE.fullmatch(token):
+        raise ValueError(f"{field_name} must be a two-letter ISO country code")
+    return token
 
 
 class FetchOthersRequest(BaseModel):
@@ -281,16 +289,17 @@ class SearchFetchRequest(BaseModel):
 
 class SearchRequest(BaseRequest):
     query: str
+    user_location: str
     additional_queries: list[str] | None = None
     mode: SearchMode = "auto"
     max_results: int | None = None
-    moderation: bool = True
     start_published_date: str | None = None
     end_published_date: str | None = None
     include_domains: list[str] | None = None
     exclude_domains: list[str] | None = None
     include_text: list[str] | None = None
     exclude_text: list[str] | None = None
+    moderation: bool = True
     fetchs: SearchFetchRequest
 
     @field_validator("query")
@@ -300,6 +309,11 @@ class SearchRequest(BaseRequest):
         if not query:
             raise ValueError("query must not be empty")
         return query
+
+    @field_validator("user_location")
+    @classmethod
+    def _validate_user_location(cls, value: str) -> str:
+        return _normalize_iso_country_code(value, field_name="user_location")
 
     @field_validator("additional_queries")
     @classmethod

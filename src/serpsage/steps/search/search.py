@@ -162,8 +162,9 @@ class SearchStep(StepBase[SearchStepContext]):
             out[idx] = await self.provider.asearch(
                 query=query,
                 limit=ctx.runtime.provider_limit,
-                locale=str(ctx.runtime.provider_locale or ""),
-                moderation=bool(ctx.request.moderation),
+                language=ctx.runtime.provider_language,
+                location=ctx.request.user_location,
+                moderation=ctx.request.moderation,
                 start_published_date=ctx.request.start_published_date,
                 end_published_date=ctx.request.end_published_date,
                 **kwargs,

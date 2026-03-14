@@ -110,7 +110,8 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -139,10 +140,11 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
             index: int, provider: SearchProviderBase[ProviderConfigBase]
         ) -> None:
             try:
-                outputs[index] = await provider.asearch(
+                outputs[index] = await provider._asearch(
                     query=normalized_query,
                     limit=limit,
-                    locale=locale,
+                    language=language,
+                    location=location,
                     moderation=moderation,
                     start_published_date=start_published_date,
                     end_published_date=end_published_date,

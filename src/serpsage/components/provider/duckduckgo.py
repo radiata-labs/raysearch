@@ -125,7 +125,8 @@ class DuckDuckGoProvider(
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -141,6 +142,8 @@ class DuckDuckGoProvider(
         request_base_url = self._request_base_url()
         request_params = self._build_request_params(
             query=normalized_query,
+            language=language,
+            location=location,
             region=kwargs.get("region"),
             time_range=self._resolve_time_range(
                 runtime_value=kwargs.get("time_range"),
@@ -184,19 +187,47 @@ class DuckDuckGoProvider(
         self,
         *,
         query: str,
+        language: str,
+        location: str,
         region: Any,
         time_range: str,
     ) -> dict[str, str]:
         params: dict[str, str] = {"q": self._quote_bangs(query)}
-        normalized_region = clean_whitespace(
-            str(region or self.config.region or "")
-        ).lower()
+        normalized_region = self._resolve_region(
+            location=location,
+            language=language,
+            region=region,
+        )
         if normalized_region and normalized_region != "all":
             params["kl"] = normalized_region
         time_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
         if time_range in time_map:
             params["df"] = time_map[time_range]
         return params
+
+    def _resolve_region(
+        self,
+        *,
+        location: str,
+        language: str,
+        region: Any,
+    ) -> str:
+        if location:
+            region_language = self._resolve_region_language(language=language)
+            country = {"GB": "uk"}.get(location, location.lower())
+            return f"{country}-{region_language}"
+        return clean_whitespace(str(region or self.config.region or "")).lower()
+
+    def _resolve_region_language(self, *, language: str) -> str:
+        if language:
+            base_language = language.split("-", 1)[0].lower()
+            if base_language:
+                return base_language
+        configured_region = clean_whitespace(str(self.config.region or "")).lower()
+        parts = [part for part in configured_region.split("-") if part]
+        if len(parts) >= 2 and parts[-1] != "wt":
+            return parts[-1]
+        return "en"
 
     def _build_headers(self) -> dict[str, str]:
         headers = dict(self.config.headers or {})

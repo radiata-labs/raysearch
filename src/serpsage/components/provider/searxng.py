@@ -114,7 +114,8 @@ class SearxngProvider(
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -129,8 +130,8 @@ class SearxngProvider(
         page_size = max(1, int(limit)) if limit is not None else None
         if page_size is not None:
             payload["limit"] = str(page_size)
-        if locale:
-            payload["language"] = str(locale)
+        if language:
+            payload["language"] = str(language)
         effective_kwargs = dict(kwargs)
         effective_kwargs.setdefault(
             "safesearch",

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic
 from typing_extensions import TypeVar
 
+import anyio
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
@@ -19,10 +21,12 @@ from serpsage.utils import (
 )
 
 PROVIDER_ROUTES_TOKEN = "component.provider_routes"  # noqa: S105
+_ISO_COUNTRY_CODE_RE = re.compile(r"^[A-Za-z]{2}$")
+_LANGUAGE_TAG_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$")
 
 
 class RetrySettings(ComponentConfigBase):
-    max_attempts: int = 3
+    retries: int = 1
     delay_ms: int = 200
 
 
@@ -86,7 +90,8 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -94,16 +99,29 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
     ) -> list[SearchProviderResult]:
         normalized_start = self._normalize_published_date_bound(start_published_date)
         normalized_end = self._normalize_published_date_bound(end_published_date)
-        normalized_moderation = self._normalize_moderation_flag(moderation)
-        return await self._asearch(
-            query=query,
-            limit=limit,
-            locale=locale,
-            moderation=normalized_moderation,
-            start_published_date=normalized_start,
-            end_published_date=normalized_end,
-            **kwargs,
-        )
+        normalized_language = self._normalize_language(language)
+        normalized_location = self._normalize_location(location)
+        retry = self.config.retry
+        attempts = max(1, int(retry.retries) + 1)
+        delay_s = max(0.0, float(getattr(retry, "delay_ms", 0.0)) / 1000.0)
+        for attempt_index in range(attempts):
+            try:
+                return await self._asearch(
+                    query=query,
+                    limit=limit,
+                    language=normalized_language,
+                    location=normalized_location,
+                    moderation=moderation,
+                    start_published_date=normalized_start,
+                    end_published_date=normalized_end,
+                    **kwargs,
+                )
+            except Exception:
+                if attempt_index >= attempts - 1:
+                    raise
+                if delay_s > 0:
+                    await anyio.sleep(delay_s)
+        raise RuntimeError("search retry loop exhausted without result")
 
     @abstractmethod
     async def _asearch(
@@ -111,7 +129,8 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -119,18 +138,35 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
     ) -> list[SearchProviderResult]:
         raise NotImplementedError
 
-    def _normalize_moderation_flag(self, value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            token = clean_whitespace(value).casefold()
-            if token in {"false", "0", "off", "no"}:
-                return False
-            if token in {"true", "1", "on", "yes"}:
-                return True
-        if isinstance(value, (int, float)):
-            return bool(value)
-        return True
+    def _normalize_language(self, value: str) -> str:
+        token = clean_whitespace(str(value or "")).replace("_", "-")
+        if not token or token.casefold() == "all":
+            return ""
+        if not _LANGUAGE_TAG_RE.fullmatch(token):
+            raise ValueError("language must be a valid BCP 47 language tag")
+        parts = [part for part in token.split("-") if part]
+        if not parts:
+            return ""
+        normalized_parts = [parts[0].lower()]
+        for part in parts[1:]:
+            if len(part) == 4 and part.isalpha():
+                normalized_parts.append(part.title())
+                continue
+            if (len(part) == 2 and part.isalpha()) or (
+                len(part) == 3 and part.isdigit()
+            ):
+                normalized_parts.append(part.upper())
+                continue
+            normalized_parts.append(part.lower())
+        return "-".join(normalized_parts)
+
+    def _normalize_location(self, value: str) -> str:
+        token = clean_whitespace(str(value or "")).upper()
+        if not token:
+            return ""
+        if not _ISO_COUNTRY_CODE_RE.fullmatch(token):
+            raise ValueError("location must be a two-letter ISO country code")
+        return token
 
     def _normalize_published_date_bound(self, value: str | None) -> str:
         token = clean_whitespace(str(value or ""))

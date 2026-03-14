@@ -2,7 +2,7 @@
 
 This provider follows the common Google-engine pattern used in search stacks:
 
-- it builds Google search URLs with locale, country, and safesearch controls
+- it builds Google search URLs with language, country, and safesearch controls
 - it applies Google ``tbs`` date filters when date bounds are available
 - it detects consent, sorry, and unusual-traffic pages
 - it parses public search-result blocks and unwraps Google redirect links
@@ -113,7 +113,8 @@ class GoogleProvider(
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -131,7 +132,8 @@ class GoogleProvider(
         request = self._build_request(
             query=normalized_query,
             limit=page_size,
-            locale=clean_whitespace(locale),
+            language=language,
+            location=location,
             start=self._coerce_start(kwargs.get("start")),
             safe=self._resolve_safe(
                 value=kwargs.get("safe"),
@@ -161,7 +163,8 @@ class GoogleProvider(
         *,
         query: str,
         limit: int | None,
-        locale: str,
+        language: str,
+        location: str,
         start: int,
         safe: str,
         country: str,
@@ -170,8 +173,8 @@ class GoogleProvider(
         end_date: str,
     ) -> dict[str, Any]:
         google_info = self._get_google_info(
-            locale=locale,
-            default_country=country,
+            language=language,
+            default_country=(location or country),
         )
         page_size = max(1, min(100, int(limit))) if limit is not None else 10
         query_params: dict[str, str | int] = {
@@ -203,23 +206,18 @@ class GoogleProvider(
     def _get_google_info(
         self,
         *,
-        locale: str,
+        language: str,
         default_country: str,
     ) -> dict[str, Any]:
         cfg = self.config
-        requested_locale = clean_whitespace(locale).replace("_", "-")
-        region_in_locale = False
-        if not requested_locale or requested_locale == "all":
-            requested_locale = "en"
-        parts = [part for part in requested_locale.split("-") if part]
+        requested_language = language or "en"
+        parts = [part for part in requested_language.split("-") if part]
         lang = clean_whitespace(parts[0]).lower() or "en"
         country = default_country or "US"
-        if len(parts) > 1 and len(clean_whitespace(parts[-1])) == 2:
-            country = clean_whitespace(parts[-1]).upper()
-            region_in_locale = True
         lr = f"lang_{lang}"
-        if region_in_locale and lang == "zh":
+        if lang == "zh" and country:
             lr = f"lang_{lang}-{country}"
+        hl = requested_language if len(parts) > 1 else f"{lang}-{country}"
         headers = dict(cfg.headers or {})
         headers["Accept"] = "*/*"
         headers["User-Agent"] = self._google_user_agent()
@@ -230,9 +228,10 @@ class GoogleProvider(
             "headers": headers,
             "cookies": cookies,
             "params": {
-                "hl": f"{lr.split('_')[-1] if lr else lang}-{country}",
-                "lr": "" if requested_locale.casefold() == "all" else lr,
-                "cr": f"country{country}" if region_in_locale else "",
+                "hl": hl,
+                "lr": lr,
+                "gl": country,
+                "cr": f"country{country}",
                 "ie": "utf8",
                 "oe": "utf8",
             },

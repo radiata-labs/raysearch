@@ -27,6 +27,7 @@ async def main(
 ) -> dict[str, Any]:
     req = SearchRequest(
         query=query,
+        user_location="US",
         mode=mode,
         max_results=max_results,
         fetchs=SearchFetchRequest(

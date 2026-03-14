@@ -175,7 +175,8 @@ class WikidataProvider(
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -185,7 +186,7 @@ class WikidataProvider(
         if not normalized_query:
             raise ValueError("query must not be empty")
 
-        language = self._resolve_language(locale)
+        language = self._resolve_language(language)
         page_size = self._coerce_page_size(
             limit if limit is not None else self.config.results_per_page
         )
@@ -311,12 +312,11 @@ class WikidataProvider(
             if token
         ]
 
-    def _resolve_language(self, locale: str) -> str:
-        normalized = clean_whitespace(locale).replace("_", "-")
-        if not normalized or normalized.casefold() == "all":
+    def _resolve_language(self, language: str) -> str:
+        if not language:
             return "en"
-        language = clean_whitespace(normalized.split("-", 1)[0]).lower()
-        return language or "en"
+        base_language = language.split("-", 1)[0].lower()
+        return base_language or "en"
 
     def _escape_sparql_string(self, value: str) -> str:
         return (

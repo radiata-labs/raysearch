@@ -5,7 +5,7 @@ This provider follows the same broad shape as the SearXNG engine:
 
 - it uses the official Works endpoint and does not require an API key
 - it searches through the ``search`` parameter and keeps relevance sorting
-- it can apply a language filter derived from the runtime locale
+- it can apply a language filter derived from the runtime language tag
 - it reconstructs abstracts from OpenAlex's inverted index payload
 - it carries over authors, venue, tags, and citation hints into the snippet
 
@@ -125,7 +125,8 @@ class OpenAlexProvider(
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -158,7 +159,7 @@ class OpenAlexProvider(
                     query=normalized_query,
                     page=page + page_index,
                     per_page=request_size if page_index == 0 else per_page,
-                    locale=locale,
+                    language=language,
                 ),
                 headers=self._build_headers(),
                 timeout=httpx.Timeout(self.config.timeout_s),
@@ -193,7 +194,7 @@ class OpenAlexProvider(
         query: str,
         page: int,
         per_page: int,
-        locale: str,
+        language: str,
     ) -> dict[str, str]:
         params = {
             "search": query,
@@ -201,20 +202,19 @@ class OpenAlexProvider(
             "per-page": str(max(1, int(per_page))),
             "sort": "relevance_score:desc",
         }
-        filters = self._build_filters(locale=locale)
+        filters = self._build_filters(language=language)
         if filters:
             params["filter"] = ",".join(filters)
         if self.config.mailto:
             params["mailto"] = self.config.mailto
         return params
 
-    def _build_filters(self, *, locale: str) -> list[str]:
-        normalized = clean_whitespace(locale).replace("_", "-")
-        if not normalized or normalized.casefold() == "all":
+    def _build_filters(self, *, language: str) -> list[str]:
+        if not language:
             return []
-        language = clean_whitespace(normalized.split("-", 1)[0]).lower()
-        if len(language) == 2:
-            return [f"language:{language}"]
+        base_language = language.split("-", 1)[0].lower()
+        if len(base_language) == 2:
+            return [f"language:{base_language}"]
         return []
 
     def _parse_results(self, raw_results: Any) -> list[SearchProviderResult]:

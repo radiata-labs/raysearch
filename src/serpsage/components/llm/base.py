@@ -280,7 +280,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
         format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
         retries: int = 0,
-        retry_delay_s: float = 0.0,
+        retry_delay_ms: float = 0.0,
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatResultBase:
@@ -289,7 +289,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
             format_override=format_override,
         )
         attempts = max(1, int(retries) + 1)
-        delay_s = max(0.0, float(retry_delay_s))
+        delay_s = max(0.0, float(retry_delay_ms) / 1000.0)
         retry_func = self._normalize_retry_on(retry_on)
         for attempt_index in range(attempts):
             try:

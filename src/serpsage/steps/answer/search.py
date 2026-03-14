@@ -47,30 +47,22 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             return ctx
         ctx.search.request = requests[0].model_copy(deep=True)
         ctx.search.search_mode = _FIXED_SEARCH_MODE
-        search_contexts: list[SearchStepContext] = []
-        for idx, req in enumerate(requests):
-            sub_question = sub_questions[idx]
-            search_query = (
-                sub_question.search_query.model_copy(deep=True)
-                if sub_question.search_query is not None
-                else QuerySourceSpec(query=sub_question.question)
-            )
-            search_contexts.append(
-                SearchStepContext(
-                    request=req,
-                    response=SearchResponse(
-                        request_id=ctx.request_id,
-                        search_mode=req.mode,
-                        results=[],
-                    ),
-                    runtime=SearchRuntimeState(
-                        disable_internal_llm=True,
-                        engine_selection_subsystem="answer",
-                        query=search_query,
-                    ),
+        search_contexts = [
+            SearchStepContext(
+                request=req,
+                response=SearchResponse(
                     request_id=ctx.request_id,
-                )
+                    search_mode=req.mode,
+                    results=[],
+                ),
+                runtime=SearchRuntimeState(
+                    disable_internal_llm=True,
+                    engine_selection_subsystem="answer",
+                ),
+                request_id=ctx.request_id,
             )
+            for req in requests
+        ]
         try:
             search_contexts = await self.search_runner.run_batch(search_contexts)
         except Exception as exc:  # noqa: BLE001
@@ -158,6 +150,7 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         query_text = query.query if query is not None else ""
         return SearchRequest(
             query=query_text,
+            user_location="US",
             mode=_FIXED_SEARCH_MODE,
             max_results=_FIXED_MAX_RESULTS,
             additional_queries=None,

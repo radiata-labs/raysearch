@@ -4,7 +4,7 @@ This provider follows the expected shape of an encyclopedia search adapter:
 
 - it searches article titles through the Wikimedia REST search endpoint
 - it optionally expands results with page summaries from the summary endpoint
-- it supports per-locale Wikipedia domains with English as a fallback default
+- it supports per-language Wikipedia domains with English as a fallback default
 - it extracts description and timestamp fields into normalized search results
 
 Configuration
@@ -139,7 +139,8 @@ class WikipediaProvider(
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -151,7 +152,7 @@ class WikipediaProvider(
             raise ValueError("query must not be empty")
 
         resolved = self._resolve_wiki_language(
-            clean_whitespace(locale) or cfg.default_language
+            language or cfg.default_language
         )
         per_page = self._coerce_per_page(
             limit if limit is not None else cfg.results_per_page
@@ -406,12 +407,15 @@ class WikipediaProvider(
         return ""
 
     def _resolve_wiki_language(self, value: str) -> dict[str, str]:
-        requested = clean_whitespace(value).replace("_", "-")
-        normalized = requested.casefold()
-        if not normalized or normalized == "all":
-            requested = clean_whitespace(self.config.default_language or "en") or "en"
-            normalized = requested.casefold()
-        wiki_tag = self._wiki_tag_for_locale(normalized)
+        requested = self._normalize_language(value)
+        if not requested:
+            requested = (
+                self._normalize_language(
+                    clean_whitespace(self.config.default_language or "en")
+                )
+                or "en"
+            )
+        wiki_tag = self._wiki_tag_for_language(requested)
         return {
             "request_language": requested or wiki_tag,
             "accept_language": self._canonical_accept_language(requested or wiki_tag),
@@ -419,8 +423,8 @@ class WikipediaProvider(
             "wiki_netloc": f"{wiki_tag}.wikipedia.org",
         }
 
-    def _wiki_tag_for_locale(self, locale: str) -> str:
-        normalized = clean_whitespace(locale).replace("_", "-").casefold()
+    def _wiki_tag_for_language(self, language: str) -> str:
+        normalized = language.casefold()
         if not normalized:
             return "en"
         if normalized in _WIKI_SCRIPT_VARIANTS:

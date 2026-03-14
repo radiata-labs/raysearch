@@ -158,7 +158,7 @@ _GOOGLE_NEWS_CEID_LIST = (
     "ZW:en",
 )
 _GOOGLE_NEWS_SKIP_CEID = {"ET:en", "ID:en", "LV:en"}
-_GOOGLE_NEWS_LOCALE_OVERRIDES = {"NO:no": "nb-NO"}
+_GOOGLE_NEWS_LANGUAGE_OVERRIDES = {"NO:no": "nb-NO"}
 
 
 class GoogleNewsProviderConfig(ProviderConfigBase):
@@ -206,7 +206,8 @@ class GoogleNewsProvider(
         *,
         query: str,
         limit: int | None = None,
-        locale: str = "",
+        language: str = "",
+        location: str = "",
         moderation: bool = True,
         start_published_date: str | None = None,
         end_published_date: str | None = None,
@@ -216,7 +217,11 @@ class GoogleNewsProvider(
         if not normalized_query:
             raise ValueError("query must not be empty")
 
-        request = self._build_request(query=normalized_query, locale=locale)
+        request = self._build_request(
+            query=normalized_query,
+            language=language,
+            location=location,
+        )
         resp = await self.http.client.get(
             request["url"],
             headers=request["headers"],
@@ -229,8 +234,14 @@ class GoogleNewsProvider(
         results = self._parse_results(resp.text, base_url=str(resp.url))
         return self._trim_results(results, limit=limit)
 
-    def _build_request(self, *, query: str, locale: str) -> dict[str, Any]:
-        ceid = self._resolve_ceid(locale=locale)
+    def _build_request(
+        self,
+        *,
+        query: str,
+        language: str,
+        location: str,
+    ) -> dict[str, Any]:
+        ceid = self._resolve_ceid(language=language, location=location)
         region, language = ceid.split(":", 1)
         hl = self._resolve_hl(region=region, language=language)
         params = {
@@ -373,36 +384,57 @@ class GoogleNewsProvider(
             return ""
         return resolved
 
-    def _resolve_ceid(self, *, locale: str) -> str:
-        normalized = clean_whitespace(str(locale or "")).replace("_", "-")
-        if not normalized or normalized.casefold() == "all":
-            return "US:en"
-        lowered = normalized.casefold()
+    def _resolve_ceid(self, *, language: str, location: str) -> str:
         ceid_map = _google_news_ceid_map()
-        if lowered in ceid_map:
-            return ceid_map[lowered]
-        language = clean_whitespace(normalized.split("-", 1)[0]).lower()
-        region = ""
-        parts = [part for part in normalized.split("-") if part]
-        if len(parts) >= 2:
-            region = clean_whitespace(parts[-1]).upper()
-        if region:
-            direct = f"{region}:{language}"
-            if (
-                direct in _GOOGLE_NEWS_CEID_LIST
-                and direct not in _GOOGLE_NEWS_SKIP_CEID
+        normalized = language
+        normalized_location = location
+        base_language = ""
+        region = normalized_location
+        if normalized:
+            lowered = normalized.casefold()
+            direct = ceid_map.get(lowered, "")
+            if direct and (
+                not normalized_location
+                or direct.split(":", 1)[0] == normalized_location
             ):
                 return direct
+            base_language = clean_whitespace(normalized.split("-", 1)[0]).lower()
+            if not region:
+                parts = [part for part in normalized.split("-") if part]
+                if len(parts) >= 2 and self._is_region_subtag(parts[-1]):
+                    region = clean_whitespace(parts[-1]).upper()
+        if region:
+            if base_language:
+                direct = f"{region}:{base_language}"
+                if (
+                    direct in _GOOGLE_NEWS_CEID_LIST
+                    and direct not in _GOOGLE_NEWS_SKIP_CEID
+                ):
+                    return direct
             for ceid in _GOOGLE_NEWS_CEID_LIST:
                 if ceid.startswith(f"{region}:") and ceid not in _GOOGLE_NEWS_SKIP_CEID:
                     return ceid
+        if not base_language and normalized:
+            lowered = normalized.casefold()
+            if lowered in ceid_map:
+                return ceid_map[lowered]
+        if normalized:
+            for ceid in _GOOGLE_NEWS_CEID_LIST:
+                if ceid.split(":", 1)[1].casefold() == normalized.casefold():
+                    return ceid
         for ceid in _GOOGLE_NEWS_CEID_LIST:
             if (
-                ceid.split(":", 1)[1].split("-", 1)[0] == language
+                ceid.split(":", 1)[1].split("-", 1)[0] == base_language
                 and ceid not in _GOOGLE_NEWS_SKIP_CEID
             ):
                 return ceid
         return "US:en"
+
+    def _is_region_subtag(self, value: str) -> bool:
+        token = clean_whitespace(value)
+        return (len(token) == 2 and token.isalpha()) or (
+            len(token) == 3 and token.isdigit()
+        )
 
     def _resolve_hl(self, *, region: str, language: str) -> str:
         lang_parts = [part for part in language.split("-") if part]
@@ -455,8 +487,11 @@ def _google_news_ceid_map() -> dict[str, str]:
         if ceid in _GOOGLE_NEWS_SKIP_CEID:
             continue
         region, language = ceid.split(":", 1)
-        locale = _GOOGLE_NEWS_LOCALE_OVERRIDES.get(ceid, f"{language}-{region}")
-        out[locale.casefold()] = ceid
+        language_tag = _GOOGLE_NEWS_LANGUAGE_OVERRIDES.get(
+            ceid,
+            f"{language}-{region}",
+        )
+        out[language_tag.casefold()] = ceid
         out[f"{language.casefold()}-{region.casefold()}"] = ceid
         out[f"{language.split('-', 1)[0].casefold()}-{region.casefold()}"] = ceid
     return out

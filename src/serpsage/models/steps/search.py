@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any, Literal
 
@@ -16,12 +17,35 @@ _RESERVED_PROVIDER_KWARG_KEYS = frozenset(
     {
         "query",
         "limit",
-        "locale",
+        "language",
+        "location",
         "moderation",
         "start_published_date",
         "end_published_date",
     }
 )
+_LANGUAGE_TAG_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$")
+
+
+def _normalize_language_tag(value: str) -> str:
+    token = clean_whitespace(str(value or "")).replace("_", "-")
+    if not token or token.casefold() == "all":
+        return ""
+    if not _LANGUAGE_TAG_RE.fullmatch(token):
+        raise ValueError("provider_language must be a valid BCP 47 language tag")
+    parts = [part for part in token.split("-") if part]
+    if not parts:
+        return ""
+    normalized_parts = [parts[0].lower()]
+    for part in parts[1:]:
+        if len(part) == 4 and part.isalpha():
+            normalized_parts.append(part.title())
+            continue
+        if (len(part) == 2 and part.isalpha()) or (len(part) == 3 and part.isdigit()):
+            normalized_parts.append(part.upper())
+            continue
+        normalized_parts.append(part.lower())
+    return "-".join(normalized_parts)
 
 
 class QuerySourceSpec(MutableModel):
@@ -66,7 +90,7 @@ class SearchRuntimeState(MutableModel):
     disable_internal_llm: bool = False
     engine_selection_subsystem: Literal["", "search", "research", "answer"] = ""
     provider_limit: int | None = None
-    provider_locale: str = ""
+    provider_language: str = ""
     provider_extra_kwargs: dict[str, Any] = Field(default_factory=dict)
     additional_queries: list[QuerySourceSpec] = Field(default_factory=list)
 
@@ -79,10 +103,10 @@ class SearchRuntimeState(MutableModel):
             raise ValueError("provider_limit must be > 0")
         return value
 
-    @field_validator("provider_locale")
+    @field_validator("provider_language")
     @classmethod
     def _validate_provider_text(cls, value: str) -> str:
-        return clean_whitespace(value)
+        return _normalize_language_tag(value)
 
     @field_validator("provider_extra_kwargs", mode="before")
     @classmethod

@@ -21,8 +21,7 @@ from serpsage.components.loads import (
     load_components,
     materialize_settings,
 )
-from serpsage.components.provider import PROVIDER_ROUTES_TOKEN
-from serpsage.components.provider.base import SearchProviderBase
+from serpsage.components.provider.base import PROVIDER_ROUTES_TOKEN, SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.components.telemetry import TelemetryEmitterBase

@@ -151,7 +151,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
                     runtime=SearchRuntimeState(
                         disable_internal_llm=True,
                         engine_selection_subsystem="research",
-                        query=job.query.model_copy(deep=True),
                         additional_queries=[
                             item.model_copy(deep=True)
                             for item in list(job.additional_queries or [])
@@ -210,6 +209,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
     ) -> SearchRequest:
         return SearchRequest(
             query=query_job.query.query,
+            user_location="US",
             additional_queries=(
                 [item.query for item in list(query_job.additional_queries or [])]
                 if query_job.mode == "deep"
