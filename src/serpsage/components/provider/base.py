@@ -20,7 +20,6 @@ from serpsage.utils import (
     published_date_in_range,
 )
 
-PROVIDER_ROUTES_TOKEN = "component.provider_routes"  # noqa: S105
 _ISO_COUNTRY_CODE_RE = re.compile(r"^[A-Za-z]{2}$")
 _LANGUAGE_TAG_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$")
 
@@ -264,7 +263,6 @@ class SearchProviderBase(ComponentBase[ProviderConfigT], ABC, Generic[ProviderCo
 
 
 __all__ = [
-    "PROVIDER_ROUTES_TOKEN",
     "ProviderConfigBase",
     "ProviderMeta",
     "RetrySettings",

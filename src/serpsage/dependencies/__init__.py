@@ -10,6 +10,8 @@ from serpsage.dependencies.utils import (
 
 _T = TypeVar("_T")
 
+CACHE_TOKEN: Final[str] = "cache"  # noqa: S105
+
 SEARCH_RUNNER: Final[str] = "app.search_runner"
 FETCH_RUNNER: Final[str] = "app.fetch_runner"
 CHILD_FETCH_RUNNER: Final[str] = "app.child_fetch_runner"
@@ -25,6 +27,7 @@ def Depends(dependency: Dependency[_T] | None = None, *, use_cache: bool = True)
 
 __all__ = [
     "ANSWER_RUNNER",
+    "CACHE_TOKEN",
     "CHILD_FETCH_RUNNER",
     "Dependency",
     "Depends",

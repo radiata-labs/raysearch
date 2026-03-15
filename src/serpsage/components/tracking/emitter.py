@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from contextlib import suppress
 from contextvars import ContextVar, Token
+from typing import Any
 from typing_extensions import override
 
 import anyio
@@ -12,8 +13,9 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 from pydantic import field_validator
 
 from serpsage.components.base import ComponentConfigBase
+from serpsage.components.loads import ComponentRegistry
 from serpsage.components.tracking.base import TrackingEmitterBase, TrackingSinkBase
-from serpsage.dependencies import Depends
+from serpsage.dependencies import CACHE_TOKEN, Depends, solve_dependencies
 from serpsage.models.components.tracking import (
     EventEnvelope,
     TrackingLevel,
@@ -23,7 +25,21 @@ from serpsage.models.components.tracking import (
 )
 
 _REQUEST_ID_CTX: ContextVar[str] = ContextVar("tracking_request_id", default="")
-TRACKING_SINKS_TOKEN = "component.tracking_sinks"  # noqa: S105
+
+
+async def tracking_sinks_factory(
+    cache: dict[Any, Any] = Depends(CACHE_TOKEN),
+    registry: ComponentRegistry = Depends(),
+) -> tuple[TrackingSinkBase, ...]:
+    """Factory function: collect all enabled tracking sinks."""
+    sinks: list[TrackingSinkBase] = []
+    for spec in registry.enabled_specs("tracking"):
+        if not issubclass(spec.cls, TrackingSinkBase):
+            continue
+        instance = await solve_dependencies(spec.cls, dependency_cache=cache)
+        if isinstance(instance, TrackingSinkBase):
+            sinks.append(instance)
+    return tuple(sinks)
 
 
 class TrackingEmitterConfig(ComponentConfigBase):
@@ -65,9 +81,9 @@ class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
         self,
         *,
         config: TrackingEmitterConfig,
-        sinks: tuple[object, ...] = Depends(TRACKING_SINKS_TOKEN),
+        sinks: tuple[TrackingSinkBase, ...] = Depends(tracking_sinks_factory),
     ) -> None:
-        self._sinks = [sink for sink in sinks if isinstance(sink, TrackingSinkBase)]
+        self._sinks = list(sinks)
         self._queue_size = max(1, int(config.queue_size))
         self._minimum_level: TrackingLevel = normalize_tracking_level(
             config.minimum_level
@@ -216,6 +232,6 @@ __all__ = [
     "AsyncTrackingEmitter",
     "NullTrackingEmitter",
     "NullTrackingEmitterConfig",
-    "TRACKING_SINKS_TOKEN",
     "TrackingEmitterConfig",
+    "tracking_sinks_factory",
 ]

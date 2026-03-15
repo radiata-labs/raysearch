@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from contextvars import ContextVar, Token
+from typing import Any
 from typing_extensions import override
 
 import anyio
@@ -10,12 +11,27 @@ from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from serpsage.components.base import ComponentConfigBase
+from serpsage.components.loads import ComponentRegistry
 from serpsage.components.metering.base import MeteringEmitterBase, MeteringSinkBase
-from serpsage.dependencies import Depends
+from serpsage.dependencies import CACHE_TOKEN, Depends, solve_dependencies
 from serpsage.models.components.metering import MeterRecord
 
 _REQUEST_ID_CTX: ContextVar[str] = ContextVar("metering_request_id", default="")
-METERING_SINKS_TOKEN = "component.metering_sinks"  # noqa: S105
+
+
+async def metering_sinks_factory(
+    cache: dict[Any, Any] = Depends(CACHE_TOKEN),
+    registry: ComponentRegistry = Depends(),
+) -> tuple[MeteringSinkBase, ...]:
+    """Factory function: collect all enabled metering sinks."""
+    sinks: list[MeteringSinkBase] = []
+    for spec in registry.enabled_specs("metering"):
+        if not issubclass(spec.cls, MeteringSinkBase):
+            continue
+        instance = await solve_dependencies(spec.cls, dependency_cache=cache)
+        if isinstance(instance, MeteringSinkBase):
+            sinks.append(instance)
+    return tuple(sinks)
 
 
 class MeteringEmitterConfig(ComponentConfigBase):
@@ -50,9 +66,9 @@ class AsyncMeteringEmitter(MeteringEmitterBase[MeteringEmitterConfig]):
         self,
         *,
         config: MeteringEmitterConfig,
-        sinks: tuple[object, ...] = Depends(METERING_SINKS_TOKEN),
+        sinks: tuple[MeteringSinkBase, ...] = Depends(metering_sinks_factory),
     ) -> None:
-        self._sinks = [sink for sink in sinks if isinstance(sink, MeteringSinkBase)]
+        self._sinks = list(sinks)
         self._queue_size = max(1, int(config.queue_size))
         self._send: MemoryObjectSendStream[MeterRecord] | None = None
         self._recv: MemoryObjectReceiveStream[MeterRecord] | None = None
@@ -147,7 +163,7 @@ class AsyncMeteringEmitter(MeteringEmitterBase[MeteringEmitterConfig]):
 __all__ = [
     "AsyncMeteringEmitter",
     "MeteringEmitterConfig",
-    "METERING_SINKS_TOKEN",
     "NullMeteringEmitter",
     "NullMeteringEmitterConfig",
+    "metering_sinks_factory",
 ]

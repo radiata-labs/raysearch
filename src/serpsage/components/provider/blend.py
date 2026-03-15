@@ -38,20 +38,37 @@ from typing_extensions import override
 import anyio
 from pydantic import Field, field_validator
 
+from serpsage.components.loads import ComponentRegistry
 from serpsage.components.provider.base import (
-    PROVIDER_ROUTES_TOKEN,
     ProviderConfigBase,
     ProviderMeta,
     SearchProviderBase,
 )
 from serpsage.components.rank.base import RankerBase
-from serpsage.dependencies import Depends
+from serpsage.dependencies import CACHE_TOKEN, Depends, solve_dependencies
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import canonicalize_url, clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.settings.models import AppSettings
+
+
+async def provider_routes_factory(
+    cache: dict[Any, Any] = Depends(CACHE_TOKEN),
+    registry: ComponentRegistry = Depends(),
+) -> tuple[SearchProviderBase[ProviderConfigBase], ...]:
+    """Factory function: collect all enabled provider routes (excluding blend)."""
+    routes: list[SearchProviderBase[ProviderConfigBase]] = []
+    for spec in registry.enabled_specs("provider"):
+        if spec.name == "blend":
+            continue
+        if not issubclass(spec.cls, SearchProviderBase):
+            continue
+        instance = await solve_dependencies(spec.cls, dependency_cache=cache)
+        if isinstance(instance, SearchProviderBase):
+            routes.append(instance)
+    return tuple(routes)
 
 
 def _normalize_source_names(value: object) -> set[str]:
@@ -85,12 +102,12 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
     def __init__(
         self,
         *,
-        routes: tuple[object, ...] = Depends(PROVIDER_ROUTES_TOKEN),
+        routes: tuple[SearchProviderBase[ProviderConfigBase], ...] = Depends(provider_routes_factory),
         ranker: RankerBase = Depends(),
     ) -> None:
         self.ranker = ranker
         self._all_routes: dict[str, SearchProviderBase[ProviderConfigBase]] = {}
-        for route in cast("tuple[SearchProviderBase[ProviderConfigBase], ...]", routes):
+        for route in routes:
             name = route.config.name
             if name == "blend":
                 continue
@@ -267,5 +284,6 @@ __all__ = [
     "BlendProvider",
     "BlendProviderConfig",
     "build_engine_selection_context",
+    "provider_routes_factory",
     "resolve_engine_selection_routes",
 ]

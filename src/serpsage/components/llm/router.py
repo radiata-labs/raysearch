@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, TypeVar, cast, overload
+from typing import Any, TypeVar, overload
 from typing_extensions import override
 
 from pydantic import BaseModel
@@ -12,7 +12,8 @@ from serpsage.components.llm.base import (
     LLMClientBase,
     LLMConfig,
 )
-from serpsage.dependencies import Depends
+from serpsage.components.loads import ComponentRegistry
+from serpsage.dependencies import CACHE_TOKEN, Depends, solve_dependencies
 from serpsage.models.components.llm import (
     ChatDictResult,
     ChatModelResult,
@@ -20,7 +21,22 @@ from serpsage.models.components.llm import (
     ChatTextResult,
 )
 
-LLM_ROUTES_TOKEN = "component.llm_routes"  # noqa: S105
+
+async def llm_routes_factory(
+    cache: dict[Any, Any] = Depends(CACHE_TOKEN),
+    registry: ComponentRegistry = Depends(),
+) -> tuple[LLMClientBase[Any], ...]:
+    """Factory function: collect all enabled LLM routes (excluding RoutedLLMClient)."""
+    routes: list[LLMClientBase[Any]] = []
+    for spec in registry.enabled_specs("llm"):
+        if spec.cls.__name__ == "RoutedLLMClient":
+            continue
+        if not issubclass(spec.cls, LLMClientBase):
+            continue
+        instance = await solve_dependencies(spec.cls, dependency_cache=cache)
+        if isinstance(instance, LLMClientBase):
+            routes.append(instance)
+    return tuple(routes)
 
 
 class LLMRouterConfig(ComponentConfigBase):
@@ -35,11 +51,10 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
     def __init__(
         self,
         *,
-        routes: tuple[object, ...] = Depends(LLM_ROUTES_TOKEN),
+        routes: tuple[LLMClientBase[Any], ...] = Depends(llm_routes_factory),
     ) -> None:
-        route_clients = cast("tuple[LLMClientBase[Any], ...]", routes)
         self.routes: dict[str, tuple[LLMClientBase[LLMConfig], str]] = {}
-        for client in route_clients:
+        for client in routes:
             for model_cfg in client.configured_models():
                 if not model_cfg.api_key:
                     continue
@@ -139,4 +154,4 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
         )
 
 
-__all__ = ["LLM_ROUTES_TOKEN", "RoutedLLMClient"]
+__all__ = ["RoutedLLMClient", "llm_routes_factory"]

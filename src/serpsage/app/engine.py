@@ -15,31 +15,23 @@ from serpsage.components.crawl.base import CrawlerBase
 from serpsage.components.extract.base import ExtractorBase
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.llm.base import LLMClientBase
-from serpsage.components.llm.router import LLM_ROUTES_TOKEN
 from serpsage.components.loads import (
     ComponentRegistry,
     load_components,
     materialize_settings,
 )
 from serpsage.components.metering import MeteringEmitterBase
-from serpsage.components.metering.base import MeteringSinkBase
-from serpsage.components.metering.emitter import (
-    METERING_SINKS_TOKEN,
-    NullMeteringEmitter,
-)
-from serpsage.components.provider.base import PROVIDER_ROUTES_TOKEN, SearchProviderBase
+from serpsage.components.metering.emitter import NullMeteringEmitter
+from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.components.tracking import TrackingEmitterBase
-from serpsage.components.tracking.base import TrackingSinkBase
-from serpsage.components.tracking.emitter import (
-    TRACKING_SINKS_TOKEN,
-    NullTrackingEmitter,
-)
+from serpsage.components.tracking.emitter import NullTrackingEmitter
 from serpsage.core.overrides import Overrides
 from serpsage.core.workunit import ClockBase, WorkUnit
 from serpsage.dependencies import (
     ANSWER_RUNNER,
+    CACHE_TOKEN,
     CHILD_FETCH_RUNNER,
     FETCH_RUNNER,
     RESEARCH_ROUND_RUNNER,
@@ -223,6 +215,7 @@ class Engine(WorkUnit):
             cache[spec.config_cls] = spec.config
             if not bool(spec.config.enabled):
                 cache[spec.cls] = None
+        cache[CACHE_TOKEN] = cache
 
         async def solve(
             dependent: Any,
@@ -283,14 +276,7 @@ class Engine(WorkUnit):
                 continue
             cache[contract] = await solve(registry.default_spec(family).cls)
 
-        tracking_sinks: list[object] = []
-        for spec in registry.enabled_specs("tracking"):
-            if not issubclass(spec.cls, TrackingSinkBase):
-                continue
-            sink = await solve(spec.cls)
-            if sink is not None:
-                tracking_sinks.append(sink)
-        cache[TRACKING_SINKS_TOKEN] = tuple(tracking_sinks)
+        # Tracking emitter setup
         tracker_emitter: TrackingEmitterBase[Any]
         if registry.enabled_specs("tracking") and overrides.tracker is None:
             tracker_emitter = await solve(registry.default_spec("tracking").cls)
@@ -301,14 +287,7 @@ class Engine(WorkUnit):
         cache[TrackingEmitterBase] = tracker_emitter
         cache[type(tracker_emitter)] = tracker_emitter
 
-        metering_sinks: list[object] = []
-        for spec in registry.enabled_specs("metering"):
-            if not issubclass(spec.cls, MeteringSinkBase):
-                continue
-            sink = await solve(spec.cls)
-            if sink is not None:
-                metering_sinks.append(sink)
-        cache[METERING_SINKS_TOKEN] = tuple(metering_sinks)
+        # Metering emitter setup
         meter_emitter: MeteringEmitterBase[Any]
         if registry.enabled_specs("metering") and overrides.meter is None:
             meter_emitter = await solve(registry.default_spec("metering").cls)
@@ -319,16 +298,7 @@ class Engine(WorkUnit):
         cache[MeteringEmitterBase] = meter_emitter
         cache[type(meter_emitter)] = meter_emitter
 
-        provider_routes: list[object] = []
-        for spec in registry.enabled_specs("provider"):
-            if spec.name == "blend":
-                continue
-            if not issubclass(spec.cls, SearchProviderBase):
-                continue
-            route = await solve(spec.cls)
-            if route is not None:
-                provider_routes.append(route)
-        cache[PROVIDER_ROUTES_TOKEN] = tuple(provider_routes)
+        # Provider setup
         if overrides.provider is not None:
             cache[SearchProviderBase] = overrides.provider
             cache[type(overrides.provider)] = overrides.provider
@@ -337,16 +307,7 @@ class Engine(WorkUnit):
                 registry.default_spec("provider").cls
             )
 
-        llm_routes: list[object] = []
-        for spec in registry.enabled_specs("llm"):
-            if spec.cls.__name__ == "RoutedLLMClient":
-                continue
-            if not issubclass(spec.cls, LLMClientBase):
-                continue
-            route = await solve(spec.cls)
-            if route is not None:
-                llm_routes.append(route)
-        cache[LLM_ROUTES_TOKEN] = tuple(llm_routes)
+        # LLM setup
         if overrides.llm is not None:
             cache[LLMClientBase] = overrides.llm
             cache[type(overrides.llm)] = overrides.llm
