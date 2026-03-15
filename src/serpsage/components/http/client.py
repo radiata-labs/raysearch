@@ -11,8 +11,8 @@ class HttpClient(HttpClientBase[HttpClientConfig]):
     def __init__(
         self,
     ) -> None:
-        registry = self.rt.components
-        override_client = registry.http_override() if registry is not None else None
+        registry = self.require_components()
+        override_client = registry.http_override()
         if isinstance(override_client, httpx.AsyncClient):
             self._client = override_client
             self._owns_client = False

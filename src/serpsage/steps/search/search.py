@@ -208,7 +208,6 @@ class SearchStep(StepBase[SearchStepContext]):
         telemetry = self.telemetry
         if telemetry is None:
             return
-        provider_backend = self.components.family_name("provider")
         with suppress(Exception):
             await telemetry.emit(
                 event_name="meter.usage.search_call",
@@ -223,13 +222,11 @@ class SearchStep(StepBase[SearchStepContext]):
                 attrs={
                     "query": query,
                     "mode": str(ctx.plan.mode),
-                    "provider_backend": provider_backend,
                 },
                 meter=MeterPayload(
                     meter_type="search_call",
                     unit="call",
                     quantity=1.0,
-                    provider=provider_backend,
                 ),
             )
 

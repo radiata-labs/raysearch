@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self
 
@@ -12,12 +13,20 @@ if TYPE_CHECKING:
 
     from serpsage.components.loads import ComponentRegistry
     from serpsage.components.telemetry import TelemetryEmitterBase
-    from serpsage.core.runtime import ClockBase, Runtime
     from serpsage.settings.models import AppSettings
 
 
+class ClockBase(ABC):
+    @abstractmethod
+    def now_ms(self) -> int:
+        raise NotImplementedError
+
+
 class WorkUnit:
-    rt: Runtime = Depends()
+    settings: AppSettings = Depends()
+    clock: ClockBase = Depends()
+    telemetry: TelemetryEmitterBase[Any] | None = None
+    components: ComponentRegistry | None = None
 
     _wu_bootstrapped: bool
     _wu_deps: list[WorkUnit]
@@ -44,10 +53,20 @@ class WorkUnit:
                 f"{type(self).__name__} is not bootstrapped; construct it through the dependency solver"
             )
 
-    def _wu_bootstrap(self, rt: Runtime | object) -> None:
+    def _wu_bootstrap(
+        self,
+        *,
+        settings: AppSettings,
+        clock: ClockBase,
+        telemetry: TelemetryEmitterBase[Any] | None = None,
+        components: ComponentRegistry | None = None,
+    ) -> None:
         if bool(getattr(self, "_wu_bootstrapped", False)):
             raise RuntimeError(f"{type(self).__name__} is already bootstrapped")
-        self.rt = rt  # type: ignore[assignment]
+        self.settings = settings
+        self.clock = clock
+        self.telemetry = telemetry
+        self.components = components
         self._wu_bootstrapped = True
         self._wu_deps = []
         self._wu_dep_ids = set()
@@ -104,23 +123,10 @@ class WorkUnit:
             for item in value:
                 self._wu_collect_injected_one(item, seen=seen, found=found)
 
-    @property
-    def settings(self) -> AppSettings:
-        return self.rt.settings
-
-    @property
-    def clock(self) -> ClockBase:
-        return self.rt.clock
-
-    @property
-    def telemetry(self) -> TelemetryEmitterBase[Any] | None:
-        return self.rt.telemetry
-
-    @property
-    def components(self) -> ComponentRegistry:
-        container = self.rt.components
+    def require_components(self) -> ComponentRegistry:
+        container = self.components
         if container is None:
-            raise RuntimeError("component registry is not attached to the runtime")
+            raise RuntimeError("component registry is not attached to the workunit")
         return container
 
     def bind_deps(self, *deps: WorkUnit | None) -> None:
@@ -270,4 +276,4 @@ class WorkUnit:
         await self.aclose()
 
 
-__all__ = ["WorkUnit"]
+__all__ = ["ClockBase", "WorkUnit"]

@@ -236,14 +236,28 @@ async def _execute_class(
         "_T | AbstractAsyncContextManager[_T] | AbstractContextManager[_T]",
         dependent.__new__(dependent),
     )
-    from serpsage.core.runtime import Runtime
-    from serpsage.core.workunit import WorkUnit
+    from serpsage.components.loads import ComponentRegistry
+    from serpsage.components.telemetry import TelemetryEmitterBase
+    from serpsage.core.workunit import ClockBase, WorkUnit
+    from serpsage.settings.models import AppSettings
 
     if isinstance(depend_obj, WorkUnit):
-        runtime = dependency_cache.get(Runtime)
-        if runtime is None:
-            raise TypeError("Runtime must be available before constructing a WorkUnit")
-        depend_obj._wu_bootstrap(runtime)
+        settings = dependency_cache.get(AppSettings)
+        if settings is None:
+            raise TypeError(
+                "AppSettings must be available before constructing a WorkUnit"
+            )
+        clock = dependency_cache.get(ClockBase)
+        if clock is None:
+            raise TypeError(
+                "ClockBase must be available before constructing a WorkUnit"
+            )
+        depend_obj._wu_bootstrap(
+            settings=settings,
+            clock=clock,
+            telemetry=dependency_cache.get(TelemetryEmitterBase),
+            components=dependency_cache.get(ComponentRegistry),
+        )
     for key, value in values.items():
         setattr(depend_obj, key, value)
     marker = object()

@@ -146,7 +146,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
         if self._session is None:
             raise RuntimeError("curl_cffi session is not initialized")
         cfg = self.config
-        default_http_cfg = self.components.resolve_default_config(
+        default_http_cfg = self.require_components().resolve_default_config(
             "http", expected_type=HttpClientConfig
         )
         req_timeout_s = timeout_s or cfg.timeout_s

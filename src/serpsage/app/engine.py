@@ -27,8 +27,8 @@ from serpsage.components.rate_limit.base import RateLimiterBase
 from serpsage.components.telemetry import TelemetryEmitterBase
 from serpsage.components.telemetry.base import EventSinkBase
 from serpsage.components.telemetry.emitter import TELEMETRY_SINKS_TOKEN
-from serpsage.core.runtime import ClockBase, Overrides, Runtime
-from serpsage.core.workunit import WorkUnit
+from serpsage.core.overrides import Overrides
+from serpsage.core.workunit import ClockBase, WorkUnit
 from serpsage.dependencies import (
     ANSWER_RUNNER,
     CHILD_FETCH_RUNNER,
@@ -159,7 +159,7 @@ class Engine(WorkUnit):
                 )
             if not bool(getattr(override_value, "_wu_bootstrapped", False)):
                 raise TypeError(
-                    f"override `{name}` must have a bootstrapped WorkUnit runtime"
+                    f"override `{name}` must already be bootstrapped as a WorkUnit"
                 )
 
         try:
@@ -197,22 +197,16 @@ class Engine(WorkUnit):
             settings=settings,
             components=components,
         )
-        runtime = Runtime(
-            settings=normalized_settings,
-            clock=(overrides.clock or SystemClock()),
-            env=dict(normalized_settings.runtime_env or {}),
-        )
+        clock = overrides.clock or SystemClock()
         registry = ComponentRegistry(
             settings=normalized_settings,
             components=components,
             overrides=overrides,
-            env=runtime.env,
+            env=dict(normalized_settings.runtime_env or {}),
         )
-        runtime.components = registry
         cache: dict[Any, Any] = {
-            AppSettings: runtime.settings,
-            ClockBase: runtime.clock,
-            Runtime: runtime,
+            AppSettings: normalized_settings,
+            ClockBase: clock,
             ComponentRegistry: registry,
         }
         for spec in registry.all_specs():
@@ -328,10 +322,6 @@ class Engine(WorkUnit):
             cache[type(overrides.llm)] = overrides.llm
         elif registry.enabled_specs("llm"):
             cache[LLMClientBase] = await solve(registry.default_spec("llm").cls)
-
-        telemetry = cache.get(TelemetryEmitterBase)
-        if isinstance(telemetry, TelemetryEmitterBase):
-            runtime.telemetry = telemetry
 
         cache[CHILD_FETCH_RUNNER] = await solve_transient(
             RunnerBase,

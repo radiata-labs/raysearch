@@ -11,8 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from serpsage.app.engine import Engine
-    from serpsage.core.runtime import Overrides
-from serpsage.core.runtime import Overrides
+    from serpsage.core.overrides import Overrides
 from serpsage.models.app.request import (
     AnswerRequest,
     CrawlMode,
@@ -45,6 +44,10 @@ def __getattr__(name: str) -> object:
         from serpsage.app.engine import Engine
 
         return Engine
+    if name == "Overrides":
+        from serpsage.core.overrides import Overrides
+
+        return Overrides
     raise AttributeError(name)
 
 

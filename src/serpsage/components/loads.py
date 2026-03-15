@@ -29,7 +29,7 @@ from serpsage.settings.models import (
 if TYPE_CHECKING:
     import httpx
 
-    from serpsage.core.runtime import Overrides
+    from serpsage.core.overrides import Overrides
 
 _FAMILY_SETTING_BASES: dict[str, type[SettingModel]] = {
     "cache": CacheSettings,

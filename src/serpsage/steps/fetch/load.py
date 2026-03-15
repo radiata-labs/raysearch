@@ -40,15 +40,16 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             )
             return ctx
         mode = str(ctx.page.crawl_mode or "fallback")
-        default_crawl_cfg = self.components.resolve_default_config(
+        registry = self.require_components()
+        default_crawl_cfg = registry.resolve_default_config(
             "crawl", expected_type=CrawlerConfigBase
         )
-        default_cache_cfg = self.components.resolve_default_config(
+        default_cache_cfg = registry.resolve_default_config(
             "cache", expected_type=CacheConfigBase
         )
         cache_key = _cache_key(
             url=url,
-            backend=self.components.family_name("crawl"),
+            backend=registry.family_name("crawl"),
         )
         timeout_s = float(ctx.page.crawl_timeout_s or 0.0) or float(
             default_crawl_cfg.timeout_s

@@ -9,7 +9,7 @@ from typing import Any
 def load_settings(
     path: str | None = None, *, env: dict[str, str] | None = None
 ) -> dict[str, Any]:
-    """Load raw settings data from YAML/JSON and preserve runtime env.
+    """Load raw settings data from YAML/JSON and preserve process env values.
 
     Precedence:
     1) explicit `path`

@@ -95,7 +95,7 @@ class ComponentBase(WorkUnit, Generic[ConfigT]):
         ):
             value = getattr(
                 getattr(
-                    self.rt.settings.components, config_class.__setting_family__, None
+                    self.settings.components, config_class.__setting_family__, None
                 ),
                 config_class.__setting_name__,
                 default,

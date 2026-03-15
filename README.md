@@ -11,7 +11,7 @@ SerpSage is an async-only SERP, fetch, answer, and research engine. Public entry
 
 ## Component System
 
-The component layer now loads through `serpsage.load` and is isolated per
+The component layer now loads through `serpsage.components.loads` and is isolated per
 `Engine.from_settings(...)` call.
 
 - Each component owns its own `pydantic` config model.
@@ -19,7 +19,7 @@ The component layer now loads through `serpsage.load` and is isolated per
 - Builtin components self-register through metadata attached at import time.
 - Each `from_settings(...)` call builds a fresh registry and component catalog.
 - Raw user-declared instances are tracked separately from merged defaults.
-- Runtime assembly uses automatic dependency injection by `family + contract + default`.
+- WorkUnit bootstrap uses direct dependency injection for settings, clock, telemetry, and component registry.
 - `backend: Literal[...]` is removed from settings. Families now declare `default` and `instances`.
 - Components with `config_optional=True` may load from merged defaults even when
   the instance was not explicitly written in the config file.
@@ -74,7 +74,7 @@ Reference config: `demo/search_config_example.yaml`.
 
 ## Environment Injection
 
-`load_settings()` only loads the top-level file and preserves runtime env. Component-specific env overrides are implemented by each component config model.
+`load_settings()` only loads the top-level file and preserves environment values in `AppSettings.runtime_env`. Component-specific env overrides are implemented by each component config model.
 
 Examples:
 
@@ -137,5 +137,5 @@ async with Engine.from_settings(settings) as engine:
 
 - `search.mode`: `fast | auto | deep`
 - Fetch remains markdown-first.
-- Runtime component loading lives under `serpsage.load`.
+- Component loading lives under `serpsage.components.loads`.
 - JS rendering still requires Playwright browsers to be installed.
