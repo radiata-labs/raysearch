@@ -259,6 +259,28 @@ class Engine(WorkUnit):
                 out.append(instance)
             return out
 
+        # Tracking emitter setup (must be before other WorkUnits)
+        tracker_emitter: TrackingEmitterBase[Any]
+        if registry.enabled_specs("tracking") and overrides.tracker is None:
+            tracker_emitter = await solve(registry.default_spec("tracking").cls)
+        elif overrides.tracker is not None:
+            tracker_emitter = overrides.tracker
+        else:
+            tracker_emitter = await solve_transient(NullTrackingEmitter)
+        cache[TrackingEmitterBase] = tracker_emitter
+        cache[type(tracker_emitter)] = tracker_emitter
+
+        # Metering emitter setup (must be before other WorkUnits)
+        meter_emitter: MeteringEmitterBase[Any]
+        if registry.enabled_specs("metering") and overrides.meter is None:
+            meter_emitter = await solve(registry.default_spec("metering").cls)
+        elif overrides.meter is not None:
+            meter_emitter = overrides.meter
+        else:
+            meter_emitter = await solve_transient(NullMeteringEmitter)
+        cache[MeteringEmitterBase] = meter_emitter
+        cache[type(meter_emitter)] = meter_emitter
+
         for family, contract, override_value in (
             ("http", HttpClientBase, None),
             ("cache", CacheBase, overrides.cache),
@@ -275,28 +297,6 @@ class Engine(WorkUnit):
             if not enabled_specs:
                 continue
             cache[contract] = await solve(registry.default_spec(family).cls)
-
-        # Tracking emitter setup
-        tracker_emitter: TrackingEmitterBase[Any]
-        if registry.enabled_specs("tracking") and overrides.tracker is None:
-            tracker_emitter = await solve(registry.default_spec("tracking").cls)
-        elif overrides.tracker is not None:
-            tracker_emitter = overrides.tracker
-        else:
-            tracker_emitter = await solve_transient(NullTrackingEmitter)
-        cache[TrackingEmitterBase] = tracker_emitter
-        cache[type(tracker_emitter)] = tracker_emitter
-
-        # Metering emitter setup
-        meter_emitter: MeteringEmitterBase[Any]
-        if registry.enabled_specs("metering") and overrides.meter is None:
-            meter_emitter = await solve(registry.default_spec("metering").cls)
-        elif overrides.meter is not None:
-            meter_emitter = overrides.meter
-        else:
-            meter_emitter = await solve_transient(NullMeteringEmitter)
-        cache[MeteringEmitterBase] = meter_emitter
-        cache[type(meter_emitter)] = meter_emitter
 
         # Provider setup
         if overrides.provider is not None:

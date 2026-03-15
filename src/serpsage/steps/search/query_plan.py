@@ -261,6 +261,60 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
             "- keep only qualifiers required by the original question.",
         ]
 
+    def _build_expansion_query_schema(self, *, has_routes: bool) -> dict[str, Any]:
+        if not has_routes:
+            return {"type": "string", "minLength": 1}
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["query", "include_sources"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1},
+                "include_sources": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                },
+            },
+        }
+
+    def _build_expansion_query_messages(
+        self,
+        *,
+        query: str,
+        max_queries: int,
+        engine_selection_context: str,
+    ) -> list[dict[str, str]]:
+        lines = [
+            f"Primary query: {query}",
+            f"Generate up to {max_queries} additional search queries.",
+            "Requirements:",
+            "- keep the same language and script as the primary query.",
+            "- keep the same entities and intent boundaries.",
+            "- keep each query concise and web-search friendly.",
+            "- make each query semantically distinct from the others.",
+            "- include time or entity qualifiers only when implied by the primary query.",
+        ]
+        if engine_selection_context:
+            lines.append(
+                "ENGINE_SELECTION_OUTPUT_RULES:\n"
+                "- Each query in the array must be an object with query and include_sources.\n"
+                "- Prefer include_sources=[] for broad first-pass retrieval.\n"
+                "- Restrict engines only when the query clearly targets a specific evidence route.\n\n"
+                f"{engine_selection_context}"
+            )
+        else:
+            lines.append('Output JSON: {"queries": ["...", "..."]}')
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You generate additional deep-search queries for a web retrieval pipeline. "
+                    "Return JSON only."
+                ),
+            },
+            {"role": "user", "content": "\n".join(lines)},
+        ]
+
     async def _collect_llm_queries(
         self,
         *,
@@ -276,6 +330,7 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
                 request_id=request_id,
                 model_name=model_name,
                 max_queries=max_queries,
+                subsystem=ctx.runtime.engine_selection_subsystem or "search",
             )
         except Exception as exc:  # noqa: BLE001
             await self.tracker.error(
@@ -304,46 +359,36 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
         request_id: str,
         model_name: str,
         max_queries: int,
+        subsystem: Literal["search", "research", "answer"],
     ) -> list[QuerySourceSpec]:
+        routes = resolve_engine_selection_routes(
+            settings=self.settings,
+            subsystem=subsystem,
+            provider=self.provider,
+        )
+        engine_selection_context = build_engine_selection_context(routes=routes)
+        has_routes = bool(routes)
+
+        response_format: dict[str, Any] = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["queries"],
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "items": self._build_expansion_query_schema(has_routes=has_routes),
+                    "maxItems": max_queries,
+                }
+            },
+        }
         result = await self.llm.create(
             model=model_name,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You generate additional deep-search queries for a web retrieval pipeline. "
-                        "Return JSON only."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": "\n".join(
-                        [
-                            f"Primary query: {query}",
-                            f"Generate up to {max_queries} additional search queries.",
-                            "Requirements:",
-                            "- keep the same language and script as the primary query.",
-                            "- keep the same entities and intent boundaries.",
-                            "- keep each query concise and web-search friendly.",
-                            "- make each query semantically distinct from the others.",
-                            "- include time or entity qualifiers only when implied by the primary query.",
-                            'Output JSON: {"queries": ["...", "..."]}',
-                        ]
-                    ),
-                },
-            ],
-            response_format={
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["queries"],
-                "properties": {
-                    "queries": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "maxItems": max_queries,
-                    }
-                },
-            },
+            messages=self._build_expansion_query_messages(
+                query=query,
+                max_queries=max_queries,
+                engine_selection_context=engine_selection_context,
+            ),
+            response_format=response_format,
             timeout_s=self.settings.search.expansion.llm_timeout_s,
         )
         await self.meter.record(
@@ -416,11 +461,10 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
         queries: list[QuerySourceSpec] = []
         seen: set[tuple[str, tuple[str, ...]]] = set()
         for value in values:
-            query = (
-                value.model_copy(deep=True)
-                if isinstance(value, QuerySourceSpec)
-                else QuerySourceSpec.model_validate(value)
-            )
+            if isinstance(value, QuerySourceSpec):
+                query = value.model_copy(deep=True)
+            else:
+                query = QuerySourceSpec.model_validate(value)
             key = (query.query.casefold(), tuple(query.include_sources))
             if key in seen:
                 continue

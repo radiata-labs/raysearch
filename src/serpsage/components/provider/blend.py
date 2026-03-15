@@ -102,7 +102,9 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
     def __init__(
         self,
         *,
-        routes: tuple[SearchProviderBase[ProviderConfigBase], ...] = Depends(provider_routes_factory),
+        routes: tuple[SearchProviderBase[ProviderConfigBase], ...] = Depends(
+            provider_routes_factory
+        ),
         ranker: RankerBase = Depends(),
     ) -> None:
         self.ranker = ranker
@@ -268,7 +270,9 @@ def build_engine_selection_context(*, routes: tuple[ProviderMeta, ...]) -> str:
             "- Restrict include_sources only when the query clearly benefits from targeted evidence routes.",
             "- If the query needs general web coverage, prefer multiple general engines or [].",
             "- Choose engines using both description and preference: description tells you what the engine covers, preference tells you what query shape it handles best.",
-            "- Prefer the smallest engine set that still matches the evidence need; do not add engines with overlapping value unless broader recall is clearly useful.",
+            "- Aim for the smallest engine set that effectively addresses the query, but consider including multiple engines if they provide complementary coverage or diverse perspectives that together enhance the answer.",
+            "- Avoid adding engines with largely redundant coverage, unless the query explicitly benefits from broader recall (e.g., comprehensive search).",
+            "- For queries that require diverse sources (e.g., news from different outlets, multiple viewpoints, or cross-validation), selecting several relevant engines is recommended.",
             "- If you are unsure which engine subset is best, keep include_sources empty.",
             "ENGINE_CATALOG:",
             *[

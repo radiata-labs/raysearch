@@ -52,6 +52,13 @@ class QuerySourceSpec(MutableModel):
     query: str
     include_sources: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_from_string(cls, value: object) -> object:
+        if isinstance(value, str):
+            return {"query": value}
+        return value
+
     @field_validator("include_sources", mode="before")
     @classmethod
     def _validate_include_sources(cls, value: object) -> list[str]:
