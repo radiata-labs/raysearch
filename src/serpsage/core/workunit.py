@@ -12,9 +12,8 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from serpsage.components.loads import ComponentRegistry
-    from serpsage.components.metering import MeteringEmitterBase
-    from serpsage.components.tracking import TrackingEmitterBase
     from serpsage.settings.models import AppSettings
+    from serpsage.telemetry import MeteringEmitterBase, TrackingEmitterBase
 
 
 class ClockBase(ABC):
@@ -26,8 +25,6 @@ class ClockBase(ABC):
 class WorkUnit:
     settings: AppSettings = Depends()
     clock: ClockBase = Depends()
-    meter: MeteringEmitterBase[Any]
-    tracker: TrackingEmitterBase[Any]
     components: ComponentRegistry
 
     _wu_bootstrapped: bool
@@ -38,6 +35,28 @@ class WorkUnit:
     _wu_initialized: bool
     _wu_closed: bool
     _wu_init_order: list[WorkUnit] | None
+    _tracker: TrackingEmitterBase | None
+    _meter: MeteringEmitterBase | None
+
+    @property
+    def tracker(self) -> TrackingEmitterBase:
+        """Return tracker. Subclasses can override with Depends() injection."""
+        if self._tracker is None:
+            raise RuntimeError(
+                f"{type(self).__name__} tracker is not initialized; "
+                "sink components should not use this property"
+            )
+        return self._tracker
+
+    @property
+    def meter(self) -> MeteringEmitterBase:
+        """Return meter. Subclasses can override with Depends() injection."""
+        if self._meter is None:
+            raise RuntimeError(
+                f"{type(self).__name__} meter is not initialized; "
+                "sink components should not use this property"
+            )
+        return self._meter
 
     def __init_subclass__(cls, **_kwargs: Any) -> None:
         super().__init_subclass__()
@@ -60,16 +79,12 @@ class WorkUnit:
         *,
         settings: AppSettings,
         clock: ClockBase,
-        tracker: TrackingEmitterBase[Any],
-        meter: MeteringEmitterBase[Any],
         components: ComponentRegistry,
     ) -> None:
         if bool(getattr(self, "_wu_bootstrapped", False)):
             raise RuntimeError(f"{type(self).__name__} is already bootstrapped")
         self.settings = settings
         self.clock = clock
-        self.tracker = tracker
-        self.meter = meter
         self.components = components
         self._wu_bootstrapped = True
         self._wu_deps = []
@@ -79,6 +94,11 @@ class WorkUnit:
         self._wu_initialized = False
         self._wu_closed = False
         self._wu_init_order = None
+        # Initialize telemetry to None; subclasses can set via Depends() injection
+        if not hasattr(self, "_tracker"):
+            self._tracker = None
+        if not hasattr(self, "_meter"):
+            self._meter = None
 
     def _wu_bind_injected(self, *values: object) -> None:
         self._require_bootstrapped()

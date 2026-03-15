@@ -4,6 +4,37 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from serpsage.models.components.tracking import TrackingLevel, normalize_tracking_level
+
+
+class TrackingEmitterSettings(BaseModel):
+    """Tracking emitter configuration (NOT a component config)."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    queue_size: int = Field(default=2048, ge=1)
+    minimum_level: TrackingLevel = "INFO"
+    drop_noncritical_when_full: bool = True
+
+    @field_validator("minimum_level", mode="before")
+    @classmethod
+    def _validate_level(cls, value: object) -> TrackingLevel:
+        return normalize_tracking_level(value)
+
+
+class MeteringEmitterSettings(BaseModel):
+    """Metering emitter configuration (NOT a component config)."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    queue_size: int = Field(default=2048, ge=1)
+
+
+class TelemetrySettings(BaseModel):
+    """Top-level telemetry configuration."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    tracking: TrackingEmitterSettings = Field(default_factory=TrackingEmitterSettings)
+    metering: MeteringEmitterSettings = Field(default_factory=MeteringEmitterSettings)
+
 
 class SettingModel(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -392,6 +423,7 @@ class ComponentSettings(SettingModel):
 class AppSettings(SettingModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     components: ComponentSettings = Field(default_factory=ComponentSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
 
     search: SearchSettings = Field(default_factory=SearchSettings)
     fetch: FetchSettings = Field(default_factory=FetchSettings)
@@ -416,11 +448,14 @@ __all__ = [
     "ExtractSettings",
     "HttpSettings",
     "LlmSettings",
+    "MeteringEmitterSettings",
     "MeteringSettings",
     "ProviderSettings",
     "RankSettings",
     "RateLimitSettings",
     "SettingModel",
+    "TelemetrySettings",
+    "TrackingEmitterSettings",
     "TrackingSettings",
     "ReportStyleKey",
     "ResearchModeSettings",

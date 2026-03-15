@@ -20,13 +20,11 @@ from serpsage.components.loads import (
     load_components,
     materialize_settings,
 )
-from serpsage.components.metering import MeteringEmitterBase
-from serpsage.components.metering.emitter import NullMeteringEmitter
+from serpsage.components.metering.base import MeteringSinkBase
 from serpsage.components.provider.base import SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.components.tracking import TrackingEmitterBase
-from serpsage.components.tracking.emitter import NullTrackingEmitter
+from serpsage.components.tracking.base import TrackingSinkBase
 from serpsage.core.overrides import Overrides
 from serpsage.core.workunit import ClockBase, WorkUnit
 from serpsage.dependencies import (
@@ -88,6 +86,12 @@ from serpsage.steps.search import (
     SearchRerankStep,
     SearchStep,
 )
+from serpsage.telemetry import (
+    AsyncMeteringEmitter,
+    AsyncTrackingEmitter,
+    MeteringEmitterBase,
+    TrackingEmitterBase,
+)
 
 if TYPE_CHECKING:
     from serpsage.models.app.request import (
@@ -120,8 +124,6 @@ class Engine(WorkUnit):
         self._answer_runner = answer_runner
         self._research_runner = research_runner
         self.bind_deps(
-            self.tracker,
-            self.meter,
             self._search_runner,
             self._fetch_runner,
             self._answer_runner,
@@ -259,27 +261,29 @@ class Engine(WorkUnit):
                 out.append(instance)
             return out
 
-        # Tracking emitter setup (must be before other WorkUnits)
-        tracker_emitter: TrackingEmitterBase[Any]
-        if registry.enabled_specs("tracking") and overrides.tracker is None:
-            tracker_emitter = await solve(registry.default_spec("tracking").cls)
-        elif overrides.tracker is not None:
-            tracker_emitter = overrides.tracker
-        else:
-            tracker_emitter = await solve_transient(NullTrackingEmitter)
-        cache[TrackingEmitterBase] = tracker_emitter
-        cache[type(tracker_emitter)] = tracker_emitter
+        # Telemetry setup: resolve sinks first, then emitters via dependency injection
+        # Sink -> Emitter dependency is handled by WorkUnit lifecycle
+        if registry.enabled_specs("tracking"):
+            cache[TrackingSinkBase] = await solve(registry.default_spec("tracking").cls)
+        if registry.enabled_specs("metering"):
+            cache[MeteringSinkBase] = await solve(registry.default_spec("metering").cls)
 
-        # Metering emitter setup (must be before other WorkUnits)
-        meter_emitter: MeteringEmitterBase[Any]
-        if registry.enabled_specs("metering") and overrides.meter is None:
-            meter_emitter = await solve(registry.default_spec("metering").cls)
-        elif overrides.meter is not None:
-            meter_emitter = overrides.meter
+        # Resolve emitters via DI (they depend on sinks)
+        if overrides.tracker is not None:
+            cache[TrackingEmitterBase] = overrides.tracker
+            cache[type(overrides.tracker)] = overrides.tracker
+        elif TrackingSinkBase in cache:
+            cache[TrackingEmitterBase] = await solve(AsyncTrackingEmitter)
         else:
-            meter_emitter = await solve_transient(NullMeteringEmitter)
-        cache[MeteringEmitterBase] = meter_emitter
-        cache[type(meter_emitter)] = meter_emitter
+            raise RuntimeError("no tracking sink configured")
+
+        if overrides.meter is not None:
+            cache[MeteringEmitterBase] = overrides.meter
+            cache[type(overrides.meter)] = overrides.meter
+        elif MeteringSinkBase in cache:
+            cache[MeteringEmitterBase] = await solve(AsyncMeteringEmitter)
+        else:
+            raise RuntimeError("no metering sink configured")
 
         for family, contract, override_value in (
             ("http", HttpClientBase, None),

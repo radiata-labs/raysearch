@@ -3,19 +3,14 @@ from __future__ import annotations
 import uuid
 from contextlib import suppress
 from contextvars import ContextVar, Token
-from typing import Any
 from typing_extensions import override
 
 import anyio
 from anyio import WouldBlock
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import field_validator
 
-from serpsage.components.base import ComponentConfigBase
-from serpsage.components.loads import ComponentRegistry
-from serpsage.components.tracking.base import TrackingEmitterBase, TrackingSinkBase
-from serpsage.dependencies import CACHE_TOKEN, Depends, solve_dependencies
+from serpsage.models.components.metering import MeterRecord
 from serpsage.models.components.tracking import (
     EventEnvelope,
     TrackingLevel,
@@ -23,67 +18,21 @@ from serpsage.models.components.tracking import (
     normalize_tracking_level,
     should_emit_tracking,
 )
+from serpsage.telemetry.base import MeteringEmitterBase, TrackingEmitterBase
 
-_REQUEST_ID_CTX: ContextVar[str] = ContextVar("tracking_request_id", default="")
-
-
-async def tracking_sinks_factory(
-    cache: dict[Any, Any] = Depends(CACHE_TOKEN),
-    registry: ComponentRegistry = Depends(),
-) -> tuple[TrackingSinkBase, ...]:
-    """Factory function: collect all enabled tracking sinks."""
-    sinks: list[TrackingSinkBase] = []
-    for spec in registry.enabled_specs("tracking"):
-        if not issubclass(spec.cls, TrackingSinkBase):
-            continue
-        instance = await solve_dependencies(spec.cls, dependency_cache=cache)
-        if isinstance(instance, TrackingSinkBase):
-            sinks.append(instance)
-    return tuple(sinks)
+_REQUEST_ID_CTX_TRACKING: ContextVar[str] = ContextVar(
+    "tracking_request_id", default=""
+)
+_REQUEST_ID_CTX_METERING: ContextVar[str] = ContextVar(
+    "metering_request_id", default=""
+)
 
 
-class TrackingEmitterConfig(ComponentConfigBase):
-    __setting_family__ = "tracking"
-    __setting_name__ = "async_emitter"
+class AsyncTrackingEmitter(TrackingEmitterBase):
+    """Asynchronous tracking emitter with queue-based event processing."""
 
-    queue_size: int = 2048
-    minimum_level: TrackingLevel = "INFO"
-    drop_noncritical_when_full: bool = True
-
-    @field_validator("minimum_level", mode="before")
-    @classmethod
-    def _validate_level(cls, value: object) -> TrackingLevel:
-        return normalize_tracking_level(value)
-
-
-class NullTrackingEmitterConfig(ComponentConfigBase):
-    __setting_family__ = "tracking"
-    __setting_name__ = "null_emitter"
-
-
-class NullTrackingEmitter(TrackingEmitterBase[NullTrackingEmitterConfig]):
-    @override
-    async def emit_event(self, *, event: EventEnvelope) -> None:
-        _ = event
-
-    @override
-    def push_request_context(self, *, request_id: str) -> object:
-        _ = request_id
-        return None
-
-    @override
-    def pop_request_context(self, token: object) -> None:
-        _ = token
-
-
-class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
-    def __init__(
-        self,
-        *,
-        config: TrackingEmitterConfig,
-        sinks: tuple[TrackingSinkBase, ...] = Depends(tracking_sinks_factory),
-    ) -> None:
-        self._sinks = list(sinks)
+    def __init__(self) -> None:
+        config = self.settings.telemetry.tracking
         self._queue_size = max(1, int(config.queue_size))
         self._minimum_level: TrackingLevel = normalize_tracking_level(
             config.minimum_level
@@ -94,6 +43,8 @@ class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
         self._tg_cm: TaskGroup | None = None
         self._tg: TaskGroup | None = None
         self._dropped_noncritical = 0
+        # Bind sink as dependency for lifecycle management
+        self.bind_deps(self.sink)
 
     @override
     async def on_init(self) -> None:
@@ -128,12 +79,12 @@ class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
 
     @override
     def push_request_context(self, *, request_id: str) -> object:
-        return _REQUEST_ID_CTX.set(str(request_id or ""))
+        return _REQUEST_ID_CTX_TRACKING.set(str(request_id or ""))
 
     @override
     def pop_request_context(self, token: object) -> None:
         if isinstance(token, Token):
-            _REQUEST_ID_CTX.reset(token)
+            _REQUEST_ID_CTX_TRACKING.reset(token)
 
     @override
     async def emit_event(self, *, event: EventEnvelope) -> None:
@@ -175,9 +126,8 @@ class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
                 await self._emit_direct(event)
 
     async def _emit_direct(self, event: EventEnvelope) -> None:
-        for sink in self._sinks:
-            with suppress(Exception):
-                await sink.emit(event=event)
+        with suppress(Exception):
+            await self.sink.emit(event=event)
 
     def _start_direct_emit(self, *, event: EventEnvelope) -> bool:
         tg = self._tg
@@ -192,7 +142,7 @@ class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
     def _fill_request_context(self, event: EventEnvelope) -> EventEnvelope:
         if str(event.request_id):
             return event
-        request_id = str(_REQUEST_ID_CTX.get() or "")
+        request_id = str(_REQUEST_ID_CTX_TRACKING.get() or "")
         if not request_id:
             return event
         return event.model_copy(update={"request_id": request_id})
@@ -228,10 +178,104 @@ class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
         self._dropped_noncritical = 0
 
 
+class AsyncMeteringEmitter(MeteringEmitterBase):
+    """Asynchronous metering emitter with queue-based record processing."""
+
+    def __init__(self) -> None:
+        config = self.settings.telemetry.metering
+        self._queue_size = max(1, int(config.queue_size))
+        self._send: MemoryObjectSendStream[MeterRecord] | None = None
+        self._recv: MemoryObjectReceiveStream[MeterRecord] | None = None
+        self._tg_cm: TaskGroup | None = None
+        self._tg: TaskGroup | None = None
+        # Bind sink as dependency for lifecycle management
+        self.bind_deps(self.sink)
+
+    @override
+    async def on_init(self) -> None:
+        if self._send is not None:
+            return
+        send, recv = anyio.create_memory_object_stream[MeterRecord](
+            max_buffer_size=self._queue_size
+        )
+        tg_cm = anyio.create_task_group()
+        tg = await tg_cm.__aenter__()
+        tg.start_soon(self._worker_loop, recv.clone())
+        self._send = send
+        self._recv = recv
+        self._tg_cm = tg_cm
+        self._tg = tg
+
+    @override
+    async def on_close(self) -> None:
+        send = self._send
+        recv = self._recv
+        tg_cm = self._tg_cm
+        self._send = None
+        self._recv = None
+        self._tg = None
+        self._tg_cm = None
+        if send is not None:
+            await send.aclose()
+        if tg_cm is not None:
+            await tg_cm.__aexit__(None, None, None)
+        if recv is not None:
+            await recv.aclose()
+
+    @override
+    def push_request_context(self, *, request_id: str) -> object:
+        return _REQUEST_ID_CTX_METERING.set(str(request_id or ""))
+
+    @override
+    def pop_request_context(self, token: object) -> None:
+        if isinstance(token, Token):
+            _REQUEST_ID_CTX_METERING.reset(token)
+
+    @override
+    async def emit_record(self, *, record: MeterRecord) -> None:
+        send = self._send
+        if send is None:
+            return
+        out = self._fill_request_context(record)
+        try:
+            send.send_nowait(out)
+        except WouldBlock:
+            if self._start_direct_emit(record=out):
+                return
+            await send.send(out)
+
+    async def _worker_loop(
+        self,
+        recv: MemoryObjectReceiveStream[MeterRecord],
+    ) -> None:
+        async with recv:
+            async for record in recv:
+                await self._emit_direct(record)
+
+    async def _emit_direct(self, record: MeterRecord) -> None:
+        with suppress(Exception):
+            await self.sink.emit(record=record)
+
+    def _start_direct_emit(self, *, record: MeterRecord) -> bool:
+        tg = self._tg
+        if tg is None:
+            return False
+        try:
+            tg.start_soon(self._emit_direct, record)
+            return True
+        except Exception:
+            return False
+
+    def _fill_request_context(self, record: MeterRecord) -> MeterRecord:
+        if str(record.request_id):
+            return record
+        request_id = str(_REQUEST_ID_CTX_METERING.get() or "")
+        if not request_id:
+            return record
+        return record.model_copy(update={"request_id": request_id})
+
+
 __all__ = [
+    "AsyncMeteringEmitter",
     "AsyncTrackingEmitter",
-    "NullTrackingEmitter",
-    "NullTrackingEmitterConfig",
-    "TrackingEmitterConfig",
-    "tracking_sinks_factory",
 ]

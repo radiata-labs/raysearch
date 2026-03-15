@@ -237,56 +237,45 @@ async def _execute_class(
         dependent.__new__(dependent),
     )
     from serpsage.components.loads import ComponentRegistry
-    from serpsage.components.metering import MeteringEmitterBase, MeteringSinkBase
-    from serpsage.components.tracking import TrackingEmitterBase, TrackingSinkBase
     from serpsage.core.workunit import ClockBase, WorkUnit
     from serpsage.settings.models import AppSettings
 
     if isinstance(depend_obj, WorkUnit):
-        # Sink/emitter components don't need their own emitter during construction
-        # to avoid circular dependency (emitter needs sinks, sinks need emitter;
-        # also emitter itself needs parent emitter which doesn't exist for the root)
-        is_tracking_sink = isinstance(depend_obj, TrackingSinkBase)
-        is_tracking_emitter = isinstance(depend_obj, TrackingEmitterBase)
-        is_metering_sink = isinstance(depend_obj, MeteringSinkBase)
-        is_metering_emitter = isinstance(depend_obj, MeteringEmitterBase)
-        # Any tracking/metering component can be created without emitters
-        can_skip_tracker = is_tracking_sink or is_tracking_emitter or is_metering_sink or is_metering_emitter
-        can_skip_meter = is_metering_sink or is_metering_emitter or is_tracking_sink or is_tracking_emitter
         try:
             settings = dependency_cache[AppSettings]
             clock = dependency_cache[ClockBase]
-            # Tracking/metering components don't need emitters (would be circular)
-            tracker = dependency_cache.get(
-                TrackingEmitterBase,
-                None if can_skip_tracker else ...,
-            )
-            meter = dependency_cache.get(
-                MeteringEmitterBase,
-                None if can_skip_meter else ...,
-            )
             registry = dependency_cache[ComponentRegistry]
         except KeyError as exc:
             raise TypeError(
                 f"{get_dependency_name(exc.args[0])} must be available before constructing a WorkUnit"
             ) from exc
-        # Use sentinel check for missing emitters (non-tracking/metering components)
-        if tracker is ... or meter is ...:
-            missing = (
-                "TrackingEmitterBase"
-                if tracker is ...
-                else "MeteringEmitterBase"
-            )
-            raise TypeError(
-                f"{missing} must be available before constructing a WorkUnit"
-            )
         depend_obj._wu_bootstrap(
             settings=settings,
             clock=clock,
-            tracker=tracker,
-            meter=meter,
             components=registry,
         )
+        # Auto-inject telemetry emitters for non-telemetry WorkUnits
+        from serpsage.components.metering import MeteringSinkBase
+        from serpsage.components.tracking import TrackingSinkBase
+        from serpsage.telemetry import MeteringEmitterBase, TrackingEmitterBase
+
+        if not isinstance(
+            depend_obj,
+            (
+                TrackingSinkBase,
+                MeteringSinkBase,
+                TrackingEmitterBase,
+                MeteringEmitterBase,
+            ),
+        ):
+            tracker = dependency_cache.get(TrackingEmitterBase)
+            meter = dependency_cache.get(MeteringEmitterBase)
+            if tracker is not None:
+                depend_obj._tracker = tracker
+                depend_obj.bind_deps(tracker)
+            if meter is not None:
+                depend_obj._meter = meter
+                depend_obj.bind_deps(meter)
     for key, value in values.items():
         setattr(depend_obj, key, value)
     marker = object()

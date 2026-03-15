@@ -1,3 +1,3 @@
-from serpsage.components.tracking.base import TrackingEmitterBase, TrackingSinkBase
+from serpsage.components.tracking.base import TrackingSinkBase
 
-__all__ = ["TrackingEmitterBase", "TrackingSinkBase"]
+__all__ = ["TrackingSinkBase"]

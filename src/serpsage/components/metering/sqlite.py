@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 from pathlib import Path
 from typing import Any, cast
 from typing_extensions import override
@@ -20,29 +19,9 @@ except Exception:  # noqa: BLE001
     AioSqliteModule = None
 
 
-class NullMeteringSinkConfig(ComponentConfigBase):
-    __setting_family__ = "metering"
-    __setting_name__ = "null_sink"
-
-
-class JsonlMeteringSinkConfig(ComponentConfigBase):
-    __setting_family__ = "metering"
-    __setting_name__ = "jsonl_sink"
-
-    jsonl_path: str = ".serpsage_metering.jsonl"
-
-    @field_validator("jsonl_path")
-    @classmethod
-    def _validate_jsonl_path(cls, value: str) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("metering jsonl_path must be non-empty")
-        return token
-
-
 class SqliteMeteringSinkConfig(ComponentConfigBase):
     __setting_family__ = "metering"
-    __setting_name__ = "sqlite_sink"
+    __setting_name__ = "sqlite"
 
     sqlite_db_path: str = ".serpsage_metering.sqlite3"
 
@@ -55,49 +34,9 @@ class SqliteMeteringSinkConfig(ComponentConfigBase):
         return token
 
 
-class NullMeteringSink(MeteringSinkBase[NullMeteringSinkConfig]):
-    @override
-    async def emit(self, *, record: MeterRecord) -> None:
-        _ = record
-
-
-class JsonlMeteringSink(MeteringSinkBase[JsonlMeteringSinkConfig]):
-    def __init__(self) -> None:
-        self._file_path = str(self.config.jsonl_path).strip()
-        self._file: Any | None = None
-        self._lock = anyio.Lock()
-
-    @override
-    async def on_init(self) -> None:
-        if self._file is not None:
-            return
-        path = Path(self._file_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = await anyio.open_file(path, mode="a", encoding="utf-8")
-
-    @override
-    async def emit(self, *, record: MeterRecord) -> None:
-        if self._file is None:
-            return
-        line = json.dumps(
-            record.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        async with self._lock:
-            await self._file.write(line + "\n")
-            await self._file.flush()
-
-    @override
-    async def on_close(self) -> None:
-        if self._file is None:
-            return
-        await self._file.aclose()
-        self._file = None
-
-
 class SqliteMeterLedgerSink(MeteringSinkBase[SqliteMeteringSinkConfig]):
+    """Metering sink that writes records to a SQLite database."""
+
     def __init__(self) -> None:
         self._db_path = Path(str(self.config.sqlite_db_path).strip())
         self._con: Any | None = None
@@ -188,11 +127,4 @@ class SqliteMeterLedgerSink(MeteringSinkBase[SqliteMeteringSinkConfig]):
         self._con = None
 
 
-__all__ = [
-    "JsonlMeteringSink",
-    "JsonlMeteringSinkConfig",
-    "NullMeteringSink",
-    "NullMeteringSinkConfig",
-    "SqliteMeterLedgerSink",
-    "SqliteMeteringSinkConfig",
-]
+__all__ = ["SqliteMeterLedgerSink", "SqliteMeteringSinkConfig"]
