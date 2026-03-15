@@ -189,10 +189,12 @@ components:
           enable_structured: true
 
   tracking:
-    default: jsonl
+    default: log
     jsonl:
       enabled: true
       jsonl_path: ./.cache/.serpsage_tracking.jsonl
+    log:
+      enabled: true
 
   metering:
     default: jsonl

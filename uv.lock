@@ -3058,23 +3058,11 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
-    { name = "beautifulsoup4" },
-    { name = "curl-cffi" },
-    { name = "html-to-markdown" },
     { name = "httpx" },
     { name = "jieba" },
     { name = "jsonschema" },
-    { name = "playwright" },
     { name = "pydantic" },
-    { name = "pymupdf" },
-    { name = "pymupdf4llm" },
-    { name = "pypdf" },
     { name = "pyyaml" },
-    { name = "rank-bm25" },
-    { name = "scikit-learn" },
-    { name = "selectolax" },
-    { name = "sentence-transformers" },
-    { name = "trafilatura" },
     { name = "typing-extensions" },
 ]
 
@@ -3090,19 +3078,68 @@ cache = [
     { name = "asyncmy" },
     { name = "sqlalchemy" },
 ]
+crawl = [
+    { name = "beautifulsoup4" },
+    { name = "curl-cffi" },
+    { name = "playwright" },
+]
+extract = [
+    { name = "beautifulsoup4" },
+    { name = "html-to-markdown" },
+    { name = "selectolax" },
+    { name = "trafilatura" },
+]
+extract-pdf = [
+    { name = "pymupdf" },
+    { name = "pymupdf4llm" },
+    { name = "pypdf" },
+]
 extract-plus = [
     { name = "inscriptis" },
+]
+full = [
+    { name = "aiomysql" },
+    { name = "aioredis" },
+    { name = "aiosqlite" },
+    { name = "asyncmy" },
+    { name = "beautifulsoup4" },
+    { name = "curl-cffi" },
+    { name = "dashscope" },
+    { name = "fastapi" },
+    { name = "google-genai" },
+    { name = "html-to-markdown" },
+    { name = "openai" },
+    { name = "playwright" },
+    { name = "pymupdf" },
+    { name = "pymupdf4llm" },
+    { name = "pypdf" },
+    { name = "rank-bm25" },
+    { name = "scikit-learn" },
+    { name = "selectolax" },
+    { name = "sentence-transformers" },
+    { name = "sqlalchemy" },
+    { name = "structlog" },
+    { name = "trafilatura" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 overview = [
     { name = "dashscope" },
     { name = "google-genai" },
     { name = "openai" },
 ]
+rank = [
+    { name = "rank-bm25" },
+    { name = "scikit-learn" },
+    { name = "sentence-transformers" },
+]
 stopwords = [
     { name = "marisa-trie" },
 ]
 to-zh-tw = [
     { name = "opencc" },
+]
+tracking = [
+    { name = "structlog" },
 ]
 
 [package.dev-dependencies]
@@ -3129,12 +3166,13 @@ requires-dist = [
     { name = "aiosqlite", marker = "extra == 'cache'", specifier = ">=0.22.1" },
     { name = "anyio", specifier = "==4.9.0" },
     { name = "asyncmy", marker = "extra == 'cache'", specifier = ">=0.2.11" },
-    { name = "beautifulsoup4" },
-    { name = "curl-cffi" },
+    { name = "beautifulsoup4", marker = "extra == 'crawl'" },
+    { name = "beautifulsoup4", marker = "extra == 'extract'" },
+    { name = "curl-cffi", marker = "extra == 'crawl'" },
     { name = "dashscope", marker = "extra == 'overview'", specifier = ">=1.0.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.110,<1" },
     { name = "google-genai", marker = "extra == 'overview'", specifier = ">=1.63.0" },
-    { name = "html-to-markdown", specifier = ">=2.28.0" },
+    { name = "html-to-markdown", marker = "extra == 'extract'", specifier = ">=2.28.0" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "inscriptis", marker = "extra == 'extract-plus'", specifier = ">=2.5.0" },
     { name = "jieba" },
@@ -3142,22 +3180,24 @@ requires-dist = [
     { name = "marisa-trie", marker = "extra == 'stopwords'", specifier = ">=1.3.1" },
     { name = "openai", marker = "extra == 'overview'", specifier = ">=2.17.0" },
     { name = "opencc", marker = "extra == 'to-zh-tw'", specifier = ">=1.2.0" },
-    { name = "playwright", specifier = ">=1.49.1" },
+    { name = "playwright", marker = "extra == 'crawl'", specifier = ">=1.49.1" },
     { name = "pydantic", specifier = ">=2.7,<3" },
-    { name = "pymupdf", specifier = ">=1.24.0" },
-    { name = "pymupdf4llm", specifier = ">=0.3.4" },
-    { name = "pypdf", specifier = ">=5.2.0" },
+    { name = "pymupdf", marker = "extra == 'extract-pdf'", specifier = ">=1.24.0" },
+    { name = "pymupdf4llm", marker = "extra == 'extract-pdf'", specifier = ">=0.3.4" },
+    { name = "pypdf", marker = "extra == 'extract-pdf'", specifier = ">=5.2.0" },
     { name = "pyyaml" },
-    { name = "rank-bm25" },
-    { name = "scikit-learn", specifier = ">=1.8.0" },
-    { name = "selectolax", specifier = ">=0.3.26" },
-    { name = "sentence-transformers", specifier = ">=5.2.3" },
+    { name = "rank-bm25", marker = "extra == 'rank'" },
+    { name = "scikit-learn", marker = "extra == 'rank'", specifier = ">=1.8.0" },
+    { name = "selectolax", marker = "extra == 'extract'", specifier = ">=0.3.26" },
+    { name = "sentence-transformers", marker = "extra == 'rank'", specifier = ">=5.2.3" },
+    { name = "serpsage", extras = ["extract", "extract-pdf", "crawl", "rank", "cache", "api", "overview", "tracking"], marker = "extra == 'full'" },
     { name = "sqlalchemy", marker = "extra == 'cache'", specifier = ">=2.0.46" },
-    { name = "trafilatura", specifier = ">=1.10.0" },
+    { name = "structlog", marker = "extra == 'tracking'", specifier = ">=24.1.0" },
+    { name = "trafilatura", marker = "extra == 'extract'", specifier = ">=1.10.0" },
     { name = "typing-extensions", specifier = ">=4.10,<5" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.27,<1" },
 ]
-provides-extras = ["extract-plus", "cache", "api", "overview", "to-zh-tw", "stopwords"]
+provides-extras = ["extract", "extract-pdf", "extract-plus", "crawl", "rank", "cache", "api", "overview", "to-zh-tw", "stopwords", "tracking", "full"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3303,6 +3343,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/0d/13d1d239a25cbfb19e740db83143e95c772a1fe10202dda4b76792b114dd/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74", size = 74272, upload-time = "2026-01-18T13:34:09.188Z" },
+]
+
+[[package]]
+name = "structlog"
+version = "25.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
 ]
 
 [[package]]
@@ -3476,6 +3525,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0f/8b/4b61d6e13f7108f36910df9ab4b58fd389cc2520d54d81b88660804aad99/torch-2.10.0-2-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:418997cb02d0a0f1497cf6a09f63166f9f5df9f3e16c8a716ab76a72127c714f", size = 79423467, upload-time = "2026-02-10T21:44:48.711Z" },
     { url = "https://files.pythonhosted.org/packages/d3/54/a2ba279afcca44bbd320d4e73675b282fcee3d81400ea1b53934efca6462/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:13ec4add8c3faaed8d13e0574f5cd4a323c11655546f91fbe6afa77b57423574", size = 79498202, upload-time = "2026-02-10T21:44:52.603Z" },
     { url = "https://files.pythonhosted.org/packages/ec/23/2c9fe0c9c27f7f6cb865abcea8a4568f29f00acaeadfc6a37f6801f84cb4/torch-2.10.0-2-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:e521c9f030a3774ed770a9c011751fb47c4d12029a3d6522116e48431f2ff89e", size = 79498254, upload-time = "2026-02-10T21:44:44.095Z" },
+    { url = "https://files.pythonhosted.org/packages/36/ab/7b562f1808d3f65414cd80a4f7d4bb00979d9355616c034c171249e1a303/torch-2.10.0-3-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:ac5bdcbb074384c66fa160c15b1ead77839e3fe7ed117d667249afce0acabfac", size = 915518691, upload-time = "2026-03-11T14:15:43.147Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/7a/abada41517ce0011775f0f4eacc79659bc9bc6c361e6bfe6f7052a6b9363/torch-2.10.0-3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:98c01b8bb5e3240426dcde1446eed6f40c778091c8544767ef1168fc663a05a6", size = 915622781, upload-time = "2026-03-11T14:17:11.354Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/c6/4dfe238342ffdcec5aef1c96c457548762d33c40b45a1ab7033bb26d2ff2/torch-2.10.0-3-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:80b1b5bfe38eb0e9f5ff09f206dcac0a87aadd084230d4a36eea5ec5232c115b", size = 915627275, upload-time = "2026-03-11T14:16:11.325Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/f0/72bf18847f58f877a6a8acf60614b14935e2f156d942483af1ffc081aea0/torch-2.10.0-3-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:46b3574d93a2a8134b3f5475cfb98e2eb46771794c57015f6ad1fb795ec25e49", size = 915523474, upload-time = "2026-03-11T14:17:44.422Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/39/590742415c3030551944edc2ddc273ea1fdfe8ffb2780992e824f1ebee98/torch-2.10.0-3-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:b1d5e2aba4eb7f8e87fbe04f86442887f9167a35f092afe4c237dfcaaef6e328", size = 915632474, upload-time = "2026-03-11T14:15:13.666Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/8e/34949484f764dde5b222b7fe3fede43e4a6f0da9d7f8c370bb617d629ee2/torch-2.10.0-3-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:0228d20b06701c05a8f978357f657817a4a63984b0c90745def81c18aedfa591", size = 915523882, upload-time = "2026-03-11T14:14:46.311Z" },
     { url = "https://files.pythonhosted.org/packages/78/89/f5554b13ebd71e05c0b002f95148033e730d3f7067f67423026cc9c69410/torch-2.10.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:3282d9febd1e4e476630a099692b44fdc214ee9bf8ee5377732d9d9dfe5712e4", size = 145992610, upload-time = "2026-01-21T16:25:26.327Z" },
     { url = "https://files.pythonhosted.org/packages/ae/30/a3a2120621bf9c17779b169fc17e3dc29b230c29d0f8222f499f5e159aa8/torch-2.10.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:a2f9edd8dbc99f62bc4dfb78af7bf89499bca3d753423ac1b4e06592e467b763", size = 915607863, upload-time = "2026-01-21T16:25:06.696Z" },
     { url = "https://files.pythonhosted.org/packages/6f/3d/c87b33c5f260a2a8ad68da7147e105f05868c281c63d65ed85aa4da98c66/torch-2.10.0-cp311-cp311-win_amd64.whl", hash = "sha256:29b7009dba4b7a1c960260fc8ac85022c784250af43af9fb0ebafc9883782ebd", size = 113723116, upload-time = "2026-01-21T16:25:21.916Z" },

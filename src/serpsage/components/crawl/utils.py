@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
-
 DEFAULT_USER_AGENT = "serpsage-bot/4.0"
 # Real browser User-Agents for rotation (updated for 2024-2025)
 USER_AGENTS = [
@@ -393,6 +391,8 @@ def _extract_html_signals_selectolax(sample: str) -> HtmlSignals:
 
 
 def _extract_html_signals_bs4(sample: str) -> HtmlSignals:
+    from bs4 import BeautifulSoup  # noqa: PLC0415
+
     soup = BeautifulSoup(sample, "html.parser")
     script_tags = soup.find_all("script")
     title_tag = soup.find("title")

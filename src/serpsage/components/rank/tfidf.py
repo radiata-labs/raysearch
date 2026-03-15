@@ -17,10 +17,6 @@ class RankTfidfSettings(ComponentConfigBase):
     __setting_name__ = "tfidf"
 
 
-def _analyze_text(text: str) -> list[str]:
-    return tokenize(text)
-
-
 def _build_query_terms(query: str, query_tokens: list[str]) -> list[str]:
     candidates = query_tokens or tokenize(query)
     seen: set[str] = set()
@@ -43,7 +39,8 @@ def _score_texts_sync(
     if not query_terms:
         return [0.0 for _ in texts]
     vectorizer = TfidfVectorizer(
-        tokenizer=_analyze_text,
+        tokenizer=tokenize,
+        token_pattern=None,  # type: ignore
         vocabulary=query_terms,
         lowercase=False,
         norm="l2",

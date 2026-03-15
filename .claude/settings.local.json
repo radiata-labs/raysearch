@@ -15,7 +15,8 @@
       "Bash(xxd)",
       "Bash(d:/WjjFiles/code/google-ai-overview-api/.venv/Scripts/python.exe d:/WjjFiles/code/google-ai-overview-api/demo/fetch.py)",
       "Bash(d:/WjjFiles/code/google-ai-overview-api/.venv/Scripts/python.exe -c \":*)",
-      "Bash(d:/WjjFiles/code/google-ai-overview-api/.venv/Scripts/python.exe -c \"from serpsage.app.engine import Engine; print\\(''Import OK''\\)\")"
+      "Bash(d:/WjjFiles/code/google-ai-overview-api/.venv/Scripts/python.exe -c \"from serpsage.app.engine import Engine; print\\(''Import OK''\\)\")",
+      "Bash(uv sync:*)"
     ]
   }
 }
