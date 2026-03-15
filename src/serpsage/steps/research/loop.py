@@ -83,16 +83,15 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 try:
                     track_ctx = await self.round_runner.run(track_ctx)
                 except Exception as exc:  # noqa: BLE001
-                    await self.emit_tracking_event(
-                        event_name="research.loop.error",
+                    await self.tracker.error(
+                        name="research.loop.track_failed",
                         request_id=ctx.request_id,
-                        stage="track",
-                        status="error",
+                        step="research.loop",
                         error_code="research_loop_track_failed",
                         error_type=type(exc).__name__,
-                        attrs={
+                        error_message=str(exc),
+                        data={
                             "question_id": card.question_id,
-                            "message": str(exc),
                         },
                     )
                     raise
@@ -441,16 +440,41 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             if isinstance(rendered.result.structured, TrackInsightCardPayload)
             else None
         )
-        await self.emit_tracking_event(
-            event_name="research.loop.subreport",
+        key_findings = self._extract_key_findings(rendered)
+        await self.tracker.info(
+            name="research.loop.subreport_ready",
             request_id=rendered.request_id,
-            stage="subreport",
-            attrs={
+            step="research.loop",
+            data={
+                "success": True,
                 "question_id": card.question_id,
                 "rounds": len(rendered.run.history),
                 "stop_reason": rendered.run.stop_reason or "n/a",
-                "subreport_chars": len(rendered.result.content),
                 "has_insight_card": insight_card is not None,
+            },
+        )
+        await self.tracker.debug(
+            name="research.loop.subreport_ready.detail",
+            request_id=rendered.request_id,
+            step="research.loop",
+            data={
+                "success": True,
+                "question": card.question,
+                "subreport_chars": len(rendered.result.content),
+                "search_calls": rendered.run.search_calls,
+                "fetch_calls": rendered.run.fetch_calls,
+                "budget_tier": runtime.current_budget_tier,
+                "waiting_rounds": runtime.waiting_rounds,
+                "confidence": (
+                    latest_round.confidence if latest_round is not None else 0.0
+                ),
+                "coverage_ratio": (
+                    latest_round.coverage_ratio if latest_round is not None else 0.0
+                ),
+                "unresolved_conflicts": (
+                    latest_round.unresolved_conflicts if latest_round is not None else 0
+                ),
+                "key_findings_count": len(key_findings),
             },
         )
         return ResearchTrackResult(
@@ -460,18 +484,16 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             rounds=len(rendered.run.history),
             search_calls=rendered.run.search_calls,
             fetch_calls=rendered.run.fetch_calls,
-            confidence=float(latest_round.confidence)
-            if latest_round is not None
-            else 0.0,
-            coverage_ratio=float(latest_round.coverage_ratio)
-            if latest_round is not None
-            else 0.0,
+            confidence=latest_round.confidence if latest_round is not None else 0.0,
+            coverage_ratio=(
+                latest_round.coverage_ratio if latest_round is not None else 0.0
+            ),
             unresolved_conflicts=(
                 latest_round.unresolved_conflicts if latest_round is not None else 0
             ),
             subreport_markdown=rendered.result.content,
             track_insight_card=insight_card,
-            key_findings=self._extract_key_findings(rendered),
+            key_findings=key_findings,
             budget_tier=runtime.current_budget_tier,
             waiting_rounds=runtime.waiting_rounds,
         )

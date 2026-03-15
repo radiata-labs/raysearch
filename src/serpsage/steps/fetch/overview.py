@@ -27,18 +27,17 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
             return ctx
         source_items = self._build_source_items(ctx)
         if not source_items:
-            await self.emit_tracking_event(
-                event_name="fetch.overview.error",
+            await self.tracker.error(
+                name="fetch.overview.failed",
                 request_id=ctx.request_id,
-                stage="overview",
-                status="error",
+                step="fetch.overview",
                 error_code="fetch_overview_failed",
-                attrs={
+                error_message="no overview source content",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": False,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "no overview source content",
+                    "fatal": False,
                 },
             )
             return ctx
@@ -84,6 +83,17 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                     retries=retries,
                     retry_on=retry_on,
                 )
+                await self.meter.record(
+                    name="llm.tokens",
+                    request_id=ctx.request_id,
+                    model=str(self.settings.fetch.overview.use_model),
+                    unit="token",
+                    tokens={
+                        "prompt_tokens": int(text_res.usage.prompt_tokens),
+                        "completion_tokens": int(text_res.usage.completion_tokens),
+                        "total_tokens": int(text_res.usage.total_tokens),
+                    },
+                )
                 output_text = str(text_res.text or "")
                 if not output_text.strip():
                     raise ValueError("overview output is empty")
@@ -99,6 +109,19 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                             messages=attempt_messages,
                             response_format=schema,
                             retries=0,
+                        )
+                        await self.meter.record(
+                            name="llm.tokens",
+                            request_id=ctx.request_id,
+                            model=str(self.settings.fetch.overview.use_model),
+                            unit="token",
+                            tokens={
+                                "prompt_tokens": int(json_res.usage.prompt_tokens),
+                                "completion_tokens": int(
+                                    json_res.usage.completion_tokens
+                                ),
+                                "total_tokens": int(json_res.usage.total_tokens),
+                            },
                         )
                         output_obj = _coerce_json_output(
                             result_data=json_res.data, raw_text=json_res.text
@@ -137,36 +160,34 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
                 )
             return ctx
         except SchemaMismatchError as exc:
-            await self.emit_tracking_event(
-                event_name="fetch.overview.error",
+            await self.tracker.error(
+                name="fetch.overview.failed",
                 request_id=ctx.request_id,
-                stage="overview",
-                status="error",
+                step="fetch.overview",
                 error_code="overview_schema_mismatch",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": False,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": str(exc),
+                    "fatal": False,
                 },
             )
             return ctx
         except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="fetch.overview.error",
+            await self.tracker.error(
+                name="fetch.overview.failed",
                 request_id=ctx.request_id,
-                stage="overview",
-                status="error",
+                step="fetch.overview",
                 error_code="fetch_overview_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": False,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": str(exc),
+                    "fatal": False,
                 },
             )
             return ctx

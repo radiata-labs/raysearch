@@ -17,18 +17,17 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             ctx.error.failed = True
             ctx.error.tag = "SOURCE_NOT_AVAILABLE"
             ctx.error.detail = "missing extracted content"
-            await self.emit_tracking_event(
-                event_name="fetch.finalize.error",
+            await self.tracker.error(
+                name="fetch.finalize.failed",
                 request_id=ctx.request_id,
-                stage="finalize",
-                status="error",
+                step="fetch.finalize",
                 error_code="fetch_extract_failed",
-                attrs={
+                error_message="missing extracted content",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": True,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "missing extracted content",
+                    "fatal": True,
                 },
             )
             return ctx

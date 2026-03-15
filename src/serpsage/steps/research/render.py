@@ -56,42 +56,53 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
             if isinstance(ctx.request.json_schema, dict)
             else None
         )
+        render_mode = "final_markdown"
+        debug_data: dict[str, Any]
         if schema is None:
             await self._render_markdown_architect_writer(
                 ctx=ctx,
                 target_language=ctx.task.output_language,
                 now_utc=now_utc,
             )
-            await self.emit_tracking_event(
-                event_name="research.render.summary",
-                request_id=ctx.request_id,
-                stage="render",
-                attrs={
-                    "mode": "final_markdown",
-                    "track_results": len(ctx.result.tracks),
-                    "content_chars": len(ctx.result.content),
-                    "mode_depth_profile": ctx.run.limits.mode_key,
-                    "report_style_selected": ctx.task.style,
-                },
-            )
-            return ctx
-        await self._render_structured_once(
-            ctx=ctx,
-            schema=schema,
-            target_language=ctx.task.output_language,
-            now_utc=now_utc,
-        )
-        await self.emit_tracking_event(
-            event_name="research.render.summary",
-            request_id=ctx.request_id,
-            stage="render",
-            attrs={
-                "mode": "final_structured",
-                "track_results": len(ctx.result.tracks),
-                "has_structured": ctx.result.structured is not None,
+            debug_data = {
+                "content_chars": len(ctx.result.content),
                 "mode_depth_profile": ctx.run.limits.mode_key,
                 "report_style_selected": ctx.task.style,
+                "target_language": ctx.task.output_language,
+                "has_schema": False,
+            }
+        else:
+            render_mode = "final_structured"
+            await self._render_structured_once(
+                ctx=ctx,
+                schema=schema,
+                target_language=ctx.task.output_language,
+                now_utc=now_utc,
+            )
+            debug_data = {
+                "content_chars": len(ctx.result.content),
+                "mode_depth_profile": ctx.run.limits.mode_key,
+                "report_style_selected": ctx.task.style,
+                "target_language": ctx.task.output_language,
+                "has_schema": True,
+                "schema_keys": sorted(schema),
+            }
+        await self.tracker.info(
+            name="research.render.summary",
+            request_id=ctx.request_id,
+            step="research.render",
+            data={
+                "success": True,
+                "mode": render_mode,
+                "track_results": len(ctx.result.tracks),
+                "has_structured": ctx.result.structured is not None,
             },
+        )
+        await self.tracker.debug(
+            name="research.render.summary.detail",
+            request_id=ctx.request_id,
+            step="research.render",
+            data={"success": True, **debug_data},
         )
         return ctx
 
@@ -143,17 +154,28 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 response_format=RenderArchitectOutput,
                 retries=self.settings.research.llm_self_heal_retries,
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.render.error",
+            await self.meter.record(
+                name="llm.tokens",
                 request_id=ctx.request_id,
-                stage="architect",
-                status="error",
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(chat_result.usage.prompt_tokens),
+                    "completion_tokens": int(chat_result.usage.completion_tokens),
+                    "total_tokens": int(chat_result.usage.total_tokens),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self.tracker.error(
+                name="research.render.failed",
+                request_id=ctx.request_id,
+                step="research.render",
                 error_code="research_render_architect_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
+                    "phase": "architect",
                     "model": model,
-                    "message": str(exc),
                 },
             )
             raise
@@ -189,18 +211,18 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     )
         except Exception as exc:  # noqa: BLE001
             failed_sections = self._collect_writer_section_failures(exc)
-            await self.emit_tracking_event(
-                event_name="research.render.error",
+            await self.tracker.error(
+                name="research.render.failed",
                 request_id=ctx.request_id,
-                stage="writer",
-                status="error",
+                step="research.render",
                 error_code="research_render_writer_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
+                    "phase": "writer",
                     "model": model,
                     "sections_total": len(architect_output.sections),
                     "failed_sections": [item.to_payload() for item in failed_sections],
-                    "message": str(exc),
                 },
             )
             raise
@@ -232,6 +254,17 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     ),
                 ),
                 response_format=None,
+            )
+            await self.meter.record(
+                name="llm.tokens",
+                request_id=ctx.request_id,
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(result.usage.prompt_tokens),
+                    "completion_tokens": int(result.usage.completion_tokens),
+                    "total_tokens": int(result.usage.total_tokens),
+                },
             )
         except Exception as exc:  # noqa: BLE001
             raise _WriterSectionError(
@@ -290,20 +323,31 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                 ),
                 response_format=schema,
             )
+            await self.meter.record(
+                name="llm.tokens",
+                request_id=ctx.request_id,
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(result.usage.prompt_tokens),
+                    "completion_tokens": int(result.usage.completion_tokens),
+                    "total_tokens": int(result.usage.total_tokens),
+                },
+            )
             if not isinstance(result.data, dict):
                 raise TypeError("structured output must be a JSON object")
         except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.render.error",
+            await self.tracker.error(
+                name="research.render.failed",
                 request_id=ctx.request_id,
-                stage="structured",
-                status="error",
+                step="research.render",
                 error_code="research_render_structured_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
+                    "phase": "structured",
                     "model": model,
                     "schema_keys": sorted(schema),
-                    "message": str(exc),
                 },
             )
             raise

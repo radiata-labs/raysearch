@@ -24,98 +24,32 @@ class StepBase(WorkUnit, ABC, Generic[TContext]):
         request_id = str(getattr(ctx, "request_id", "") or "anonymous")
         step_name = type(self).__name__
         started_ms = int(self.clock.now_ms())
-        await self._emit_step_event(
-            event_name="step.start",
+        await self.tracker.debug(
+            name="step.started",
             request_id=request_id,
-            step_name=step_name,
-            status="start",
-            attrs={"step": step_name},
+            step=step_name,
         )
         try:
             out = await self.run_inner(ctx)
             if out is None:
                 raise RuntimeError(f"{step_name} returned no context")
-            await self._emit_step_event(
-                event_name="step.end",
+            await self.tracker.debug(
+                name="step.completed",
                 request_id=request_id,
-                step_name=step_name,
-                status="ok",
+                step=step_name,
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                attrs={
-                    "step": step_name,
-                },
             )
             return out
         except Exception as exc:  # noqa: BLE001
-            await self._emit_step_event(
-                event_name="step.error",
+            await self.tracker.error(
+                name="step.failed",
                 request_id=request_id,
-                step_name=step_name,
-                status="error",
+                step=step_name,
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                error_code="step_failed",
                 error_type=type(exc).__name__,
-                attrs={
-                    "step": step_name,
-                    "fatal_step": True,
-                    "error_message": str(exc),
-                },
+                error_message=str(exc),
             )
             raise
-
-    async def _emit_step_event(
-        self,
-        *,
-        event_name: str,
-        request_id: str,
-        step_name: str,
-        status: Literal["start", "ok", "error"],
-        duration_ms: int | None = None,
-        error_code: str = "",
-        error_type: str = "",
-        attrs: dict[str, object] | None = None,
-    ) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
-        with suppress(Exception):
-            await telemetry.emit(
-                event_name=event_name,
-                status=status,
-                request_id=request_id,
-                component="step",
-                stage=step_name,
-                duration_ms=duration_ms,
-                error_code=error_code,
-                error_type=error_type,
-                attrs=attrs,
-            )
-
-    async def emit_tracking_event(
-        self,
-        *,
-        event_name: str,
-        request_id: str,
-        stage: str,
-        status: Literal["ok", "error"] = "ok",
-        error_code: str = "",
-        error_type: str = "",
-        attrs: dict[str, object] | None = None,
-    ) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
-        with suppress(Exception):
-            await telemetry.emit(
-                event_name=event_name,
-                status="error" if status == "error" else "ok",
-                request_id=request_id,
-                component="step",
-                stage=stage,
-                error_code=error_code,
-                error_type=error_type,
-                attrs=attrs,
-            )
 
     @abstractmethod
     async def run_inner(self, ctx: TContext) -> TContext:

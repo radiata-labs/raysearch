@@ -19,7 +19,7 @@ The component layer now loads through `serpsage.components.loads` and is isolate
 - Builtin components self-register through metadata attached at import time.
 - Each `from_settings(...)` call builds a fresh registry and component catalog.
 - Raw user-declared instances are tracked separately from merged defaults.
-- WorkUnit bootstrap uses direct dependency injection for settings, clock, telemetry, and component registry.
+- WorkUnit bootstrap uses direct dependency injection for settings, clock, tracking, metering, and component registry.
 - `backend: Literal[...]` is removed from settings. Families now declare `default` and `instances`.
 - Components with `config_optional=True` may load from merged defaults even when
   the instance was not explicitly written in the config file.
@@ -32,8 +32,9 @@ Built-in component families:
 - `extract`
 - `rank`
 - `llm`
+- `tracking`
+- `metering`
 - `cache`
-- `telemetry`
 - `rate_limit`
 
 ## Configuration Shape
@@ -89,31 +90,41 @@ Global loader behavior:
 - `serpsage.yaml`
 - defaults
 
-## Telemetry
+## Tracking And Metering
 
-Telemetry is also a component family.
+Tracking and metering are separate component families.
 
-Built-in telemetry components:
+Built-in tracking components:
 
 - emitters: `null_emitter`, `async_emitter`
-- sinks: `null_sink`, `jsonl_sink`, `sqlite_metering_sink`
+- sinks: `null_sink`, `jsonl_sink`
+
+Built-in metering components:
+
+- emitters: `null_emitter`, `async_emitter`
+- sinks: `null_sink`, `jsonl_sink`, `sqlite_sink`
 
 Example:
 
 ```yaml
-telemetry:
-  default: async_main
-  instances:
-    async_main:
-      component: async_emitter
-      enabled: true
-      config:
-        queue_size: 2048
-    jsonl_main:
-      component: jsonl_sink
-      enabled: true
-      config:
-        jsonl_path: .serpsage_events.jsonl
+tracking:
+  default: async_emitter
+  async_emitter:
+    enabled: true
+    queue_size: 2048
+    minimum_level: INFO
+  jsonl_sink:
+    enabled: true
+    jsonl_path: .serpsage_tracking.jsonl
+
+metering:
+  default: async_emitter
+  async_emitter:
+    enabled: true
+    queue_size: 2048
+  sqlite_sink:
+    enabled: true
+    sqlite_db_path: .serpsage_metering.sqlite3
 ```
 
 ## Usage

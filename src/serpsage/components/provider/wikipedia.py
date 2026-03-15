@@ -151,9 +151,7 @@ class WikipediaProvider(
         if not normalized_query:
             raise ValueError("query must not be empty")
 
-        resolved = self._resolve_wiki_language(
-            language or cfg.default_language
-        )
+        resolved = self._resolve_wiki_language(language or cfg.default_language)
         per_page = self._coerce_per_page(
             limit if limit is not None else cfg.results_per_page
         )

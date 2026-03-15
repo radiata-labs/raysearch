@@ -188,17 +188,30 @@ components:
           headers: {}
           enable_structured: true
 
-  telemetry:
+  tracking:
     default: async_emitter
     async_emitter:
       enabled: true
       queue_size: 2048
+      minimum_level: INFO
       drop_noncritical_when_full: true
     jsonl_sink:
       enabled: true
-      jsonl_path: ./.cache/.serpsage_events.jsonl
+      jsonl_path: ./.cache/.serpsage_tracking.jsonl
     null_sink:
+      enabled: false
+
+  metering:
+    default: async_emitter
+    async_emitter:
       enabled: true
+      queue_size: 2048
+    jsonl_sink:
+      enabled: true
+      jsonl_path: ./.cache/.serpsage_metering.jsonl
+    sqlite_sink:
+      enabled: false
+      sqlite_db_path: ./.cache/.serpsage_metering.sqlite3
 
   rate_limit:
     default: basic

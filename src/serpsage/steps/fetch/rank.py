@@ -29,18 +29,17 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
             return ctx
         candidates = list(ctx.analysis.abstracts.prepared or [])
         if not candidates:
-            await self.emit_tracking_event(
-                event_name="fetch.rank.error",
+            await self.tracker.error(
+                name="fetch.rank.failed",
                 request_id=ctx.request_id,
-                stage="rank",
-                status="error",
+                step="fetch.rank",
                 error_code="fetch_abstract_rank_failed",
-                attrs={
+                error_message="no prepared abstracts",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": False,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "no prepared abstracts",
+                    "fatal": False,
                 },
             )
             return ctx
@@ -65,18 +64,17 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
                 fetch_cfg=fetch_cfg.abstract,
             )
             if not raw_scored:
-                await self.emit_tracking_event(
-                    event_name="fetch.rank.error",
+                await self.tracker.error(
+                    name="fetch.rank.failed",
                     request_id=ctx.request_id,
-                    stage="rank",
-                    status="error",
+                    step="fetch.rank",
                     error_code="fetch_abstract_rank_failed",
-                    attrs={
+                    error_message="no matching abstracts",
+                    data={
                         "url": ctx.url,
                         "url_index": ctx.url_index,
-                        "fatal": False,
                         "crawl_mode": ctx.page.crawl_mode,
-                        "message": "no matching abstracts",
+                        "fatal": False,
                     },
                 )
             else:

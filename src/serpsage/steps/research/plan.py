@@ -96,17 +96,27 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
                 format_override=build_plan_schema(select_engines=bool(routes)),
                 retries=self.settings.research.llm_self_heal_retries,
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.plan.error",
+            await self.meter.record(
+                name="llm.tokens",
                 request_id=ctx.request_id,
-                stage="plan",
-                status="error",
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(chat_result.usage.prompt_tokens),
+                    "completion_tokens": int(chat_result.usage.completion_tokens),
+                    "total_tokens": int(chat_result.usage.total_tokens),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self.tracker.error(
+                name="research.plan.failed",
+                request_id=ctx.request_id,
+                step="research.plan",
                 error_code="research_round_plan_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "round_index": round_index,
-                    "message": str(exc),
                 },
             )
             raise

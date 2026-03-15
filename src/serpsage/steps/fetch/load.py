@@ -3,8 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from contextlib import suppress
-from typing import Any
 from typing_extensions import override
 
 from serpsage.components.cache import CacheBase
@@ -14,7 +12,6 @@ from serpsage.components.crawl.base import CrawlerConfigBase
 from serpsage.dependencies import Depends
 from serpsage.models.app.response import FetchErrorTag
 from serpsage.models.components.crawl import CrawlResult
-from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 
@@ -31,12 +28,23 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             return ctx
         url = (ctx.url or "").strip()
         if not url:
-            await self._fail(
-                ctx,
-                code="fetch_load_failed",
-                message="empty url",
-                stage="load",
-                source=None,
+            ctx.error.failed = True
+            ctx.error.tag = "SOURCE_NOT_AVAILABLE"
+            ctx.error.detail = "empty url"
+            await self.tracker.error(
+                name="fetch.load.failed",
+                request_id=ctx.request_id,
+                step="fetch.load",
+                error_code="fetch_load_failed",
+                error_message="empty url",
+                data={
+                    "error_tag": ctx.error.tag,
+                    "url": ctx.url,
+                    "url_index": ctx.url_index,
+                    "crawl_mode": ctx.page.crawl_mode,
+                    "source": "",
+                    "fatal": True,
+                },
             )
             return ctx
         mode = str(ctx.page.crawl_mode or "fallback")
@@ -90,139 +98,187 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                 ttl_s=ttl_s,
             )
 
-        source: str | None = None
         fetched: CrawlResult | None = None
         crawl_exc: Exception | None = None
         if mode == "never":
             fetched = await get_cached()
             if fetched is None:
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.cache_miss",
-                    status="error",
-                    attrs={"mode": mode, "cache_key": cache_key},
+                await self.tracker.warning(
+                    name="fetch.load.cache_miss",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    data={"mode": mode, "cache_key": cache_key},
                 )
-                await self._fail(
-                    ctx,
-                    code="fetch_cache_miss",
-                    message="cache miss in crawl_mode=never",
-                    stage="load",
-                    source="cache",
+                ctx.error.failed = True
+                ctx.error.tag = "SOURCE_NOT_AVAILABLE"
+                ctx.error.detail = "cache miss in crawl_mode=never"
+                await self.tracker.error(
+                    name="fetch.load.failed",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    error_code="fetch_cache_miss",
+                    error_message="cache miss in crawl_mode=never",
+                    data={
+                        "error_tag": ctx.error.tag,
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "crawl_mode": ctx.page.crawl_mode,
+                        "source": "cache",
+                        "fatal": True,
+                    },
                 )
                 return ctx
-            await self._emit_load_event(
-                ctx=ctx,
-                event_name="fetch.load.cache_hit",
-                attrs={
+            await self.tracker.info(
+                name="fetch.load.cache_hit",
+                request_id=ctx.request_id,
+                step="fetch.load",
+                data={
                     "mode": mode,
                     "cache_key": cache_key,
                     "latency_ms": cache_fetch_ms,
                 },
             )
-            source = "cache"
         elif mode == "always":
             try:
                 fetched = await crawl_once()
             except Exception as exc:  # noqa: BLE001
                 crawl_exc = exc if isinstance(exc, Exception) else Exception(str(exc))
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.crawl_error",
-                    status="error",
+                await self.tracker.error(
+                    name="fetch.load.crawl_failed",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
                     error_type=type(crawl_exc).__name__,
-                    attrs={"mode": mode, "cache_key": cache_key},
+                    data={
+                        "mode": mode,
+                        "cache_key": cache_key,
+                    },
                 )
             if fetched is None:
-                await self._fail(
-                    ctx,
+                message = str(crawl_exc or "crawl failed")
+                ctx.error.failed = True
+                ctx.error.tag = _resolve_error_tag(
                     code="fetch_crawl_failed",
-                    message=str(crawl_exc or "crawl failed"),
-                    stage="load",
-                    source="crawl",
+                    message=message,
+                )
+                ctx.error.detail = message
+                await self.tracker.error(
+                    name="fetch.load.failed",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    error_code="fetch_crawl_failed",
+                    error_message=message,
+                    data={
+                        "error_tag": ctx.error.tag,
+                        "url": ctx.url,
+                        "url_index": ctx.url_index,
+                        "crawl_mode": ctx.page.crawl_mode,
+                        "source": "crawl",
+                        "fatal": True,
+                    },
                 )
                 return ctx
             await write_cache(fetched)
-            await self._emit_load_event(
-                ctx=ctx,
-                event_name="fetch.load.crawl_success",
-                attrs={
+            await self.tracker.info(
+                name="fetch.load.crawl_succeeded",
+                request_id=ctx.request_id,
+                step="fetch.load",
+                data={
                     "mode": mode,
                     "cache_key": cache_key,
                     "latency_ms": crawl_fetch_ms,
                 },
             )
-            source = "crawl"
         elif mode == "preferred":
             try:
                 fetched = await crawl_once()
             except Exception as exc:  # noqa: BLE001
                 crawl_exc = exc if isinstance(exc, Exception) else Exception(str(exc))
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.crawl_error",
-                    status="error",
-                    error_type=type(crawl_exc).__name__,
-                    attrs={"mode": mode, "cache_key": cache_key},
+                await self.tracker.warning(
+                    name="fetch.load.crawl_failed",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    warning_code="fetch_crawl_failed",
+                    warning_message=str(crawl_exc),
+                    data={
+                        "mode": mode,
+                        "cache_key": cache_key,
+                    },
                 )
             if fetched is None:
                 cached = await get_cached()
                 if cached is None:
-                    await self._emit_load_event(
-                        ctx=ctx,
-                        event_name="fetch.load.cache_miss",
-                        status="error",
-                        attrs={"mode": mode, "cache_key": cache_key},
+                    await self.tracker.error(
+                        name="fetch.load.cache_miss",
+                        request_id=ctx.request_id,
+                        step="fetch.load",
+                        data={"mode": mode, "cache_key": cache_key},
                     )
-                    await self._fail(
-                        ctx,
+                    message = str(crawl_exc or "crawl failed and cache miss")
+                    ctx.error.failed = True
+                    ctx.error.tag = _resolve_error_tag(
                         code="fetch_crawl_failed",
-                        message=str(crawl_exc or "crawl failed and cache miss"),
-                        stage="load",
-                        source="crawl",
+                        message=message,
+                    )
+                    ctx.error.detail = message
+                    await self.tracker.error(
+                        name="fetch.load.failed",
+                        request_id=ctx.request_id,
+                        step="fetch.load",
+                        error_code="fetch_crawl_failed",
+                        error_message=message,
+                        data={
+                            "error_tag": ctx.error.tag,
+                            "url": ctx.url,
+                            "url_index": ctx.url_index,
+                            "crawl_mode": ctx.page.crawl_mode,
+                            "source": "crawl",
+                            "fatal": True,
+                        },
                     )
                     return ctx
                 fetched = cached
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.cache_hit",
-                    attrs={
+                await self.tracker.info(
+                    name="fetch.load.cache_hit",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    data={
                         "mode": mode,
                         "cache_key": cache_key,
                         "latency_ms": cache_fetch_ms,
                     },
                 )
-                source = "cache"
             else:
                 await write_cache(fetched)
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.crawl_success",
-                    attrs={
+                await self.tracker.info(
+                    name="fetch.load.crawl_succeeded",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    data={
                         "mode": mode,
                         "cache_key": cache_key,
                         "latency_ms": crawl_fetch_ms,
                     },
                 )
-                source = "crawl"
         else:
             cached = await get_cached()
             if cached is not None:
                 fetched = cached
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.cache_hit",
-                    attrs={
+                await self.tracker.info(
+                    name="fetch.load.cache_hit",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    data={
                         "mode": mode,
                         "cache_key": cache_key,
                         "latency_ms": cache_fetch_ms,
                     },
                 )
-                source = "cache"
             else:
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.cache_miss",
-                    attrs={
+                await self.tracker.warning(
+                    name="fetch.load.cache_miss",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    data={
                         "mode": mode,
                         "cache_key": cache_key,
                         "latency_ms": cache_fetch_ms,
@@ -234,127 +290,60 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                     crawl_exc = (
                         exc if isinstance(exc, Exception) else Exception(str(exc))
                     )
-                    await self._emit_load_event(
-                        ctx=ctx,
-                        event_name="fetch.load.crawl_error",
-                        status="error",
+                    await self.tracker.error(
+                        name="fetch.load.crawl_failed",
+                        request_id=ctx.request_id,
+                        step="fetch.load",
                         error_type=type(crawl_exc).__name__,
-                        attrs={"mode": mode, "cache_key": cache_key},
+                        data={
+                            "mode": mode,
+                            "cache_key": cache_key,
+                        },
                     )
                 if fetched is None:
-                    await self._fail(
-                        ctx,
+                    message = str(crawl_exc or "crawl failed")
+                    ctx.error.failed = True
+                    ctx.error.tag = _resolve_error_tag(
                         code="fetch_crawl_failed",
-                        message=str(crawl_exc or "crawl failed"),
-                        stage="load",
-                        source="crawl",
+                        message=message,
+                    )
+                    ctx.error.detail = message
+                    await self.tracker.error(
+                        name="fetch.load.failed",
+                        request_id=ctx.request_id,
+                        step="fetch.load",
+                        error_code="fetch_crawl_failed",
+                        error_message=message,
+                        data={
+                            "error_tag": ctx.error.tag,
+                            "url": ctx.url,
+                            "url_index": ctx.url_index,
+                            "crawl_mode": ctx.page.crawl_mode,
+                            "source": "crawl",
+                            "fatal": True,
+                        },
                     )
                     return ctx
                 await write_cache(fetched)
-                await self._emit_load_event(
-                    ctx=ctx,
-                    event_name="fetch.load.crawl_success",
-                    attrs={
+                await self.tracker.info(
+                    name="fetch.load.crawl_succeeded",
+                    request_id=ctx.request_id,
+                    step="fetch.load",
+                    data={
                         "mode": mode,
                         "cache_key": cache_key,
                         "latency_ms": crawl_fetch_ms,
                     },
                 )
-                source = "crawl"
         assert fetched is not None
-        await self._emit_fetch_meter(ctx=ctx, source=str(source or "unknown"))
+        await self.meter.record(
+            name="fetch.page",
+            request_id=ctx.request_id,
+            key=f"{ctx.request_id}:fetch.page:{ctx.url_index}",
+            unit="page",
+        )
         ctx.page.raw = fetched
         return ctx
-
-    async def _fail(
-        self,
-        ctx: FetchStepContext,
-        *,
-        code: str,
-        message: str,
-        stage: str,
-        source: str | None,
-        tag: FetchErrorTag | None = None,
-    ) -> None:
-        ctx.error.failed = True
-        ctx.error.tag = tag or _resolve_error_tag(code=code, message=message)
-        ctx.error.detail = str(message or "").strip() or None
-        details: dict[str, Any] = {
-            "url": ctx.url,
-            "url_index": ctx.url_index,
-            "stage": stage,
-            "fatal": True,
-            "crawl_mode": ctx.page.crawl_mode,
-        }
-        if source:
-            details["source"] = source
-        await self.emit_tracking_event(
-            event_name="fetch.load.error",
-            request_id=ctx.request_id,
-            stage=stage,
-            status="error",
-            error_code=code,
-            attrs={
-                **details,
-                "message": message,
-                "error_tag": ctx.error.tag,
-            },
-        )
-
-    async def _emit_load_event(
-        self,
-        *,
-        ctx: FetchStepContext,
-        event_name: str,
-        status: str = "ok",
-        error_type: str = "",
-        attrs: dict[str, Any] | None = None,
-    ) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
-        payload = {
-            "url": ctx.url,
-            "url_index": int(ctx.url_index),
-            "crawl_mode": str(ctx.page.crawl_mode),
-        }
-        if attrs:
-            payload.update(attrs)
-        with suppress(Exception):
-            await telemetry.emit(
-                event_name=event_name,
-                status="error" if status == "error" else "ok",
-                request_id=ctx.request_id,
-                component="fetch_load",
-                stage="load",
-                error_type=error_type,
-                attrs=payload,
-            )
-
-    async def _emit_fetch_meter(self, *, ctx: FetchStepContext, source: str) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
-        with suppress(Exception):
-            await telemetry.emit(
-                event_name="meter.usage.fetch_page",
-                status="ok",
-                request_id=ctx.request_id,
-                component="fetch_load",
-                stage="load",
-                idempotency_key=f"{ctx.request_id}:meter.usage.fetch_page:{ctx.url_index}",
-                attrs={
-                    "url": ctx.url,
-                    "url_index": int(ctx.url_index),
-                    "source": source,
-                    "crawl_mode": str(ctx.page.crawl_mode),
-                },
-                meter=MeterPayload(
-                    meter_type="fetch_page",
-                    unit="page",
-                    quantity=1.0,
-                ),
-            )
 
 
 def _cache_key(*, url: str, backend: str) -> str:

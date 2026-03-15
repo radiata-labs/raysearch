@@ -61,20 +61,23 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
         try:
             planned_query = await self._plan_primary_query(
                 query=query,
+                request_id=ctx.request_id,
                 now_utc=datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC),
                 mode=ctx.plan.mode,
                 subsystem=ctx.runtime.engine_selection_subsystem or "search",
             )
         except Exception as exc:  # noqa: BLE001
-            await self._emit_query_plan_error(
-                ctx=ctx,
-                phase="primary_query",
+            await self.tracker.error(
+                name="search.query_plan.failed",
+                request_id=ctx.request_id,
+                step="search.query_plan",
                 error_code="search_primary_query_plan_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
+                    "phase": "primary_query",
                     "mode": ctx.plan.mode,
                     "query": query,
-                    "message": str(exc),
                 },
             )
             return primary_query
@@ -98,6 +101,7 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
             llm_queries = await self._collect_llm_queries(
                 ctx=ctx,
                 query=primary_query.query,
+                request_id=ctx.request_id,
                 max_queries=max_extra_queries,
             )
 
@@ -127,6 +131,7 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
         self,
         *,
         query: str,
+        request_id: str,
         now_utc: datetime,
         mode: Literal["fast", "auto", "deep"],
         subsystem: Literal["search", "research", "answer"],
@@ -155,6 +160,17 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
                 engine_selection_context=engine_selection_context,
             ),
             response_format=response_format,
+        )
+        await self.meter.record(
+            name="llm.tokens",
+            request_id=request_id,
+            model=str(self.settings.answer.plan.use_model),
+            unit="token",
+            tokens={
+                "prompt_tokens": int(result.usage.prompt_tokens),
+                "completion_tokens": int(result.usage.completion_tokens),
+                "total_tokens": int(result.usage.total_tokens),
+            },
         )
         raw = (
             result.data
@@ -250,25 +266,29 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
         *,
         ctx: SearchStepContext,
         query: str,
+        request_id: str,
         max_queries: int,
     ) -> list[QuerySourceSpec]:
         model_name = self._resolve_expansion_model()
         try:
             return await self._expand_queries(
                 query=query,
+                request_id=request_id,
                 model_name=model_name,
                 max_queries=max_queries,
             )
         except Exception as exc:  # noqa: BLE001
-            await self._emit_query_plan_error(
-                ctx=ctx,
-                phase="expand",
+            await self.tracker.error(
+                name="search.query_plan.failed",
+                request_id=ctx.request_id,
+                step="search.query_plan",
                 error_code="search_query_expansion_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
+                    "phase": "expand",
                     "query": query,
                     "model": model_name,
-                    "message": str(exc),
                 },
             )
             return []
@@ -281,6 +301,7 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
         self,
         *,
         query: str,
+        request_id: str,
         model_name: str,
         max_queries: int,
     ) -> list[QuerySourceSpec]:
@@ -324,6 +345,17 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
                 },
             },
             timeout_s=self.settings.search.expansion.llm_timeout_s,
+        )
+        await self.meter.record(
+            name="llm.tokens",
+            request_id=request_id,
+            model=str(model_name),
+            unit="token",
+            tokens={
+                "prompt_tokens": int(result.usage.prompt_tokens),
+                "completion_tokens": int(result.usage.completion_tokens),
+                "total_tokens": int(result.usage.total_tokens),
+            },
         )
         raw = (
             result.data
@@ -399,35 +431,15 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
     async def _abort_empty_query(self, ctx: SearchStepContext) -> None:
         ctx.plan.aborted = True
         ctx.plan.abort_reason = "empty query"
-        await self._emit_query_plan_error(
-            ctx=ctx,
-            phase="validate",
-            error_code="search_query_plan_failed",
-            attrs={
-                "query": ctx.request.query,
-                "message": "empty query",
-            },
-        )
-
-    async def _emit_query_plan_error(
-        self,
-        *,
-        ctx: SearchStepContext,
-        phase: str,
-        error_code: str,
-        attrs: dict[str, object],
-        error_type: str = "",
-    ) -> None:
-        await self.emit_tracking_event(
-            event_name="search.query_plan.error",
+        await self.tracker.error(
+            name="search.query_plan.failed",
             request_id=ctx.request_id,
-            stage="search_query_plan",
-            status="error",
-            error_code=error_code,
-            error_type=error_type,
-            attrs={
-                "phase": phase,
-                **attrs,
+            step="search.query_plan",
+            error_code="search_query_plan_failed",
+            error_message="empty query",
+            data={
+                "phase": "validate",
+                "query": ctx.request.query,
             },
         )
 

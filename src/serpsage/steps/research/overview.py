@@ -105,17 +105,27 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.overview.error",
+            await self.meter.record(
+                name="llm.tokens",
                 request_id=ctx.request_id,
-                stage="overview_review",
-                status="error",
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(chat_result.usage.prompt_tokens),
+                    "completion_tokens": int(chat_result.usage.completion_tokens),
+                    "total_tokens": int(chat_result.usage.total_tokens),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self.tracker.error(
+                name="research.overview.failed",
+                request_id=ctx.request_id,
+                step="research.overview",
                 error_code="research_overview_review_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "round_index": ctx.run.current.round_index,
-                    "message": str(exc),
                 },
             )
             raise
@@ -150,17 +160,41 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         ctx.run.current.next_queries = list(
             payload.next_queries[: ctx.run.limits.max_queries_per_round]
         )
-        await self.emit_tracking_event(
-            event_name="research.style.applied",
+        await self.tracker.info(
+            name="research.style.applied",
             request_id=ctx.request_id,
-            stage="overview_review",
-            attrs={
+            step="research.overview",
+            data={
+                "success": True,
+                "sources_reviewed": len(sources),
+                "findings": len(payload.findings),
+                "confidence": payload.confidence,
+                "coverage_ratio": ctx.run.current.coverage_ratio,
+            },
+        )
+        await self.tracker.debug(
+            name="research.style.applied.detail",
+            request_id=ctx.request_id,
+            step="research.overview",
+            data={
+                "success": True,
                 "report_style_selected": ctx.task.style,
                 "style_applied_stage": "overview",
                 "mode_depth_profile": mode_depth.mode_key,
                 "review_source_window_effective": review_source_window,
                 "overview_new_result_target_ratio": new_result_target_ratio,
                 "overview_min_history_sources": min_history_sources,
+                "context_source_ids": ctx.run.current.context_source_ids,
+                "need_content_source_ids": ctx.run.current.need_content_source_ids,
+                "covered_subthemes": len(payload.covered_subthemes),
+                "missing_entities": payload.missing_entities,
+                "critical_gaps": payload.critical_gaps,
+                "unresolved_conflict_topics": unresolved_topics,
+                "next_queries": [
+                    item.model_dump(mode="json")
+                    for item in ctx.run.current.next_queries
+                ],
+                "query_strategy": payload.next_query_strategy,
             },
         )
         return ctx

@@ -66,16 +66,14 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
         try:
             search_contexts = await self.search_runner.run_batch(search_contexts)
         except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="answer.search.error",
+            await self.tracker.error(
+                name="answer.search.failed",
                 request_id=ctx.request_id,
-                stage="search",
-                status="error",
+                step="answer.search",
                 error_code="answer_search_failed",
                 error_type=type(exc).__name__,
-                attrs={
-                    "request_id": ctx.request_id,
-                    "message": str(exc),
+                error_message=str(exc),
+                data={
                     "sub_question_count": len(sub_questions),
                 },
             )

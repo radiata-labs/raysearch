@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import suppress
 from typing import Any, TypeVar, cast, overload
 from typing_extensions import override
 
@@ -20,7 +19,6 @@ from serpsage.models.components.llm import (
     ChatResultBase,
     ChatTextResult,
 )
-from serpsage.models.components.telemetry import EventStatus, MeterPayload
 
 LLM_ROUTES_TOKEN = "component.llm_routes"  # noqa: S105
 
@@ -106,147 +104,39 @@ class RoutedLLMClient(LLMClientBase[LLMRouterConfig]):
         if route is None:
             raise RuntimeError(f"llm model route `{model}` is not configured")
         client, provider_model = route
-        provider_client = type(client).__name__
-        route_attrs = self._route_attrs(
-            route_model=route_key,
-            provider_model=provider_model,
-            provider_client=provider_client,
+        if response_format is None:
+            return await client._create(
+                model=provider_model,
+                messages=messages,
+                response_format=None,
+                format_override=None,
+                timeout_s=timeout_s,
+                _route_name=route_key,
+                **kwargs,
+            )
+        if isinstance(response_format, dict):
+            return await client._create(
+                model=provider_model,
+                messages=messages,
+                response_format=response_format,
+                format_override=None,
+                timeout_s=timeout_s,
+                _route_name=route_key,
+                **kwargs,
+            )
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return await client._create(
+                model=provider_model,
+                messages=messages,
+                response_format=response_format,
+                format_override=format_override,
+                timeout_s=timeout_s,
+                _route_name=route_key,
+                **kwargs,
+            )
+        raise TypeError(
+            "response_format must be dict[str, object] | type[BaseModel] | None"
         )
-        started_ms = int(self.clock.now_ms())
-        await self._emit_safe(
-            event_name="llm.call",
-            status="start",
-            component="llm_router",
-            stage="chat",
-            attrs={**route_attrs, "message_count": len(messages)},
-        )
-        try:
-            result: ChatResultBase
-            if response_format is None:
-                result = await client.create(
-                    model=provider_model,
-                    messages=messages,
-                    response_format=None,
-                    format_override=None,
-                    timeout_s=timeout_s,
-                    _route_name=route_key,
-                    **kwargs,
-                )
-            elif isinstance(response_format, dict):
-                result = await client.create(
-                    model=provider_model,
-                    messages=messages,
-                    response_format=response_format,
-                    format_override=None,
-                    timeout_s=timeout_s,
-                    _route_name=route_key,
-                    **kwargs,
-                )
-            elif isinstance(response_format, type) and issubclass(
-                response_format, BaseModel
-            ):
-                result = await client.create(
-                    model=provider_model,
-                    messages=messages,
-                    response_format=response_format,
-                    format_override=format_override,
-                    timeout_s=timeout_s,
-                    _route_name=route_key,
-                    **kwargs,
-                )
-            else:
-                raise TypeError(
-                    "response_format must be dict[str, object] | type[BaseModel] | None"
-                )
-            usage = result.usage
-            await self._emit_safe(
-                event_name="llm.result",
-                status="ok",
-                component="llm_router",
-                stage="chat",
-                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                attrs=route_attrs,
-            )
-            await self._emit_safe(
-                event_name="meter.usage.llm_tokens",
-                status="ok",
-                component="llm_router",
-                stage="chat",
-                idempotency_key=f"{route_key}:{provider_model}:{started_ms}:{usage.total_tokens}",
-                attrs=route_attrs,
-                meter=MeterPayload(
-                    meter_type="llm_tokens",
-                    unit="token",
-                    quantity=float(usage.total_tokens),
-                    provider=provider_client,
-                    model=str(provider_model),
-                    prompt_tokens=int(usage.prompt_tokens),
-                    completion_tokens=int(usage.completion_tokens),
-                    total_tokens=int(usage.total_tokens),
-                ),
-            )
-            return result
-        except Exception as exc:
-            await self._emit_safe(
-                event_name="llm.error",
-                status="error",
-                component="llm_router",
-                stage="chat",
-                duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                error_type=type(exc).__name__,
-                attrs=route_attrs,
-            )
-            raise
-
-    @staticmethod
-    def _route_attrs(
-        *,
-        route_model: str,
-        provider_model: str,
-        provider_client: str,
-    ) -> dict[str, object]:
-        return {
-            "route_model": str(route_model),
-            "provider_model": str(provider_model),
-            "provider_client": str(provider_client),
-        }
-
-    async def _emit_safe(
-        self,
-        *,
-        event_name: str,
-        status: EventStatus = "ok",
-        request_id: str = "",
-        trace_id: str = "",
-        span_id: str = "",
-        component: str = "",
-        stage: str = "",
-        duration_ms: int | None = None,
-        error_code: str = "",
-        error_type: str = "",
-        attrs: dict[str, object] | None = None,
-        meter: MeterPayload | None = None,
-        idempotency_key: str = "",
-    ) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
-        with suppress(Exception):
-            await telemetry.emit(
-                event_name=event_name,
-                status=status,
-                request_id=request_id,
-                trace_id=trace_id,
-                span_id=span_id,
-                component=component,
-                stage=stage,
-                duration_ms=duration_ms,
-                error_code=error_code,
-                error_type=error_type,
-                attrs=attrs,
-                meter=meter,
-                idempotency_key=idempotency_key,
-            )
 
 
 __all__ = ["LLM_ROUTES_TOKEN", "RoutedLLMClient"]

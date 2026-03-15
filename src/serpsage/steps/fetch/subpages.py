@@ -36,19 +36,18 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                 query_tokens=ctx.related.subpages.keywords,
             )
         except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="fetch.subpages.error",
+            await self.tracker.error(
+                name="fetch.subpages.failed",
                 request_id=ctx.request_id,
-                stage="subpages",
-                status="error",
+                step="fetch.subpages",
                 error_code="fetch_subpage_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": False,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": str(exc),
+                    "fatal": False,
                 },
             )
             return ctx
@@ -102,19 +101,18 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         for index, child_context in enumerate(child_results):
             url = selected_urls[index]
             if child_context.result is None or child_context.error.failed:
-                await self.emit_tracking_event(
-                    event_name="fetch.subpages.error",
+                await self.tracker.error(
+                    name="fetch.subpages.failed",
                     request_id=ctx.request_id,
-                    stage="subpages",
-                    status="error",
+                    step="fetch.subpages",
                     error_code="fetch_subpage_failed",
-                    attrs={
+                    error_message="subpage fetch failed",
+                    data={
                         "url": ctx.url,
                         "url_index": int(ctx.url_index),
                         "subpage_url": url,
-                        "fatal": False,
                         "crawl_mode": str(ctx.page.crawl_mode),
-                        "message": "subpage fetch failed",
+                        "fatal": False,
                     },
                 )
                 continue

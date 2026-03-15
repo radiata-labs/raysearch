@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import suppress
 from typing_extensions import override
 from urllib.parse import urlparse
 
@@ -12,7 +11,6 @@ from serpsage.components.provider.blend import (
 )
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
-from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.search import (
     SearchCanonicalBucket,
     SearchNormalizedResult,
@@ -169,65 +167,29 @@ class SearchStep(StepBase[SearchStepContext]):
                 end_published_date=ctx.request.end_published_date,
                 **kwargs,
             )
-            await self._emit_search_meter(
-                ctx=ctx,
-                query=query,
-                query_index=idx,
-                status="ok",
+            await self.meter.record(
+                name="search.query",
+                request_id=ctx.request_id,
+                key=f"{ctx.request_id}:search.query:{int(idx)}",
+                unit="call",
             )
         except Exception as exc:  # noqa: BLE001
-            await self._emit_search_meter(
-                ctx=ctx,
-                query=query,
-                query_index=idx,
-                status="error",
-                error_type=type(exc).__name__,
-            )
-            await self.emit_tracking_event(
-                event_name="search.query.error",
+            await self.meter.record(
+                name="search.query",
                 request_id=ctx.request_id,
-                stage="search",
-                status="error",
+                key=f"{ctx.request_id}:search.query:{int(idx)}",
+                unit="call",
+            )
+            await self.tracker.error(
+                name="search.query.failed",
+                request_id=ctx.request_id,
+                step="search.search",
                 error_code="search_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "query": query,
-                    "message": str(exc),
                 },
-            )
-
-    async def _emit_search_meter(
-        self,
-        *,
-        ctx: SearchStepContext,
-        query: str,
-        query_index: int,
-        status: str,
-        error_type: str = "",
-    ) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
-        with suppress(Exception):
-            await telemetry.emit(
-                event_name="meter.usage.search_call",
-                status="error" if status == "error" else "ok",
-                request_id=ctx.request_id,
-                component="search_step",
-                stage="search",
-                error_type=error_type,
-                idempotency_key=(
-                    f"{ctx.request_id}:meter.usage.search_call:{int(query_index)}"
-                ),
-                attrs={
-                    "query": query,
-                    "mode": str(ctx.plan.mode),
-                },
-                meter=MeterPayload(
-                    meter_type="search_call",
-                    unit="call",
-                    quantity=1.0,
-                ),
             )
 
     def _pick_snippet(self, item: SearchNormalizedResult) -> str:

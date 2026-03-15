@@ -58,17 +58,27 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.theme.error",
+            await self.meter.record(
+                name="llm.tokens",
                 request_id=ctx.request_id,
-                stage="theme_plan",
-                status="error",
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(chat_result.usage.prompt_tokens),
+                    "completion_tokens": int(chat_result.usage.completion_tokens),
+                    "total_tokens": int(chat_result.usage.total_tokens),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self.tracker.error(
+                name="research.theme.failed",
+                request_id=ctx.request_id,
+                step="research.theme",
                 error_code="research_theme_plan_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "model": model,
-                    "message": str(exc),
                 },
             )
             raise
@@ -105,30 +115,23 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
             f"Mode depth kept from requested search mode `{ctx.run.limits.mode_key}`."
         )
         ctx.run.notes.append(f"Output language fixed to {theme_plan.output_language}.")
-        await self.emit_tracking_event(
-            event_name="research.language.selected",
+        await self.tracker.info(
+            name="research.theme.summary",
             request_id=ctx.request_id,
-            stage="theme_plan",
-            attrs={
-                "input_language": theme_plan.input_language,
+            step="research.theme",
+            data={
+                "success": True,
+                "question_cards": len(question_cards),
+                "report_style_selected": theme_plan.style,
                 "output_language": theme_plan.output_language,
             },
         )
-        await self.emit_tracking_event(
-            event_name="research.style.selected",
+        await self.tracker.debug(
+            name="research.theme.summary.detail",
             request_id=ctx.request_id,
-            stage="theme_plan",
-            attrs={
-                "report_style_selected": theme_plan.style,
-                "task_intent_selected": theme_plan.intent,
-                "complexity_tier_selected": theme_plan.complexity,
-            },
-        )
-        await self.emit_tracking_event(
-            event_name="research.theme.summary",
-            request_id=ctx.request_id,
-            stage="theme_plan",
-            attrs={
+            step="research.theme",
+            data={
+                "success": True,
                 "core_question": theme_plan.question,
                 "question_cards": len(question_cards),
                 "subthemes": len(theme_plan.subthemes),
@@ -139,6 +142,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 "report_style_selected": theme_plan.style,
                 "task_intent_selected": theme_plan.intent,
                 "complexity_tier_selected": theme_plan.complexity,
+                "required_entities_count": len(theme_plan.entities),
             },
         )
         return ctx

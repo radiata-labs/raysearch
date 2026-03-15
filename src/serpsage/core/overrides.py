@@ -9,10 +9,11 @@ from serpsage.components.cache.base import CacheBase
 from serpsage.components.crawl import CrawlerBase
 from serpsage.components.extract import ExtractorBase
 from serpsage.components.llm import LLMClientBase
+from serpsage.components.metering import MeteringEmitterBase
 from serpsage.components.provider import SearchProviderBase
 from serpsage.components.rank import RankerBase
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.components.telemetry import TelemetryEmitterBase
+from serpsage.components.tracking import TrackingEmitterBase
 from serpsage.core.workunit import ClockBase
 from serpsage.models.base import MutableModel
 
@@ -32,7 +33,8 @@ class Overrides(MutableModel):
     extractor: ExtractorBase | None = None
     ranker: RankerBase | None = None
     llm: LLMClientBase | None = None
-    telemetry: TelemetryEmitterBase[Any] | None = None
+    tracker: TrackingEmitterBase[Any] | None = None
+    meter: MeteringEmitterBase[Any] | None = None
 
 
 __all__ = ["Overrides"]

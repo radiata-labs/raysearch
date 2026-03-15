@@ -39,18 +39,17 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
             ctx.error.failed = True
             ctx.error.tag = "SOURCE_NOT_AVAILABLE"
             ctx.error.detail = "empty url"
-            await self.emit_tracking_event(
-                event_name="fetch.prepare.error",
+            await self.tracker.error(
+                name="fetch.prepare.failed",
                 request_id=ctx.request_id,
-                stage="prepare",
-                status="error",
+                step="fetch.prepare",
                 error_code="fetch_load_failed",
-                attrs={
+                error_message="empty url",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": True,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "empty url",
+                    "fatal": True,
                 },
             )
             return ctx
@@ -59,18 +58,17 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
             ctx.error.failed = True
             ctx.error.tag = "UNSUPPORTED_URL"
             ctx.error.detail = "unsupported url format"
-            await self.emit_tracking_event(
-                event_name="fetch.prepare.error",
+            await self.tracker.error(
+                name="fetch.prepare.failed",
                 request_id=ctx.request_id,
-                stage="prepare",
-                status="error",
+                step="fetch.prepare",
                 error_code="fetch_load_failed",
-                attrs={
+                error_message="unsupported url format",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": True,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "unsupported url format",
+                    "fatal": True,
                 },
             )
             return ctx

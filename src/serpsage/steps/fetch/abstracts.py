@@ -114,18 +114,17 @@ class FetchAbstractBuildStep(StepBase[FetchStepContext]):
         if req is None:
             return ctx
         if ctx.page.doc is None:
-            await self.emit_tracking_event(
-                event_name="fetch.abstract_build.error",
+            await self.tracker.error(
+                name="fetch.abstract_build.failed",
                 request_id=ctx.request_id,
-                stage="abstract_build",
-                status="error",
+                step="fetch.abstract_build",
                 error_code="fetch_abstract_build_failed",
-                attrs={
+                error_message="missing extracted content",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": False,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "missing extracted content",
+                    "fatal": False,
                 },
             )
             return ctx

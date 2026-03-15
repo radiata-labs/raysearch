@@ -67,6 +67,17 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                 messages=messages,
                 response_format=schema,
             )
+            await self.meter.record(
+                name="llm.tokens",
+                request_id=ctx.request_id,
+                model=str(self.settings.answer.generate.use_model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(result.usage.prompt_tokens),
+                    "completion_tokens": int(result.usage.completion_tokens),
+                    "total_tokens": int(result.usage.total_tokens),
+                },
+            )
             if schema is None:
                 answer_text = str(result.text or "")
                 normalized_answer = _expand_compound_citation_markers(answer_text)
@@ -97,32 +108,24 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
                 ctx.output.answers = _strip_citation_markers(ctx.output.answers)
             ctx.output.answers = _sanitize_output_value(ctx.output.answers)
         except _AnswerSchemaMismatchError as exc:
-            await self.emit_tracking_event(
-                event_name="answer.generate.error",
+            await self.tracker.error(
+                name="answer.generate.failed",
                 request_id=ctx.request_id,
-                stage="generate",
-                status="error",
+                step="answer.generate",
                 error_code="answer_schema_mismatch",
                 error_type=type(exc).__name__,
-                attrs={
-                    "request_id": ctx.request_id,
-                    "message": str(exc),
-                },
+                error_message=str(exc),
             )
             ctx.output.answers = {}
             ctx.output.citations = []
         except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="answer.generate.error",
+            await self.tracker.error(
+                name="answer.generate.failed",
                 request_id=ctx.request_id,
-                stage="generate",
-                status="error",
+                step="answer.generate",
                 error_code="answer_generate_failed",
                 error_type=type(exc).__name__,
-                attrs={
-                    "request_id": ctx.request_id,
-                    "message": str(exc),
-                },
+                error_message=str(exc),
             )
             ctx.output.answers = {} if schema is not None else ""
             ctx.output.citations = []

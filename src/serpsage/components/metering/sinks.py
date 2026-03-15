@@ -10,10 +10,8 @@ import anyio
 from pydantic import field_validator
 
 from serpsage.components.base import ComponentConfigBase
-from serpsage.components.telemetry.base import (
-    EventSinkBase,
-)
-from serpsage.models.components.telemetry import EventEnvelope
+from serpsage.components.metering.base import MeteringSinkBase
+from serpsage.models.components.metering import MeterRecord
 
 AioSqliteModule: Any | None = None
 try:
@@ -22,29 +20,29 @@ except Exception:  # noqa: BLE001
     AioSqliteModule = None
 
 
-class NullObsConfig(ComponentConfigBase):
-    __setting_family__ = "telemetry"
+class NullMeteringSinkConfig(ComponentConfigBase):
+    __setting_family__ = "metering"
     __setting_name__ = "null_sink"
 
 
-class JsonlObsConfig(ComponentConfigBase):
-    __setting_family__ = "telemetry"
+class JsonlMeteringSinkConfig(ComponentConfigBase):
+    __setting_family__ = "metering"
     __setting_name__ = "jsonl_sink"
 
-    jsonl_path: str = ".serpsage_events.jsonl"
+    jsonl_path: str = ".serpsage_metering.jsonl"
 
     @field_validator("jsonl_path")
     @classmethod
     def _validate_jsonl_path(cls, value: str) -> str:
         token = str(value or "").strip()
         if not token:
-            raise ValueError("telemetry obs jsonl_path must be non-empty")
+            raise ValueError("metering jsonl_path must be non-empty")
         return token
 
 
-class SqliteMeteringConfig(ComponentConfigBase):
-    __setting_family__ = "telemetry"
-    __setting_name__ = "sqlite_metering_sink"
+class SqliteMeteringSinkConfig(ComponentConfigBase):
+    __setting_family__ = "metering"
+    __setting_name__ = "sqlite_sink"
 
     sqlite_db_path: str = ".serpsage_metering.sqlite3"
 
@@ -53,17 +51,17 @@ class SqliteMeteringConfig(ComponentConfigBase):
     def _validate_sqlite_db_path(cls, value: str) -> str:
         token = str(value or "").strip()
         if not token:
-            raise ValueError("telemetry metering sqlite_db_path must be non-empty")
+            raise ValueError("metering sqlite_db_path must be non-empty")
         return token
 
 
-class NullObsSink(EventSinkBase[NullObsConfig]):
+class NullMeteringSink(MeteringSinkBase[NullMeteringSinkConfig]):
     @override
-    async def emit(self, *, event: EventEnvelope) -> None:
-        _ = event
+    async def emit(self, *, record: MeterRecord) -> None:
+        _ = record
 
 
-class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
+class JsonlMeteringSink(MeteringSinkBase[JsonlMeteringSinkConfig]):
     def __init__(self) -> None:
         self._file_path = str(self.config.jsonl_path).strip()
         self._file: Any | None = None
@@ -78,12 +76,11 @@ class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
         self._file = await anyio.open_file(path, mode="a", encoding="utf-8")
 
     @override
-    async def emit(self, *, event: EventEnvelope) -> None:
+    async def emit(self, *, record: MeterRecord) -> None:
         if self._file is None:
             return
-        payload = event.model_dump(mode="json")
         line = json.dumps(
-            payload,
+            record.model_dump(mode="json"),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
@@ -100,7 +97,7 @@ class JsonlObsSink(EventSinkBase[JsonlObsConfig]):
         self._file = None
 
 
-class SqliteMeterLedgerSink(EventSinkBase[SqliteMeteringConfig]):
+class SqliteMeterLedgerSink(MeteringSinkBase[SqliteMeteringSinkConfig]):
     def __init__(self) -> None:
         self._db_path = Path(str(self.config.sqlite_db_path).strip())
         self._con: Any | None = None
@@ -123,71 +120,64 @@ class SqliteMeterLedgerSink(EventSinkBase[SqliteMeteringConfig]):
             """
             CREATE TABLE IF NOT EXISTS metering_ledger (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL UNIQUE,
-                idempotency_key TEXT NOT NULL UNIQUE,
+                record_id TEXT NOT NULL UNIQUE,
+                record_key TEXT NOT NULL UNIQUE,
                 request_id TEXT NOT NULL,
-                event_name TEXT NOT NULL,
-                meter_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                value REAL NOT NULL,
                 unit TEXT NOT NULL,
-                quantity REAL NOT NULL,
                 provider TEXT NOT NULL,
                 model TEXT NOT NULL,
                 prompt_tokens INTEGER NOT NULL,
                 completion_tokens INTEGER NOT NULL,
                 total_tokens INTEGER NOT NULL,
-                occurred_at_ms INTEGER NOT NULL,
-                attrs_json TEXT NOT NULL
+                occurred_at_ms INTEGER NOT NULL
             );
             """
         )
         await con.commit()
 
     @override
-    async def emit(self, *, event: EventEnvelope) -> None:
-        if self._con is None or event.meter is None:
+    async def emit(self, *, record: MeterRecord) -> None:
+        if self._con is None:
             return
-        meter = event.meter
-        attrs_json = json.dumps(
-            event.attrs.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
         async with self._lock:
             await self._con.execute(
                 """
                 INSERT OR IGNORE INTO metering_ledger(
-                    event_id,
-                    idempotency_key,
+                    record_id,
+                    record_key,
                     request_id,
-                    event_name,
-                    meter_type,
+                    name,
+                    value,
                     unit,
-                    quantity,
                     provider,
                     model,
                     prompt_tokens,
                     completion_tokens,
                     total_tokens,
-                    occurred_at_ms,
-                    attrs_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    occurred_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(event.event_id),
-                    str(event.idempotency_key or event.event_id),
-                    str(event.request_id or ""),
-                    str(event.event_name),
-                    str(meter.meter_type),
-                    str(meter.unit),
-                    float(meter.quantity),
-                    str(meter.provider or ""),
-                    str(meter.model or ""),
-                    int(meter.prompt_tokens),
-                    int(meter.completion_tokens),
-                    int(meter.total_tokens),
-                    int(event.ts_ms),
-                    attrs_json,
+                    str(record.id),
+                    str(record.key or record.id),
+                    str(record.request_id or ""),
+                    str(record.name),
+                    float(record.value),
+                    str(record.unit),
+                    str(record.provider or ""),
+                    str(record.model or ""),
+                    int(
+                        record.tokens.prompt_tokens if record.tokens is not None else 0
+                    ),
+                    int(
+                        record.tokens.completion_tokens
+                        if record.tokens is not None
+                        else 0
+                    ),
+                    int(record.tokens.total_tokens if record.tokens is not None else 0),
+                    int(record.ts_ms),
                 ),
             )
             await self._con.commit()
@@ -201,10 +191,10 @@ class SqliteMeterLedgerSink(EventSinkBase[SqliteMeteringConfig]):
 
 
 __all__ = [
-    "JsonlObsConfig",
-    "JsonlObsSink",
-    "NullObsConfig",
-    "NullObsSink",
-    "SqliteMeteringConfig",
+    "JsonlMeteringSink",
+    "JsonlMeteringSinkConfig",
+    "NullMeteringSink",
+    "NullMeteringSinkConfig",
     "SqliteMeterLedgerSink",
+    "SqliteMeteringSinkConfig",
 ]

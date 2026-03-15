@@ -24,18 +24,17 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             ctx.error.failed = True
             ctx.error.tag = "SOURCE_NOT_AVAILABLE"
             ctx.error.detail = "missing fetch result"
-            await self.emit_tracking_event(
-                event_name="fetch.extract.error",
+            await self.tracker.error(
+                name="fetch.extract.failed",
                 request_id=ctx.request_id,
-                stage="extract",
-                status="error",
+                step="fetch.extract",
                 error_code="fetch_load_failed",
-                attrs={
+                error_message="missing fetch result",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": True,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "missing fetch result",
+                    "fatal": True,
                 },
             )
             return ctx
@@ -63,19 +62,18 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             ctx.error.failed = True
             ctx.error.tag = "CRAWL_UNKNOWN_ERROR"
             ctx.error.detail = str(exc)
-            await self.emit_tracking_event(
-                event_name="fetch.extract.error",
+            await self.tracker.error(
+                name="fetch.extract.failed",
                 request_id=ctx.request_id,
-                stage="extract",
-                status="error",
+                step="fetch.extract",
                 error_code="fetch_extract_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": True,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": str(exc),
+                    "fatal": True,
                 },
             )
             return ctx
@@ -112,36 +110,34 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             ctx.error.failed = True
             ctx.error.tag = "SOURCE_NOT_AVAILABLE"
             ctx.error.detail = "no content extracted"
-            await self.emit_tracking_event(
-                event_name="fetch.extract.error",
+            await self.tracker.error(
+                name="fetch.extract.failed",
                 request_id=ctx.request_id,
-                stage="extract",
-                status="error",
+                step="fetch.extract",
                 error_code="fetch_extract_failed",
-                attrs={
+                error_message="no content extracted",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": True,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "no content extracted",
+                    "fatal": True,
                 },
             )
         elif text_chars < min_text_chars:
             ctx.error.failed = True
             ctx.error.tag = "SOURCE_NOT_AVAILABLE"
             ctx.error.detail = "extracted content below min_text_chars"
-            await self.emit_tracking_event(
-                event_name="fetch.extract.error",
+            await self.tracker.error(
+                name="fetch.extract.failed",
                 request_id=ctx.request_id,
-                stage="extract",
-                status="error",
+                step="fetch.extract",
                 error_code="fetch_extract_failed",
-                attrs={
+                error_message="extracted content below min_text_chars",
+                data={
                     "url": ctx.url,
                     "url_index": int(ctx.url_index),
-                    "fatal": True,
                     "crawl_mode": str(ctx.page.crawl_mode),
-                    "message": "extracted content below min_text_chars",
+                    "fatal": True,
                     "text_chars": int(text_chars),
                     "min_text_chars": int(min_text_chars),
                 },

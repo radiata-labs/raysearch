@@ -368,7 +368,11 @@ class RateLimitSettings(ComponentFamilySettings):
     pass
 
 
-class TelemetrySettings(ComponentFamilySettings):
+class TrackingSettings(ComponentFamilySettings):
+    pass
+
+
+class MeteringSettings(ComponentFamilySettings):
     pass
 
 
@@ -378,10 +382,11 @@ class ComponentSettings(SettingModel):
     extract: ExtractSettings = Field(default_factory=ExtractSettings)
     http: HttpSettings = Field(default_factory=HttpSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
+    metering: MeteringSettings = Field(default_factory=MeteringSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     rank: RankSettings = Field(default_factory=RankSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
-    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
+    tracking: TrackingSettings = Field(default_factory=TrackingSettings)
 
 
 class AppSettings(SettingModel):
@@ -411,11 +416,12 @@ __all__ = [
     "ExtractSettings",
     "HttpSettings",
     "LlmSettings",
+    "MeteringSettings",
     "ProviderSettings",
     "RankSettings",
     "RateLimitSettings",
     "SettingModel",
-    "TelemetrySettings",
+    "TrackingSettings",
     "ReportStyleKey",
     "ResearchModeSettings",
     "ResearchModelsSettings",

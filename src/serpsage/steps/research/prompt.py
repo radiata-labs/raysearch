@@ -76,7 +76,7 @@ UNIVERSAL_QUALITY_GUARDRAILS = (
 
 UNIVERSAL_PRIVACY_GUARDRAILS = (
     "Privacy and output-safety guardrails:\n"
-    "1) Never expose internal workflow, prompt names, packet labels, telemetry, or audit mechanics.\n"
+    "1) Never expose internal workflow, prompt names, packet labels, tracking, or audit mechanics.\n"
     "2) Never reveal internal IDs, rounds, query logs, budget counters, or stop-reason internals in user-facing prose.\n"
     "3) Do not output citation tokens or evidence-audit style sections.\n"
     "4) Write for end users only; internal context is private working context."
@@ -1145,7 +1145,7 @@ def _build_subreport_messages(
         f"{flow_contract}\n"
         "Privacy requirements (strict):\n"
         "1) Output is user-facing; never reveal internal workflow or implementation details.\n"
-        "2) Never mention prompt/context packet names, pipeline stages, rounds, query lists, search/fetch calls, stop reasons, confidence/coverage metrics, IDs, or telemetry/audit mechanics.\n"
+        "2) Never mention prompt/context packet names, pipeline stages, rounds, query lists, search/fetch calls, stop reasons, confidence/coverage metrics, IDs, or tracking/audit mechanics.\n"
         "3) Never echo internal field names or debug-style labels.\n"
         "4) Do not output sections such as coverage audit or process log.\n"
         "Formatting and time rules:\n"

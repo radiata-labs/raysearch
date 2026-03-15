@@ -435,6 +435,17 @@ class ResearchFetchStep(StepBase[ResearchStepContext]):
                 format_override=build_link_picker_schema(),
                 retries=self.settings.research.llm_self_heal_retries,
             )
+            await self.meter.record(
+                name="llm.tokens",
+                request_id=ctx.request_id,
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(chat_result.usage.prompt_tokens),
+                    "completion_tokens": int(chat_result.usage.completion_tokens),
+                    "total_tokens": int(chat_result.usage.total_tokens),
+                },
+            )
             selected_ids = list(chat_result.data.selected_link_ids)
         except Exception:
             selected_ids = []

@@ -104,31 +104,32 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
                 "budget_events": [],
             }
         )
-        await self.emit_tracking_event(
-            event_name="research.progress",
+        await self.tracker.info(
+            name="research.prepare.configured",
             request_id=ctx.request_id,
-            stage="prepare",
-            attrs={
-                "message": "research.prepare.initialized",
+            step="research.prepare",
+            data={
+                "success": True,
+                "mode": mode,
+                "max_rounds": profile.max_rounds,
+                "question_cards_limit": profile.max_question_cards_effective,
+            },
+        )
+        await self.tracker.debug(
+            name="research.prepare.configured.detail",
+            request_id=ctx.request_id,
+            step="research.prepare",
+            data={
+                "success": True,
                 "mode": mode,
                 "max_rounds": profile.max_rounds,
                 "max_search_calls": profile.max_search_calls,
-                "mode_depth_profile": str(mode),
-                "mode_depth_question_cards": profile.max_question_cards_effective,
-                "mode_depth_min_rounds_per_track": profile.min_rounds_per_track,
-                "mode_depth_orchestrator_enabled": False,
-                "theme": themes,
-            },
-        )
-        await self.emit_tracking_event(
-            event_name="research.mode_depth.selected",
-            request_id=ctx.request_id,
-            stage="prepare",
-            attrs={
-                "mode_depth_profile": str(mode),
-                "llm_orchestrator_enabled": False,
+                "max_fetch_calls": profile.max_fetch_calls,
+                "question_cards_limit": profile.max_question_cards_effective,
+                "min_rounds_per_track": profile.min_rounds_per_track,
                 "review_source_window": profile.review_source_window,
                 "explore_target_pages_per_round": profile.explore_target_pages_per_round,
+                "theme": themes,
             },
         )
         return ctx

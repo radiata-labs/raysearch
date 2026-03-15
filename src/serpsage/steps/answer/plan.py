@@ -41,22 +41,19 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         try:
             plan = await self._plan_search(
                 query=query_text,
+                request_id=ctx.request_id,
                 now_utc=now_utc,
                 select_engines=bool(routes),
                 engine_selection_context=engine_selection_context,
             )
         except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="answer.plan.error",
+            await self.tracker.error(
+                name="answer.plan.failed",
                 request_id=ctx.request_id,
-                stage="plan",
-                status="error",
+                step="answer.plan",
                 error_code="answer_plan_failed",
                 error_type=type(exc).__name__,
-                attrs={
-                    "request_id": ctx.request_id,
-                    "message": str(exc),
-                },
+                error_message=str(exc),
             )
             plan = AnswerPlanPayload(
                 answer_mode="summary",
@@ -102,6 +99,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         self,
         *,
         query: str,
+        request_id: str,
         now_utc: datetime,
         select_engines: bool,
         engine_selection_context: str,
@@ -162,6 +160,17 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             messages=messages,
             response_format=AnswerPlanPayload,
             format_override=schema,
+        )
+        await self.meter.record(
+            name="llm.tokens",
+            request_id=request_id,
+            model=str(self.settings.answer.plan.use_model),
+            unit="token",
+            tokens={
+                "prompt_tokens": int(result.usage.prompt_tokens),
+                "completion_tokens": int(result.usage.completion_tokens),
+                "total_tokens": int(result.usage.total_tokens),
+            },
         )
         raw = result.data
         return self._normalize_plan(raw=raw, original_query=query)

@@ -12,15 +12,24 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
         mode_depth = ctx.run.limits
         theme_plan = ctx.task
         report_chars = len(ctx.result.content)
-        await self.emit_tracking_event(
-            event_name="research.finalize.summary",
+        await self.tracker.info(
+            name="research.finalize.summary",
             request_id=ctx.request_id,
-            stage="finalize",
-            attrs={
+            step="research.finalize",
+            data={
+                "success": True,
                 "stop": ctx.run.stop,
                 "stop_reason": ctx.run.stop_reason or "n/a",
                 "report_chars": report_chars,
                 "has_structured": ctx.result.structured is not None,
+            },
+        )
+        await self.tracker.debug(
+            name="research.finalize.summary.detail",
+            request_id=ctx.request_id,
+            step="research.finalize",
+            data={
+                "success": True,
                 "report_style_selected": theme_plan.style,
                 "mode_depth_profile": mode_depth.mode_key,
                 "llm_orchestrator_enabled": False,

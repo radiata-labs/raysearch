@@ -21,12 +21,21 @@ from serpsage.components.loads import (
     load_components,
     materialize_settings,
 )
+from serpsage.components.metering import MeteringEmitterBase
+from serpsage.components.metering.base import MeteringSinkBase
+from serpsage.components.metering.emitter import (
+    METERING_SINKS_TOKEN,
+    NullMeteringEmitter,
+)
 from serpsage.components.provider.base import PROVIDER_ROUTES_TOKEN, SearchProviderBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.components.telemetry import TelemetryEmitterBase
-from serpsage.components.telemetry.base import EventSinkBase
-from serpsage.components.telemetry.emitter import TELEMETRY_SINKS_TOKEN
+from serpsage.components.tracking import TrackingEmitterBase
+from serpsage.components.tracking.base import TrackingSinkBase
+from serpsage.components.tracking.emitter import (
+    TRACKING_SINKS_TOKEN,
+    NullTrackingEmitter,
+)
 from serpsage.core.overrides import Overrides
 from serpsage.core.workunit import ClockBase, WorkUnit
 from serpsage.dependencies import (
@@ -48,7 +57,6 @@ from serpsage.models.app.response import (
     ResearchResponse,
     SearchResponse,
 )
-from serpsage.models.components.telemetry import MeterPayload
 from serpsage.models.steps.answer import AnswerStepContext
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.research import ResearchStepContext
@@ -120,7 +128,8 @@ class Engine(WorkUnit):
         self._answer_runner = answer_runner
         self._research_runner = research_runner
         self.bind_deps(
-            self.telemetry,
+            self.tracker,
+            self.meter,
             self._search_runner,
             self._fetch_runner,
             self._answer_runner,
@@ -148,7 +157,8 @@ class Engine(WorkUnit):
             "extractor": overrides.extractor,
             "ranker": overrides.ranker,
             "llm": overrides.llm,
-            "telemetry": overrides.telemetry,
+            "tracker": overrides.tracker,
+            "meter": overrides.meter,
         }.items():
             if override_value is None:
                 continue
@@ -273,21 +283,41 @@ class Engine(WorkUnit):
                 continue
             cache[contract] = await solve(registry.default_spec(family).cls)
 
-        telemetry_sinks: list[object] = []
-        for spec in registry.enabled_specs("telemetry"):
-            if not issubclass(spec.cls, EventSinkBase):
+        tracking_sinks: list[object] = []
+        for spec in registry.enabled_specs("tracking"):
+            if not issubclass(spec.cls, TrackingSinkBase):
                 continue
             sink = await solve(spec.cls)
             if sink is not None:
-                telemetry_sinks.append(sink)
-        cache[TELEMETRY_SINKS_TOKEN] = tuple(telemetry_sinks)
-        if overrides.telemetry is not None:
-            cache[TelemetryEmitterBase] = overrides.telemetry
-            cache[type(overrides.telemetry)] = overrides.telemetry
-        elif registry.enabled_specs("telemetry"):
-            cache[TelemetryEmitterBase] = await solve(
-                registry.default_spec("telemetry").cls
-            )
+                tracking_sinks.append(sink)
+        cache[TRACKING_SINKS_TOKEN] = tuple(tracking_sinks)
+        tracker_emitter: TrackingEmitterBase[Any]
+        if registry.enabled_specs("tracking") and overrides.tracker is None:
+            tracker_emitter = await solve(registry.default_spec("tracking").cls)
+        elif overrides.tracker is not None:
+            tracker_emitter = overrides.tracker
+        else:
+            tracker_emitter = await solve_transient(NullTrackingEmitter)
+        cache[TrackingEmitterBase] = tracker_emitter
+        cache[type(tracker_emitter)] = tracker_emitter
+
+        metering_sinks: list[object] = []
+        for spec in registry.enabled_specs("metering"):
+            if not issubclass(spec.cls, MeteringSinkBase):
+                continue
+            sink = await solve(spec.cls)
+            if sink is not None:
+                metering_sinks.append(sink)
+        cache[METERING_SINKS_TOKEN] = tuple(metering_sinks)
+        meter_emitter: MeteringEmitterBase[Any]
+        if registry.enabled_specs("metering") and overrides.meter is None:
+            meter_emitter = await solve(registry.default_spec("metering").cls)
+        elif overrides.meter is not None:
+            meter_emitter = overrides.meter
+        else:
+            meter_emitter = await solve_transient(NullMeteringEmitter)
+        cache[MeteringEmitterBase] = meter_emitter
+        cache[type(meter_emitter)] = meter_emitter
 
         provider_routes: list[object] = []
         for spec in registry.enabled_specs("provider"):
@@ -405,13 +435,11 @@ class Engine(WorkUnit):
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)
-        await self._emit_safe(
-            event_name="request.start",
-            status="start",
+        await self.tracker.info(
+            name="engine.request.started",
             request_id=request_id,
-            component="engine",
-            stage="search",
-            attrs={"request_kind": "search"},
+            step="engine.search",
+            data={"request_kind": "search"},
         )
         ctx = SearchStepContext(
             request=req,
@@ -427,52 +455,48 @@ class Engine(WorkUnit):
             ctx.response.search_mode = ctx.request.mode
             ctx.response.results = list(ctx.output.results)
             response = ctx.response
-            await self._emit_safe(
-                event_name="request.end",
-                status="ok",
+            await self.tracker.info(
+                name="engine.request.completed",
                 request_id=request_id,
-                component="engine",
-                stage="search",
+                step="engine.search",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                attrs={
+                data={
                     "request_kind": "search",
                     "result_count": len(response.results),
                 },
             )
-            await self._emit_request_meter(request_id=request_id, stage="search")
             return response
         except Exception as exc:  # noqa: BLE001
-            await self._emit_safe(
-                event_name="request.error",
-                status="error",
+            await self.tracker.error(
+                name="engine.request.failed",
                 request_id=request_id,
-                component="engine",
-                stage="search",
+                step="engine.search",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
                 error_type=type(exc).__name__,
-                attrs={"request_kind": "search"},
-            )
-            await self._emit_request_meter(
-                request_id=request_id,
-                stage="search",
-                status="error",
-                error_type=type(exc).__name__,
+                error_message=str(exc),
+                data={
+                    "request_kind": "search",
+                },
             )
             raise
         finally:
+            await self.meter.record(
+                name="request",
+                request_id=request_id,
+                key=f"{request_id}:request:search",
+                unit="request",
+            )
             self._pop_request_context(token)
 
     async def fetch(self, req: FetchRequest) -> FetchResponse:
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)
-        await self._emit_safe(
-            event_name="request.start",
-            status="start",
+        await self.tracker.info(
+            name="engine.request.started",
             request_id=request_id,
-            component="engine",
-            stage="fetch",
-            attrs={
+            step="engine.fetch",
+            data={
                 "request_kind": "fetch",
                 "url_count": len(req.urls),
             },
@@ -545,14 +569,12 @@ class Engine(WorkUnit):
                 results=results,
                 statuses=statuses,
             )
-            await self._emit_safe(
-                event_name="request.end",
-                status="ok",
+            await self.tracker.info(
+                name="engine.request.completed",
                 request_id=request_id,
-                component="engine",
-                stage="fetch",
+                step="engine.fetch",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                attrs={
+                data={
                     "request_kind": "fetch",
                     "result_count": len(response.results),
                     "success_count": int(success_count),
@@ -560,40 +582,38 @@ class Engine(WorkUnit):
                     "url_count": len(req.urls),
                 },
             )
-            await self._emit_request_meter(request_id=request_id, stage="fetch")
             return response
         except Exception as exc:  # noqa: BLE001
-            await self._emit_safe(
-                event_name="request.error",
-                status="error",
+            await self.tracker.error(
+                name="engine.request.failed",
                 request_id=request_id,
-                component="engine",
-                stage="fetch",
+                step="engine.fetch",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
                 error_type=type(exc).__name__,
-                attrs={"request_kind": "fetch"},
-            )
-            await self._emit_request_meter(
-                request_id=request_id,
-                stage="fetch",
-                status="error",
-                error_type=type(exc).__name__,
+                error_message=str(exc),
+                data={
+                    "request_kind": "fetch",
+                },
             )
             raise
         finally:
+            await self.meter.record(
+                name="request",
+                request_id=request_id,
+                key=f"{request_id}:request:fetch",
+                unit="request",
+            )
             self._pop_request_context(token)
 
     async def answer(self, req: AnswerRequest) -> AnswerResponse:
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)
-        await self._emit_safe(
-            event_name="request.start",
-            status="start",
+        await self.tracker.info(
+            name="engine.request.started",
             request_id=request_id,
-            component="engine",
-            stage="answer",
-            attrs={"request_kind": "answer"},
+            step="engine.answer",
+            data={"request_kind": "answer"},
         )
         ctx = AnswerStepContext(
             request=req,
@@ -620,14 +640,12 @@ class Engine(WorkUnit):
             ctx.response.answer = answer
             ctx.response.citations = list(ctx.output.citations)
             response = ctx.response
-            await self._emit_safe(
-                event_name="request.end",
-                status="ok",
+            await self.tracker.info(
+                name="engine.request.completed",
                 request_id=request_id,
-                component="engine",
-                stage="answer",
+                step="engine.answer",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                attrs={
+                data={
                     "request_kind": "answer",
                     "citation_count": len(response.citations),
                     "has_answer": bool(
@@ -635,40 +653,38 @@ class Engine(WorkUnit):
                     ),
                 },
             )
-            await self._emit_request_meter(request_id=request_id, stage="answer")
             return response
         except Exception as exc:  # noqa: BLE001
-            await self._emit_safe(
-                event_name="request.error",
-                status="error",
+            await self.tracker.error(
+                name="engine.request.failed",
                 request_id=request_id,
-                component="engine",
-                stage="answer",
+                step="engine.answer",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
                 error_type=type(exc).__name__,
-                attrs={"request_kind": "answer"},
-            )
-            await self._emit_request_meter(
-                request_id=request_id,
-                stage="answer",
-                status="error",
-                error_type=type(exc).__name__,
+                error_message=str(exc),
+                data={
+                    "request_kind": "answer",
+                },
             )
             raise
         finally:
+            await self.meter.record(
+                name="request",
+                request_id=request_id,
+                key=f"{request_id}:request:answer",
+                unit="request",
+            )
             self._pop_request_context(token)
 
     async def research(self, req: ResearchRequest) -> ResearchResponse:
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)
-        await self._emit_safe(
-            event_name="request.start",
-            status="start",
+        await self.tracker.info(
+            name="engine.request.started",
             request_id=request_id,
-            component="engine",
-            stage="research",
-            attrs={"request_kind": "research"},
+            step="engine.research",
+            data={"request_kind": "research"},
         )
         ctx = ResearchStepContext(
             request=req,
@@ -684,88 +700,64 @@ class Engine(WorkUnit):
             ctx.response.content = ctx.result.content
             ctx.response.structured = ctx.result.structured
             response = ctx.response
-            await self._emit_safe(
-                event_name="request.end",
-                status="ok",
+            await self.tracker.info(
+                name="engine.request.completed",
                 request_id=request_id,
-                component="engine",
-                stage="research",
+                step="engine.research",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
-                attrs={
+                data={
                     "request_kind": "research",
                     "content_chars": len(str(response.content or "")),
                     "has_structured": response.structured is not None,
                 },
             )
-            await self._emit_request_meter(request_id=request_id, stage="research")
             return response
         except Exception as exc:  # noqa: BLE001
-            await self._emit_safe(
-                event_name="request.error",
-                status="error",
+            await self.tracker.error(
+                name="engine.request.failed",
                 request_id=request_id,
-                component="engine",
-                stage="research",
+                step="engine.research",
                 duration_ms=max(0, int(self.clock.now_ms()) - started_ms),
                 error_type=type(exc).__name__,
-                attrs={"request_kind": "research"},
-            )
-            await self._emit_request_meter(
-                request_id=request_id,
-                stage="research",
-                status="error",
-                error_type=type(exc).__name__,
+                error_message=str(exc),
+                data={
+                    "request_kind": "research",
+                },
             )
             raise
         finally:
+            await self.meter.record(
+                name="request",
+                request_id=request_id,
+                key=f"{request_id}:request:research",
+                unit="request",
+            )
             self._pop_request_context(token)
 
-    async def _emit_request_meter(
-        self,
-        *,
-        request_id: str,
-        stage: str,
-        status: str = "ok",
-        error_type: str = "",
-    ) -> None:
-        await self._emit_safe(
-            event_name="meter.usage.request",
-            status="error" if status == "error" else "ok",
-            request_id=request_id,
-            component="engine",
-            stage=stage,
-            error_type=error_type,
-            idempotency_key=f"{request_id}:meter.usage.request:{stage}",
-            attrs={"request_kind": stage},
-            meter=MeterPayload(
-                meter_type="request",
-                unit="request",
-                quantity=1.0,
-            ),
-        )
-
-    async def _emit_safe(self, **kwargs: Any) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
-        with suppress(Exception):
-            await telemetry.emit(**kwargs)
-
     def _push_request_context(self, request_id: str) -> object:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return None
+        tracker_token: object = None
+        meter_token: object = None
         try:
-            return telemetry.push_request_context(request_id=request_id)
+            tracker_token = self.tracker.push_request_context(request_id=request_id)
         except Exception:
-            return None
+            tracker_token = None
+        try:
+            meter_token = self.meter.push_request_context(request_id=request_id)
+        except Exception:
+            meter_token = None
+        return (tracker_token, meter_token)
 
     def _pop_request_context(self, token: object) -> None:
-        telemetry = self.telemetry
-        if telemetry is None:
-            return
+        tracker_token: object = None
+        meter_token: object = None
+        if isinstance(token, tuple) and len(token) == 2:
+            tracker_token, meter_token = token
+        else:
+            tracker_token = token
         with suppress(Exception):
-            telemetry.pop_request_context(token)
+            self.tracker.pop_request_context(tracker_token)
+        with suppress(Exception):
+            self.meter.pop_request_context(meter_token)
 
 
 __all__ = ["Engine", "Overrides"]

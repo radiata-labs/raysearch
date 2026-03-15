@@ -89,17 +89,27 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.content.error",
+            await self.meter.record(
+                name="llm.tokens",
                 request_id=ctx.request_id,
-                stage="content_review",
-                status="error",
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(chat_result.usage.prompt_tokens),
+                    "completion_tokens": int(chat_result.usage.completion_tokens),
+                    "total_tokens": int(chat_result.usage.total_tokens),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self.tracker.error(
+                name="research.content.failed",
+                request_id=ctx.request_id,
+                step="research.content",
                 error_code="research_content_review_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "round_index": ctx.run.current.round_index,
-                    "message": str(exc),
                 },
             )
             raise
@@ -127,15 +137,38 @@ class ResearchContentStep(StepBase[ResearchStepContext]):
             limit=ctx.run.limits.max_queries_per_round,
         )
         ctx.run.current.query_strategy = payload.next_query_strategy
-        await self.emit_tracking_event(
-            event_name="research.style.applied",
+        await self.tracker.info(
+            name="research.style.applied",
             request_id=ctx.request_id,
-            stage="content_review",
-            attrs={
+            step="research.content",
+            data={
+                "success": True,
+                "sources_reviewed": len(selected_sources),
+                "resolved_findings": len(payload.resolved_findings),
+                "remaining_gaps": len(payload.remaining_gaps),
+                "confidence": ctx.run.current.confidence,
+            },
+        )
+        await self.tracker.debug(
+            name="research.style.applied.detail",
+            request_id=ctx.request_id,
+            step="research.content",
+            data={
+                "success": True,
                 "report_style_selected": ctx.task.style,
                 "style_applied_stage": "content",
                 "mode_depth_profile": ctx.run.limits.mode_key,
                 "review_source_window_effective": review_source_window,
+                "source_ids": source_ids,
+                "resolved_findings": payload.resolved_findings,
+                "missing_entities": payload.missing_entities,
+                "remaining_gaps": payload.remaining_gaps,
+                "unresolved_conflict_topics": unresolved_topics,
+                "next_queries": [
+                    item.model_dump(mode="json")
+                    for item in ctx.run.current.next_queries
+                ],
+                "query_strategy": payload.next_query_strategy,
             },
         )
         return ctx

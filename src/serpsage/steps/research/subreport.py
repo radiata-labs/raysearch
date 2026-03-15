@@ -66,6 +66,7 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         )
         chunk_size = max(1, ctx.run.limits.report_source_batch_size)
         chunk_chars = max(1, ctx.run.limits.report_source_batch_chars)
+        selected_source_count = len(source_evidence)
         chunks = [
             source_evidence[index : index + chunk_size]
             for index in range(0, len(source_evidence), chunk_size)
@@ -85,8 +86,29 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 response_format=SubreportOutputPayload,
                 retries=self.settings.research.llm_self_heal_retries,
             )
+            await self.meter.record(
+                name="llm.tokens",
+                request_id=ctx.request_id,
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(initial.usage.prompt_tokens),
+                    "completion_tokens": int(initial.usage.completion_tokens),
+                    "total_tokens": int(initial.usage.total_tokens),
+                },
+            )
         except Exception as exc:  # noqa: BLE001
-            await self._emit_subreport_error(ctx=ctx, model=model, exc=exc)
+            await self.tracker.error(
+                name="research.subreport.failed",
+                request_id=ctx.request_id,
+                step="research.subreport",
+                error_code="research_render_subreport_failed",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                data={
+                    "model": model,
+                },
+            )
             raise
         payload = initial.data
         if require_insight_card and payload.track_insight_card is None:
@@ -149,15 +171,30 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         ctx.result.structured = current_card
         ctx.result.content = current_markdown
         self._mark_sources_used(ctx=ctx, sources=source_evidence)
-        await self.emit_tracking_event(
-            event_name="research.style.applied",
+        await self.tracker.info(
+            name="research.style.applied",
             request_id=ctx.request_id,
-            stage="subreport",
-            attrs={
-                "report_style_selected": ctx.task.style,
+            step="research.subreport",
+            data={
+                "success": True,
                 "require_insight_card": require_insight_card,
                 "has_insight_card": current_card is not None,
+                "sources_selected": selected_source_count,
+            },
+        )
+        await self.tracker.debug(
+            name="research.style.applied.detail",
+            request_id=ctx.request_id,
+            step="research.subreport",
+            data={
+                "success": True,
+                "report_style_selected": ctx.task.style,
                 "source_chunks": len(chunks),
+                "source_batch_size": chunk_size,
+                "source_batch_chars": chunk_chars,
+                "sources_selected": selected_source_count,
+                "sources_used": len(source_evidence),
+                "recent_notes": len(notes),
             },
         )
 
@@ -197,8 +234,29 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
+            await self.meter.record(
+                name="llm.tokens",
+                request_id=ctx.request_id,
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(result.usage.prompt_tokens),
+                    "completion_tokens": int(result.usage.completion_tokens),
+                    "total_tokens": int(result.usage.total_tokens),
+                },
+            )
         except Exception as exc:  # noqa: BLE001
-            await self._emit_subreport_error(ctx=ctx, model=model, exc=exc)
+            await self.tracker.error(
+                name="research.subreport.failed",
+                request_id=ctx.request_id,
+                step="research.subreport",
+                error_code="research_render_subreport_failed",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                data={
+                    "model": model,
+                },
+            )
             raise
         payload = result.data
         if (
@@ -216,42 +274,33 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         now_utc: datetime,
         remaining_sources: list[ResearchSource],
     ) -> OverviewOutputPayload:
-        return (
-            await self.llm.create(
-                model=resolve_research_model(
-                    settings=self.settings,
-                    stage="overview",
-                    fallback=self.settings.answer.generate.use_model,
-                ),
-                messages=build_overview_prompt_messages(
-                    ctx=ctx,
-                    sources=remaining_sources,
-                    now_utc=now_utc,
-                ),
-                response_format=OverviewOutputPayload,
-                retries=self.settings.research.llm_self_heal_retries,
-            )
-        ).data
-
-    async def _emit_subreport_error(
-        self,
-        *,
-        ctx: ResearchStepContext,
-        model: str,
-        exc: Exception,
-    ) -> None:
-        await self.emit_tracking_event(
-            event_name="research.subreport.error",
+        model = resolve_research_model(
+            settings=self.settings,
+            stage="overview",
+            fallback=self.settings.answer.generate.use_model,
+        )
+        result = await self.llm.create(
+            model=model,
+            messages=build_overview_prompt_messages(
+                ctx=ctx,
+                sources=remaining_sources,
+                now_utc=now_utc,
+            ),
+            response_format=OverviewOutputPayload,
+            retries=self.settings.research.llm_self_heal_retries,
+        )
+        await self.meter.record(
+            name="llm.tokens",
             request_id=ctx.request_id,
-            stage="subreport",
-            status="error",
-            error_code="research_render_subreport_failed",
-            error_type=type(exc).__name__,
-            attrs={
-                "model": model,
-                "message": str(exc),
+            model=str(model),
+            unit="token",
+            tokens={
+                "prompt_tokens": int(result.usage.prompt_tokens),
+                "completion_tokens": int(result.usage.completion_tokens),
+                "total_tokens": int(result.usage.total_tokens),
             },
         )
+        return result.data
 
     def _require_insight_card(self, ctx: ResearchStepContext) -> bool:
         return ctx.run.limits.mode_key != "research-fast"

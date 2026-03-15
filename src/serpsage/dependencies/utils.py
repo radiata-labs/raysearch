@@ -237,26 +237,28 @@ async def _execute_class(
         dependent.__new__(dependent),
     )
     from serpsage.components.loads import ComponentRegistry
-    from serpsage.components.telemetry import TelemetryEmitterBase
+    from serpsage.components.metering import MeteringEmitterBase
+    from serpsage.components.tracking import TrackingEmitterBase
     from serpsage.core.workunit import ClockBase, WorkUnit
     from serpsage.settings.models import AppSettings
 
     if isinstance(depend_obj, WorkUnit):
-        settings = dependency_cache.get(AppSettings)
-        if settings is None:
+        try:
+            settings = dependency_cache[AppSettings]
+            clock = dependency_cache[ClockBase]
+            tracker = dependency_cache[TrackingEmitterBase]
+            meter = dependency_cache[MeteringEmitterBase]
+            registry = dependency_cache[ComponentRegistry]
+        except KeyError as exc:
             raise TypeError(
-                "AppSettings must be available before constructing a WorkUnit"
-            )
-        clock = dependency_cache.get(ClockBase)
-        if clock is None:
-            raise TypeError(
-                "ClockBase must be available before constructing a WorkUnit"
-            )
+                f"{get_dependency_name(exc.args[0])} must be available before constructing a WorkUnit"
+            ) from exc
         depend_obj._wu_bootstrap(
             settings=settings,
             clock=clock,
-            telemetry=dependency_cache.get(TelemetryEmitterBase),
-            components=dependency_cache.get(ComponentRegistry),
+            tracker=tracker,
+            meter=meter,
+            components=registry,
         )
     for key, value in values.items():
         setattr(depend_obj, key, value)

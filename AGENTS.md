@@ -31,10 +31,11 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |  |- extract/
 |  |  |  |- http/
 |  |  |  |- llm/
+|  |  |  |- metering/
 |  |  |  |- provider/
 |  |  |  |- rank/
 |  |  |  |- rate_limit/
-|  |  |  |- telemetry/
+|  |  |  |- tracking/
 |  |  |- core/
 |  |  |- dependencies/
 |  |  |- models/

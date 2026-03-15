@@ -37,9 +37,7 @@ if __name__ == "__main__":
     import time
 
     t1 = time.time()
-    out = anyio.run(
-        main, "What is keepalive in http?", False, None
-    )
+    out = anyio.run(main, "What is keepalive in http?", False, None)
     t2 = time.time()
     print(out["answer_result"])
     print(f"Answer: {out['answer']}")

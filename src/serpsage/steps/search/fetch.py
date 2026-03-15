@@ -65,13 +65,12 @@ class SearchFetchStep(StepBase[SearchStepContext]):
         fetched_candidates: list[SearchFetchedCandidate] = []
         for item in out:
             if item.result is None or item.error.failed:
-                await self.emit_tracking_event(
-                    event_name="search.fetch.error",
+                await self.tracker.error(
+                    name="search.fetch.failed",
                     request_id=ctx.request_id,
-                    stage="search_fetch",
-                    status="error",
+                    step="search.fetch",
                     error_code="search_fetch_failed",
-                    attrs={
+                    data={
                         "url": str(item.url),
                         "url_index": int(item.url_index),
                     },

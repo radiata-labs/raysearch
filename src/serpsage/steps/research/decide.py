@@ -109,11 +109,24 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         ctx.run.current = None
         if llm_signal.reason:
             ctx.run.notes.append(f"Decide signal: {llm_signal.reason}")
-        await self.emit_tracking_event(
-            event_name="research.decide.summary",
+        await self.tracker.info(
+            name="research.decide.summary",
             request_id=ctx.request_id,
-            stage="decide",
-            attrs={
+            step="research.decide",
+            data={
+                "success": True,
+                "next_queries": len(next_queries),
+                "remaining_objectives_count": len(remaining_objectives),
+                "stop": stop,
+                "stop_reason": stop_reason or "n/a",
+            },
+        )
+        await self.tracker.debug(
+            name="research.decide.summary.detail",
+            request_id=ctx.request_id,
+            step="research.decide",
+            data={
+                "success": True,
                 "llm_prefers_continue": llm_prefers_continue,
                 "min_rounds_per_track": min_rounds_per_track,
                 "must_continue_for_min_rounds": must_continue_for_min_rounds,
@@ -121,10 +134,9 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 "can_search_now": can_search_now,
                 "can_explore_without_search": can_explore_without_search,
                 "can_execute_next_round": can_execute_next_round,
-                "next_queries": len(next_queries),
-                "remaining_objectives_count": len(remaining_objectives),
-                "stop": stop,
-                "stop_reason": str(stop_reason or "n/a"),
+                "remaining_objectives": remaining_objectives,
+                "next_queries": [item.model_dump(mode="json") for item in next_queries],
+                "llm_reason": llm_signal.reason,
             },
         )
         if stop:
@@ -171,17 +183,27 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
                 ),
                 retries=self.settings.research.llm_self_heal_retries,
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.emit_tracking_event(
-                event_name="research.decide.error",
+            await self.meter.record(
+                name="llm.tokens",
                 request_id=ctx.request_id,
-                stage="decide",
-                status="error",
+                model=str(model),
+                unit="token",
+                tokens={
+                    "prompt_tokens": int(result.usage.prompt_tokens),
+                    "completion_tokens": int(result.usage.completion_tokens),
+                    "total_tokens": int(result.usage.total_tokens),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self.tracker.error(
+                name="research.decide.failed",
+                request_id=ctx.request_id,
+                step="research.decide",
                 error_code="research_decide_signal_failed",
                 error_type=type(exc).__name__,
-                attrs={
+                error_message=str(exc),
+                data={
                     "model": str(model),
-                    "message": str(exc),
                 },
             )
             raise

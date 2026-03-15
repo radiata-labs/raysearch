@@ -12,7 +12,8 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from serpsage.components.loads import ComponentRegistry
-    from serpsage.components.telemetry import TelemetryEmitterBase
+    from serpsage.components.metering import MeteringEmitterBase
+    from serpsage.components.tracking import TrackingEmitterBase
     from serpsage.settings.models import AppSettings
 
 
@@ -25,8 +26,9 @@ class ClockBase(ABC):
 class WorkUnit:
     settings: AppSettings = Depends()
     clock: ClockBase = Depends()
-    telemetry: TelemetryEmitterBase[Any] | None = None
-    components: ComponentRegistry | None = None
+    meter: MeteringEmitterBase[Any]
+    tracker: TrackingEmitterBase[Any]
+    components: ComponentRegistry
 
     _wu_bootstrapped: bool
     _wu_deps: list[WorkUnit]
@@ -58,14 +60,16 @@ class WorkUnit:
         *,
         settings: AppSettings,
         clock: ClockBase,
-        telemetry: TelemetryEmitterBase[Any] | None = None,
-        components: ComponentRegistry | None = None,
+        tracker: TrackingEmitterBase[Any],
+        meter: MeteringEmitterBase[Any],
+        components: ComponentRegistry,
     ) -> None:
         if bool(getattr(self, "_wu_bootstrapped", False)):
             raise RuntimeError(f"{type(self).__name__} is already bootstrapped")
         self.settings = settings
         self.clock = clock
-        self.telemetry = telemetry
+        self.tracker = tracker
+        self.meter = meter
         self.components = components
         self._wu_bootstrapped = True
         self._wu_deps = []
@@ -124,10 +128,7 @@ class WorkUnit:
                 self._wu_collect_injected_one(item, seen=seen, found=found)
 
     def require_components(self) -> ComponentRegistry:
-        container = self.components
-        if container is None:
-            raise RuntimeError("component registry is not attached to the workunit")
-        return container
+        return self.components
 
     def bind_deps(self, *deps: WorkUnit | None) -> None:
         self._require_bootstrapped()

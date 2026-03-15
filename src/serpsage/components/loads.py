@@ -19,11 +19,12 @@ from serpsage.settings.models import (
     ExtractSettings,
     HttpSettings,
     LlmSettings,
+    MeteringSettings,
     ProviderSettings,
     RankSettings,
     RateLimitSettings,
     SettingModel,
-    TelemetrySettings,
+    TrackingSettings,
 )
 
 if TYPE_CHECKING:
@@ -37,10 +38,11 @@ _FAMILY_SETTING_BASES: dict[str, type[SettingModel]] = {
     "extract": ExtractSettings,
     "http": HttpSettings,
     "llm": LlmSettings,
+    "metering": MeteringSettings,
     "provider": ProviderSettings,
     "rank": RankSettings,
     "rate_limit": RateLimitSettings,
-    "telemetry": TelemetrySettings,
+    "tracking": TrackingSettings,
 }
 
 ComponentClass: TypeAlias = type[ComponentBase[Any]]

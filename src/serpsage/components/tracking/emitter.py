@@ -3,44 +3,49 @@ from __future__ import annotations
 import uuid
 from contextlib import suppress
 from contextvars import ContextVar, Token
-from typing import Any
 from typing_extensions import override
 
 import anyio
 from anyio import WouldBlock
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from pydantic import field_validator
 
 from serpsage.components.base import ComponentConfigBase
-from serpsage.components.telemetry.base import (
-    EventSinkBase,
-    TelemetryEmitterBase,
-)
+from serpsage.components.tracking.base import TrackingEmitterBase, TrackingSinkBase
 from serpsage.dependencies import Depends
-from serpsage.models.components.telemetry import (
-    EventAttributes,
+from serpsage.models.components.tracking import (
     EventEnvelope,
-    is_critical_event,
+    TrackingLevel,
+    WarningEvent,
+    normalize_tracking_level,
+    should_emit_tracking,
 )
 
-_REQUEST_ID_CTX: ContextVar[str] = ContextVar("telemetry_request_id", default="")
-TELEMETRY_SINKS_TOKEN = "component.telemetry_sinks"  # noqa: S105
+_REQUEST_ID_CTX: ContextVar[str] = ContextVar("tracking_request_id", default="")
+TRACKING_SINKS_TOKEN = "component.tracking_sinks"  # noqa: S105
 
 
-class TelemetryEmitterConfig(ComponentConfigBase):
-    __setting_family__ = "telemetry"
+class TrackingEmitterConfig(ComponentConfigBase):
+    __setting_family__ = "tracking"
     __setting_name__ = "async_emitter"
 
     queue_size: int = 2048
+    minimum_level: TrackingLevel = "INFO"
     drop_noncritical_when_full: bool = True
 
+    @field_validator("minimum_level", mode="before")
+    @classmethod
+    def _validate_level(cls, value: object) -> TrackingLevel:
+        return normalize_tracking_level(value)
 
-class NullTelemetryEmitterConfig(ComponentConfigBase):
-    __setting_family__ = "telemetry"
+
+class NullTrackingEmitterConfig(ComponentConfigBase):
+    __setting_family__ = "tracking"
     __setting_name__ = "null_emitter"
 
 
-class NullTelemetryEmitter(TelemetryEmitterBase[NullTelemetryEmitterConfig]):
+class NullTrackingEmitter(TrackingEmitterBase[NullTrackingEmitterConfig]):
     @override
     async def emit_event(self, *, event: EventEnvelope) -> None:
         _ = event
@@ -55,15 +60,18 @@ class NullTelemetryEmitter(TelemetryEmitterBase[NullTelemetryEmitterConfig]):
         _ = token
 
 
-class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
+class AsyncTrackingEmitter(TrackingEmitterBase[TrackingEmitterConfig]):
     def __init__(
         self,
         *,
-        config: TelemetryEmitterConfig,
-        sinks: tuple[EventSinkBase[Any], ...] = Depends(TELEMETRY_SINKS_TOKEN),
+        config: TrackingEmitterConfig,
+        sinks: tuple[object, ...] = Depends(TRACKING_SINKS_TOKEN),
     ) -> None:
-        self._sinks = list(sinks)
+        self._sinks = [sink for sink in sinks if isinstance(sink, TrackingSinkBase)]
         self._queue_size = max(1, int(config.queue_size))
+        self._minimum_level: TrackingLevel = normalize_tracking_level(
+            config.minimum_level
+        )
         self._drop_noncritical_when_full = bool(config.drop_noncritical_when_full)
         self._send: MemoryObjectSendStream[EventEnvelope] | None = None
         self._recv: MemoryObjectReceiveStream[EventEnvelope] | None = None
@@ -113,14 +121,17 @@ class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
 
     @override
     async def emit_event(self, *, event: EventEnvelope) -> None:
+        if not should_emit_tracking(
+            event_level=event.level,
+            minimum_level=self._minimum_level,
+        ):
+            return
         send = self._send
         if send is None:
             return
         out = self._fill_request_context(event)
-        critical = is_critical_event(event_name=str(out.event_name), status=out.status)
-        await self._flush_drop_notice_if_any(
-            send=send, for_event=out, force=not critical
-        )
+        critical = out.level == "ERROR"
+        await self._flush_drop_notice_if_any(send=send, for_event=out, force=critical)
         if critical:
             try:
                 send.send_nowait(out)
@@ -140,7 +151,8 @@ class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
             await self._flush_drop_notice_if_any(send=send, for_event=out, force=False)
 
     async def _worker_loop(
-        self, recv: MemoryObjectReceiveStream[EventEnvelope]
+        self,
+        recv: MemoryObjectReceiveStream[EventEnvelope],
     ) -> None:
         async with recv:
             async for event in recv:
@@ -174,23 +186,20 @@ class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
         *,
         send: MemoryObjectSendStream[EventEnvelope],
         for_event: EventEnvelope,
-        force: bool = True,
+        force: bool,
     ) -> None:
         dropped = int(self._dropped_noncritical)
-        if dropped <= 0:
+        if dropped <= 0 or str(for_event.name) == "tracking.queue_overflow":
             return
-        if str(for_event.event_name) == "telemetry.dropped":
-            return
-        notice = EventEnvelope(
-            event_id=uuid.uuid4().hex,
-            idempotency_key="",
-            event_name="telemetry.dropped",
-            status="error",
+        notice = WarningEvent(
+            id=uuid.uuid4().hex,
             ts_ms=int(self.clock.now_ms()),
+            name="tracking.queue_overflow",
             request_id=str(for_event.request_id or ""),
-            component="telemetry",
-            stage="emitter",
-            attrs=EventAttributes(values={"dropped_noncritical_events": dropped}),
+            step="tracking",
+            warning_code="tracking_queue_overflow",
+            warning_message="tracking queue dropped noncritical events",
+            data={"dropped_events": dropped},
         )
         if force:
             await send.send(notice)
@@ -204,9 +213,9 @@ class AsyncEventEmitter(TelemetryEmitterBase[TelemetryEmitterConfig]):
 
 
 __all__ = [
-    "AsyncEventEmitter",
-    "NullTelemetryEmitter",
-    "NullTelemetryEmitterConfig",
-    "TELEMETRY_SINKS_TOKEN",
-    "TelemetryEmitterConfig",
+    "AsyncTrackingEmitter",
+    "NullTrackingEmitter",
+    "NullTrackingEmitterConfig",
+    "TRACKING_SINKS_TOKEN",
+    "TrackingEmitterConfig",
 ]
