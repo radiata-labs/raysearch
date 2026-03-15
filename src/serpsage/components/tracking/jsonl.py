@@ -99,16 +99,21 @@ class JsonlTrackingSink(TrackingSinkBase[JsonlTrackingSinkConfig]):
 
     @override
     async def on_close(self) -> None:
+        # Final flush before stopping the loop
         await self._do_flush()
-        tg_cm = self._tg_cm
+        # Signal the flush loop to exit by setting file to None first
+        # This MUST happen before waiting for the task group, otherwise deadlock
+        file = self._file
+        self._file = None
         self._tg = None
+        tg_cm = self._tg_cm
         self._tg_cm = None
+        # Now safe to wait for the task group to finish
         if tg_cm is not None:
             await tg_cm.__aexit__(None, None, None)
-        if self._file is None:
-            return
-        await self._file.aclose()
-        self._file = None
+        # Finally close the file handle
+        if file is not None:
+            await file.aclose()
 
 
 __all__ = ["JsonlTrackingSink", "JsonlTrackingSinkConfig"]

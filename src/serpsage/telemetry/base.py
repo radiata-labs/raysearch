@@ -28,7 +28,7 @@ from serpsage.models.components.tracking import (
 class TrackingEmitterBase(WorkUnit, ABC):
     """Base class for tracking emitters. Uses dependency injection."""
 
-    sink: TrackingSinkBase = Depends()
+    sink: TrackingSinkBase[Any] = Depends(TrackingSinkBase)
 
     @abstractmethod
     async def emit_event(self, *, event: EventEnvelope) -> None:
@@ -166,7 +166,7 @@ class TrackingEmitterBase(WorkUnit, ABC):
 class MeteringEmitterBase(WorkUnit, ABC):
     """Base class for metering emitters. Uses dependency injection."""
 
-    sink: MeteringSinkBase = Depends()
+    sink: MeteringSinkBase[Any] = Depends(MeteringSinkBase)
 
     @abstractmethod
     async def emit_record(self, *, record: MeterRecord) -> None:
