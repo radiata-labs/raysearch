@@ -27,6 +27,14 @@ class SearchFinalizeStep(StepBase[SearchStepContext]):
         )
         max_results = self._resolve_max_results(ctx)
         ctx.output.results = [item.result for item in ranked[:max_results]]
+        await self.tracker.info(
+            name="search.finalize.completed",
+            request_id=ctx.request_id,
+            step="search.finalize",
+            data={
+                "result_count": len(ctx.output.results),
+            },
+        )
         return ctx
 
     def _resolve_max_results(self, ctx: SearchStepContext) -> int:

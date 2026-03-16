@@ -129,6 +129,33 @@ class SearchFetchStep(StepBase[SearchStepContext]):
         )
         ctx.fetch.candidates = fetched_candidates
         ctx.output.results = [candidate.result for candidate in fetched_candidates]
+        await self.tracker.info(
+            name="search.fetch.completed",
+            request_id=ctx.request_id,
+            step="search.fetch",
+            data={
+                "candidate_count": len(fetched_candidates),
+                "url_count": len(urls),
+            },
+        )
+        await self.tracker.debug(
+            name="search.fetch.detail",
+            request_id=ctx.request_id,
+            step="search.fetch",
+            data={
+                "fetched_urls": [
+                    {
+                        "url": c.result.url,
+                        "title": c.result.title[:100] if c.result.title else "",
+                        "published_date": c.result.published_date,
+                    }
+                    for c in fetched_candidates[:20]
+                ],
+                "crawl_mode": ctx.request.fetchs.crawl_mode,
+                "overview_enabled": ctx.request.fetchs.overview,
+                "abstracts_enabled": ctx.request.fetchs.abstracts,
+            },
+        )
         return ctx
 
     def _build_fetch_request(self, *, ctx: SearchStepContext, url: str) -> FetchRequest:

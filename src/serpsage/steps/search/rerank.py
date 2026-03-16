@@ -50,6 +50,35 @@ class SearchRerankStep(StepBase[SearchStepContext]):
             max_results=int(options.max_results),
             context_scores=dict(context_scores),
         )
+        await self.tracker.info(
+            name="search.rerank.completed",
+            request_id=ctx.request_id,
+            step="search.rerank",
+            data={
+                "ranked_count": len(ranked),
+                "filtered_count": int(stats.filtered_count),
+                "has_sort_feature": bool(options.has_sort_feature),
+            },
+        )
+        await self.tracker.debug(
+            name="search.rerank.detail",
+            request_id=ctx.request_id,
+            step="search.rerank",
+            data={
+                "top_candidates": [
+                    {
+                        "url": c.result.url,
+                        "final_score": round(float(c.final_score), 4),
+                        "page_score": round(float(c.page_score), 4),
+                        "context_score": round(float(c.context_score), 4),
+                    }
+                    for c in ranked[:10]
+                ],
+                "content_enabled": options.content_enabled,
+                "abstracts_enabled": options.abstracts_enabled,
+                "overview_enabled": options.overview_enabled,
+            },
+        )
         return ctx
 
     def _build_rank_options(self, ctx: SearchStepContext) -> SearchRankOptions:

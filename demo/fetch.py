@@ -48,9 +48,9 @@ if __name__ == "__main__":
     out = anyio.run(
         main,
         [
-            "https://doi.org/10.48550/arXiv.2603.10031",
+            "https://doi.org/10.1111/1473-4192.00011",
         ],
-        "kimi-k2.5",
+        None,
         False,
     )
     print(out["fetch_result"])

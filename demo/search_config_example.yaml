@@ -210,6 +210,9 @@ components:
     basic:
       enabled: true
 
+telemetry:
+  tracking:
+    minimum_level: DEBUG
 search:
   max_results: 16
   select_engines: true

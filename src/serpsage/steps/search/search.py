@@ -90,6 +90,15 @@ class SearchStep(StepBase[SearchStepContext]):
                 : int(ctx.plan.prefetch_limit)
             ]
         ]
+        await self.tracker.info(
+            name="search.search.completed",
+            request_id=ctx.request_id,
+            step="search.search",
+            data={
+                "url_count": len(ctx.retrieval.urls),
+                "query_job_count": len(query_jobs),
+            },
+        )
         return ctx
 
     def _collect_canonical_buckets(

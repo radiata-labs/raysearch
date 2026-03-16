@@ -91,11 +91,25 @@ class BlendProviderConfig(ProviderConfigBase):
 
     include_sources: set[str] = Field(default_factory=set)
     exclude_sources: set[str] = Field(default_factory=set)
+    original_rank_weight: float = 0.5  # Weight for original provider ranking (0-1)
 
     @field_validator("include_sources", "exclude_sources", mode="before")
     @classmethod
     def _normalize_sources(cls, value: object) -> set[str]:
         return _normalize_source_names(value)
+
+    @field_validator("original_rank_weight", mode="before")
+    @classmethod
+    def _validate_original_rank_weight(cls, value: object) -> float:
+        if value is None:
+            return 0.5
+        try:
+            v = float(str(value))
+        except (TypeError, ValueError):
+            return 0.5
+        if v < 0 or v > 1:
+            raise ValueError("original_rank_weight must be between 0 and 1")
+        return v
 
 
 class BlendProvider(SearchProviderBase[BlendProviderConfig]):
@@ -177,14 +191,16 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
                 tg.start_soon(run_one, index, provider)
 
         merged: list[SearchProviderResult] = []
+        positions: list[int] = []  # Track positions separately
         seen: set[str] = set()
         for items in outputs:
-            for item in items or ():
+            for idx, item in enumerate(items or ()):
                 key = canonicalize_url(item.url) or item.url.casefold()
                 if key in seen:
                     continue
                 seen.add(key)
                 merged.append(item)
+                positions.append(idx + 1)  # 1-indexed position from provider
         if not merged:
             return []
 
@@ -195,6 +211,31 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
             query_tokens=tokenize_for_query(normalized_query),
             mode="retrieve",
         )
+
+        # Blend with original rank if weight > 0
+        original_rank_weight = float(self.config.original_rank_weight)
+        if original_rank_weight > 0:
+            # Calculate position scores (reciprocal rank)
+            position_scores = [
+                1.0 / max(1, pos) if pos > 0 else 0.5
+                for pos in positions
+            ]
+            # Normalize scores
+            max_score = max(scores) if scores and max(scores) > 0 else 1.0
+            max_pos = (
+                max(position_scores)
+                if position_scores and max(position_scores) > 0
+                else 1.0
+            )
+            norm_scores = [s / max_score for s in scores]
+            norm_pos = [p / max_pos for p in position_scores]
+            # Blend: weight for original_rank, (1 - weight) for semantic
+            semantic_weight = 1.0 - original_rank_weight
+            scores = [
+                semantic_weight * ns + original_rank_weight * np
+                for ns, np in zip(norm_scores, norm_pos, strict=False)
+            ]
+
         ranked = sorted(
             enumerate(merged),
             key=lambda pair: (

@@ -47,6 +47,32 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
             ctx=ctx,
             primary_query=primary_query,
         )
+        await self.tracker.info(
+            name="search.query_plan.completed",
+            request_id=ctx.request_id,
+            step="search.query_plan",
+            data={
+                "aborted": bool(ctx.plan.aborted),
+                "query_count": len(ctx.plan.query_jobs or []),
+                "primary_query": primary_query.query,
+            },
+        )
+        await self.tracker.debug(
+            name="search.query_plan.detail",
+            request_id=ctx.request_id,
+            step="search.query_plan",
+            data={
+                "queries": [
+                    {
+                        "query": job.query.query,
+                        "source": job.source,
+                        "include_sources": list(job.query.include_sources or []),
+                    }
+                    for job in (ctx.plan.query_jobs or [])
+                ],
+                "abort_reason": ctx.plan.abort_reason or "",
+            },
+        )
         return ctx
 
     async def _build_primary_query(

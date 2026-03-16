@@ -65,6 +65,16 @@ class SearchPrepareStep(StepBase[SearchStepContext]):
         ctx.fetch = SearchFetchState()
         ctx.rank = SearchRankState()
         ctx.output = SearchOutputState()
+        await self.tracker.info(
+            name="search.prepare.completed",
+            request_id=ctx.request_id,
+            step="search.prepare",
+            data={
+                "mode": mode,
+                "max_results": max_results,
+                "prefetch_limit": prefetch_limit,
+            },
+        )
         return ctx
 
     def _resolve_mode_settings(self, *, mode: str) -> SearchModeSettings:
