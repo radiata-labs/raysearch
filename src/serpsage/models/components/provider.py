@@ -12,6 +12,8 @@ class SearchProviderResult(MutableModel):
     snippet: str = ""
     engine: str = ""
     published_date: str = ""
+    pre_fetched_content: str = ""
+    pre_fetched_author: str = ""
 
     @field_validator("url")
     @classmethod

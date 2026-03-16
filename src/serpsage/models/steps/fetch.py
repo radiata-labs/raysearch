@@ -52,6 +52,9 @@ class FetchPageState(MutableModel):
     content_request: FetchContentRequest = Field(default_factory=FetchContentRequest)
     extract: ExtractSpec = Field(default_factory=ExtractSpec)
     doc: ExtractedDocument | None = None
+    pre_fetched_title: str = ""
+    pre_fetched_content: str = ""
+    pre_fetched_author: str = ""
 
 
 class FetchAbstractState(MutableModel):
@@ -82,7 +85,6 @@ class FetchSubpageGroupState(MutableModel):
     enabled: bool = False
     limit: int = 0
     candidate_limit: int | None = None
-    query: str = ""
     keywords: list[str] = Field(default_factory=list)
     candidates: list[ExtractRef] = Field(default_factory=list)
     items: list[FetchSubpageState] = Field(default_factory=list)

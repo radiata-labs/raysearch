@@ -28,6 +28,7 @@ from serpsage.models.steps.search import (
     SearchStepContext,
 )
 from serpsage.steps.base import RunnerBase, StepBase
+from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
 
 _TRACKING_QUERY_KEYS = {"gclid", "fbclid", "msclkid"}
@@ -127,7 +128,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             subpages_request = (
                 FetchSubpagesRequest(
                     max_subpages=max_subpages,
-                    subpage_keywords=job.query.query,
+                    subpage_keywords=tokenize_for_query(job.query.query),
                 )
                 if max_subpages > 0
                 else None

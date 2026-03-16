@@ -29,6 +29,7 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             ctx.fetch.candidates = []
             ctx.output.results = []
             return ctx
+        pre_fetched_items = dict(ctx.retrieval.pre_fetched_items or {})
         to_fetch: list[FetchStepContext] = []
         for index, url in enumerate(urls):
             req = self._build_fetch_request(ctx=ctx, url=url)
@@ -60,6 +61,11 @@ class SearchFetchStep(StepBase[SearchStepContext]):
             fetch_ctx.related.subpages.candidate_limit = _derive_subpage_links_limit(
                 main_links_limit
             )
+            pre_item = pre_fetched_items.get(url)
+            if pre_item is not None:
+                fetch_ctx.page.pre_fetched_title = pre_item.title
+                fetch_ctx.page.pre_fetched_content = pre_item.content
+                fetch_ctx.page.pre_fetched_author = pre_item.author
             to_fetch.append(fetch_ctx)
         out = await self.fetch_runner.run_batch(to_fetch)
         fetched_candidates: list[SearchFetchedCandidate] = []

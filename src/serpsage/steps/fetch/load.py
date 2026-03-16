@@ -100,6 +100,7 @@ class FetchLoadStep(StepBase[FetchStepContext]):
 
         fetched: CrawlResult | None = None
         crawl_exc: Exception | None = None
+        pre_fetched_content = ctx.page.pre_fetched_content or ""
         if mode == "never":
             fetched = await get_cached()
             if fetched is None:
@@ -154,29 +155,51 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                     },
                 )
             if fetched is None:
-                message = str(crawl_exc or "crawl failed")
-                ctx.error.failed = True
-                ctx.error.tag = _resolve_error_tag(
-                    code="fetch_crawl_failed",
-                    message=message,
-                )
-                ctx.error.detail = message
-                await self.tracker.error(
-                    name="fetch.load.failed",
-                    request_id=ctx.request_id,
-                    step="fetch.load",
-                    error_code="fetch_crawl_failed",
-                    error_message=message,
-                    data={
-                        "error_tag": ctx.error.tag,
-                        "url": ctx.url,
-                        "url_index": ctx.url_index,
-                        "crawl_mode": ctx.page.crawl_mode,
-                        "source": "crawl",
-                        "fatal": True,
-                    },
-                )
-                return ctx
+                if pre_fetched_content:
+                    fetched = CrawlResult(
+                        url=url,
+                        status_code=200,
+                        content_type="text/html",
+                        content=pre_fetched_content.encode("utf-8"),
+                        crawl_backend="pre_fetched",
+                        rendered=False,
+                        content_kind="html",
+                        headers={},
+                        attempt_chain=["pre_fetched"],
+                    )
+                    await self.tracker.info(
+                        name="fetch.load.pre_fetched_fallback",
+                        request_id=ctx.request_id,
+                        step="fetch.load",
+                        data={
+                            "mode": mode,
+                            "url": url,
+                        },
+                    )
+                else:
+                    message = str(crawl_exc or "crawl failed")
+                    ctx.error.failed = True
+                    ctx.error.tag = _resolve_error_tag(
+                        code="fetch_crawl_failed",
+                        message=message,
+                    )
+                    ctx.error.detail = message
+                    await self.tracker.error(
+                        name="fetch.load.failed",
+                        request_id=ctx.request_id,
+                        step="fetch.load",
+                        error_code="fetch_crawl_failed",
+                        error_message=message,
+                        data={
+                            "error_tag": ctx.error.tag,
+                            "url": ctx.url,
+                            "url_index": ctx.url_index,
+                            "crawl_mode": ctx.page.crawl_mode,
+                            "source": "crawl",
+                            "fatal": True,
+                        },
+                    )
+                    return ctx
             await write_cache(fetched)
             await self.tracker.info(
                 name="fetch.load.crawl_succeeded",
@@ -207,36 +230,59 @@ class FetchLoadStep(StepBase[FetchStepContext]):
             if fetched is None:
                 cached = await get_cached()
                 if cached is None:
-                    await self.tracker.error(
-                        name="fetch.load.cache_miss",
-                        request_id=ctx.request_id,
-                        step="fetch.load",
-                        data={"mode": mode, "cache_key": cache_key},
-                    )
-                    message = str(crawl_exc or "crawl failed and cache miss")
-                    ctx.error.failed = True
-                    ctx.error.tag = _resolve_error_tag(
-                        code="fetch_crawl_failed",
-                        message=message,
-                    )
-                    ctx.error.detail = message
-                    await self.tracker.error(
-                        name="fetch.load.failed",
-                        request_id=ctx.request_id,
-                        step="fetch.load",
-                        error_code="fetch_crawl_failed",
-                        error_message=message,
-                        data={
-                            "error_tag": ctx.error.tag,
-                            "url": ctx.url,
-                            "url_index": ctx.url_index,
-                            "crawl_mode": ctx.page.crawl_mode,
-                            "source": "crawl",
-                            "fatal": True,
-                        },
-                    )
-                    return ctx
-                fetched = cached
+                    if pre_fetched_content:
+                        fetched = CrawlResult(
+                            url=url,
+                            status_code=200,
+                            content_type="text/html",
+                            content=pre_fetched_content.encode("utf-8"),
+                            crawl_backend="pre_fetched",
+                            rendered=False,
+                            content_kind="html",
+                            headers={},
+                            attempt_chain=["pre_fetched"],
+                        )
+                        await self.tracker.info(
+                            name="fetch.load.pre_fetched_fallback",
+                            request_id=ctx.request_id,
+                            step="fetch.load",
+                            data={
+                                "mode": mode,
+                                "url": url,
+                            },
+                        )
+                    else:
+                        await self.tracker.error(
+                            name="fetch.load.cache_miss",
+                            request_id=ctx.request_id,
+                            step="fetch.load",
+                            data={"mode": mode, "cache_key": cache_key},
+                        )
+                        message = str(crawl_exc or "crawl failed and cache miss")
+                        ctx.error.failed = True
+                        ctx.error.tag = _resolve_error_tag(
+                            code="fetch_crawl_failed",
+                            message=message,
+                        )
+                        ctx.error.detail = message
+                        await self.tracker.error(
+                            name="fetch.load.failed",
+                            request_id=ctx.request_id,
+                            step="fetch.load",
+                            error_code="fetch_crawl_failed",
+                            error_message=message,
+                            data={
+                                "error_tag": ctx.error.tag,
+                                "url": ctx.url,
+                                "url_index": ctx.url_index,
+                                "crawl_mode": ctx.page.crawl_mode,
+                                "source": "crawl",
+                                "fatal": True,
+                            },
+                        )
+                        return ctx
+                else:
+                    fetched = cached
                 await self.tracker.info(
                     name="fetch.load.cache_hit",
                     request_id=ctx.request_id,
@@ -301,29 +347,51 @@ class FetchLoadStep(StepBase[FetchStepContext]):
                         },
                     )
                 if fetched is None:
-                    message = str(crawl_exc or "crawl failed")
-                    ctx.error.failed = True
-                    ctx.error.tag = _resolve_error_tag(
-                        code="fetch_crawl_failed",
-                        message=message,
-                    )
-                    ctx.error.detail = message
-                    await self.tracker.error(
-                        name="fetch.load.failed",
-                        request_id=ctx.request_id,
-                        step="fetch.load",
-                        error_code="fetch_crawl_failed",
-                        error_message=message,
-                        data={
-                            "error_tag": ctx.error.tag,
-                            "url": ctx.url,
-                            "url_index": ctx.url_index,
-                            "crawl_mode": ctx.page.crawl_mode,
-                            "source": "crawl",
-                            "fatal": True,
-                        },
-                    )
-                    return ctx
+                    if pre_fetched_content:
+                        fetched = CrawlResult(
+                            url=url,
+                            status_code=200,
+                            content_type="text/html",
+                            content=pre_fetched_content.encode("utf-8"),
+                            crawl_backend="pre_fetched",
+                            rendered=False,
+                            content_kind="html",
+                            headers={},
+                            attempt_chain=["pre_fetched"],
+                        )
+                        await self.tracker.info(
+                            name="fetch.load.pre_fetched_fallback",
+                            request_id=ctx.request_id,
+                            step="fetch.load",
+                            data={
+                                "mode": mode,
+                                "url": url,
+                            },
+                        )
+                    else:
+                        message = str(crawl_exc or "crawl failed")
+                        ctx.error.failed = True
+                        ctx.error.tag = _resolve_error_tag(
+                            code="fetch_crawl_failed",
+                            message=message,
+                        )
+                        ctx.error.detail = message
+                        await self.tracker.error(
+                            name="fetch.load.failed",
+                            request_id=ctx.request_id,
+                            step="fetch.load",
+                            error_code="fetch_crawl_failed",
+                            error_message=message,
+                            data={
+                                "error_tag": ctx.error.tag,
+                                "url": ctx.url,
+                                "url_index": ctx.url_index,
+                                "crawl_mode": ctx.page.crawl_mode,
+                                "source": "crawl",
+                                "fatal": True,
+                            },
+                        )
+                        return ctx
                 await write_cache(fetched)
                 await self.tracker.info(
                     name="fetch.load.crawl_succeeded",

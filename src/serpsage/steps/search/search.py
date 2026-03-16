@@ -12,6 +12,7 @@ from serpsage.components.provider.blend import (
 from serpsage.dependencies import Depends
 from serpsage.models.components.provider import SearchProviderResult
 from serpsage.models.steps.search import (
+    PreFetchedItem,
     SearchCanonicalBucket,
     SearchNormalizedResult,
     SearchQueryJob,
@@ -37,6 +38,7 @@ class SearchStep(StepBase[SearchStepContext]):
             ctx.retrieval.published_dates = {}
             ctx.retrieval.snippet_context = {}
             ctx.retrieval.query_hit_stats = {}
+            ctx.retrieval.pre_fetched_items = {}
             ctx.fetch.candidates = []
             ctx.output.results = []
             return ctx
@@ -90,6 +92,15 @@ class SearchStep(StepBase[SearchStepContext]):
                 : int(ctx.plan.prefetch_limit)
             ]
         ]
+        ctx.retrieval.pre_fetched_items = {
+            bucket.representative_url: PreFetchedItem(
+                title=bucket.pre_fetched_title,
+                content=bucket.pre_fetched_content,
+                author=bucket.pre_fetched_author,
+            )
+            for bucket in canonical_buckets.values()
+            if bucket.pre_fetched_content
+        }
         await self.tracker.info(
             name="search.search.completed",
             request_id=ctx.request_id,
@@ -123,12 +134,21 @@ class SearchStep(StepBase[SearchStepContext]):
                         representative_url=str(item.url),
                         representative_order=current_order,
                         published_date=str(item.published_date or ""),
+                        pre_fetched_title=item.pre_fetched_title,
+                        pre_fetched_content=item.pre_fetched_content,
+                        pre_fetched_author=item.pre_fetched_author,
                     )
                     buckets[canonical_url] = bucket
                 bucket.hit_indexes.add(job_index)
                 if current_order < int(bucket.representative_order):
                     bucket.representative_url = str(item.url)
                     bucket.representative_order = current_order
+                    if item.pre_fetched_title:
+                        bucket.pre_fetched_title = item.pre_fetched_title
+                    if item.pre_fetched_content:
+                        bucket.pre_fetched_content = item.pre_fetched_content
+                    if item.pre_fetched_author:
+                        bucket.pre_fetched_author = item.pre_fetched_author
                 bucket.published_date = pick_earliest_published_date(
                     bucket.published_date,
                     item.published_date,
@@ -246,6 +266,9 @@ class SearchStep(StepBase[SearchStepContext]):
                     title=title,
                     snippet=snippet,
                     published_date=clean_whitespace(raw.published_date),
+                    pre_fetched_title=clean_whitespace(raw.title),
+                    pre_fetched_content=raw.pre_fetched_content,
+                    pre_fetched_author=raw.pre_fetched_author,
                 )
             )
         return out

@@ -168,7 +168,7 @@ class FetchOverviewRequest(BaseModel):
 class FetchSubpagesRequest(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     max_subpages: int | None = None
-    subpage_keywords: str | None = None
+    subpage_keywords: str | list[str] | None = None
 
     @field_validator("max_subpages")
     @classmethod
@@ -179,12 +179,27 @@ class FetchSubpagesRequest(BaseModel):
             raise ValueError("max_subpages must be > 0")
         return value
 
-    @field_validator("subpage_keywords")
+    @field_validator("subpage_keywords", mode="before")
     @classmethod
-    def _validate_subpage_keywords(cls, value: str | None) -> str | None:
+    def _validate_subpage_keywords(
+        cls, value: str | list[str] | None
+    ) -> list[str] | None:
         if value is None:
             return None
-        out = str(value).strip()
+        if isinstance(value, list):
+            cleaned = [clean_whitespace(str(item)) for item in value]
+            return [item for item in cleaned if item] or None
+        text = clean_whitespace(str(value)).replace("\uff0c", ",")
+        if not text:
+            return None
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in text.split(","):
+            token = clean_whitespace(raw)
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
         return out or None
 
 

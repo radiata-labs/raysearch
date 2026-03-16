@@ -228,6 +228,9 @@ class OpenAlexProvider(
             title = clean_whitespace(str(item.get("title") or ""))
             if not title:
                 continue
+            abstract = self._reconstruct_abstract(item.get("abstract_inverted_index"))
+            authors = self._extract_authors(item)
+            author_str = ", ".join(authors[:5]) if authors else ""
             results.append(
                 SearchProviderResult(
                     url=url,
@@ -237,6 +240,8 @@ class OpenAlexProvider(
                     published_date=self._parse_publication_date(
                         item.get("publication_date")
                     ),
+                    pre_fetched_content=abstract,
+                    pre_fetched_author=author_str,
                 )
             )
         return results

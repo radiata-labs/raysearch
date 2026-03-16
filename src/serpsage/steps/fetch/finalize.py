@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing_extensions import override
 
-from serpsage.models.app.response import FetchResultItem
+from serpsage.models.app.response import FetchOthersResult, FetchResultItem
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.steps.base import StepBase
 from serpsage.utils import normalize_iso8601_string
@@ -38,12 +38,32 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
         abstract_scores = [
             float(item.score) for item in list(ctx.analysis.abstracts.ranked or [])
         ]
+
+        # Build excluded URL set for others.links and others.image_links
+        page_url = ctx.url.strip().split("#")[0]
+        page_image = (ctx.page.doc.meta.image or "").strip()
+        page_favicon = (ctx.page.doc.meta.favicon or "").strip()
+        subpage_urls = [
+            (item.result.url or "").strip().split("#")[0]
+            for item in list(ctx.related.subpages.items or [])
+            if item.result is not None
+        ]
+        excluded_urls: set[str] = {
+            url for url in [page_url, page_image, page_favicon, *subpage_urls] if url
+        }
+
         others_result = {}
         if not ctx.related.enabled:
             subpages_result = []
         else:
             if ctx.request.others is not None:
-                others_result = {"others": ctx.related.others}
+                filtered_others = _filter_others_result(
+                    others=ctx.related.others,
+                    excluded_urls=excluded_urls,
+                    max_links=ctx.request.others.max_links,
+                    max_image_links=ctx.request.others.max_image_links,
+                )
+                others_result = {"others": filtered_others}
             subpages_result = [
                 item.result
                 for item in list(ctx.related.subpages.items or [])
@@ -51,13 +71,13 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             ]
         ctx.result = FetchResultItem(
             url=ctx.url,
-            title=str(ctx.page.doc.meta.title or ""),
+            title=ctx.page.doc.meta.title or ctx.page.pre_fetched_title or "",
             published_date=_normalize_published_date(
-                str(ctx.page.doc.meta.published_date or "")
+                ctx.page.doc.meta.published_date or ""
             ),
-            author=str(ctx.page.doc.meta.author or ""),
-            image=str(ctx.page.doc.meta.image or ""),
-            favicon=str(ctx.page.doc.meta.favicon or ""),
+            author=ctx.page.doc.meta.author or ctx.page.pre_fetched_author or "",
+            image=ctx.page.doc.meta.image or "",
+            favicon=ctx.page.doc.meta.favicon or "",
             content=content,
             abstracts=abstracts,
             abstract_scores=abstract_scores,
@@ -70,6 +90,46 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             **others_result,
         )
         return ctx
+
+
+def _filter_others_result(
+    *,
+    others: FetchOthersResult,
+    excluded_urls: set[str],
+    max_links: int | None,
+    max_image_links: int | None,
+) -> FetchOthersResult:
+    """Filter out excluded URLs from others result.
+
+    Links are processed first, then image_links are filtered to exclude
+    any URLs that appeared in links (to prevent duplicates across fields).
+    """
+    # Process links first
+    filtered_links: list[str] = []
+    links_seen: set[str] = set()
+    for url in others.links:
+        clean_url = url.strip().split("#")[0]
+        if clean_url and clean_url not in excluded_urls and clean_url not in links_seen:
+            filtered_links.append(clean_url)
+            links_seen.add(clean_url)
+            if max_links is not None and len(filtered_links) >= max_links:
+                break
+
+    # Process image_links, excluding URLs from links and excluded_urls
+    filtered_image_links: list[str] = []
+    all_excluded = excluded_urls | links_seen
+    for url in others.image_links:
+        clean_url = url.strip()
+        if clean_url and clean_url not in all_excluded:
+            filtered_image_links.append(clean_url)
+            all_excluded.add(clean_url)
+            if max_image_links is not None and len(filtered_image_links) >= max_image_links:
+                break
+
+    return FetchOthersResult(
+        links=filtered_links,
+        image_links=filtered_image_links,
+    )
 
 
 def _normalize_published_date(value: str) -> str:

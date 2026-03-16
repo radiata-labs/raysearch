@@ -12,7 +12,7 @@ class CrawlResult(FrozenModel):
     status_code: int
     content_type: str | None = None
     content: bytes = b""
-    crawl_backend: Literal["curl_cffi", "playwright"] = "curl_cffi"
+    crawl_backend: Literal["curl_cffi", "playwright", "pre_fetched"] = "curl_cffi"
     rendered: bool = False
     content_kind: Literal["html", "pdf", "text", "binary", "unknown"] = "unknown"
     headers: dict[str, str] = Field(default_factory=dict)

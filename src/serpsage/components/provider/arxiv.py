@@ -221,14 +221,18 @@ class ArxivProvider(
             )
             if author
         ]
+        author_str = ", ".join(authors[:5]) if authors else ""
+        published_date = self._parse_published(
+            self._text(self._find_first(entry, "published"))
+        )
         return SearchProviderResult(
             url=url,
             title=title,
             snippet=self._build_snippet(summary=summary, authors=authors),
             engine=self.config.name,
-            published_date=self._parse_published(
-                self._text(self._find_first(entry, "published"))
-            ),
+            published_date=published_date,
+            pre_fetched_content=summary,
+            pre_fetched_author=author_str,
         )
 
     def _build_snippet(self, *, summary: str, authors: list[str]) -> str:

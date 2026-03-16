@@ -168,11 +168,18 @@ class SearchPlanState(MutableModel):
         return self
 
 
+class PreFetchedItem(MutableModel):
+    title: str = ""
+    content: str = ""
+    author: str = ""
+
+
 class SearchRetrievalState(MutableModel):
     urls: list[str] = Field(default_factory=list)
     published_dates: dict[str, str] = Field(default_factory=dict)
     snippet_context: dict[str, list[SearchSnippetContext]] = Field(default_factory=dict)
     query_hit_stats: dict[str, int] = Field(default_factory=dict)
+    pre_fetched_items: dict[str, PreFetchedItem] = Field(default_factory=dict)
 
 
 class SearchRankedCandidate(MutableModel):
@@ -229,6 +236,9 @@ class SearchNormalizedResult(MutableModel):
     title: str = ""
     snippet: str = ""
     published_date: str = ""
+    pre_fetched_title: str = ""
+    pre_fetched_content: str = ""
+    pre_fetched_author: str = ""
 
 
 class SearchCanonicalBucket(MutableModel):
@@ -237,6 +247,9 @@ class SearchCanonicalBucket(MutableModel):
     published_date: str = ""
     hit_indexes: set[int] = Field(default_factory=set)
     snippets_by_source: dict[str, SearchSnippetContext] = Field(default_factory=dict)
+    pre_fetched_title: str = ""
+    pre_fetched_content: str = ""
+    pre_fetched_author: str = ""
 
 
 class SearchRankOptions(MutableModel):

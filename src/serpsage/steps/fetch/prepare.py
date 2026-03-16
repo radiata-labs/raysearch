@@ -116,7 +116,6 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
         subpages_enabled = False
         subpages_limit = 0
         subpages_keywords: list[str] = []
-        subpages_query = ""
         if ctx.related.enabled:
             subpages_request = ctx.request.subpages
             ctx.related.link_limit = (
@@ -131,13 +130,9 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
                 subpages_request is not None
                 and subpages_request.max_subpages is not None
             ):
-                subpages_keywords = _parse_subpage_keywords(
-                    subpages_request.subpage_keywords
-                )
+                subpages_keywords = list(subpages_request.subpage_keywords or [])
                 subpages_limit = int(subpages_request.max_subpages)
-                subpages_enabled = bool(subpages_limit > 0 and subpages_keywords)
-                if subpages_enabled:
-                    subpages_query = ", ".join(subpages_keywords)
+                subpages_enabled = bool(subpages_limit > 0)
             if subpages_enabled:
                 link_cap = int(fetch_cfg.extract.link_max_count)
                 auto_limit = min(link_cap, max(20, int(subpages_limit) * 5))
@@ -158,7 +153,6 @@ class FetchPrepareStep(StepBase[FetchStepContext]):
             ctx.related.others.image_links = []
         ctx.related.subpages.enabled = bool(subpages_enabled)
         ctx.related.subpages.limit = int(subpages_limit) if subpages_enabled else 0
-        ctx.related.subpages.query = subpages_query if subpages_enabled else ""
         ctx.related.subpages.keywords = list(subpages_keywords)
         ctx.related.subpages.candidates = []
         ctx.related.subpages.items = []
@@ -183,21 +177,6 @@ def _resolve_sections(content_request: FetchContentRequest) -> list[ExtractConte
             continue
         seen.add(item)
         out.append(item)
-    return out
-
-
-def _parse_subpage_keywords(value: str | None) -> list[str]:
-    text = clean_whitespace(value or "").replace("\uff0c", ",")
-    if not text:
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for raw in text.split(","):
-        token = clean_whitespace(raw)
-        if not token or token in seen:
-            continue
-        seen.add(token)
-        out.append(token)
     return out
 
 

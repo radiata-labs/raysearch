@@ -29,36 +29,47 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         candidates = list(ctx.related.subpages.candidates or [])
         if not candidates:
             return ctx
-        try:
-            scores = await self.ranker.score_texts(
-                [f"[{item.text}]({item.url})" for item in candidates],
-                query=ctx.related.subpages.query,
-                query_tokens=ctx.related.subpages.keywords,
+        keywords = list(ctx.related.subpages.keywords or [])
+        max_subpages = max(1, int(ctx.related.subpages.limit))
+
+        # If no keywords, take first N candidates without ranking
+        if not keywords:
+            selected_urls = [
+                candidates[idx].url
+                for idx in range(min(len(candidates), max_subpages))
+            ]
+        else:
+            # Score candidates with each keyword and compute average
+            try:
+                avg_scores = await self._compute_average_scores(
+                    candidates=candidates,
+                    keywords=keywords,
+                )
+            except Exception as exc:  # noqa: BLE001
+                await self.tracker.error(
+                    name="fetch.subpages.failed",
+                    request_id=ctx.request_id,
+                    step="fetch.subpages",
+                    error_code="fetch_subpage_failed",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    data={
+                        "url": ctx.url,
+                        "url_index": int(ctx.url_index),
+                        "crawl_mode": str(ctx.page.crawl_mode),
+                        "fatal": False,
+                    },
+                )
+                return ctx
+            ranked_indexes = sorted(
+                range(len(candidates)),
+                key=lambda idx: (-avg_scores[idx], idx),
             )
-        except Exception as exc:  # noqa: BLE001
-            await self.tracker.error(
-                name="fetch.subpages.failed",
-                request_id=ctx.request_id,
-                step="fetch.subpages",
-                error_code="fetch_subpage_failed",
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-                data={
-                    "url": ctx.url,
-                    "url_index": int(ctx.url_index),
-                    "crawl_mode": str(ctx.page.crawl_mode),
-                    "fatal": False,
-                },
-            )
-            return ctx
-        ranked_indexes = sorted(
-            range(len(candidates)),
-            key=lambda idx: (-_score_at(scores=scores, idx=idx), idx),
-        )
-        selected_urls = [
-            candidates[idx].url
-            for idx in ranked_indexes[: max(1, int(ctx.related.subpages.limit))]
-        ]
+            selected_urls = [
+                candidates[idx].url
+                for idx in ranked_indexes[:max_subpages]
+            ]
+
         if not selected_urls:
             return ctx
         child_link_limit = int(ctx.related.subpages.candidate_limit or 0)
@@ -132,6 +143,30 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         ctx.related.subpages.items = [item for item in out_items if item is not None]
         return ctx
 
+    async def _compute_average_scores(
+        self,
+        *,
+        candidates: list,
+        keywords: list[str],
+    ) -> list[float]:
+        """Compute average scores across all keywords for each candidate."""
+        texts = [f"[{item.text}]({item.url})" for item in candidates]
+        n_candidates = len(candidates)
+        score_sums = [0.0] * n_candidates
+
+        for keyword in keywords:
+            scores = await self.ranker.score_texts(
+                texts,
+                query=keyword,
+                query_tokens=[keyword],
+            )
+            for idx in range(n_candidates):
+                score_sums[idx] += float(scores[idx]) if idx < len(scores) else 0.0
+
+        # Compute average
+        n_keywords = len(keywords)
+        return [score_sum / n_keywords for score_sum in score_sums]
+
 
 def _to_subpage_result(value: FetchResultItem) -> FetchSubpagesResult:
     return FetchSubpagesResult(
@@ -146,10 +181,6 @@ def _to_subpage_result(value: FetchResultItem) -> FetchSubpagesResult:
         abstract_scores=[float(item) for item in list(value.abstract_scores or [])],
         overview=value.overview,
     )
-
-
-def _score_at(*, scores: list[float], idx: int) -> float:
-    return float(scores[idx]) if idx < len(scores) else 0.0
 
 
 __all__ = ["FetchSubpageStep"]

@@ -76,6 +76,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
         secondary_paths: list[tuple[int, ...]]
         semantic_html: dict[ExtractContentTag, list[str]]
         favicon: str
+        document_links: set[str]  # URLs from meta tags (citation_pdf_url, etc.)
 
     @dataclass(slots=True)
     class TrafilaturaResult:
@@ -450,7 +451,46 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             ],
             semantic_html=semantic_html,
             favicon=cls._favicon(tree=tree, base_url=base_url),
+            document_links=cls._extract_document_links(tree=tree, base_url=base_url),
         )
+
+    @classmethod
+    def _extract_document_links(cls, *, tree: HTMLParser, base_url: str) -> set[str]:
+        """Extract document links from standard meta tags.
+
+        Recognized meta tags:
+        - citation_pdf_url (Google Scholar / academic papers)
+        - dc:format, dc:identifier (Dublin Core)
+        - link[rel="alternate"][type="application/pdf"]
+        """
+        links: set[str] = set()
+        # citation_pdf_url from meta
+        for meta in tree.css('meta[name="citation_pdf_url"]'):
+            content = str(meta.attributes.get("content", "")).strip()
+            if content:
+                normalized = cls._normalize_url(url=content, base_url=base_url, keep_hash=False)
+                if normalized:
+                    links.add(normalized)
+        # Dublin Core format
+        for meta in tree.css('meta[name="dc.format"]'):
+            content = str(meta.attributes.get("content", "")).strip().lower()
+            if content in ("application/pdf", "pdf"):
+                # Find corresponding identifier
+                for id_meta in tree.css('meta[name="dc.identifier"]'):
+                    id_content = str(id_meta.attributes.get("content", "")).strip()
+                    if id_content and id_content.lower().startswith(("http", "/")):
+                        normalized = cls._normalize_url(url=id_content, base_url=base_url, keep_hash=False)
+                        if normalized:
+                            links.add(normalized)
+                        break
+        # link[rel="alternate"] with PDF type
+        for link in tree.css('link[rel="alternate"][type="application/pdf"]'):
+            href = str(link.attributes.get("href", "")).strip()
+            if href:
+                normalized = cls._normalize_url(url=href, base_url=base_url, keep_hash=False)
+                if normalized:
+                    links.add(normalized)
+        return links
 
     def _extract_primary(
         self,
@@ -1117,8 +1157,13 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             or base_url
         )
         base_netloc = urlparse(base_norm).netloc.lower()
-        items: list[ExtractRef] = []
-        seen: set[tuple[str, str, str]] = set()
+        max_count = self._profile.link_max_count
+        document_links = snapshot.document_links
+
+        # Collect links with importance scores
+        collected: list[tuple[int, int, ExtractRef]] = []
+        seen: set[tuple[str, str]] = set()
+
         for position, anchor in enumerate(snapshot.tree.css("a"), start=1):
             href = str(anchor.attributes.get("href", "")).strip()
             text = self._node_text(anchor)
@@ -1134,32 +1179,59 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             section = self._section(anchor=anchor, snapshot=snapshot)
             if section == "secondary" and not include_secondary:
                 continue
-            key = (normalized, text.casefold(), section)
-            if key in seen:
+            # Dedupe by (url, text) without section to avoid same link in multiple sections
+            dedupe_key = (normalized, text.casefold())
+            if dedupe_key in seen:
                 continue
-            seen.add(key)
+            seen.add(dedupe_key)
             parsed = urlparse(normalized)
             rel = str(anchor.attributes.get("rel", "")).strip().lower()
-            items.append(
-                ExtractRef(
-                    url=normalized,
-                    text=text,
-                    zone=cast("Literal['primary', 'secondary']", section),
-                    internal=(parsed.netloc.lower() == base_netloc)
-                    if parsed.netloc
-                    else True,
-                    nofollow=("nofollow" in rel.split()),
-                    same_page=(
-                        self._strip_fragment(normalized)
-                        == self._strip_fragment(base_norm)
-                    ),
-                    source=self._source_hint(anchor),
-                    position=position,
-                )
+            ref = ExtractRef(
+                url=normalized,
+                text=text,
+                zone=cast("Literal['primary', 'secondary']", section),
+                internal=(parsed.netloc.lower() == base_netloc)
+                if parsed.netloc
+                else True,
+                nofollow=("nofollow" in rel.split()),
+                same_page=(
+                    self._strip_fragment(normalized)
+                    == self._strip_fragment(base_norm)
+                ),
+                source=self._source_hint(anchor),
+                position=position,
             )
-            if len(items) >= self._profile.link_max_count:
-                break
-        return items
+            # Calculate importance score (higher = more important)
+            score = self._link_importance_score(
+                ref=ref, document_links=document_links
+            )
+            collected.append((score, position, ref))
+
+        # Sort by importance score (desc), then by original position (asc)
+        collected.sort(key=lambda item: (-item[0], item[1]))
+        return [ref for _, _, ref in collected[:max_count]]
+
+    def _link_importance_score(
+        self, *, ref: ExtractRef, document_links: set[str]
+    ) -> int:
+        """Calculate importance score for a link. Higher = more important.
+
+        Priority:
+        1. Links found in document meta tags (citation_pdf_url, etc.) - highest
+        2. Links in primary content zone
+        3. DOM order as tie-breaker (handled by position in sort key)
+        """
+        score = 0
+
+        # Highest priority: explicitly declared document links from meta tags
+        if ref.url in document_links:
+            score += 1000
+
+        # Zone bonus: primary content links are more important
+        if ref.zone == "primary":
+            score += 100
+
+        return score
 
     def _images(
         self, *, snapshot: Snapshot, base_url: str, include_secondary: bool
