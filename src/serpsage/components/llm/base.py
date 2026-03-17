@@ -239,7 +239,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
         format_override: None = None,
         timeout_s: float | None = None,
         retries: int = 0,
-        retry_delay_s: float = 0.0,
+        retry_delay_ms: float = 0.0,
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatTextResult: ...
@@ -253,7 +253,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
         format_override: None = None,
         timeout_s: float | None = None,
         retries: int = 0,
-        retry_delay_s: float = 0.0,
+        retry_delay_ms: float = 0.0,
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatDictResult: ...
@@ -267,7 +267,7 @@ class LLMClientBase(ComponentBase[LLMConfigT], ABC, Generic[LLMConfigT]):
         format_override: dict[str, object] | None = None,
         timeout_s: float | None = None,
         retries: int = 0,
-        retry_delay_s: float = 0.0,
+        retry_delay_ms: float = 0.0,
         retry_on: RetryOn | None = None,
         **kwargs: Any,
     ) -> ChatModelResult[TModel]: ...

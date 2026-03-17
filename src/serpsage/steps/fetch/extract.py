@@ -51,6 +51,8 @@ class FetchExtractStep(StepBase[FetchStepContext]):
                 url=ctx.page.raw.url,
                 content=ctx.page.raw.content,
                 content_type=ctx.page.raw.content_type,
+                crawl_backend=ctx.page.raw.crawl_backend,
+                content_kind=ctx.page.raw.content_kind,
                 content_options=ctx.page.extract,
                 collect_links=collect_links,
                 collect_images=collect_images,

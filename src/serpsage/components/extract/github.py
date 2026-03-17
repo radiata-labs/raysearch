@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 from typing_extensions import override
 from urllib.parse import urljoin, urlparse
 
@@ -145,8 +145,15 @@ class GitHubExtractor(SpecializedExtractorBase[GitHubExtractorConfig]):
         *,
         url: str,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content: bytes | None = None,
     ) -> bool:
+        # Only handle HTML content
+        if content_kind not in ("html", "unknown"):
+            return False
         if content_type and "html" not in content_type.lower():
             return False
 
@@ -197,6 +204,10 @@ class GitHubExtractor(SpecializedExtractorBase[GitHubExtractorConfig]):
         url: str,
         content: bytes,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,
@@ -264,9 +275,7 @@ class GitHubExtractor(SpecializedExtractorBase[GitHubExtractorConfig]):
         if options.sections:
             selected = set(options.sections)
         else:
-            selected = set(
-                self._DETAIL_DEFAULT_TAGS.get(options.detail, ("body",))
-            )
+            selected = set(self._DETAIL_DEFAULT_TAGS.get(options.detail, ("body",)))
         return selected
 
     def _snapshot(self, *, raw_html: str, base_url: str) -> GitHubSnapshot:
@@ -970,13 +979,6 @@ class GitHubExtractor(SpecializedExtractorBase[GitHubExtractorConfig]):
             images.insert(0, ExtractRef(url=og_image, text="og:image"))
 
         return images[:10]
-
-    def _format_count(self, count: int) -> str:
-        if count >= 1000000:
-            return f"{count / 1000000:.1f}M"
-        if count >= 1000:
-            return f"{count / 1000:.1f}k"
-        return str(count)
 
 
 @dataclass(slots=True)

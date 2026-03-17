@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Generic, Literal
 from typing_extensions import TypeVar
 
 from serpsage.components.base import ComponentBase, ComponentConfigBase
@@ -43,6 +43,10 @@ class ExtractorBase(ComponentBase[ExtractConfigT], ABC, Generic[ExtractConfigT])
         url: str,
         content: bytes,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,
@@ -81,7 +85,9 @@ class ExtractorBase(ComponentBase[ExtractConfigT], ABC, Generic[ExtractConfigT])
             # Determine max_chars for output
             output_max_chars = (
                 int(options.output_max_chars)
-                if options is not None and options.output_max_chars is not None and options.output_max_chars > 0
+                if options is not None
+                and options.output_max_chars is not None
+                and options.output_max_chars > 0
                 else 10_000_000  # Large enough to not clip
             )
 
@@ -122,6 +128,10 @@ class SpecializedExtractorBase(
         *,
         url: str,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content: bytes | None = None,
     ) -> bool:
         """Return True if this extractor should handle the given content.
@@ -129,6 +139,8 @@ class SpecializedExtractorBase(
         Args:
             url: The URL being extracted
             content_type: The Content-Type header
+            crawl_backend: The crawler backend that fetched the content (e.g., "reddit", "doi", "curl_cffi")
+            content_kind: The kind of content (e.g., "html", "json", "pdf", "text")
             content: The raw content bytes (may be None for early detection)
 
         Returns:

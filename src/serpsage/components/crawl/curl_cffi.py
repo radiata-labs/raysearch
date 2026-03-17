@@ -60,6 +60,9 @@ class CurlCffiCrawlerConfig(CrawlerConfigBase):
     follow_redirects: bool = True
     user_agent: str = DEFAULT_USER_AGENT
     blocked_markers: list[str] = Field(default_factory=default_blocked_markers)
+    try_markdown_first: bool = (
+        True  # Try Accept: text/markdown for Cloudflare edge markdown
+    )
 
     @field_validator("user_agent")
     @classmethod
@@ -207,12 +210,69 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
         continue_predicate: Callable[[CrawlAttempt], bool] | None,
     ) -> CurlProgressiveResult:
         cfg = self.config
-        headers = browser_headers(
+        session = cast("Any", self._session)
+
+        # Try markdown-first strategy if enabled
+        if cfg.try_markdown_first:
+            md_headers = browser_headers(
+                profile="browser",
+                user_agent=str(cfg.user_agent),
+                randomize=True,
+                accept="text/markdown,text/plain;q=0.9,text/html;q=0.8",
+            )
+            result = await self._do_stream_request(
+                session=session,
+                url=url,
+                headers=md_headers,
+                timeout_s=timeout_s,
+                proxy=proxy,
+                scout_bytes=scout_bytes,
+                continue_predicate=continue_predicate,
+                attempt_chain_prefix=["curl_cffi:markdown_first"],
+            )
+            # If we got markdown content, return it directly
+            if result.attempt.content_kind == "markdown":
+                return result
+            # If we got HTML with good content, return it (no need to re-fetch)
+            if (
+                result.attempt.content_kind == "html"
+                and result.attempt.text_chars > 200
+            ):
+                return result
+
+        # Standard HTML request (either markdown-first disabled, or fallback)
+        html_headers = browser_headers(
             profile="browser",
             user_agent=str(cfg.user_agent),
             randomize=True,
         )
-        session = cast("Any", self._session)
+        chain_prefix = (
+            ["curl_cffi:html_fallback"] if cfg.try_markdown_first else ["curl_cffi"]
+        )
+        return await self._do_stream_request(
+            session=session,
+            url=url,
+            headers=html_headers,
+            timeout_s=timeout_s,
+            proxy=proxy,
+            scout_bytes=scout_bytes,
+            continue_predicate=continue_predicate,
+            attempt_chain_prefix=chain_prefix,
+        )
+
+    async def _do_stream_request(
+        self,
+        *,
+        session: Any,
+        url: str,
+        headers: dict[str, str],
+        timeout_s: float,
+        proxy: str | None,
+        scout_bytes: int | None,
+        continue_predicate: Callable[[CrawlAttempt], bool] | None,
+        attempt_chain_prefix: list[str],
+    ) -> CurlProgressiveResult:
+        cfg = self.config
         async with session.stream(
             "GET",
             url,
@@ -263,6 +323,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
                         content=b"".join(chunks),
                         headers=normalized_headers,
                         finished=False,
+                        attempt_chain_prefix=attempt_chain_prefix,
                     )
                     should_continue = True
                     if continue_predicate is not None:
@@ -282,6 +343,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
                 content=body,
                 headers=normalized_headers,
                 finished=finished,
+                attempt_chain_prefix=attempt_chain_prefix,
             )
             return CurlProgressiveResult(
                 attempt=attempt,
@@ -298,6 +360,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
         content: bytes,
         headers: dict[str, str],
         finished: bool,
+        attempt_chain_prefix: list[str] | None = None,
     ) -> CrawlAttempt:
         analysis = analyze_content(
             content=content,
@@ -305,7 +368,9 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
             url=url,
             markers=tuple(self.config.blocked_markers),
         )
-        attempt_chain = ["curl_cffi"]
+        attempt_chain = (
+            list(attempt_chain_prefix) if attempt_chain_prefix else ["curl_cffi"]
+        )
         if not finished:
             attempt_chain.append("curl_cffi:scout")
         return CrawlAttempt(
@@ -313,13 +378,10 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
             status_code=int(status_code or 0),
             content_type=content_type,
             content=content,
-            strategy_used="curl_cffi",
             crawl_backend="curl_cffi",
             rendered=False,
             content_kind=analysis.content_kind,
             headers=headers,
-            content_encoding=headers.get("content-encoding"),
-            content_length_header=headers.get("content-length"),
             content_score=float(analysis.content_score),
             text_chars=int(analysis.text_chars),
             script_ratio=float(analysis.script_ratio),
@@ -335,7 +397,7 @@ class CurlCffiCrawler(CrawlerBase[CurlCffiCrawlerConfig]):
         )
         if kind == "pdf":
             return 16_000_000
-        if kind == "text":
+        if kind in {"text", "markdown"}:
             return 900_000
         if kind in {"unknown", "binary"}:
             return 3_000_000

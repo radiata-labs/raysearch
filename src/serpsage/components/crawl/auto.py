@@ -464,7 +464,7 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
     def _should_accept_curl(self, attempt: CrawlAttempt, *, finished: bool) -> bool:
         if finished:
             return self._is_useful(attempt)
-        if attempt.content_kind in {"pdf", "text"}:
+        if attempt.content_kind in {"pdf", "text", "markdown"}:
             return self._is_useful(attempt)
         if attempt.content_kind != "html":
             return False

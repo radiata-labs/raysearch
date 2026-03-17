@@ -6,7 +6,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from io import BytesIO
-from typing import cast
+from typing import Literal, cast
 from typing_extensions import override
 
 import anyio
@@ -62,9 +62,16 @@ class PdfExtractor(SpecializedExtractorBase[PdfExtractorConfig]):
         *,
         url: str,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content: bytes | None = None,
     ) -> bool:
-        # Check content-type first (fast path)
+        # Check content_kind first (fast path)
+        if content_kind == "pdf":
+            return True
+        # Check content-type
         if content_type and "pdf" in content_type.lower():
             return True
         # Check URL extension
@@ -87,6 +94,8 @@ class PdfExtractor(SpecializedExtractorBase[PdfExtractorConfig]):
         url: str,
         content: bytes,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: str = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,

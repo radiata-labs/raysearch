@@ -190,7 +190,6 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
         *,
         url: str,
         timeout_s: float | None = None,
-        render_reason: str | None = None,
     ) -> CrawlAttempt:
         if self._browser is None or self._context is None:
             raise RuntimeError("playwright browser is not initialized")
@@ -229,18 +228,14 @@ class PlaywrightCrawler(CrawlerBase[PlaywrightCrawlerConfig]):
             status_code=int(status),
             content_type=content_type,
             content=body,
-            strategy_used="playwright",
             crawl_backend="playwright",
             rendered=True,
             content_kind=analysis.content_kind,
             headers=headers,
-            content_encoding=headers.get("content-encoding"),
-            content_length_header=headers.get("content-length"),
             content_score=float(analysis.content_score),
             text_chars=int(analysis.text_chars),
             script_ratio=float(analysis.script_ratio),
             blocked=bool(analysis.blocked),
-            render_reason=render_reason,
             attempt_chain=["playwright"],
         )
 

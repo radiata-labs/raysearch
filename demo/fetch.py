@@ -32,7 +32,7 @@ async def main(
         content=FetchContentRequest(detail="full"),
         abstracts=FetchAbstractsRequest(query=query, max_chars=2000),
         overview=FetchOverviewRequest(query=query) if overview else False,
-        subpages=FetchSubpagesRequest(max_subpages=3, subpage_keywords=None),
+        subpages=FetchSubpagesRequest(max_subpages=None, subpage_keywords=None),
         others=FetchOthersRequest(max_links=5, max_image_links=5),
     )
     async with Engine.from_settings("demo/search_config_example.yaml") as engine:
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     out = anyio.run(
         main,
         [
-            "https://www.mdpi.com/1999-5903/15/6/192/pdf?version=1685089354",
+            "https://doi.org/10.3390/fi15060192",
         ],
         None,
         False,

@@ -39,7 +39,7 @@ _META_CHARSET_RE = re.compile(
 _CT_CHARSET_RE = re.compile(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
 
 # Characters that require quoting in YAML values
-_YAML_SPECIAL_CHARS = set(':\\"\'\n#[{}]')
+_YAML_SPECIAL_CHARS = set(":\\\"'\n#[{}]")
 
 
 def _format_yaml_value(value: str) -> str:
@@ -404,53 +404,6 @@ def strip_markdown_links(markdown: str) -> str:
     return "\n".join(out).strip()
 
 
-def merge_markdown(*, base: str, extra: str, max_chars: int) -> str:
-    if not base.strip():
-        return finalize_markdown(markdown=extra, max_chars=max_chars)
-    if not extra.strip():
-        return finalize_markdown(markdown=base, max_chars=max_chars)
-    merged = f"{base.rstrip()}\n\n{extra.lstrip()}"
-    return finalize_markdown(markdown=merged, max_chars=max_chars)
-
-
-def extract_feature_snippets(*, markdown: str, feature: str) -> str:
-    if not markdown.strip():
-        return ""
-    if feature == "code_block_count":
-        snippets = _extract_fenced_blocks(markdown)
-        return "\n\n".join(snippets[:6]).strip()
-    if feature == "table_count":
-        blocks: list[str] = []
-        current: list[str] = []
-        for line in markdown.splitlines():
-            if _is_table_line(line):
-                current.append(line.rstrip())
-                continue
-            if current:
-                block = "\n".join(current).strip()
-                if _table_has_separator(current):
-                    blocks.append(block)
-                current = []
-        if current:
-            block = "\n".join(current).strip()
-            if _table_has_separator(current):
-                blocks.append(block)
-        return "\n\n".join(blocks[:6]).strip()
-    if feature == "heading_count":
-        heads = [
-            ln.strip() for ln in markdown.splitlines() if ln.strip().startswith("#")
-        ]
-        return "\n".join(heads[:14]).strip()
-    if feature == "ordered_list_count":
-        items = [
-            ln.rstrip()
-            for ln in markdown.splitlines()
-            if re.match(r"^\s*\d+[.)]\s+", ln)
-        ]
-        return "\n".join(items[:24]).strip()
-    return ""
-
-
 def _paragraph_key(block: str) -> str:
     compact = _collapse_ws_outside_inline_code(block).lower().strip()
     if len(compact) <= 10:
@@ -507,10 +460,6 @@ def _is_table_line(line: str) -> bool:
     return stripped.count("|") >= 2
 
 
-def _table_has_separator(lines: list[str]) -> bool:
-    return any(_TABLE_SEP_RE.match(line.strip()) for line in lines)
-
-
 def _collapse_ws_outside_inline_code(text: str) -> str:
     out: list[str] = []
     in_code = False
@@ -544,26 +493,6 @@ def _collapse_ws_outside_inline_code(text: str) -> str:
         out.append(ch)
         idx += 1
     return "".join(out)
-
-
-def _extract_fenced_blocks(markdown: str) -> list[str]:
-    lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    blocks: list[str] = []
-    buf: list[str] = []
-    active_fence = ""
-    for line in lines:
-        fence = _fence_delimiter(line)
-        if active_fence:
-            buf.append(line)
-            if fence and len(fence) >= len(active_fence):
-                blocks.append("\n".join(buf).strip())
-                buf = []
-                active_fence = ""
-            continue
-        if fence:
-            active_fence = fence
-            buf = [line]
-    return [b for b in blocks if b]
 
 
 def _clip_with_structure(*, result: str, max_chars: int) -> str:
@@ -625,10 +554,8 @@ __all__ = [
     "ContentKind",
     "decode_best_effort",
     "guess_apparent_encoding",
-    "extract_feature_snippets",
     "finalize_markdown",
     "markdown_to_abstract_text",
     "strip_markdown_links",
     "markdown_to_text",
-    "merge_markdown",
 ]

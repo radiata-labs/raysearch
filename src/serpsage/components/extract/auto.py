@@ -32,7 +32,7 @@ Example configuration in this project:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from typing_extensions import override
 
 from serpsage.components.extract.base import (
@@ -88,6 +88,10 @@ class AutoExtractor(ExtractorBase[AutoExtractorConfig]):
         url: str,
         content: bytes,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,
@@ -95,12 +99,18 @@ class AutoExtractor(ExtractorBase[AutoExtractorConfig]):
         # Try specialized extractors in order
         for extractor in self.specialized:
             if type(extractor).can_handle(
-                url=url, content_type=content_type, content=content
+                url=url,
+                content_type=content_type,
+                crawl_backend=crawl_backend,
+                content_kind=content_kind,
+                content=content,
             ):
                 return await extractor.extract(
                     url=url,
                     content=content,
                     content_type=content_type,
+                    crawl_backend=crawl_backend,
+                    content_kind=content_kind,
                     content_options=content_options,
                     collect_links=collect_links,
                     collect_images=collect_images,
@@ -111,6 +121,8 @@ class AutoExtractor(ExtractorBase[AutoExtractorConfig]):
             url=url,
             content=content,
             content_type=content_type,
+            crawl_backend=crawl_backend,
+            content_kind=content_kind,
             content_options=content_options,
             collect_links=collect_links,
             collect_images=collect_images,

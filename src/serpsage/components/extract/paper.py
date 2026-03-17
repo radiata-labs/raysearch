@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from typing_extensions import override
 from urllib.parse import urljoin, urlparse, urlunparse
 
@@ -64,9 +64,15 @@ class PaperExtractor(SpecializedExtractorBase[PaperExtractorConfig]):
         *,
         url: str,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content: bytes | None = None,
     ) -> bool:
         # Only handle HTML content
+        if content_kind not in ("html", "unknown"):
+            return False
         if content_type and "html" not in content_type.lower():
             return False
 
@@ -93,6 +99,10 @@ class PaperExtractor(SpecializedExtractorBase[PaperExtractorConfig]):
         url: str,
         content: bytes,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,
@@ -101,6 +111,8 @@ class PaperExtractor(SpecializedExtractorBase[PaperExtractorConfig]):
             url=url,
             content=content,
             content_type=content_type,
+            crawl_backend=crawl_backend,
+            content_kind=content_kind,
             content_options=content_options,
             collect_links=collect_links,
             collect_images=collect_images,

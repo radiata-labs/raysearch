@@ -13,9 +13,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 from typing_extensions import override
-from urllib.parse import urlparse
 
 from serpsage.components.extract.base import (
     ExtractConfigBase,
@@ -83,20 +82,17 @@ class RedditExtractor(SpecializedExtractorBase[RedditExtractorConfig]):
         *,
         url: str,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content: bytes | None = None,
     ) -> bool:
-        # Only handle JSON content from Reddit
-        if not content_type or "json" not in content_type.lower():
+        # First check content_kind is json
+        if content_kind != "json":
             return False
-
-        try:
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-            if ":" in domain:
-                domain = domain.split(":")[0]
-            return domain in _REDDIT_DOMAINS
-        except Exception:  # noqa: BLE001
-            return False
+        # Then check crawl_backend is reddit
+        return crawl_backend == "reddit"
 
     @override
     async def extract(
@@ -105,6 +101,10 @@ class RedditExtractor(SpecializedExtractorBase[RedditExtractorConfig]):
         url: str,
         content: bytes,
         content_type: str | None = None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,
@@ -314,9 +314,7 @@ class RedditExtractor(SpecializedExtractorBase[RedditExtractorConfig]):
 
         return "\n".join(parts)
 
-    def _extract_links_from_json(
-        self, data: list[dict[str, Any]]
-    ) -> list[ExtractRef]:
+    def _extract_links_from_json(self, data: list[dict[str, Any]]) -> list[ExtractRef]:
         """Extract links from Reddit JSON."""
         links: list[ExtractRef] = []
         seen: set[str] = set()
@@ -372,9 +370,7 @@ class RedditExtractor(SpecializedExtractorBase[RedditExtractorConfig]):
                 children = replies.get("data", {}).get("children", [])
                 self._extract_links_from_comments(children, links, seen)
 
-    def _extract_images_from_json(
-        self, post: dict[str, Any]
-    ) -> list[ExtractRef]:
+    def _extract_images_from_json(self, post: dict[str, Any]) -> list[ExtractRef]:
         """Extract images from Reddit post JSON."""
         images: list[ExtractRef] = []
         seen: set[str] = set()

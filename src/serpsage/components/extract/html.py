@@ -18,7 +18,6 @@ from html_to_markdown import (
 )
 from selectolax.parser import HTMLParser, Node
 
-from serpsage.components.crawl.utils import classify_content_kind
 from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
 from serpsage.components.extract.utils import (
     decode_best_effort,
@@ -76,7 +75,9 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
     _MIN_HTML_CAPTURE_CHARS: ClassVar[int] = 5_000_000
 
     # Content detection thresholds
-    _MIN_HEURISTIC_TEXT_CHARS: ClassVar[int] = 200  # Min chars for heuristic content detection
+    _MIN_HEURISTIC_TEXT_CHARS: ClassVar[int] = (
+        200  # Min chars for heuristic content detection
+    )
     _MIN_CONTENT_SCORE_CHARS: ClassVar[int] = 80  # Min chars for content scoring
 
     # URL normalization
@@ -332,15 +333,16 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
         url: str,
         content: bytes,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,
     ) -> ExtractedDocument:
         """Main entry point for HTML content extraction."""
-        kind = classify_content_kind(
-            content_type=content_type, url=url, content=content
-        )
-        if kind == "pdf":
+        if content_kind == "pdf":
             raise ValueError(
                 "HtmlExtractor does not handle PDF; use AutoExtractor/PdfExtractor"
             )
@@ -350,11 +352,20 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             content_type=content_type,
             apparent_encoding=guess_apparent_encoding(content),
         )
-        if kind == "unknown":
+        # Use content_kind if known, otherwise infer from decoded content
+        if content_kind == "unknown":
             kind = "html" if decoded_kind == "html" else "text"
+        else:
+            kind = content_kind
 
         options = content_options or ExtractSpec()
 
+        # Handle markdown content directly (e.g., from Cloudflare edge markdown)
+        if kind == "markdown":
+            return self._finalize_content(
+                doc=self._extract_markdown(decoded),
+                content_options=options,
+            )
         if kind == "text":
             return self._finalize_content(
                 doc=self._extract_text(decoded),
@@ -451,9 +462,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
     def _extract_text(self, text: str) -> ExtractedDocument:
         """Extract content from plain text (non-HTML)."""
         markdown = "\n\n".join(
-            cleaned
-            for line in text.splitlines()
-            if (cleaned := clean_whitespace(line))
+            cleaned for line in text.splitlines() if (cleaned := clean_whitespace(line))
         )
         plain = markdown_to_text(markdown)
         return ExtractedDocument(
@@ -469,6 +478,34 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
                     "engine_chain": "text",
                     "include_secondary_content": False,
                     "renderer_backend": "text",
+                    "renderer_fallback_used": False,
+                    "renderer_text_recall_ratio": 1.0,
+                },
+            ),
+        )
+
+    def _extract_markdown(self, markdown: str) -> ExtractedDocument:
+        """Extract content from pre-formatted markdown (e.g., Cloudflare edge markdown).
+
+        This is an optimization path - when the server returns markdown directly,
+        we skip HTML parsing entirely and use the content as-is.
+        """
+        # Clean up the markdown while preserving structure
+        cleaned = clean_whitespace(markdown)
+        plain = markdown_to_text(cleaned)
+        return ExtractedDocument(
+            content=ExtractContent(markdown=cleaned),
+            trace=ExtractTrace(
+                kind="markdown",
+                engine="markdown_direct",
+                stats={
+                    "primary_chars": len(plain),
+                    "secondary_chars": 0,
+                    "text_chars": len(plain),
+                    "markdown_chars": len(cleaned),
+                    "engine_chain": "markdown_direct",
+                    "include_secondary_content": False,
+                    "renderer_backend": "markdown",
                     "renderer_fallback_used": False,
                     "renderer_text_recall_ratio": 1.0,
                 },
@@ -500,9 +537,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
         if options.sections:
             selected = set(options.sections)
         else:
-            selected = set(
-                self._DETAIL_DEFAULT_TAGS.get(options.detail, ("body",))
-            )
+            selected = set(self._DETAIL_DEFAULT_TAGS.get(options.detail, ("body",)))
         return selected
 
     # --------------------------------------------------------------------------
@@ -694,18 +729,14 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
 
         # Strategy 1: Try trafilatura on cleaned HTML (better for noisy pages)
         try:
-            extracted = self._extract_trafilatura_cleaned(
-                raw_html=raw_html, url=url
-            )
+            extracted = self._extract_trafilatura_cleaned(raw_html=raw_html, url=url)
         except ValueError as exc:
             failure = exc
 
         # Strategy 2: Standard trafilatura
         if extracted is None:
             try:
-                extracted = self._extract_trafilatura(
-                    raw_html=raw_html, url=url
-                )
+                extracted = self._extract_trafilatura(raw_html=raw_html, url=url)
             except ValueError as exc:
                 if failure is None:
                     failure = exc
@@ -780,9 +811,7 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
             engine="trafilatura_cleaned",
         )
 
-    def _extract_trafilatura(
-        self, *, raw_html: str, url: str
-    ) -> TrafilaturaResult:
+    def _extract_trafilatura(self, *, raw_html: str, url: str) -> TrafilaturaResult:
         """Standard trafilatura extraction."""
         raw = self._trafilatura_extract(raw_html, url)
         if raw is None:
@@ -1519,52 +1548,6 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
         )
 
     @classmethod
-    def _metadata_block(
-        cls, *, extracted: TrafilaturaResult, favicon: str, preserve_html_tags: bool
-    ) -> str:
-        """Generate metadata block for document."""
-        pairs = [
-            ("title", extracted.title),
-            ("description", extracted.description),
-            ("site_name", extracted.site_name),
-            ("published_date", extracted.published_date),
-            ("author", extracted.author),
-            ("image", extracted.image),
-            ("favicon", favicon),
-        ]
-        present = [(key, value) for key, value in pairs if value]
-        if not present:
-            return ""
-
-        if preserve_html_tags:
-            return (
-                "<ul>"
-                + "".join(
-                    f"<li><strong>{html_lib.escape(key)}</strong>: {html_lib.escape(value)}</li>"
-                    for key, value in present
-                )
-                + "</ul>"
-            )
-
-        # YAML frontmatter format
-        def format_yaml_value(val: str) -> str:
-            """Format value for YAML frontmatter, quoting if necessary."""
-            if not val:
-                return '""'
-            # Quote if contains special chars, colon, or starts with special char
-            if any(c in val for c in [":", '"', "'", "\n", "#", "[", "]", "{", "}"]):
-                # Escape double quotes and wrap in double quotes
-                escaped = val.replace('"', '\\"')
-                return f'"{escaped}"'
-            return val
-
-        lines = ["---"]
-        for key, value in present:
-            lines.append(f"{key}: {format_yaml_value(value)}")
-        lines.append("---")
-        return "\n".join(lines)
-
-    @classmethod
     def _wrap_block(
         cls, tag: ExtractContentTag, content: str, preserve_html_tags: bool
     ) -> str:
@@ -1827,7 +1810,9 @@ class HtmlExtractor(ExtractorBase[HtmlExtractorConfig]):
         """Check if node is a secondary content region."""
         ident = cls._node_ident(node)
         # Normalize style: lowercase and remove ALL whitespace (spaces, tabs, newlines)
-        style = re.sub(r"\s+", "", str(node.attributes.get("style", "")).strip().lower())
+        style = re.sub(
+            r"\s+", "", str(node.attributes.get("style", "")).strip().lower()
+        )
         return (
             cls._text_len(node) >= 20
             and str(node.attributes.get("aria-hidden", "")).strip().lower() != "true"

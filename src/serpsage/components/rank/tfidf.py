@@ -40,7 +40,7 @@ def _score_texts_sync(
         return [0.0 for _ in texts]
     vectorizer = TfidfVectorizer(
         tokenizer=tokenize,
-        token_pattern=None, # pyright: ignore[reportArgumentType]
+        token_pattern=None,  # pyright: ignore[reportArgumentType]
         vocabulary=query_terms,
         lowercase=False,
         norm="l2",

@@ -453,7 +453,7 @@ def _decode_fetch_cache(payload: bytes, *, url: str) -> CrawlResult:
         status_code=int(obj.get("status_code") or 0),
         content_type=obj.get("content_type"),
         content=bytes.fromhex(str(obj.get("content_hex") or "")),
-        crawl_backend=str(obj.get("crawl_backend") or "curl_cffi"),  # type: ignore[arg-type]
+        crawl_backend=str(obj.get("crawl_backend") or "curl_cffi"),
         rendered=bool(obj.get("rendered", False)),
         content_kind=str(obj.get("content_kind") or "unknown"),  # type: ignore[arg-type]
         headers={str(k): str(v) for k, v in dict(obj.get("headers") or {}).items()},

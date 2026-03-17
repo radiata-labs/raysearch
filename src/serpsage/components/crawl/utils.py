@@ -36,6 +36,7 @@ _BINARY_PREFIXES = (
 )
 _HTML_CT_HINTS = ("text/html", "application/xhtml+xml")
 _TEXT_CT_HINTS = ("text/plain", "text/markdown")
+_MARKDOWN_CT_HINTS = ("text/markdown",)
 _PDF_CT_HINTS = ("application/pdf",)
 _PUNCT_RE = re.compile(r"[,.!?;:\u3002\uff01\uff1f\uff1b]")
 _SPACE_RE = re.compile(r"\s+")
@@ -87,7 +88,7 @@ class HtmlSignals:
 
 @dataclass(slots=True)
 class ContentAnalysis:
-    content_kind: Literal["html", "pdf", "text", "binary", "unknown"]
+    content_kind: Literal["html", "pdf", "text", "markdown", "binary", "unknown"]
     text_chars: int
     content_score: float
     script_ratio: float
@@ -114,8 +115,19 @@ def browser_headers(
     profile: str | None = None,
     user_agent: str | None = None,
     randomize: bool = True,
+    accept: str | None = None,
 ) -> dict[str, str]:
-    """Generate browser-like HTTP headers."""
+    """Generate browser-like HTTP headers.
+
+    Args:
+        profile: Optional browser profile ("browser" adds Sec-Fetch headers)
+        user_agent: Custom user agent string
+        randomize: Whether to randomize user agent
+        accept: Custom Accept header value (e.g., "text/markdown" for Cloudflare edge markdown)
+
+    Returns:
+        Dictionary of HTTP headers
+    """
     if user_agent is not None:
         ua = user_agent
     elif randomize:
@@ -124,7 +136,8 @@ def browser_headers(
         ua = DEFAULT_USER_AGENT
     headers: dict[str, str] = {
         "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": accept
+        or "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
         "Cache-Control": "no-cache",
@@ -184,26 +197,17 @@ def _normalize_path_segment(part: str) -> str:
     return token
 
 
-def is_reddit_thread_url(url: str) -> bool:
-    parsed = urlparse(url)
-    host = str(parsed.netloc or "").lower().removeprefix("www.")
-    if host not in {"reddit.com", "old.reddit.com"}:
-        return False
-    parts = [part for part in str(parsed.path or "").split("/") if part]
-    if len(parts) < 4:
-        return False
-    return parts[0] == "r" and parts[2] == "comments"
-
-
 def classify_content_kind(
     *, content_type: str | None, url: str, content: bytes
-) -> Literal["html", "pdf", "text", "binary", "unknown"]:
+) -> Literal["html", "pdf", "text", "markdown", "binary", "unknown"]:
     ct = (content_type or "").lower()
     path = (urlparse(url).path or "").lower()
     if path.endswith(".pdf") or any(h in ct for h in _PDF_CT_HINTS):
         return "pdf"
     if any(h in ct for h in _HTML_CT_HINTS):
         return "html"
+    if any(h in ct for h in _MARKDOWN_CT_HINTS):
+        return "markdown"
     if any(h in ct for h in _TEXT_CT_HINTS):
         return "text"
     if ct and any(ct.startswith(pref) for pref in _BINARY_PREFIXES):
@@ -230,6 +234,18 @@ def classify_content_kind(
     ]
     if any(pattern in sample_lower or pattern in sample for pattern in html_patterns):
         return "html"
+    # Detect markdown by common patterns (headings, lists, code blocks)
+    if b"#" in sample or b"```" in sample or b"- " in sample or b"* " in sample:
+        try:
+            text_sample = sample.decode("utf-8", errors="ignore")
+            # Check for markdown heading patterns
+            if re.search(r"^#{1,6}\s+\S", text_sample, re.MULTILINE):
+                return "markdown"
+            # Check for code blocks
+            if "```" in text_sample:
+                return "markdown"
+        except Exception:
+            pass
     if b"\x00" in sample:
         return "binary"
     try:
@@ -296,9 +312,23 @@ def analyze_content(
             spa=False,
             html_signals=None,
         )
+    # Handle markdown and text content
     sample = (content or b"")[:450_000].decode("utf-8", errors="ignore")
     txt = _collapse_whitespace(sample)
     chars = len(txt)
+    # Markdown is already structured, so it has higher quality score
+    if content_kind == "markdown":
+        score = min(1.0, chars / 2000.0)
+        return ContentAnalysis(
+            content_kind=content_kind,
+            text_chars=chars,
+            content_score=score,
+            script_ratio=0.0,
+            blocked=False,
+            nextjs=False,
+            spa=False,
+            html_signals=None,
+        )
     score = min(1.0, chars / (2600.0 if content_kind == "text" else 2200.0))
     return ContentAnalysis(
         content_kind=content_kind,
@@ -524,7 +554,6 @@ __all__ = [
     "get_delay_s",
     "has_nextjs_signals",
     "has_spa_signals",
-    "is_reddit_thread_url",
     "normalize_route_key",
     "parse_retry_after_s",
 ]

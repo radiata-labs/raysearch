@@ -17,9 +17,8 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from typing_extensions import override
-from urllib.parse import urlparse
 
 from serpsage.components.extract.base import (
     ExtractConfigBase,
@@ -77,33 +76,17 @@ class DOIExtractor(SpecializedExtractorBase[DOIExtractorConfig]):
         *,
         url: str,
         content_type: str | None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content: bytes | None = None,
     ) -> bool:
-        # Only handle JSON content
-        if not content_type or "json" not in content_type.lower():
+        # First check content_kind is json
+        if content_kind != "json":
             return False
-
-        # Check if URL is DOI-related or content looks like Crossref response
-        try:
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-            # Handle DOI URLs or Crossref API URLs
-            if "doi.org" in domain or "crossref.org" in domain:
-                return True
-
-            # Check content for Crossref response structure
-            if content:
-                try:
-                    data = json.loads(content.decode("utf-8", errors="replace"))
-                    # Crossref API wraps response in "message" key
-                    if isinstance(data, dict) and "message" in data:
-                        return "DOI" in data["message"] or "title" in data["message"]
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    pass
-        except Exception:  # noqa: BLE001
-            return False
-
-        return False
+        # Then check crawl_backend is doi
+        return crawl_backend == "doi"
 
     @override
     async def extract(
@@ -112,6 +95,10 @@ class DOIExtractor(SpecializedExtractorBase[DOIExtractorConfig]):
         url: str,
         content: bytes,
         content_type: str | None = None,
+        crawl_backend: str = "curl_cffi",
+        content_kind: Literal[
+            "html", "pdf", "text", "markdown", "json", "binary", "unknown"
+        ] = "unknown",
         content_options: ExtractSpec | None = None,
         collect_links: bool = False,
         collect_images: bool = False,
@@ -467,31 +454,46 @@ class DOIExtractor(SpecializedExtractorBase[DOIExtractorConfig]):
         return refs
 
     def _extract_links(self, message: dict[str, Any]) -> list[ExtractRef]:
-        """Extract links from Crossref data."""
+        """Extract links from Crossref data with open access priority."""
         links: list[ExtractRef] = []
         seen: set[str] = set()
 
-        # Full text links (PDF, HTML) - most important for getting actual content
+        # Collect full text links
+        full_text_links: list[ExtractRef] = []
         for link_info in message.get("link", []):
             if isinstance(link_info, dict):
                 full_text_url = clean_whitespace(str(link_info.get("URL", "") or ""))
-                content_type = clean_whitespace(str(link_info.get("content-type", "") or ""))
+                content_type = clean_whitespace(
+                    str(link_info.get("content-type", "") or "")
+                )
                 if full_text_url and full_text_url not in seen:
                     # Convert PDF URLs to HTML URLs for better crawling success
-                    # Many publishers block direct PDF access but allow HTML
                     if full_text_url.endswith("/pdf"):
-                        html_url = full_text_url[:-4]  # Remove /pdf suffix
+                        html_url = full_text_url[:-4]
                         if html_url not in seen:
                             seen.add(html_url)
-                            links.append(ExtractRef(url=html_url, text="Full Text (HTML)"))
+                            full_text_links.append(
+                                ExtractRef(url=html_url, text="Full Text (HTML)")
+                            )
                     else:
                         seen.add(full_text_url)
-                        if "pdf" in full_text_url.lower() or "pdf" in content_type.lower():
-                            links.append(ExtractRef(url=full_text_url, text="PDF Full Text"))
+                        if (
+                            "pdf" in full_text_url.lower()
+                            or "pdf" in content_type.lower()
+                        ):
+                            full_text_links.append(
+                                ExtractRef(url=full_text_url, text="PDF Full Text")
+                            )
                         else:
-                            links.append(ExtractRef(url=full_text_url, text="Full Text"))
+                            full_text_links.append(
+                                ExtractRef(url=full_text_url, text="Full Text")
+                            )
 
-        # DOI link
+        # Sort full text links by accessibility priority
+        full_text_links = self._sort_links_by_priority(full_text_links)
+        links.extend(full_text_links)
+
+        # DOI link (usually resolves to publisher page)
         doi = clean_whitespace(str(message.get("DOI", "") or ""))
         if doi:
             doi_url = f"https://doi.org/{doi}"
@@ -528,6 +530,49 @@ class DOIExtractor(SpecializedExtractorBase[DOIExtractorConfig]):
                     )
 
         return links[: self.config.link_max_count]
+
+    def _sort_links_by_priority(self, links: list[ExtractRef]) -> list[ExtractRef]:
+        """Sort links by accessibility priority.
+
+        Open access and easily crawlable platforms are prioritized.
+        """
+        # High priority: Open access platforms with good API/HTML access
+        high_priority_domains = (
+            "plos.org",  # PLoS - open access, good HTML
+            "ncbi.nlm.nih.gov",  # PubMed Central - open access
+            "arxiv.org",  # arXiv - open access
+            "biorxiv.org",  # bioRxiv - open access
+            "medrxiv.org",  # medRxiv - open access
+            "frontiersin.org",  # Frontiers - open access
+            "sciencedirect.com",  # ScienceDirect (some open)
+            "nature.com",  # Nature (some open)
+        )
+
+        # Low priority: Publishers known to block automated access
+        low_priority_domains = (
+            "mdpi.com",  # MDPI - returns 403 for bots
+            "elsevier.com",  # Elsevier - paywall/bot protection
+            "springer.com",  # Springer - paywall/bot protection
+            "wiley.com",  # Wiley - paywall/bot protection
+            "tandfonline.com",  # Taylor & Francis - paywall
+            "ieee.org",  # IEEE - paywall
+            "acm.org",  # ACM - paywall
+        )
+
+        high: list[ExtractRef] = []
+        medium: list[ExtractRef] = []
+        low: list[ExtractRef] = []
+
+        for link in links:
+            url_lower = link.url.lower()
+            if any(domain in url_lower for domain in high_priority_domains):
+                high.append(link)
+            elif any(domain in url_lower for domain in low_priority_domains):
+                low.append(link)
+            else:
+                medium.append(link)
+
+        return high + medium + low
 
     def _build_stats(
         self,
