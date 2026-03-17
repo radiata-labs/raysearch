@@ -38,6 +38,33 @@ _META_CHARSET_RE = re.compile(
 )
 _CT_CHARSET_RE = re.compile(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
 
+# Characters that require quoting in YAML values
+_YAML_SPECIAL_CHARS = set(':\\"\'\n#[{}]')
+
+
+def _format_yaml_value(value: str) -> str:
+    """Format a value for YAML frontmatter."""
+    if not value:
+        return '""'
+    # Quote if contains special chars
+    if any(ch in _YAML_SPECIAL_CHARS for ch in value):
+        # Escape double quotes and backslashes, wrap in double quotes
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
+def _build_frontmatter(metadata: dict[str, str]) -> str:
+    """Build YAML frontmatter from metadata dict."""
+    if not metadata:
+        return ""
+    lines = ["---"]
+    for key, value in metadata.items():
+        if value:  # Only include non-empty values
+            lines.append(f"{key}: {_format_yaml_value(str(value))}")
+    lines.append("---")
+    return "\n".join(lines)
+
 
 def guess_apparent_encoding(data: bytes) -> str | None:
     sample = data[:65536]
@@ -170,9 +197,19 @@ def _extract_meta_charset(data: bytes) -> str | None:
     return cs or None
 
 
-def finalize_markdown(*, markdown: str, max_chars: int) -> str:
+def finalize_markdown(
+    *, markdown: str, max_chars: int, metadata: dict[str, str] | None = None
+) -> str:
+    """Finalize markdown content with optional YAML frontmatter.
+
+    Args:
+        markdown: The markdown content to process
+        max_chars: Maximum characters for the final output
+        metadata: Optional dict of metadata to prepend as YAML frontmatter
+    """
     if not markdown:
-        return ""
+        return _build_frontmatter(metadata) if metadata else ""
+
     source_lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out: list[str] = []
     paragraph_buf: list[str] = []
@@ -252,6 +289,13 @@ def finalize_markdown(*, markdown: str, max_chars: int) -> str:
     flush_paragraph()
     compact = _compact_blank_lines(out)
     result = "\n".join(compact).strip()
+
+    # Prepend frontmatter if metadata provided
+    if metadata:
+        frontmatter = _build_frontmatter(metadata)
+        if frontmatter:
+            result = f"{frontmatter}\n\n{result}" if result else frontmatter
+
     if len(result) <= int(max_chars):
         return result
     return _clip_with_structure(result=result, max_chars=int(max_chars))

@@ -110,6 +110,10 @@ components:
       readiness_stable_rounds: 2
       post_ready_wait_ms: 120
       ready_text_chars: 100
+    reddit:
+      enabled: true
+    doi:
+      enabled: true
 
   extract:
     default: auto
@@ -118,6 +122,14 @@ components:
     html:
       enabled: true
     pdf:
+      enabled: true
+    paper:
+      enabled: true
+    github:
+      enabled: true
+    reddit:
+      enabled: true
+    doi:
       enabled: true
 
   rank:

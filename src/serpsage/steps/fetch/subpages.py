@@ -12,6 +12,7 @@ from serpsage.steps.base import RunnerBase, StepBase
 
 if TYPE_CHECKING:
     from serpsage.models.app.response import FetchResultItem
+    from serpsage.models.components.extract import ExtractRef
 
 
 class FetchSubpageStep(StepBase[FetchStepContext]):
@@ -35,8 +36,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
         # If no keywords, take first N candidates without ranking
         if not keywords:
             selected_urls = [
-                candidates[idx].url
-                for idx in range(min(len(candidates), max_subpages))
+                candidates[idx].url for idx in range(min(len(candidates), max_subpages))
             ]
         else:
             # Score candidates with each keyword and compute average
@@ -66,8 +66,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
                 key=lambda idx: (-avg_scores[idx], idx),
             )
             selected_urls = [
-                candidates[idx].url
-                for idx in ranked_indexes[:max_subpages]
+                candidates[idx].url for idx in ranked_indexes[:max_subpages]
             ]
 
         if not selected_urls:
@@ -146,7 +145,7 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
     async def _compute_average_scores(
         self,
         *,
-        candidates: list,
+        candidates: list[ExtractRef],
         keywords: list[str],
     ) -> list[float]:
         """Compute average scores across all keywords for each candidate."""

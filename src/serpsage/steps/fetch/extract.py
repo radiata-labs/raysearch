@@ -80,8 +80,7 @@ class FetchExtractStep(StepBase[FetchStepContext]):
             # The ordering is determined by _links (importance score)
             ordered_links = list(extracted.refs.links or [])
             ordered_urls = [
-                str(item.url or "").strip().split("#")[0]
-                for item in ordered_links
+                str(item.url or "").strip().split("#")[0] for item in ordered_links
             ]
             # Collect links and image_links for later filtering in finalize step
             ctx.related.others.links = _collect_urls(values=ordered_urls)

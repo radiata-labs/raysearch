@@ -1,3 +1,33 @@
+"""Auto-selecting crawler that dispatches to specialized crawlers.
+
+Resolution order:
+1. Try each SpecializedCrawlerBase's can_handle()
+2. Use the first one that returns True
+3. Fall back to curl_cffi/playwright for normal web crawling
+
+Configuration
+=============
+
+Specialized crawlers are discovered automatically from the component registry.
+To add a new specialized crawler:
+
+1. Create a class inheriting from SpecializedCrawlerBase
+2. Implement can_handle() classmethod
+3. Register it in the component configuration
+
+Example configuration in this project:
+
+.. code:: yaml
+
+   crawl:
+     auto:
+       enabled: true
+     doi:
+       enabled: true
+     reddit:
+       enabled: true
+"""
+
 from __future__ import annotations
 
 import re
@@ -11,7 +41,11 @@ from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 
-from serpsage.components.crawl.base import CrawlerBase, CrawlerConfigBase
+from serpsage.components.crawl.base import (
+    CrawlerBase,
+    CrawlerConfigBase,
+    SpecializedCrawlerBase,
+)
 from serpsage.components.crawl.curl_cffi import CurlCffiCrawler
 from serpsage.components.crawl.playwright import PlaywrightCrawler
 from serpsage.components.crawl.utils import (
@@ -19,8 +53,9 @@ from serpsage.components.crawl.utils import (
     has_spa_signals,
     normalize_route_key,
 )
+from serpsage.components.loads import ComponentRegistry
 from serpsage.components.rate_limit.base import RateLimiterBase
-from serpsage.dependencies import Depends
+from serpsage.dependencies import CACHE_TOKEN, Depends, solve_dependencies
 from serpsage.models.components.crawl import CrawlAttempt, CrawlResult
 
 BLOCK_STATUSES = {401, 403, 429}
@@ -33,9 +68,7 @@ ROUTE_PLAYWRIGHT_SCORE_RATIO = 0.78
 ROUTE_PLAYWRIGHT_MIN_USEFUL = 0.72
 
 DirectPlaywrightRule = str | Callable[[str], bool]
-DIRECT_PLAYWRIGHT_RULES: frozenset[DirectPlaywrightRule] = frozenset(
-    {"github.com", "reddit.com"}
-)
+DIRECT_PLAYWRIGHT_RULES: frozenset[DirectPlaywrightRule] = frozenset({"github.com"})
 RULE_REASON_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -138,6 +171,24 @@ class AutoCrawlerConfig(CrawlerConfigBase):
         return self
 
 
+async def specialized_crawlers_factory(
+    cache: dict[Any, Any] = Depends(CACHE_TOKEN),
+    registry: ComponentRegistry = Depends(),
+) -> tuple[SpecializedCrawlerBase, ...]:
+    """Factory function: collect all enabled specialized crawlers."""
+    crawlers: list[SpecializedCrawlerBase] = []
+    for spec in registry.enabled_specs("crawl"):
+        # Skip auto, curl_cffi, playwright (they are not specialized)
+        if spec.name in ("auto", "curl_cffi", "playwright"):
+            continue
+        if not issubclass(spec.cls, SpecializedCrawlerBase):
+            continue
+        instance = await solve_dependencies(spec.cls, dependency_cache=cache)
+        if isinstance(instance, SpecializedCrawlerBase):
+            crawlers.append(instance)
+    return tuple(crawlers)
+
+
 class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
     rate_limiter: RateLimiterBase[Any] = Depends()
     curl: CurlCffiCrawler = Depends()
@@ -145,9 +196,16 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
 
     route_stats: OrderedDict[str, RouteStats]
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        specialized: tuple[SpecializedCrawlerBase, ...] = Depends(
+            specialized_crawlers_factory
+        ),
+    ) -> None:
         super().__init__()
         self.route_stats = OrderedDict()
+        self.specialized = specialized
 
     @override
     async def _acrawl(
@@ -157,6 +215,18 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         timeout_s: float | None = None,
     ) -> CrawlResult:
         host = urlparse(url).netloc.lower()
+
+        # Try specialized crawlers first (they handle their own rate limiting)
+        for crawler in self.specialized:
+            if type(crawler).can_handle(url=url):
+                try:
+                    result = await crawler._acrawl(url=url, timeout_s=timeout_s)
+                    # Only accept successful results
+                    if result.status_code == 200 and result.content:
+                        return result
+                except Exception:  # noqa: BLE001
+                    pass  # Fall through to normal flow
+
         await self.rate_limiter.acquire(host=host)
         try:
             attempt = await self._crawl_attempt(url=url, timeout_s=timeout_s)
@@ -481,4 +551,8 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         return remaining
 
 
-__all__ = ["AutoCrawler", "AutoCrawlerConfig"]
+__all__ = [
+    "AutoCrawler",
+    "AutoCrawlerConfig",
+    "specialized_crawlers_factory",
+]

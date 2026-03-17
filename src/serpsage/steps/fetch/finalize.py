@@ -39,17 +39,14 @@ class FetchFinalizeStep(StepBase[FetchStepContext]):
             float(item.score) for item in list(ctx.analysis.abstracts.ranked or [])
         ]
 
-        # Build excluded URL set for others.links and others.image_links
+        # Build excluded URL set for others.image_links only
+        # Note: We don't exclude subpage URLs from others.links because
+        # the first link should always point to the full text article
         page_url = ctx.url.strip().split("#")[0]
         page_image = (ctx.page.doc.meta.image or "").strip()
         page_favicon = (ctx.page.doc.meta.favicon or "").strip()
-        subpage_urls = [
-            (item.result.url or "").strip().split("#")[0]
-            for item in list(ctx.related.subpages.items or [])
-            if item.result is not None
-        ]
         excluded_urls: set[str] = {
-            url for url in [page_url, page_image, page_favicon, *subpage_urls] if url
+            url for url in [page_url, page_image, page_favicon] if url
         }
 
         others_result = {}
@@ -123,7 +120,10 @@ def _filter_others_result(
         if clean_url and clean_url not in all_excluded:
             filtered_image_links.append(clean_url)
             all_excluded.add(clean_url)
-            if max_image_links is not None and len(filtered_image_links) >= max_image_links:
+            if (
+                max_image_links is not None
+                and len(filtered_image_links) >= max_image_links
+            ):
                 break
 
     return FetchOthersResult(

@@ -173,8 +173,33 @@ class CrawlerBase(ComponentBase[CrawlerConfigT], ABC, Generic[CrawlerConfigT]):
         raise NotImplementedError
 
 
+class SpecializedCrawlerBase(CrawlerBase[CrawlerConfigT], ABC, Generic[CrawlerConfigT]):
+    """Base class for specialized crawlers that handle specific URL patterns.
+
+    Specialized crawlers implement `can_handle` to declare what URLs they can process.
+    The AutoCrawler will try each specialized crawler in order and use the
+    first one that returns True. Falls back to curl_cffi/playwright for unmatched URLs.
+
+    This is analogous to SpecializedExtractorBase in the extract module.
+    """
+
+    @classmethod
+    @abstractmethod
+    def can_handle(cls, *, url: str) -> bool:
+        """Return True if this crawler should handle the given URL.
+
+        Args:
+            url: The URL to check
+
+        Returns:
+            True if this crawler should handle the URL
+        """
+        raise NotImplementedError
+
+
 __all__ = [
     "CrawlerBase",
     "CrawlerConfigBase",
     "CrawlerConfigT",
+    "SpecializedCrawlerBase",
 ]

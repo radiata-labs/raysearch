@@ -14,7 +14,7 @@ class CrawlResult(FrozenModel):
     content: bytes = b""
     crawl_backend: Literal["curl_cffi", "playwright", "pre_fetched"] = "curl_cffi"
     rendered: bool = False
-    content_kind: Literal["html", "pdf", "text", "binary", "unknown"] = "unknown"
+    content_kind: Literal["html", "pdf", "text", "json", "reddit_json", "doi_json", "binary", "unknown"] = "unknown"
     headers: dict[str, str] = Field(default_factory=dict)
     attempt_chain: list[str] = Field(default_factory=list)
 

@@ -217,8 +217,7 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         if original_rank_weight > 0:
             # Calculate position scores (reciprocal rank)
             position_scores = [
-                1.0 / max(1, pos) if pos > 0 else 0.5
-                for pos in positions
+                1.0 / max(1, pos) if pos > 0 else 0.5 for pos in positions
             ]
             # Normalize scores
             max_score = max(scores) if scores and max(scores) > 0 else 1.0

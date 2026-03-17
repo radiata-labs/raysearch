@@ -17,9 +17,11 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError, PdfStreamError
 
 from serpsage.components.crawl.utils import classify_content_kind
-from serpsage.components.extract.base import ExtractConfigBase, ExtractorBase
+from serpsage.components.extract.base import (
+    ExtractConfigBase,
+    SpecializedExtractorBase,
+)
 from serpsage.components.extract.utils import (
-    finalize_markdown,
     markdown_to_text,
 )
 from serpsage.models.components.extract import (
@@ -52,7 +54,32 @@ class PdfExtractionResult:
     stats: dict[str, int | float | str | bool]
 
 
-class PdfExtractor(ExtractorBase[PdfExtractorConfig]):
+class PdfExtractor(SpecializedExtractorBase[PdfExtractorConfig]):
+    @classmethod
+    @override
+    def can_handle(
+        cls,
+        *,
+        url: str,
+        content_type: str | None,
+        content: bytes | None = None,
+    ) -> bool:
+        # Check content-type first (fast path)
+        if content_type and "pdf" in content_type.lower():
+            return True
+        # Check URL extension
+        if url.lower().endswith(".pdf"):
+            return True
+        # Check content if available
+        if content:
+            kind = classify_content_kind(
+                content_type=content_type,
+                url=url,
+                content=content,
+            )
+            return kind == "pdf"
+        return False
+
     @override
     async def extract(
         self,
@@ -61,13 +88,11 @@ class PdfExtractor(ExtractorBase[PdfExtractorConfig]):
         content: bytes,
         content_type: str | None,
         content_options: ExtractSpec | None = None,
-        include_secondary_content: bool = False,
         collect_links: bool = False,
         collect_images: bool = False,
     ) -> ExtractedDocument:
         del (
             url,
-            include_secondary_content,
             collect_links,
             collect_images,
         )
@@ -177,10 +202,7 @@ class PdfExtractor(ExtractorBase[PdfExtractorConfig]):
                 for chunk in page_chunks
             ]
             kept_chunks = [text for text in page_texts if text]
-            markdown = finalize_markdown(
-                markdown=_PAGE_SEPARATOR.join(kept_chunks).strip(),
-                max_chars=max(8_000, self.config.max_markdown_chars),
-            )
+            markdown = _PAGE_SEPARATOR.join(kept_chunks).strip()
             text_chars = len(markdown_to_text(markdown))
             pages_total = len(page_chunks)
             pages_kept = len(kept_chunks)

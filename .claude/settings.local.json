@@ -16,7 +16,11 @@
       "Bash(d:/WjjFiles/code/google-ai-overview-api/.venv/Scripts/python.exe d:/WjjFiles/code/google-ai-overview-api/demo/fetch.py)",
       "Bash(d:/WjjFiles/code/google-ai-overview-api/.venv/Scripts/python.exe -c \":*)",
       "Bash(d:/WjjFiles/code/google-ai-overview-api/.venv/Scripts/python.exe -c \"from serpsage.app.engine import Engine; print\\(''Import OK''\\)\")",
-      "Bash(uv sync:*)"
+      "Bash(uv sync:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(\"d:\\\\WjjFiles\\\\code\\\\google-ai-overview-api\\\\src\\\\serpsage\\\\components\\\\extract\\\\github.py\")",
+      "Bash(python -c \":*)",
+      "Bash(\"d:/WjjFiles/code/google-ai-overview-api/src/serpsage/components/extract/html.py\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\wangc\\.claude\\plans"

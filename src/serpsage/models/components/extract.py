@@ -11,7 +11,7 @@ ExtractContentTag = Literal[
     "header", "navigation", "banner", "body", "sidebar", "footer", "metadata"
 ]
 ExtractRefZone = Literal["primary", "secondary"]
-ExtractContentKind = Literal["html", "pdf", "text", "binary"]
+ExtractContentKind = Literal["html", "pdf", "text", "json", "binary"]
 
 
 class ExtractSpec(FrozenModel):
