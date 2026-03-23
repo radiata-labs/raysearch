@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing_extensions import override
 
+from pydantic import ValidationError
+
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
-    OverviewOutputPayload,
+    OverviewReviewPayload,
     ResearchSource,
     ResearchStepContext,
     SubreportOutputPayload,
@@ -20,7 +22,10 @@ from serpsage.steps.research.prompt import (
     build_subreport_update_prompt_messages,
 )
 from serpsage.steps.research.rank import rerank_research_sources
-from serpsage.steps.research.schema import build_subreport_update_schema
+from serpsage.steps.research.schema import (
+    build_overview_schema,
+    build_subreport_update_schema,
+)
 from serpsage.steps.research.search import source_authority_score
 from serpsage.steps.research.utils import resolve_research_model
 
@@ -246,6 +251,24 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 },
             )
         except Exception as exc:  # noqa: BLE001
+            if self._is_nonfatal_update_parse_failure(exc):
+                await self.tracker.warning(
+                    name="research.subreport.update_skipped",
+                    request_id=ctx.request_id,
+                    step="research.subreport",
+                    warning_code="research_subreport_update_parse_failed",
+                    warning_message=(
+                        "incremental subreport update chunk skipped after malformed "
+                        "structured llm output"
+                    ),
+                    data={
+                        "model": model,
+                        "update_phase": update_phase,
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    },
+                )
+                return None
             await self.tracker.error(
                 name="research.subreport.failed",
                 request_id=ctx.request_id,
@@ -267,13 +290,27 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
             raise ValueError("subreport update must include track_insight_card")
         return payload
 
+    def _is_nonfatal_update_parse_failure(self, exc: Exception) -> bool:
+        if isinstance(exc, ValidationError):
+            return True
+        message = str(exc).casefold()
+        return any(
+            token in message
+            for token in (
+                "invalid json",
+                "json_invalid",
+                "structured llm response",
+                "must be a json object",
+            )
+        )
+
     async def _build_remaining_overview(
         self,
         *,
         ctx: ResearchStepContext,
         now_utc: datetime,
         remaining_sources: list[ResearchSource],
-    ) -> OverviewOutputPayload:
+    ) -> OverviewReviewPayload:
         model = resolve_research_model(
             settings=self.settings,
             stage="overview",
@@ -286,7 +323,11 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
                 sources=remaining_sources,
                 now_utc=now_utc,
             ),
-            response_format=OverviewOutputPayload,
+            response_format=OverviewReviewPayload,
+            format_override=build_overview_schema(
+                max_queries=ctx.run.limits.max_queries_per_round,
+                select_engines=False,
+            ),
             retries=self.settings.research.llm_self_heal_retries,
         )
         await self.meter.record(
@@ -311,9 +352,11 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         *,
         limit: int,
     ) -> list[str]:
+        # Use track_state.notes for track-level execution notes
+        notes_source = ctx.track_state.notes if ctx.track_state else ctx.run.notes
         seen: set[str] = set()
         notes: list[str] = []
-        for item in reversed(ctx.run.notes):
+        for item in reversed(notes_source):
             key = item.casefold()
             if key in seen:
                 continue
@@ -328,10 +371,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         self,
         ctx: ResearchStepContext,
     ) -> list[ResearchSource]:
+        # loop.py passes a track-local knowledge snapshot for per-track rendering.
+        used_source_ids = set(ctx.knowledge.report_used_source_ids)
         selected_sources = [
             item.model_copy(deep=True)
             for item in list(ctx.knowledge.sources)
-            if item.source_id not in set(ctx.knowledge.report_used_source_ids)
+            if item.source_id not in used_source_ids
         ]
         selected_sources.sort(
             key=lambda item: (

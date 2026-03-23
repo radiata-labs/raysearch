@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING, Any, cast, overload
 from typing_extensions import TypeVar, override
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from serpsage.components.http.base import HttpClientBase
 from serpsage.components.llm.base import LLMClientBase, LLMConfig, LLMModelConfig
@@ -149,7 +149,10 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
             parsed = self._extract_pydantic_text(pydantic_completion)
             usage = self._to_usage(getattr(pydantic_completion, "usage", None))
             if parsed is None:
-                parsed = response_model.model_validate_json(text)
+                parsed = self._validate_model_response(
+                    response_model=response_model,
+                    content=text,
+                )
             return ChatModelResult(text=text, data=parsed, usage=usage)
         completion = await self._create_completion(
             client=client,
@@ -171,7 +174,12 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
             return ChatTextResult(text=text, usage=usage)
         if response_model is not None:
             return ChatModelResult(
-                text=text, data=response_model.model_validate_json(text), usage=usage
+                text=text,
+                data=self._validate_model_response(
+                    response_model=response_model,
+                    content=text,
+                ),
+                usage=usage,
             )
         data = self._parse_json_object(text)
         return ChatDictResult(text=text, data=data, usage=usage)
@@ -302,20 +310,116 @@ class OpenAIClient(LLMClientBase[OpenAIModelConfig]):
             total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
         )
 
-    @staticmethod
-    def _parse_json_object(content: str) -> dict[str, object]:
+    @classmethod
+    def _validate_model_response(
+        cls,
+        *,
+        response_model: type[TModel],
+        content: str,
+    ) -> TModel:
+        last_error: ValidationError | None = None
+        for candidate in cls._iter_json_candidates(content):
+            try:
+                return response_model.model_validate_json(candidate)
+            except ValidationError as exc:
+                last_error = exc
+        payload = cls._parse_json_object(content)
         try:
-            payload: object = json.loads(content)
-        except json.JSONDecodeError:
-            start = content.find("{")
-            end = content.rfind("}")
-            if 0 <= start < end:
-                payload = json.loads(content[start : end + 1])
-            else:
-                raise
+            return response_model.model_validate(payload)
+        except ValidationError:
+            if last_error is not None:
+                raise last_error from None
+            raise
+
+    @classmethod
+    def _parse_json_object(cls, content: str) -> dict[str, object]:
+        last_error: json.JSONDecodeError | None = None
+        payload: object = None
+        for candidate in cls._iter_json_candidates(content):
+            try:
+                payload = json.loads(candidate)
+                break
+            except json.JSONDecodeError as exc:
+                last_error = exc
+        else:
+            if last_error is not None:
+                raise last_error
+            raise json.JSONDecodeError(
+                "structured LLM response is not valid JSON", "", 0
+            )
         if not isinstance(payload, dict):
             raise TypeError("structured LLM response must be a JSON object")
         return {str(k): v for k, v in payload.items()}
+
+    @classmethod
+    def _iter_json_candidates(cls, content: str) -> tuple[str, ...]:
+        candidates: list[str] = []
+
+        def add(candidate: str) -> None:
+            token = str(candidate)
+            if not token or token in candidates:
+                return
+            candidates.append(token)
+
+        add(content)
+        sanitized = cls._sanitize_json_text(content)
+        add(sanitized)
+
+        for candidate in candidates:
+            start = candidate.find("{")
+            end = candidate.rfind("}")
+            if 0 <= start < end:
+                add(candidate[start : end + 1])
+
+        return tuple(candidates)
+
+    @staticmethod
+    def _sanitize_json_text(content: str) -> str:
+        if not content:
+            return ""
+        out: list[str] = []
+        in_string = False
+        escaped = False
+        changed = False
+        for char in content:
+            if in_string:
+                if escaped:
+                    out.append(char)
+                    escaped = False
+                    continue
+                if char == "\\":
+                    out.append(char)
+                    escaped = True
+                    continue
+                if char == '"':
+                    out.append(char)
+                    in_string = False
+                    continue
+                if char == "\n":
+                    out.append("\\n")
+                    changed = True
+                    continue
+                if char == "\r":
+                    out.append("\\r")
+                    changed = True
+                    continue
+                if char == "\t":
+                    out.append("\\t")
+                    changed = True
+                    continue
+                codepoint = ord(char)
+                if codepoint < 0x20:
+                    out.append(f"\\u{codepoint:04x}")
+                    changed = True
+                    continue
+                out.append(char)
+                continue
+            out.append(char)
+            if char == '"':
+                in_string = True
+        if not changed:
+            return content
+        return "".join(out)
 
 
 __all__ = ["OpenAIClient", "OpenAIModelConfig"]

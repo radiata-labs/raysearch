@@ -34,8 +34,7 @@ LanguageCode = Literal[
 ]
 SearchJobIntent = Literal["coverage", "deepen", "verify", "refresh"]
 SearchJobMode = Literal["auto", "deep"]
-OverviewConflictStatus = Literal["resolved", "unresolved"]
-ContentConflictStatus = Literal["resolved", "unresolved", "insufficient", "closed"]
+ConflictResolutionStatus = Literal["resolved", "unresolved", "insufficient", "closed"]
 ResearchTrackState = Literal["active", "waiting_for_budget", "completed", "stopped"]
 ResearchBudgetTier = Literal["base", "restored", "extension"]
 SubreportUpdateAction = Literal["update", "no_update", "stop_after_update"]
@@ -99,40 +98,38 @@ class PlanOutputPayload(MutableModel):
     search_jobs: list[PlanSearchJobPayload] = Field(max_length=8)
 
 
-class OverviewConflictPayload(MutableModel):
+class ConflictTopicPayload(MutableModel):
+    """Conflict topic detected during overview stage."""
+
     topic: NonEmptyText
-    status: OverviewConflictStatus
+    source_ids: list[int] = Field(default_factory=list, max_length=8)
 
 
-class OverviewOutputPayload(MutableModel):
+class ConflictResolutionPayload(MutableModel):
+    """Conflict resolution result from content stage."""
+
+    topic: NonEmptyText
+    status: ConflictResolutionStatus
+
+
+class OverviewReviewPayload(MutableModel):
+    """Overview stage output - rapid screening + coverage analysis."""
+
     findings: list[NonEmptyText] = Field(max_length=20)
-    conflict_arbitration: list[OverviewConflictPayload] = Field(max_length=16)
+    conflict_topics: list[ConflictTopicPayload] = Field(max_length=16)
     covered_subthemes: list[NonEmptyText] = Field(max_length=16)
-    entity_coverage_complete: bool
-    covered_entities: list[NonEmptyText] = Field(max_length=24)
-    missing_entities: list[NonEmptyText] = Field(max_length=24)
-    critical_gaps: list[NonEmptyText] = Field(max_length=12)
-    confidence: float = Field(ge=-1.0, le=1.0)
     need_content_source_ids: list[int] = Field(max_length=20)
-    next_query_strategy: NonEmptyText
-    next_queries: list[QuerySourceSpec] = Field(max_length=8)
-
-
-class ContentConflictPayload(MutableModel):
-    topic: NonEmptyText
-    status: ContentConflictStatus
-
-
-class ContentOutputPayload(MutableModel):
-    resolved_findings: list[NonEmptyText] = Field(max_length=20)
-    conflict_resolutions: list[ContentConflictPayload] = Field(max_length=16)
-    entity_coverage_complete: bool
-    covered_entities: list[NonEmptyText] = Field(max_length=24)
     missing_entities: list[NonEmptyText] = Field(max_length=24)
+    confidence: float = Field(ge=-1.0, le=1.0)
+
+
+class ContentReviewPayload(MutableModel):
+    """Content stage output - deep arbitration + conflict resolution."""
+
+    resolved_findings: list[NonEmptyText] = Field(max_length=20)
+    conflict_resolutions: list[ConflictResolutionPayload] = Field(max_length=16)
     remaining_gaps: list[NonEmptyText] = Field(max_length=12)
     confidence_adjustment: float = Field(ge=-1.0, le=1.0)
-    next_query_strategy: NonEmptyText
-    next_queries: list[QuerySourceSpec] = Field(max_length=8)
 
 
 class TrackInsightPointPayload(MutableModel):
@@ -187,45 +184,93 @@ class ResearchLinkPickerPayload(MutableModel):
     selected_link_ids: list[int] = Field(default_factory=list, max_length=24)
 
 
-class ResearchBudgetTierState(MutableModel):
-    search_total: int = 0
-    fetch_total: int = 0
+class ResearchLimits(MutableModel):
+    """Research mode configuration and limits."""
+
+    mode_key: Literal["research-fast", "research", "research-pro"] = "research"
+    max_rounds: int = 1
+    max_search_calls: int = 1
+    max_fetch_calls: int = 1
+    max_results_per_search: int = 1
+    max_queries_per_round: int = 1
+    max_question_cards_effective: int = 4
+    max_concurrent_tracks: int = 4
+    min_rounds_per_track: int = 2
+    round_search_budget: int = 2
+    round_fetch_budget: int = 6
+    review_source_window: int = 48
+    report_source_batch_size: int = 8
+    report_source_batch_chars: int = 48_000
+    fetch_page_max_chars: int = 10_000
+    explore_target_pages_per_round: int = 3
+    explore_links_per_page: int = 8
+
+
+class GlobalBudget(MutableModel):
+    total_search: int = 0
+    total_fetch: int = 0
     search_used: int = 0
     fetch_used: int = 0
+    tier: ResearchBudgetTier = "base"
+
+    @property
+    def search_remaining(self) -> int:
+        return max(0, self.total_search - self.search_used)
+
+    @property
+    def fetch_remaining(self) -> int:
+        return max(0, self.total_fetch - self.fetch_used)
+
+    @property
+    def is_exhausted(self) -> bool:
+        return self.search_remaining <= 0 and self.fetch_remaining <= 0
 
 
-class ResearchBudgetLedger(MutableModel):
-    original_search_budget: int = 0
-    original_fetch_budget: int = 0
-    base_budget: ResearchBudgetTierState = Field(
-        default_factory=ResearchBudgetTierState
-    )
-    restored_budget: ResearchBudgetTierState = Field(
-        default_factory=ResearchBudgetTierState
-    )
-    extension_budget: ResearchBudgetTierState = Field(
-        default_factory=ResearchBudgetTierState
-    )
-    restore_used: bool = False
-    extension_used: bool = False
-    extension_multiplier: float = 0.0
+class TrackAllocation(MutableModel):
+    search_quota: int = 0
+    fetch_quota: int = 0
+    search_used: int = 0
+    fetch_used: int = 0
+    minimum_search: int = 0
+    minimum_fetch: int = 0
+
+    @property
+    def search_remaining(self) -> int:
+        return max(0, self.search_quota - self.search_used)
+
+    @property
+    def fetch_remaining(self) -> int:
+        return max(0, self.fetch_quota - self.fetch_used)
+
+    @property
+    def reclaimable_search(self) -> int:
+        return max(0, self.search_remaining - self.minimum_search)
+
+    @property
+    def reclaimable_fetch(self) -> int:
+        return max(0, self.fetch_remaining - self.minimum_fetch)
+
+    @property
+    def is_exhausted(self) -> bool:
+        return self.search_remaining <= 0 and self.fetch_remaining <= 0
 
 
 class ResearchTrackRuntime(MutableModel):
+    """Track runtime state with budget tracking.
+
+    Uses composition with TrackAllocation for budget properties.
+    Access allocation fields directly: runtime.allocation.search_quota
+    """
+
     question_id: str = ""
+    priority: int = 3
     state: ResearchTrackState = "active"
-    current_budget_tier: ResearchBudgetTier = "base"
-    waiting_reason: str = ""
-    waiting_rounds: int = 0
-    allocated_search_calls: int = 0
-    allocated_fetch_calls: int = 0
-    used_search_calls: int = 0
-    used_fetch_calls: int = 0
-    reclaimed_search_calls: int = 0
-    reclaimed_fetch_calls: int = 0
+    budget_tier: ResearchBudgetTier = "base"
     completed_rounds: int = 0
+    waiting_rounds: int = 0
     stop_reason: str = ""
-    last_budget_event: str = ""
+    # Budget allocation using composition
+    allocation: TrackAllocation = Field(default_factory=TrackAllocation)
 
 
 class ResearchCorpusUpsertResult(MutableModel):
@@ -263,9 +308,7 @@ class ResearchSource(MutableModel):
     is_subpage: bool = False
     seen_count: int = 1
     content_fingerprint: str = ""
-    admitted: bool = True
     used_in_report: bool = False
-    used_in_final_pass: bool = False
 
 
 class ResearchSearchJob(MutableModel):
@@ -289,8 +332,8 @@ class ResearchTrackResult(MutableModel):
     question: str
     stop_reason: str = ""
     rounds: int = 0
-    search_calls: int = 0
-    fetch_calls: int = 0
+    search_used: int = 0
+    fetch_used: int = 0
     confidence: float = 0.0
     coverage_ratio: float = 0.0
     unresolved_conflicts: int = 0
@@ -299,25 +342,6 @@ class ResearchTrackResult(MutableModel):
     key_findings: list[str] = Field(default_factory=list)
     budget_tier: ResearchBudgetTier = "base"
     waiting_rounds: int = 0
-
-
-class ResearchLimits(MutableModel):
-    mode_key: Literal["research-fast", "research", "research-pro"] = "research"
-    max_rounds: int = 1
-    max_search_calls: int = 1
-    max_fetch_calls: int = 1
-    max_results_per_search: int = 1
-    max_queries_per_round: int = 1
-    max_question_cards_effective: int = 4
-    min_rounds_per_track: int = 2
-    round_search_budget: int = 2
-    round_fetch_budget: int = 6
-    review_source_window: int = 48
-    report_source_batch_size: int = 8
-    report_source_batch_chars: int = 48_000
-    fetch_page_max_chars: int = 10_000
-    explore_target_pages_per_round: int = 3
-    explore_links_per_page: int = 8
 
 
 class ResearchLinkCandidate(MutableModel):
@@ -348,8 +372,6 @@ class ResearchKnowledge(MutableModel):
     ranked_source_ids: list[int] = Field(default_factory=list)
     source_scores: dict[int, float] = Field(default_factory=dict)
     covered_subthemes: list[str] = Field(default_factory=list)
-    admitted_source_ids: list[int] = Field(default_factory=list)
-    pending_source_ids: list[int] = Field(default_factory=list)
     report_used_source_ids: list[int] = Field(default_factory=list)
 
 
@@ -364,60 +386,111 @@ class ResearchRound(MutableModel):
         default_factory=list
     )
     pending_search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
-    overview_review: OverviewOutputPayload | None = None
-    content_review: ContentOutputPayload | None = None
+    overview_review: OverviewReviewPayload | None = None
+    content_review: ContentReviewPayload | None = None
     need_content_source_ids: list[int] = Field(default_factory=list)
-    next_queries: list[QuerySourceSpec] = Field(default_factory=list)
     result_count: int = 0
-    new_source_ids: list[int] = Field(default_factory=list)
-    fetched_source_ids: list[int] = Field(default_factory=list)
-    admitted_source_ids: list[int] = Field(default_factory=list)
-    deferred_candidate_urls: list[str] = Field(default_factory=list)
-    remaining_source_ids: list[int] = Field(default_factory=list)
     context_source_ids: list[int] = Field(default_factory=list)
-    corpus_score_gain: float = 0.0
     overview_summary: str = ""
     content_summary: str = ""
-    confidence: float = 0.0
     coverage_ratio: float = 0.0
-    entity_coverage_complete: bool = False
-    missing_entities: list[str] = Field(default_factory=list)
-    unresolved_conflicts: int = 0
-    unresolved_conflict_topics: list[str] = Field(default_factory=list)
-    critical_gaps: int = 0
-    remaining_objectives: list[str] = Field(default_factory=list)
     waiting_for_budget: bool = False
     waiting_reason: str = ""
-    budget_tier_applied: ResearchBudgetTier = "base"
     stop_reason: str = ""
     stop: bool = False
+
+    @property
+    def has_pending_io(self) -> bool:
+        return bool(self.pending_search_jobs or self.search_fetched_candidates)
+
+    @property
+    def needs_resume(self) -> bool:
+        return bool(self.waiting_for_budget or self.has_pending_io)
+
+    @property
+    def is_review_ready(self) -> bool:
+        return not self.needs_resume
+
+    @property
+    def confidence(self) -> float:
+        confidence = self.overview_review.confidence if self.overview_review else 0.0
+        if self.content_review is not None:
+            confidence = max(
+                -1.0,
+                min(1.0, confidence + self.content_review.confidence_adjustment),
+            )
+        return confidence
+
+    @property
+    def missing_entities(self) -> list[str]:
+        if self.overview_review is None:
+            return []
+        return list(self.overview_review.missing_entities)
+
+    @property
+    def unresolved_conflicts(self) -> int:
+        if self.content_review is None:
+            return 0
+        return sum(
+            1
+            for item in self.content_review.conflict_resolutions
+            if item.status in {"unresolved", "insufficient"}
+        )
+
+    @property
+    def remaining_gap_count(self) -> int:
+        if self.content_review is None:
+            return 0
+        return len(self.content_review.remaining_gaps)
+
+
+class RoundState(MutableModel):
+    limits: ResearchLimits = Field(default_factory=ResearchLimits)
+    allocation: TrackAllocation = Field(default_factory=TrackAllocation)
+    round_index: int = 0
+    current: ResearchRound | None = None
+    history: list[ResearchRound] = Field(default_factory=list)
+    stop: bool = False
+    stop_reason: str = ""
+    next_queries: list[QuerySourceSpec] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    link_candidates: list[ResearchLinkCandidate] = Field(default_factory=list)
+    link_candidates_round: int = 0
+    explore_resolved_relative_links: int = 0
+
+    @property
+    def latest_round(self) -> ResearchRound | None:
+        if self.history:
+            return self.history[-1]
+        return self.current
+
+    def archive_current_round(
+        self,
+        *,
+        stop: bool | None = None,
+        stop_reason: str | None = None,
+    ) -> ResearchRound | None:
+        current = self.current
+        if current is None:
+            return None
+        if stop is not None:
+            current.stop = stop
+        if stop_reason is not None:
+            current.stop_reason = stop_reason
+        self.history.append(current)
+        self.current = None
+        return current
 
 
 class ResearchRun(MutableModel):
     mode: Literal["research-fast", "research", "research-pro"] = "research"
     limits: ResearchLimits = Field(default_factory=ResearchLimits)
-    search_calls: int = 0
-    fetch_calls: int = 0
-    explore_resolved_relative_links: int = 0
+    budget: GlobalBudget = Field(default_factory=GlobalBudget)
+    track_runtimes: dict[str, ResearchTrackRuntime] = Field(default_factory=dict)
     stop: bool = False
     stop_reason: str = ""
-    round_index: int = 0
-    next_queries: list[QuerySourceSpec] = Field(default_factory=list)
-    link_candidates: list[ResearchLinkCandidate] = Field(default_factory=list)
-    link_candidates_round: int = 0
     notes: list[str] = Field(default_factory=list)
-    current: ResearchRound | None = None
-    history: list[ResearchRound] = Field(default_factory=list)
-    global_search_budget: int = 0
-    global_fetch_budget: int = 0
-    global_search_used: int = 0
-    global_fetch_used: int = 0
-    budget_ledger: ResearchBudgetLedger = Field(default_factory=ResearchBudgetLedger)
-    track_runtime: ResearchTrackRuntime | None = None
-    track_runtimes: dict[str, ResearchTrackRuntime] = Field(default_factory=dict)
-    restored_budget_applied: bool = False
-    extension_budget_applied: bool = False
-    budget_events: list[str] = Field(default_factory=list)
+    explore_resolved_relative_links: int = 0
 
 
 class ResearchResult(MutableModel):
@@ -426,31 +499,57 @@ class ResearchResult(MutableModel):
     tracks: list[ResearchTrackResult] = Field(default_factory=list)
 
 
+# =============================================================================
+# Context Models
+# =============================================================================
+
+
+class RoundStepContext(BaseStepContext[ResearchRequest, ResearchResponse]):
+    """Track-scoped context for round runner execution."""
+
+    request: ResearchRequest
+    response: ResearchResponse
+    question_id: str = ""
+    task: ResearchTask = Field(default_factory=ResearchTask)
+    run: RoundState = Field(default_factory=RoundState)
+    knowledge: ResearchKnowledge = Field(default_factory=ResearchKnowledge)
+
+
 class ResearchStepContext(BaseStepContext[ResearchRequest, ResearchResponse]):
+    """Global research context.
+
+    For render/subreport steps, track_state provides access to the current
+    track's execution state (history, notes, etc.) without duplicating
+    those fields in ResearchRun.
+    """
+
     request: ResearchRequest
     response: ResearchResponse
     task: ResearchTask = Field(default_factory=ResearchTask)
     run: ResearchRun = Field(default_factory=ResearchRun)
     knowledge: ResearchKnowledge = Field(default_factory=ResearchKnowledge)
     result: ResearchResult = Field(default_factory=ResearchResult)
+    track_state: RoundState | None = None
+
+
+RoundState.model_rebuild()
+ResearchRun.model_rebuild()
 
 
 __all__ = [
-    "ContentConflictPayload",
-    "ContentConflictStatus",
-    "ContentOutputPayload",
+    "ConflictResolutionPayload",
+    "ConflictResolutionStatus",
+    "ConflictTopicPayload",
+    "ContentReviewPayload",
+    "GlobalBudget",
     "LanguageCode",
-    "OverviewConflictPayload",
-    "OverviewConflictStatus",
-    "OverviewOutputPayload",
+    "OverviewReviewPayload",
     "PlanOutputPayload",
     "PlanSearchJobPayload",
     "RenderArchitectOutput",
     "RenderArchitectSectionPlan",
     "ReportStyle",
-    "ResearchBudgetLedger",
     "ResearchBudgetTier",
-    "ResearchBudgetTierState",
     "ResearchCorpusUpsertResult",
     "ResearchDecideSignalPayload",
     "ResearchKnowledge",
@@ -472,6 +571,8 @@ __all__ = [
     "ResearchTrackState",
     "ResearchWriterSectionFailure",
     "RoundAction",
+    "RoundState",
+    "RoundStepContext",
     "SearchJobIntent",
     "SearchJobMode",
     "SubreportOutputPayload",
@@ -481,6 +582,7 @@ __all__ = [
     "TaskIntent",
     "ThemeOutputPayload",
     "ThemeQuestionCardPayload",
+    "TrackAllocation",
     "TrackInsightCardPayload",
     "TrackInsightPointPayload",
 ]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from typing_extensions import override
 
 from serpsage.components.llm.base import LLMClientBase
@@ -104,30 +104,9 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         select_engines: bool,
         engine_selection_context: str,
     ) -> AnswerPlanPayload:
-        sub_question_schema: dict[str, Any]
-        if select_engines:
-            sub_question_schema = {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["question", "search_query"],
-                "properties": {
-                    "question": {"type": "string", "minLength": 1},
-                    "search_query": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["query", "include_sources"],
-                        "properties": {
-                            "query": {"type": "string", "minLength": 1},
-                            "include_sources": {
-                                "type": "array",
-                                "items": {"type": "string", "minLength": 1},
-                            },
-                        },
-                    },
-                },
-            }
-        else:
-            sub_question_schema = {"type": "string", "minLength": 1}
+        search_query_schema = self._build_search_query_schema(
+            select_engines=select_engines
+        )
         schema: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
@@ -135,16 +114,41 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                 "answer_mode",
                 "freshness_intent",
                 "query_language",
-                "sub_questions",
+                "planner_action",
+                "tool_calls",
             ],
             "properties": {
                 "answer_mode": {"type": "string", "enum": ["direct", "summary"]},
                 "freshness_intent": {"type": "boolean"},
                 "query_language": {"type": "string", "minLength": 1},
-                "sub_questions": {
+                "planner_action": {
+                    "type": "string",
+                    "enum": ["search", "respond"],
+                },
+                "direct_answer": {"type": "string"},
+                "tool_calls": {
                     "type": "array",
-                    "items": sub_question_schema,
-                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["tool_name", "arguments"],
+                        "properties": {
+                            "tool_name": {
+                                "type": "string",
+                                "enum": ["search"],
+                            },
+                            "arguments": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["question", "search_query"],
+                                "properties": {
+                                    "question": {"type": "string", "minLength": 1},
+                                    "search_query": search_query_schema,
+                                },
+                            },
+                        },
+                    },
+                    "minItems": 0,
                     "maxItems": self._MAX_SUB_QUESTIONS,
                 },
             },
@@ -158,8 +162,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
         result = await self.llm.create(
             model=str(self.settings.answer.plan.use_model),
             messages=messages,
-            response_format=AnswerPlanPayload,
-            format_override=schema,
+            response_format=schema,
         )
         await self.meter.record(
             name="llm.tokens",
@@ -173,7 +176,39 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
             },
         )
         raw = result.data
+        if not isinstance(raw, dict):
+            raise TypeError("answer planner output must be a JSON object")
+        await self.tracker.debug(
+            name="answer.plan.detail",
+            request_id=request_id,
+            step="answer.plan",
+            data={
+                "planner_action": clean_whitespace(
+                    str(raw.get("planner_action") or "")
+                ),
+                "tool_call_count": len(raw.get("tool_calls") or []),
+                "has_direct_answer": bool(
+                    clean_whitespace(str(raw.get("direct_answer") or ""))
+                ),
+            },
+        )
         return self._normalize_plan(raw=raw, original_query=query)
+
+    def _build_search_query_schema(self, *, select_engines: bool) -> dict[str, Any]:
+        if not select_engines:
+            return {"type": "string", "minLength": 1}
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["query", "include_sources"],
+            "properties": {
+                "query": {"type": "string", "minLength": 1},
+                "include_sources": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                },
+            },
+        }
 
     def _build_messages(
         self,
@@ -197,19 +232,30 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                         f"Current UTC timestamp: {now_utc.isoformat()}",
                         f"Current UTC date: {now_utc.date().isoformat()}",
                         f"Question: {query}",
+                        "Planner agent protocol:",
+                        "- You operate like a tiny agent with one available tool named search.",
+                        "- search tool output must be returned via tool_calls only; do not narrate intermediate reasoning.",
+                        "- If search is required, set planner_action=search and return 1-8 search tool calls.",
+                        "- If you can answer from stable world knowledge without searching, set planner_action=respond, set tool_calls=[], and provide direct_answer.",
+                        "- direct_answer is allowed only for extremely stable, widely known, non-current facts that you can answer with very high confidence.",
+                        "- if the question may depend on recency, niche knowledge, ambiguity resolution, evidence gathering, or nontrivial synthesis, do not use direct_answer; use search tool calls instead.",
                         "Decision policy:",
                         "- answer_mode is defined by the expected final response style, not by superficial question length.",
                         "- choose direct only when the final response should be a minimal factual answer (typically short entity/number/date/yes-no).",
                         "- choose summary when the final response needs explanation, comparison, recommendation, tradeoffs, or synthesis.",
                         "- freshness_intent: true ONLY when recency/currentness is explicitly requested.",
                         "- query_language: language+script for final answer output.",
-                        "- sub_questions: output 1-8 only when decomposition is necessary for retrieval coverage.",
-                        "- default to minimal decomposition; do not create filler sub_questions.",
-                        "- if one query is enough, output exactly one sub_question.",
-                        "- keep sub_questions in logical reasoning order.",
+                        "- Use the smallest number of search tool calls that still gives strong retrieval coverage.",
+                        "- Exactly one search tool call is allowed only when the question is both atomic factual and genuinely simple, or another genuinely simple question with a narrow answer space that one precise search can settle.",
+                        "- Do not use exactly one broad search tool call for open-ended, comparative, explanatory, recommendation, tradeoff, or synthesis questions.",
+                        "- For open-ended or multi-facet questions, prefer 2-4 search tool calls from complementary retrieval angles.",
+                        "- Use complementary angles such as definition/current state, key drivers or mechanism, evidence/examples, comparisons/options, risks/tradeoffs, or edge cases when relevant.",
+                        "- Do not collapse a complex question into one broad search tool call when multiple focused searches would retrieve better evidence.",
+                        "- Avoid filler or near-duplicate paraphrases; each search tool call must contribute distinct retrieval value.",
+                        "- Keep search tool calls in logical reasoning order.",
                         (
                             "ENGINE_SELECTION_OUTPUT_RULES:\n"
-                            "- Each sub_question should be an object with question and search_query.\n"
+                            "- Each search tool call arguments object must contain question and search_query.\n"
                             "- search_query must include query and include_sources.\n"
                             "- question is the readable decomposition; search_query is the retrieval wording and may differ.\n"
                             "- Prefer include_sources=[] unless a narrower route clearly improves retrieval.\n\n"
@@ -221,10 +267,12 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                         "- answer_mode: direct|summary",
                         "- freshness_intent: boolean",
                         "- query_language: language+script",
+                        "- planner_action: search|respond",
+                        "- direct_answer: string; required only when planner_action=respond",
                         (
-                            "- sub_questions: {question, search_query}[] (1-8)"
+                            "- tool_calls: [{tool_name:'search', arguments:{question, search_query}}] (0-8)"
                             if select_engines
-                            else "- sub_questions: string[] (1-8)"
+                            else "- tool_calls: [{tool_name:'search', arguments:{question, search_query}}] (0-8), where search_query is a string"
                         ),
                     ]
                 ),
@@ -234,24 +282,130 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
     def _normalize_plan(
         self,
         *,
-        raw: AnswerPlanPayload,
+        raw: object,
         original_query: str,
     ) -> AnswerPlanPayload:
-        query_language = clean_whitespace(raw.query_language)
+        if isinstance(raw, AnswerPlanPayload):
+            query_language = clean_whitespace(raw.query_language)
+            if not query_language:
+                query_language = "same as query"
+            sub_questions = _normalize_sub_questions(
+                list(raw.sub_questions),
+                fallback=clean_whitespace(original_query),
+                limit=self._MAX_SUB_QUESTIONS,
+            )
+            return raw.model_copy(
+                update={
+                    "query_language": query_language,
+                    "sub_questions": sub_questions,
+                },
+                deep=True,
+            )
+        if not isinstance(raw, dict):
+            raise TypeError("answer planner output must be an object")
+        query_language = clean_whitespace(str(raw.get("query_language") or ""))
         if not query_language:
             query_language = "same as query"
+        answer_mode = clean_whitespace(str(raw.get("answer_mode") or "")).casefold()
+        if answer_mode not in {"direct", "summary"}:
+            answer_mode = "summary"
+        normalized_answer_mode: Literal["direct", "summary"] = (
+            "direct" if answer_mode == "direct" else "summary"
+        )
+        sub_questions = self._extract_sub_questions(raw)
         sub_questions = _normalize_sub_questions(
-            list(raw.sub_questions),
+            sub_questions,
             fallback=clean_whitespace(original_query),
             limit=self._MAX_SUB_QUESTIONS,
         )
-        return raw.model_copy(
-            update={
-                "query_language": query_language,
-                "sub_questions": sub_questions,
-            },
-            deep=True,
+        return AnswerPlanPayload(
+            answer_mode=normalized_answer_mode,
+            freshness_intent=_coerce_bool(raw.get("freshness_intent"), default=False),
+            query_language=query_language,
+            sub_questions=sub_questions,
         )
+
+    def _extract_sub_questions(
+        self,
+        raw: dict[str, Any],
+    ) -> list[AnswerSubQuestionPayload]:
+        tool_calls = raw.get("tool_calls")
+        out = self._normalize_tool_calls(tool_calls)
+        if out:
+            return out
+        legacy_sub_questions = raw.get("sub_questions")
+        if not isinstance(legacy_sub_questions, list):
+            return []
+        legacy_out: list[AnswerSubQuestionPayload] = []
+        for item in legacy_sub_questions:
+            payload = self._try_validate_sub_question(item)
+            if payload is None:
+                continue
+            legacy_out.append(payload)
+        return legacy_out
+
+    def _normalize_tool_calls(
+        self,
+        raw_tool_calls: object,
+    ) -> list[AnswerSubQuestionPayload]:
+        if not isinstance(raw_tool_calls, list):
+            return []
+        out: list[AnswerSubQuestionPayload] = []
+        for item in raw_tool_calls:
+            if not isinstance(item, dict):
+                continue
+            tool_name = clean_whitespace(
+                str(item.get("tool_name") or item.get("name") or item.get("tool") or "")
+            ).casefold()
+            if tool_name and tool_name != "search":
+                continue
+            raw_arguments = item.get("arguments")
+            if raw_arguments is None:
+                raw_arguments = item.get("args")
+            if not isinstance(raw_arguments, dict):
+                continue
+            raw_search_query = raw_arguments.get("search_query")
+            if raw_search_query is None:
+                raw_search_query = raw_arguments.get("query")
+            question = clean_whitespace(str(raw_arguments.get("question") or ""))
+            if not question:
+                if isinstance(raw_search_query, str):
+                    question = clean_whitespace(raw_search_query)
+                elif isinstance(raw_search_query, dict):
+                    question = clean_whitespace(
+                        str(raw_search_query.get("query") or "")
+                    )
+            search_query_value = raw_search_query or question
+            if not question or not search_query_value:
+                continue
+            search_query = self._try_validate_search_query(search_query_value)
+            if search_query is None:
+                continue
+            out.append(
+                AnswerSubQuestionPayload(
+                    question=question,
+                    search_query=search_query,
+                )
+            )
+        return out
+
+    def _try_validate_sub_question(
+        self,
+        value: object,
+    ) -> AnswerSubQuestionPayload | None:
+        try:
+            return AnswerSubQuestionPayload.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _try_validate_search_query(
+        self,
+        value: object,
+    ) -> QuerySourceSpec | None:
+        try:
+            return QuerySourceSpec.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
 
 
 def _normalize_sub_questions(
@@ -293,6 +447,20 @@ def _normalize_sub_questions(
         if fallback_question
         else []
     )
+
+
+def _coerce_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        token = clean_whitespace(value).casefold()
+        if token in {"1", "true", "yes", "y"}:
+            return True
+        if token in {"0", "false", "no", "n", ""}:
+            return False
+    return default
 
 
 __all__ = ["AnswerPlanStep"]

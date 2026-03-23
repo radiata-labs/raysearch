@@ -19,7 +19,7 @@ from serpsage.models.steps.research import (
     ResearchCorpusUpsertResult,
     ResearchSearchJob,
     ResearchSource,
-    ResearchStepContext,
+    RoundStepContext,
 )
 from serpsage.models.steps.search import (
     QuerySourceSpec,
@@ -82,11 +82,11 @@ _HIGH_AUTHORITY_TITLE_HINTS = (
 )
 
 
-class ResearchSearchStep(StepBase[ResearchStepContext]):
+class ResearchSearchStep(StepBase[RoundStepContext]):
     search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER)
 
     @override
-    async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
+    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
         if ctx.run.stop or ctx.run.current is None:
             return ctx
         round_action = (ctx.run.current.round_action or "search").casefold()
@@ -101,18 +101,13 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
             return ctx
         return await self._run_search_action(ctx)
 
-    async def _run_search_action(self, ctx: ResearchStepContext) -> ResearchStepContext:
+    async def _run_search_action(self, ctx: RoundStepContext) -> RoundStepContext:
         assert ctx.run.current is not None
         jobs = list(ctx.run.current.pending_search_jobs or ctx.run.current.search_jobs)
         if not jobs:
             return ctx
-        remaining_search_budget = max(
-            0,
-            ctx.run.limits.max_search_calls - ctx.run.search_calls,
-        )
+        remaining_search_budget = ctx.run.allocation.search_remaining
         if remaining_search_budget <= 0:
-            ctx.run.stop = True
-            ctx.run.stop_reason = "max_search_calls"
             ctx.run.current.waiting_for_budget = True
             ctx.run.current.waiting_reason = "max_search_calls"
             return ctx
@@ -182,7 +177,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx.run.current.search_fetched_candidates = [
             item.model_copy(deep=True) for item in prepared_candidates
         ]
-        ctx.run.search_calls += len(jobs)
+        ctx.run.allocation.search_used += len(jobs)
         ctx.run.current.pending_search_jobs = [
             item.model_copy(deep=True)
             for item in list(
@@ -194,8 +189,6 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
         ctx.run.current.waiting_for_budget = False
         ctx.run.current.waiting_reason = ""
         if ctx.run.current.pending_search_jobs:
-            ctx.run.stop = True
-            ctx.run.stop_reason = "max_search_calls"
             ctx.run.current.waiting_for_budget = True
             ctx.run.current.waiting_reason = "max_search_calls"
         return ctx
@@ -203,7 +196,7 @@ class ResearchSearchStep(StepBase[ResearchStepContext]):
     def _build_search_request(
         self,
         *,
-        ctx: ResearchStepContext,
+        ctx: RoundStepContext,
         query_job: ResearchSearchJob,
         subpages_request: FetchSubpagesRequest | None,
         main_links_limit: int,
@@ -291,14 +284,31 @@ def canonicalize_url(raw_url: str) -> str:
 
 def append_source_version(
     *,
-    ctx: ResearchStepContext,
+    ctx: RoundStepContext,
     url: str,
     title: str,
     overview: str,
     content: str,
     round_index: int,
     is_subpage: bool,
+    source_id: int | None = None,
 ) -> ResearchCorpusUpsertResult:
+    """Append or update a source version in the knowledge corpus.
+
+    Args:
+        ctx: The round step context containing knowledge.
+        url: The source URL.
+        title: The source title.
+        overview: The source overview/summary text.
+        content: The full source content.
+        round_index: The current round index.
+        is_subpage: Whether this is a subpage.
+        source_id: Pre-allocated unique source ID. If None, generates from list length
+            (not safe for parallel tracks; prefer passing pre-allocated ID).
+
+    Returns:
+        ResearchCorpusUpsertResult with source_id and status flags.
+    """
     normalized_url = clean_whitespace(url)
     canonical_url = canonicalize_url(normalized_url) or normalized_url
     normalized_title = clean_whitespace(title)
@@ -311,8 +321,8 @@ def append_source_version(
     synchronize_corpus_indexes(ctx=ctx)
     source_idx_by_id = _build_source_idx_by_id(ctx.knowledge.sources)
     existing_ids = list(ctx.knowledge.source_ids_by_url.get(canonical_url, []))
-    for source_id in reversed(existing_ids):
-        idx = source_idx_by_id.get(source_id)
+    for existing_source_id in reversed(existing_ids):
+        idx = source_idx_by_id.get(existing_source_id)
         if idx is None:
             continue
         source = ctx.knowledge.sources[idx]
@@ -332,15 +342,19 @@ def append_source_version(
         )
         ctx.knowledge.sources[idx] = updated
         return ResearchCorpusUpsertResult(
-            source_id=source_id,
+            source_id=existing_source_id,
             canonical_url=canonical_url,
             is_new_canonical=False,
             is_new_version=False,
         )
-    source_id = len(ctx.knowledge.sources) + 1
+    # Use pre-allocated ID if provided, otherwise fall back to list-based generation
+    # WARNING: List-based generation is NOT safe for parallel track execution
+    allocated_source_id = (
+        source_id if source_id is not None else len(ctx.knowledge.sources) + 1
+    )
     ctx.knowledge.sources.append(
         ResearchSource(
-            source_id=source_id,
+            source_id=allocated_source_id,
             url=normalized_url,
             canonical_url=canonical_url,
             title=normalized_title,
@@ -353,10 +367,10 @@ def append_source_version(
         )
     )
     ids = list(ctx.knowledge.source_ids_by_url.get(canonical_url, []))
-    ids.append(source_id)
+    ids.append(allocated_source_id)
     ctx.knowledge.source_ids_by_url[canonical_url] = ids
     return ResearchCorpusUpsertResult(
-        source_id=source_id,
+        source_id=allocated_source_id,
         canonical_url=canonical_url,
         is_new_canonical=len(existing_ids) == 0,
         is_new_version=True,
@@ -365,7 +379,7 @@ def append_source_version(
 
 def rebuild_corpus_ranking(
     *,
-    ctx: ResearchStepContext,
+    ctx: RoundStepContext,
     round_index: int,
 ) -> float:
     synchronize_corpus_indexes(ctx=ctx)
@@ -465,7 +479,7 @@ def rebuild_corpus_ranking(
 
 def select_context_source_ids(
     *,
-    ctx: ResearchStepContext,
+    ctx: RoundStepContext,
     round_index: int,
     topk: int,
     new_result_target_ratio: float,
@@ -564,7 +578,7 @@ def pick_sources_by_ids(
 
 def sort_source_ids_by_score(
     *,
-    ctx: ResearchStepContext,
+    ctx: RoundStepContext,
     source_ids: list[int],
 ) -> list[int]:
     source_by_id = {source.source_id: source for source in ctx.knowledge.sources}
@@ -588,7 +602,7 @@ def sort_source_ids_by_score(
     return out
 
 
-def synchronize_corpus_indexes(*, ctx: ResearchStepContext) -> None:
+def synchronize_corpus_indexes(*, ctx: RoundStepContext) -> None:
     sorted_sources = sorted(ctx.knowledge.sources, key=lambda item: item.source_id)
     url_to_ids: dict[str, list[int]] = {}
     for idx, source in enumerate(sorted_sources):
@@ -614,7 +628,7 @@ def build_content_fingerprint(*, content: str, overview: str) -> str:
     return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
 
 
-def _resolve_ranked_source_ids(*, ctx: ResearchStepContext) -> list[int]:
+def _resolve_ranked_source_ids(*, ctx: RoundStepContext) -> list[int]:
     source_ids: list[int] = []
     source_by_id = {source.source_id: source for source in ctx.knowledge.sources}
     seen_canonical: set[str] = set()
@@ -665,7 +679,7 @@ def _trim_to_limit(
     return out
 
 
-def _source_round_index(*, ctx: ResearchStepContext, source_id: int) -> int:
+def _source_round_index(*, ctx: RoundStepContext, source_id: int) -> int:
     for source in ctx.knowledge.sources:
         if source.source_id == source_id:
             return source.round_index
@@ -741,7 +755,7 @@ def source_authority_score(source: ResearchSource) -> float:
     return min(1.0, max(0.05, score))
 
 
-def _build_query_tokens(*, ctx: ResearchStepContext) -> set[str]:
+def _build_query_tokens(*, ctx: RoundStepContext) -> set[str]:
     tokens: set[str] = set()
     values: list[QuerySourceSpec | str] = list(ctx.run.next_queries)
     if ctx.run.current is not None:

@@ -229,45 +229,42 @@ def build_plan_schema(*, select_engines: bool = False) -> dict[str, Any]:
 def build_overview_schema(
     *, max_queries: int, select_engines: bool = False
 ) -> dict[str, Any]:
+    _ = (max_queries, select_engines)
     return {
         "type": "object",
         "additionalProperties": False,
         "required": [
             "findings",
-            "conflict_arbitration",
+            "conflict_topics",
             "covered_subthemes",
-            "entity_coverage_complete",
-            "covered_entities",
-            "missing_entities",
-            "critical_gaps",
-            "confidence",
             "need_content_source_ids",
-            "next_query_strategy",
-            "next_queries",
+            "missing_entities",
+            "confidence",
         ],
         "properties": {
             "findings": {
                 "type": "array",
                 "maxItems": 20,
-                "description": "High-density findings. Each item should state conclusion, condition/boundary, and impact.",
+                "description": "High-density findings from overview. Each item should state conclusion, condition/boundary, and impact.",
                 "items": _non_empty_string_schema(description="One overview finding."),
             },
-            "conflict_arbitration": {
+            "conflict_topics": {
                 "type": "array",
                 "maxItems": 16,
-                "description": "Conflict topics already resolved or still unresolved at overview level.",
+                "description": "Conflict topics detected at overview level. These will be resolved in content stage.",
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["topic", "status"],
+                    "required": ["topic", "source_ids"],
                     "properties": {
                         "topic": _non_empty_string_schema(
                             description="Concrete disputed claim or comparison topic."
                         ),
-                        "status": {
-                            "type": "string",
-                            "enum": ["resolved", "unresolved"],
-                            "description": "resolved=overview evidence already breaks the tie; unresolved=needs more work.",
+                        "source_ids": {
+                            "type": "array",
+                            "maxItems": 8,
+                            "description": "Source IDs involved in this conflict.",
+                            "items": {"type": "integer", "minimum": 1},
                         },
                     },
                 },
@@ -278,17 +275,11 @@ def build_overview_schema(
                 "description": "Subthemes sufficiently covered by current evidence.",
                 "items": _non_empty_string_schema(description="One covered subtheme."),
             },
-            "entity_coverage_complete": {
-                "type": "boolean",
-                "description": "True only when every required entity has meaningful evidence coverage.",
-            },
-            "covered_entities": {
+            "need_content_source_ids": {
                 "type": "array",
-                "maxItems": 24,
-                "description": "Required entities already backed by usable evidence.",
-                "items": _non_empty_string_schema(
-                    description="One covered required entity."
-                ),
+                "maxItems": 20,
+                "description": "Source IDs that should move to full-content review because they are high-impact, conflicting, or uncertain.",
+                "items": {"type": "integer", "minimum": 1},
             },
             "missing_entities": {
                 "type": "array",
@@ -298,37 +289,11 @@ def build_overview_schema(
                     description="One missing required entity."
                 ),
             },
-            "critical_gaps": {
-                "type": "array",
-                "maxItems": 12,
-                "description": "Highest-priority unanswered gaps that still block a strong answer.",
-                "items": _non_empty_string_schema(
-                    description="One critical remaining gap."
-                ),
-            },
             "confidence": {
                 "type": "number",
                 "minimum": -1.0,
                 "maximum": 1.0,
                 "description": "Calibrated confidence: 1.0=strongly supported, 0=mixed/unclear, negative=conflicted or weak.",
-            },
-            "need_content_source_ids": {
-                "type": "array",
-                "maxItems": 20,
-                "description": "Source IDs that should move to full-content review because they are high-impact, conflicting, or uncertain.",
-                "items": {"type": "integer", "minimum": 1},
-            },
-            "next_query_strategy": _non_empty_string_schema(
-                description="Short rationale for the next search direction if more work is needed."
-            ),
-            "next_queries": {
-                "type": "array",
-                "maxItems": max(1, max_queries),
-                "description": "De-duplicated follow-up queries ordered by expected information gain.",
-                "items": _query_schema(
-                    description="One focused follow-up query.",
-                    select_engines=select_engines,
-                ),
             },
         },
     }
@@ -337,19 +302,15 @@ def build_overview_schema(
 def build_content_schema(
     *, max_queries: int, select_engines: bool = False
 ) -> dict[str, Any]:
+    _ = (max_queries, select_engines)
     return {
         "type": "object",
         "additionalProperties": False,
         "required": [
             "resolved_findings",
             "conflict_resolutions",
-            "entity_coverage_complete",
-            "covered_entities",
-            "missing_entities",
             "remaining_gaps",
             "confidence_adjustment",
-            "next_query_strategy",
-            "next_queries",
         ],
         "properties": {
             "resolved_findings": {
@@ -361,7 +322,7 @@ def build_content_schema(
             "conflict_resolutions": {
                 "type": "array",
                 "maxItems": 16,
-                "description": "Arbitration result for each important conflict topic.",
+                "description": "Arbitration result for each conflict topic from overview.",
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -383,26 +344,6 @@ def build_content_schema(
                     },
                 },
             },
-            "entity_coverage_complete": {
-                "type": "boolean",
-                "description": "True only when every required entity is sufficiently covered after content review.",
-            },
-            "covered_entities": {
-                "type": "array",
-                "maxItems": 24,
-                "description": "Required entities now supported by adequate evidence.",
-                "items": _non_empty_string_schema(
-                    description="One covered required entity."
-                ),
-            },
-            "missing_entities": {
-                "type": "array",
-                "maxItems": 24,
-                "description": "Required entities still lacking enough evidence.",
-                "items": _non_empty_string_schema(
-                    description="One missing required entity."
-                ),
-            },
             "remaining_gaps": {
                 "type": "array",
                 "maxItems": 12,
@@ -414,18 +355,6 @@ def build_content_schema(
                 "minimum": -1.0,
                 "maximum": 1.0,
                 "description": "Signed confidence delta to apply after this content pass.",
-            },
-            "next_query_strategy": _non_empty_string_schema(
-                description="Short rationale for the next research direction if more work is still needed."
-            ),
-            "next_queries": {
-                "type": "array",
-                "maxItems": max(1, max_queries),
-                "description": "De-duplicated focused follow-up queries ordered by expected information gain.",
-                "items": _query_schema(
-                    description="One focused follow-up query.",
-                    select_engines=select_engines,
-                ),
             },
         },
     }

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 from serpsage.models.steps.research import (
-    OverviewOutputPayload,
+    OverviewReviewPayload,
     RenderArchitectOutput,
     RenderArchitectSectionPlan,
     ReportStyle,
@@ -17,14 +17,63 @@ from serpsage.models.steps.research import (
     ResearchThemePlan,
     ResearchThemePlanCard,
     ResearchTrackResult,
+    RoundState,
+    RoundStepContext,
     TaskComplexity,
     TaskIntent,
+    TrackAllocation,
 )
 from serpsage.models.steps.search import QuerySourceSpec
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from datetime import datetime
+
+# Type alias for context that can access track-level execution state
+# Accepts both ResearchStepContext (with track_state) and RoundStepContext (with run as RoundState)
+StepContext = ResearchStepContext | RoundStepContext
+
+
+def _get_track_state(ctx: StepContext) -> RoundState | None:
+    """Get track state from either ResearchStepContext.track_state or RoundStepContext.run."""
+    if isinstance(ctx, RoundStepContext):
+        return ctx.run
+    return ctx.track_state
+
+
+def _get_current_round(ctx: StepContext) -> ResearchRound | None:
+    """Get current round from track state."""
+    track = _get_track_state(ctx)
+    return track.current if track else None
+
+
+def _get_round_history(ctx: StepContext) -> list[ResearchRound]:
+    """Get round history from track state."""
+    track = _get_track_state(ctx)
+    return list(track.history) if track else []
+
+
+def _get_allocation(ctx: StepContext) -> TrackAllocation | None:
+    """Get allocation from track state."""
+    track = _get_track_state(ctx)
+    return track.allocation if track else None
+
+
+def _round_confidence(round_state: ResearchRound | None) -> float:
+    return round_state.confidence if round_state is not None else 0.0
+
+
+def _round_missing_entities(round_state: ResearchRound | None) -> list[str]:
+    return round_state.missing_entities if round_state is not None else []
+
+
+def _round_unresolved_conflicts(round_state: ResearchRound | None) -> int:
+    return round_state.unresolved_conflicts if round_state is not None else 0
+
+
+def _round_remaining_gap_count(round_state: ResearchRound | None) -> int:
+    return round_state.remaining_gap_count if round_state is not None else 0
+
 
 PromptStage = Literal[
     "theme",
@@ -365,14 +414,11 @@ def _overview_field_contract() -> str:
     return (
         "Field definitions and calibration rules:\n"
         "- findings: each item should compress one evidence-backed point into conclusion -> condition/boundary -> impact.\n"
-        "- conflict_arbitration.status: resolved only when overview evidence already gives a credible direction; otherwise unresolved.\n"
+        "- conflict_topics: list detected disputes with their involved source_ids; do NOT resolve here, just detect.\n"
         "- covered_subthemes: include only subthemes with meaningful evidence, not merely mentioned topics.\n"
-        "- entity_coverage_complete=true only when every required entity has non-trivial evidence support.\n"
-        "- critical_gaps: include only answer-blocking gaps, not minor nice-to-have follow-ups.\n"
-        "- confidence scale: 0.8 to 1.0=strong and well-supported, 0.4 to 0.79=useful but incomplete, 0.0 to 0.39=weak/mixed, below 0=conflicted, stale, or likely misleading.\n"
         "- need_content_source_ids: choose sources that are high-impact, contradictory, authority-rich, or too important to judge from overview alone.\n"
-        "- next_query_strategy: one short rationale for the next retrieval move.\n"
-        "- next_queries: 0-4 preferred, ordered by gain; each query must reduce a concrete gap.\n"
+        "- missing_entities: required entities still lacking adequate evidence.\n"
+        "- confidence scale: 0.8 to 1.0=strong and well-supported, 0.4 to 0.79=useful but incomplete, 0.0 to 0.39=weak/mixed, below 0=conflicted, stale, or likely misleading.\n"
     )
 
 
@@ -381,11 +427,8 @@ def _content_field_contract() -> str:
         "Field definitions and calibration rules:\n"
         "- resolved_findings: each item should compress one full-content conclusion into conclusion -> condition/boundary -> impact.\n"
         "- conflict_resolutions.status: resolved=clear winner supported by content, unresolved=real tie remains, insufficient=not enough evidence, closed=topic no longer matters after review.\n"
-        "- entity_coverage_complete=true only when every required entity has enough full-context evidence for the current card.\n"
         "- remaining_gaps: include only gaps that still materially weaken the answer.\n"
         "- confidence_adjustment scale: +0.4 to +1.0 for major strengthening evidence, +0.1 to +0.39 for moderate strengthening, around 0 for little change, -0.1 to -0.39 for meaningful weakening, below -0.4 for severe contradiction or staleness.\n"
-        "- next_query_strategy: one short rationale for what evidence should be pursued next, if any.\n"
-        "- next_queries: 0-4 preferred, de-duplicated, and tightly scoped to unresolved gaps.\n"
     )
 
 
@@ -748,16 +791,16 @@ def _build_overview_messages(
 ) -> list[dict[str, str]]:
     system_contract = (
         "Role: Research Analyst (Overview-First).\n"
-        "Mission: Evaluate source overviews and convert them into high-value information units for one core question.\n"
+        "Mission: Rapidly evaluate source overviews to detect high-value sources, identify conflicts, and assess coverage.\n"
         "Instruction Priority:\n"
         "P1) Schema correctness.\n"
-        "P2) Information density and conflict transparency.\n"
+        "P2) Information density and conflict detection.\n"
         "P3) Language consistency.\n"
         "Hard Constraints:\n"
         "1) Use only SOURCE_OVERVIEW_PACKET.\n"
         "2) Keep analysis scoped to CORE_QUESTION and its information dimensions.\n"
         "3) Distinguish observations from inferences.\n"
-        "4) Identify unresolved conflicts and critical information gaps.\n"
+        "4) Detect conflicts but do NOT resolve them; list in conflict_topics with involved source_ids.\n"
         "5) Choose source IDs for full-content arbitration when claims are high-impact, comparative, contradictory, or recency-sensitive.\n"
         "6) Use URL/domain/path/title cues from SOURCE_OVERVIEW_PACKET to estimate source authority and information type.\n"
         "7) For need_content_source_ids, prioritize authoritative URLs first: official documentation, standards/specs, papers/preprints, repositories/model hubs, government/education, and vendor technical docs.\n"
@@ -765,21 +808,18 @@ def _build_overview_messages(
         "9) Evaluate temporal relevance for recency-sensitive claims.\n"
         "10) Free-text fields must be strictly in required_output_language.\n"
         "11) Do not mix another language/script except unavoidable proper nouns and product names.\n"
-        "12) next_queries must remain strictly focused on CORE_QUESTION and must not introduce new standalone topics.\n"
-        "13) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, and missing_entities.\n"
-        "14) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
-        "15) If no valid focused query exists, return next_queries as an empty array.\n"
-        "16) Return JSON only, exactly matching schema.\n"
-        "17) findings must be high-density: each item should include conclusion + condition/boundary + impact.\n"
-        "18) next_queries must be de-duplicated and sorted by expected information gain.\n"
-        "19) conflict_arbitration items must include topic and status only.\n"
-        "20) Do not output citation tokens, evidence-audit sections, or evidence ledgers.\n"
+        "12) required_entities coverage is mandatory when provided: output missing_entities.\n"
+        "13) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
+        "14) Return JSON only, exactly matching schema.\n"
+        "15) findings must be high-density: each item should include conclusion + condition/boundary + impact.\n"
+        "16) conflict_topics items must include topic and source_ids (source IDs involved in the conflict).\n"
+        "17) Do not output citation tokens, evidence-audit sections, or evidence ledgers.\n"
         "Allowed Inputs:\n"
         "- Theme, theme plan, round summaries, overview packet.\n"
         "Failure Policy:\n"
-        "- If information is weak or stale for a recency query, lower confidence and propose targeted next queries.\n"
+        "- If information is weak or stale for a recency query, lower confidence and escalate the affected sources for content review.\n"
         "Quality Checklist:\n"
-        "- Coverage progression, conflict clarity, economical content escalation, calibrated confidence.\n"
+        "- Coverage progression, conflict detection, economical content escalation, calibrated confidence.\n"
         "- Every returned field must add practical value; avoid filler statements."
     ) + _overview_field_contract()
     return [
@@ -807,8 +847,7 @@ def _build_overview_messages(
                 "TEMPORAL_POLICY:\n"
                 "- If THEME or prior plans indicate latest/current intent, judge whether each overview is fresh enough.\n"
                 "- Treat relative time words (today/this month/this year/recent/latest) against current_utc_date.\n"
-                "- For stale evidence under recency intent, request follow-up queries in next_queries.\n"
-                "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
+                "- For stale evidence under recency intent, lower confidence and move the affected sources into need_content_source_ids.\n\n"
                 "SOURCE_SELECTION_POLICY:\n"
                 "- Use URL host, path, and URL evidence hint to estimate authority and evidence type.\n"
                 "- Prefer authoritative sources for content escalation: docs/specs, papers/preprints, repositories/model hubs, and institutional domains.\n"
@@ -816,7 +855,6 @@ def _build_overview_messages(
                 "DENSITY_POLICY:\n"
                 "- findings items must follow: conclusion -> condition/boundary -> impact.\n"
                 "- Ban generic filler such as broad restatements with no new information.\n"
-                "- next_queries must be non-overlapping and ranked by expected gain.\n\n"
                 "LANGUAGE_POLICY:\n"
                 f"{_build_language_lock_block(field_name='required_output_language', language_code=required_output_language, language_label=required_output_language_label)}\n"
                 "- Keep all free-text fields strictly in required_output_language.\n"
@@ -856,7 +894,7 @@ def _build_content_messages(
 ) -> list[dict[str, str]]:
     system_contract = (  # noqa: S608
         "Role: Content Arbiter (Full-Content Stage).\n"
-        "Mission: Resolve contradictions and raise information completeness for one core question.\n"
+        "Mission: Resolve detected conflicts and synthesize findings with full content evidence.\n"
         "Instruction Priority:\n"
         "P1) Schema correctness.\n"
         "P2) Content-grounded arbitration quality.\n"
@@ -864,25 +902,21 @@ def _build_content_messages(
         "Hard Constraints:\n"
         "1) Use only SOURCE_CONTENT_PACKET.\n"
         "2) Keep every judgment aligned to CORE_QUESTION; do not branch into a new standalone topic.\n"
-        "3) Mark conflict status conservatively as resolved, unresolved, or insufficient.\n"
-        "4) Prefer direct content signals over overview-level assumptions.\n"
-        "5) If uncertainty remains, list concrete remaining gaps.\n"
-        "6) next_queries must remain strictly focused on CORE_QUESTION and non-redundant.\n"
+        "3) Resolve each conflict from OVERVIEW_REVIEW_MARKDOWN using full content evidence.\n"
+        "4) Mark conflict status as resolved, unresolved, insufficient, or closed.\n"
+        "5) Prefer direct content signals over overview-level assumptions.\n"
+        "6) If uncertainty remains, list concrete remaining_gaps.\n"
         "7) For recency-sensitive claims, explicitly account for publication/update-time relevance.\n"
         "8) Free-text fields must be strictly in required_output_language.\n"
         "9) Do not mix another language/script except unavoidable proper nouns and product names.\n"
         "10) resolved_findings must be information-dense: include conclusion + condition/boundary + impact.\n"
-        "11) required_entities coverage is mandatory when provided: output entity_coverage_complete, covered_entities, and missing_entities.\n"
-        "12) Keep required entity strings exact, including version markers (for example qwen3.5, glm4.7).\n"
-        "13) If no valid focused next query exists, return next_queries as an empty array.\n"
-        "14) next_queries must be de-duplicated and sorted by expected information gain.\n"
-        "15) Return JSON only and match schema exactly.\n"
-        "16) conflict_resolutions items must include topic and status only.\n"
-        "17) Do not output citation tokens or evidence-audit sections.\n"
+        "11) Return JSON only and match schema exactly.\n"
+        "12) conflict_resolutions items must include topic and status only.\n"
+        "13) Do not output citation tokens or evidence-audit sections.\n"
         "Allowed Inputs:\n"
-        "- Theme, theme plan, overview review, selected content packet.\n"
+        "- Theme, theme plan, overview review with detected conflicts, selected content packet.\n"
         "Failure Policy:\n"
-        "- If information is insufficient or stale for recency intent, avoid overclaiming and lower confidence.\n"
+        "- If information is insufficient or stale for recency intent, avoid overclaiming and set negative confidence_adjustment.\n"
         "Quality Checklist:\n"
         "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency.\n"
         "- Preserve detail that can later be rendered compactly (fact, conflict, constraint, gap)."
@@ -910,8 +944,7 @@ def _build_content_messages(
                 f"- current_utc_date={current_utc_date}\n\n"
                 "TEMPORAL_POLICY:\n"
                 "- Resolve relative time expressions against current_utc_date.\n"
-                "- If latest/current intent exists, prefer the most recent trustworthy evidence and flag stale content.\n"
-                "- Any next_queries must directly reduce uncertainty for CORE_QUESTION only.\n\n"
+                "- If latest/current intent exists, prefer the most recent trustworthy evidence and flag stale content.\n\n"
                 "LANGUAGE_POLICY:\n"
                 f"{_build_language_lock_block(field_name='required_output_language', language_code=required_output_language, language_label=required_output_language_label)}\n"
                 "- Keep all free-text fields strictly in required_output_language.\n"
@@ -924,7 +957,8 @@ def _build_content_messages(
                 "Arbitration rubric:\n"
                 "- resolved: one side is sufficiently better supported by evidence.\n"
                 "- unresolved: both sides remain plausible with no decisive tie-break.\n"
-                "- insufficient: current evidence cannot adjudicate the claim.\n\n"
+                "- insufficient: current evidence cannot adjudicate the claim.\n"
+                "- closed: topic no longer matters after review.\n\n"
                 "Output depth rubric:\n"
                 "- Prefer specific, decision-useful findings over generic statements.\n"
                 "- Every resolved_findings item should include conclusion, condition/boundary, and impact.\n"
@@ -943,9 +977,8 @@ def _build_decide_signal_messages(
     confidence: float,
     coverage_ratio: float,
     unresolved_conflicts: int,
-    critical_gaps: int,
+    remaining_gaps: int,
     missing_entities: list[str],
-    remaining_objectives: list[str],
     search_remaining: int,
     fetch_remaining: int,
 ) -> list[dict[str, str]]:
@@ -974,9 +1007,8 @@ def _build_decide_signal_messages(
                 f"- confidence={confidence:.3f}\n"
                 f"- coverage_ratio={coverage_ratio:.3f}\n"
                 f"- unresolved_conflicts={unresolved_conflicts}\n"
-                f"- critical_gaps={critical_gaps}\n"
-                f"- missing_entities={missing_entities}\n"
-                f"- remaining_objectives={remaining_objectives}\n\n"
+                f"- remaining_gaps={remaining_gaps}\n"
+                f"- missing_entities={missing_entities}\n\n"
                 "BUDGET_REMAINING:\n"
                 f"- search={search_remaining}\n"
                 f"- fetch={fetch_remaining}\n"
@@ -1037,7 +1069,7 @@ def _build_gap_closure_messages(
     confidence: float,
     coverage_ratio: float,
     unresolved_conflicts: int,
-    critical_gaps: int,
+    remaining_gaps: int,
     missing_entities: list[str],
     round_notes_markdown: str,
 ) -> list[dict[str, str]]:
@@ -1064,7 +1096,7 @@ def _build_gap_closure_messages(
                 f"- confidence={confidence}\n"
                 f"- coverage_ratio={coverage_ratio}\n"
                 f"- unresolved_conflicts={unresolved_conflicts}\n"
-                f"- critical_gaps={critical_gaps}\n"
+                f"- remaining_gaps={remaining_gaps}\n"
                 f"- missing_entities={missing_entities}\n\n"
                 f"ROUND_NOTES:\n{round_notes_markdown}\n\n"
                 "Output format:\n"
@@ -1562,7 +1594,7 @@ def build_theme_prompt_messages(
 
 def build_plan_prompt_messages(
     *,
-    ctx: ResearchStepContext,
+    ctx: StepContext,
     candidate_queries: list[QuerySourceSpec],
     core_question: str,
     now_utc: datetime,
@@ -1573,7 +1605,10 @@ def build_plan_prompt_messages(
     mode_depth = ctx.run.limits
     theme_plan = _theme_plan_from_task(ctx.task)
     output_language = theme_plan.output_language
-    round_index = ctx.run.round_index
+    track = _get_track_state(ctx)
+    round_index = track.round_index if track else 0
+    history = _get_round_history(ctx)
+    allocation = _get_allocation(ctx)
     last_round_candidates_markdown = render_link_candidates_markdown(
         last_round_candidates,
         max_pages=max(1, mode_depth.explore_target_pages_per_round),
@@ -1590,17 +1625,11 @@ def build_plan_prompt_messages(
         required_output_language=output_language,
         required_output_language_label=_resolve_language_label(output_language),
         theme_plan_markdown=render_theme_plan_markdown(theme_plan),
-        previous_rounds_markdown=render_rounds_markdown(ctx.run.history, limit=3),
+        previous_rounds_markdown=render_rounds_markdown(history, limit=3),
         candidate_queries_markdown=render_queries_markdown(candidate_queries),
         required_entities=list(theme_plan.required_entities),
-        search_calls_remaining=max(
-            0,
-            budget.max_search_calls - ctx.run.search_calls,
-        ),
-        fetch_calls_remaining=max(
-            0,
-            budget.max_fetch_calls - ctx.run.fetch_calls,
-        ),
+        search_calls_remaining=allocation.search_remaining if allocation else 0,
+        fetch_calls_remaining=allocation.fetch_remaining if allocation else 0,
         max_queries_this_round=budget.max_queries_per_round,
         allow_explore=_can_attempt_explore(
             ctx=ctx,
@@ -1660,25 +1689,28 @@ def build_link_picker_prompt_messages(
 
 def build_overview_prompt_messages(
     *,
-    ctx: ResearchStepContext,
+    ctx: StepContext,
     sources: list[ResearchSource],
     now_utc: datetime,
     engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
     theme_plan = _theme_plan_from_task(ctx.task)
     output_language = theme_plan.output_language
+    current_round = _get_current_round(ctx)
+    current_round_index = current_round.round_index if current_round else 0
+    history = _get_round_history(ctx)
     messages = _build_overview_messages(
         theme=ctx.request.themes,
         core_question=theme_plan.core_question,
         report_style=theme_plan.report_style,
         mode_depth_profile=ctx.run.limits.mode_key,
-        round_index=ctx.run.current.round_index if ctx.run.current else 0,
+        round_index=current_round_index,
         current_utc_timestamp=now_utc.isoformat(),
         current_utc_date=now_utc.date().isoformat(),
         required_output_language=output_language,
         required_output_language_label=_resolve_language_label(output_language),
         theme_plan_markdown=render_theme_plan_markdown(theme_plan),
-        previous_rounds_markdown=render_rounds_markdown(ctx.run.history, limit=3),
+        previous_rounds_markdown=render_rounds_markdown(history, limit=3),
         required_entities=list(theme_plan.required_entities),
         source_overview_packet=build_overview_packet(sources=sources),
     )
@@ -1695,23 +1727,25 @@ def build_overview_prompt_messages(
 
 def build_content_prompt_messages(
     *,
-    ctx: ResearchStepContext,
+    ctx: StepContext,
     selected_sources: list[ResearchSource],
     source_ids: list[int],
     now_utc: datetime,
     engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
-    overview_review = ctx.run.current.overview_review if ctx.run.current else None
+    current_round = _get_current_round(ctx)
+    overview_review = current_round.overview_review if current_round else None
     if overview_review is None:
         raise ValueError("content prompt requires overview review")
     theme_plan = _theme_plan_from_task(ctx.task)
     output_language = theme_plan.output_language
+    current_round_index = current_round.round_index if current_round else 0
     messages = _build_content_messages(
         theme=ctx.request.themes,
         core_question=theme_plan.core_question,
         report_style=theme_plan.report_style,
         mode_depth_profile=ctx.run.limits.mode_key,
-        round_index=ctx.run.current.round_index if ctx.run.current else 0,
+        round_index=current_round_index,
         current_utc_timestamp=now_utc.isoformat(),
         current_utc_date=now_utc.date().isoformat(),
         required_output_language=output_language,
@@ -1737,29 +1771,23 @@ def build_content_prompt_messages(
 
 def build_decide_prompt_messages(
     *,
-    ctx: ResearchStepContext,
+    ctx: StepContext,
     engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
-    round_state = ctx.run.current
+    round_state = _get_current_round(ctx)
     if round_state is None:
         return []
+    allocation = _get_allocation(ctx)
     messages = _build_decide_signal_messages(
         core_question=ctx.task.question,
         mode_depth_profile=ctx.run.limits.mode_key,
-        confidence=round_state.confidence,
+        confidence=_round_confidence(round_state),
         coverage_ratio=round_state.coverage_ratio,
-        unresolved_conflicts=round_state.unresolved_conflicts,
-        critical_gaps=round_state.critical_gaps,
-        missing_entities=list(round_state.missing_entities),
-        remaining_objectives=list(round_state.remaining_objectives),
-        search_remaining=max(
-            0,
-            ctx.run.limits.max_search_calls - ctx.run.search_calls,
-        ),
-        fetch_remaining=max(
-            0,
-            ctx.run.limits.max_fetch_calls - ctx.run.fetch_calls,
-        ),
+        unresolved_conflicts=_round_unresolved_conflicts(round_state),
+        remaining_gaps=_round_remaining_gap_count(round_state),
+        missing_entities=_round_missing_entities(round_state),
+        search_remaining=allocation.search_remaining if allocation else 0,
+        fetch_remaining=allocation.fetch_remaining if allocation else 0,
     )
     if engine_selection_context:
         messages[-1]["content"] += (
@@ -1777,18 +1805,11 @@ def build_track_orchestrator_prompt_messages(
     root: ResearchStepContext,
     track_map: dict[str, ResearchStepContext],
 ) -> list[dict[str, str]]:
-    budget = root.run.limits
     return _build_track_orchestrator_messages(
         mode_depth_profile=root.run.limits.mode_key,
         core_question=root.task.question,
-        search_remaining=max(
-            0,
-            budget.max_search_calls - root.run.search_calls,
-        ),
-        fetch_remaining=max(
-            0,
-            budget.max_fetch_calls - root.run.fetch_calls,
-        ),
+        search_remaining=root.run.budget.search_remaining,
+        fetch_remaining=root.run.budget.fetch_remaining,
         track_snapshots_markdown=render_track_snapshot_markdown(track_map),
     )
 
@@ -1800,15 +1821,16 @@ def build_gap_closure_prompt_messages(
     pass_index: int,
 ) -> list[dict[str, str]]:
     latest = _latest_round_from_track(track_ctx)
+
     return _build_gap_closure_messages(
         core_question=track_ctx.task.question or card.question,
         question_id=card.question_id,
         pass_index=pass_index,
-        confidence=float(latest.confidence) if latest is not None else 0.0,
+        confidence=_round_confidence(latest),
         coverage_ratio=float(latest.coverage_ratio) if latest is not None else 0.0,
-        unresolved_conflicts=latest.unresolved_conflicts if latest is not None else 0,
-        critical_gaps=latest.critical_gaps if latest is not None else 0,
-        missing_entities=list(latest.missing_entities) if latest is not None else [],
+        unresolved_conflicts=_round_unresolved_conflicts(latest),
+        remaining_gaps=_round_remaining_gap_count(latest),
+        missing_entities=_round_missing_entities(latest),
         round_notes_markdown=render_track_snapshot_markdown(
             {card.question_id: track_ctx}
         ),
@@ -1843,7 +1865,7 @@ def build_subreport_prompt_messages(
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
             theme_plan=theme_plan,
-            rounds=list(ctx.run.history),
+            rounds=list(ctx.track_state.history) if ctx.track_state else [],
             source_evidence=source_evidence,
             source_evidence_max_chars=source_evidence_max_chars,
             notes=notes,
@@ -1886,7 +1908,7 @@ def build_subreport_update_prompt_messages(
             utc_timestamp=now_utc.isoformat(),
             utc_date=now_utc.date().isoformat(),
             theme_plan=theme_plan,
-            rounds=list(ctx.run.history),
+            rounds=list(ctx.track_state.history) if ctx.track_state else [],
             source_evidence=source_evidence,
             source_evidence_max_chars=source_evidence_max_chars,
             notes=notes,
@@ -2037,20 +2059,21 @@ def _normalize_style(raw_style: object | None) -> ReportStyle | None:
 def _latest_round_from_track(
     track_ctx: ResearchStepContext,
 ) -> ResearchRound | None:
-    if track_ctx.run.history:
-        return track_ctx.run.history[-1]
-    return track_ctx.run.current
+    if track_ctx.track_state is None:
+        return None
+    return track_ctx.track_state.latest_round
 
 
 def _can_attempt_explore(
     *,
-    ctx: ResearchStepContext,
+    ctx: StepContext,
     round_index: int,
     last_round_candidates: list[ResearchLinkCandidate],
 ) -> bool:
     if round_index <= 1:
         return False
-    if ctx.run.limits.max_fetch_calls <= ctx.run.fetch_calls:
+    allocation = _get_allocation(ctx)
+    if allocation is None or allocation.fetch_remaining <= 0:
         return False
     return len(last_round_candidates) > 0
 
@@ -2246,9 +2269,8 @@ def render_rounds_markdown(rounds: list[ResearchRound], *, limit: int) -> str:
                 f"- Result count: {round_state.result_count}",
                 f"- Confidence: {float(round_state.confidence):.3f}",
                 f"- Coverage ratio: {float(round_state.coverage_ratio):.3f}",
-                f"- Entity coverage complete: {round_state.entity_coverage_complete}",
                 f"- Unresolved conflicts: {round_state.unresolved_conflicts}",
-                f"- Critical gaps: {round_state.critical_gaps}",
+                f"- Remaining gaps: {round_state.remaining_gap_count}",
                 f"- Stop: {round_state.stop}",
                 f"- Stop reason: {_normalize_scalar_text(round_state.stop_reason) or 'n/a'}",
                 "- Queries:",
@@ -2285,12 +2307,10 @@ def render_rounds_markdown(rounds: list[ResearchRound], *, limit: int) -> str:
     return "\n".join(lines).strip()
 
 
-def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
+def render_overview_review_markdown(review: OverviewReviewPayload) -> str:
     lines: list[str] = [
         "### Overview Review",
         f"- Confidence: {float(review.confidence):.3f}",
-        f"- Entity coverage complete: {review.entity_coverage_complete}",
-        f"- Next query strategy: {_normalize_scalar_text(review.next_query_strategy) or 'n/a'}",
         "- Findings:",
     ]
     lines.extend(_render_markdown_bullets(review.findings, indent="  ") or _NONE_BULLET)
@@ -2298,31 +2318,19 @@ def render_overview_review_markdown(review: OverviewOutputPayload) -> str:
     lines.extend(
         _render_markdown_bullets(review.covered_subthemes, indent="  ") or _NONE_BULLET
     )
-    lines.append("- Critical gaps:")
-    lines.extend(
-        _render_markdown_bullets(review.critical_gaps, indent="  ") or _NONE_BULLET
-    )
     lines.append("- Need content source IDs:")
     if review.need_content_source_ids:
         lines.extend(f"  - {source_id}" for source_id in review.need_content_source_ids)
     else:
         lines.extend(_NONE_BULLET)
-    lines.append("- Conflict arbitration:")
-    if review.conflict_arbitration:
-        for item in review.conflict_arbitration:
+    lines.append("- Conflict topics:")
+    if review.conflict_topics:
+        for item in review.conflict_topics:
             topic = _normalize_scalar_text(item.topic) or "n/a"
-            status = _normalize_scalar_text(item.status) or "n/a"
-            lines.append(f"  - topic={topic}; status={status}")
+            source_ids = ", ".join(str(sid) for sid in item.source_ids)
+            lines.append(f"  - topic={topic}; source_ids=[{source_ids}]")
     else:
         lines.extend(_NONE_BULLET)
-    lines.append("- Next queries:")
-    lines.extend(
-        _render_markdown_bullets(review.next_queries, indent="  ") or _NONE_BULLET
-    )
-    lines.append("- Covered entities:")
-    lines.extend(
-        _render_markdown_bullets(review.covered_entities, indent="  ") or _NONE_BULLET
-    )
     lines.append("- Missing entities:")
     lines.extend(
         _render_markdown_bullets(review.missing_entities, indent="  ") or _NONE_BULLET
@@ -2450,51 +2458,33 @@ def build_content_packet(
 def render_track_snapshot_markdown(track_map: dict[str, ResearchStepContext]) -> str:
     lines: list[str] = []
     for question_id, track_ctx in track_map.items():
-        latest = (
-            track_ctx.run.history[-1]
-            if track_ctx.run.history
-            else track_ctx.run.current
+        # Use track_state for track-level execution data
+        track_state = track_ctx.track_state
+        latest = track_state.latest_round if track_state else None
+        round_count = (
+            len(track_state.history) + (1 if track_state.current is not None else 0)
+            if track_state
+            else 0
         )
+
         lines.extend(
             [
                 f"### {question_id}",
                 f"- question: {track_ctx.task.question or track_ctx.request.themes}",
-                f"- rounds: {len(track_ctx.run.history)}",
-                f"- search_calls: {track_ctx.run.search_calls}",
-                f"- fetch_calls: {track_ctx.run.fetch_calls}",
-                (
-                    f"- confidence: {float(latest.confidence):.3f}"
-                    if latest is not None
-                    else "- confidence: 0.000"
-                ),
-                (
-                    f"- coverage_ratio: {float(latest.coverage_ratio):.3f}"
-                    if latest is not None
-                    else "- coverage_ratio: 0.000"
-                ),
-                (
-                    f"- unresolved_conflicts: {latest.unresolved_conflicts}"
-                    if latest is not None
-                    else "- unresolved_conflicts: 0"
-                ),
-                (
-                    f"- critical_gaps: {latest.critical_gaps}"
-                    if latest is not None
-                    else "- critical_gaps: 0"
-                ),
-                (
-                    f"- stop_reason: {latest.stop_reason or 'n/a'}"
-                    if latest is not None
-                    else "- stop_reason: n/a"
-                ),
+                f"- rounds: {round_count}",
+                f"- search_used: {track_state.allocation.search_used if track_state else 0}",
+                f"- fetch_used: {track_state.allocation.fetch_used if track_state else 0}",
+                f"- confidence: {float(_round_confidence(latest)):.3f}",
+                f"- coverage_ratio: {float(latest.coverage_ratio):.3f}"
+                if latest is not None
+                else "- coverage_ratio: 0.000",
+                f"- unresolved_conflicts: {_round_unresolved_conflicts(latest)}",
+                f"- remaining_gaps: {_round_remaining_gap_count(latest)}",
+                f"- stop_reason: {latest.stop_reason or 'n/a'}"
+                if latest is not None
+                else "- stop_reason: n/a",
             ]
         )
-        if latest is not None and latest.remaining_objectives:
-            lines.append("- remaining_objectives:")
-            lines.extend(
-                _render_markdown_bullets(latest.remaining_objectives, indent="  ")
-                or _NONE_BULLET
-            )
     return "\n".join(lines).strip() or "- (none)"
 
 
@@ -2547,7 +2537,7 @@ def build_subreport_context_packet_markdown(
                     f"- Confidence: {float(round_state.confidence):.3f}",
                     f"- Coverage ratio: {float(round_state.coverage_ratio):.3f}",
                     f"- Unresolved conflicts: {round_state.unresolved_conflicts}",
-                    f"- Critical gaps: {round_state.critical_gaps}",
+                    f"- Remaining gaps: {round_state.remaining_gap_count}",
                     f"- Stop: {round_state.stop}",
                     f"- Stop reason: {round_state.stop_reason or 'n/a'}",
                 ]

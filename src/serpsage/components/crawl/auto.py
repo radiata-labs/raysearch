@@ -262,7 +262,6 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
                 url=url,
                 deadline_ts=deadline_ts,
                 route_key=route_key,
-                render_reason=direct_reason,
                 chain_prefix=[f"decision:playwright:{direct_reason}"],
             )
             if attempt is not None:
@@ -273,7 +272,6 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
                 url=url,
                 deadline_ts=deadline_ts,
                 route_key=route_key,
-                render_reason="route_memory",
                 chain_prefix=["decision:playwright:route_memory"],
             )
             if attempt is not None:
@@ -297,7 +295,6 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
             url=url,
             deadline_ts=deadline_ts,
             route_key=route_key,
-            render_reason=fallback_reason,
             chain_prefix=[
                 "decision:curl_cffi:scout",
                 f"fallback:playwright:{fallback_reason}",
@@ -346,7 +343,6 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
         url: str,
         deadline_ts: float,
         route_key: str,
-        render_reason: str,
         chain_prefix: list[str],
     ) -> CrawlAttempt | None:
         started = time.monotonic()
@@ -355,7 +351,6 @@ class AutoCrawler(CrawlerBase[AutoCrawlerConfig]):
             attempt = await self.playwright.crawl_attempt(
                 url=url,
                 timeout_s=self._remaining_timeout_s(deadline_ts),
-                render_reason=render_reason,
             )
         except Exception:
             pass

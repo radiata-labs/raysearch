@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from serpsage.models.steps.research import (
-    ResearchBudgetLedger,
-    ResearchBudgetTierState,
+    GlobalBudget,
     ResearchKnowledge,
     ResearchLimits,
     ResearchResult,
@@ -67,43 +66,16 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
         ctx.run = ResearchRun(
             mode=mode,  # type: ignore[arg-type]
             limits=limits,
-            search_calls=0,
-            fetch_calls=0,
+            budget=GlobalBudget(
+                total_search=max(1, int(profile.max_search_calls)),
+                total_fetch=max(1, int(profile.max_fetch_calls)),
+            ),
             stop=False,
             stop_reason="",
-            round_index=0,
-            next_queries=[],
-            link_candidates=[],
-            link_candidates_round=0,
             notes=[],
-            current=None,
-            history=[],
         )
         ctx.knowledge = ResearchKnowledge()
         ctx.result = ResearchResult(content="", structured=None, tracks=[])
-        global_search_budget = max(1, int(profile.max_search_calls))
-        global_fetch_budget = max(1, int(profile.max_fetch_calls))
-        ctx.run = ctx.run.model_copy(
-            update={
-                "global_search_budget": global_search_budget,
-                "global_fetch_budget": global_fetch_budget,
-                "global_search_used": 0,
-                "global_fetch_used": 0,
-                "budget_ledger": ResearchBudgetLedger(
-                    original_search_budget=global_search_budget,
-                    original_fetch_budget=global_fetch_budget,
-                    base_budget=ResearchBudgetTierState(
-                        search_total=global_search_budget,
-                        fetch_total=global_fetch_budget,
-                    ),
-                    restored_budget=ResearchBudgetTierState(),
-                    extension_budget=ResearchBudgetTierState(),
-                ),
-                "restored_budget_applied": False,
-                "extension_budget_applied": False,
-                "budget_events": [],
-            }
-        )
         await self.tracker.info(
             name="research.prepare.configured",
             request_id=ctx.request_id,

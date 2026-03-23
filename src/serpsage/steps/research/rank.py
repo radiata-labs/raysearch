@@ -8,7 +8,11 @@ from serpsage.utils import clean_whitespace
 
 if TYPE_CHECKING:
     from serpsage.components.rank.base import RankerBase
-    from serpsage.models.steps.research import ResearchSource, ResearchStepContext
+    from serpsage.models.steps.research import (
+        ResearchSource,
+        ResearchStepContext,
+        RoundStepContext,
+    )
 
 _MAX_CONTENT_CHARS = 4000
 _MAX_OVERVIEW_CHARS = 1800
@@ -26,7 +30,7 @@ def build_research_source_rank_text(source: ResearchSource) -> str:
 
 async def rerank_research_sources(
     *,
-    ctx: ResearchStepContext,
+    ctx: ResearchStepContext | RoundStepContext,
     ranker: RankerBase,
     sources: list[ResearchSource],
     query: str,

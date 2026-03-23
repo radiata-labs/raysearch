@@ -12,10 +12,9 @@ from serpsage.components.provider.blend import (
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
-    OverviewConflictPayload,
-    OverviewOutputPayload,
+    OverviewReviewPayload,
     ResearchSource,
-    ResearchStepContext,
+    RoundStepContext,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_overview_prompt_messages
@@ -28,7 +27,7 @@ from serpsage.steps.research.search import (
 from serpsage.steps.research.utils import resolve_research_model
 
 
-class ResearchOverviewStep(StepBase[ResearchStepContext]):
+class ResearchOverviewStep(StepBase[RoundStepContext]):
     _CONTEXT_NEW_RESULT_TARGET_RATIO = 0.60
     _CONTEXT_MIN_HISTORY_SOURCES = 3
 
@@ -37,9 +36,11 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
-    async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
+    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.run.stop or ctx.run.current is None:
+            return ctx
+        if not ctx.run.current.is_review_ready:
             return ctx
         all_sources = list(ctx.knowledge.sources)
         if not all_sources:
@@ -98,7 +99,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                     now_utc=now_utc,
                     engine_selection_context=engine_selection_context,
                 ),
-                response_format=OverviewOutputPayload,
+                response_format=OverviewReviewPayload,
                 format_override=build_overview_schema(
                     max_queries=ctx.run.limits.max_queries_per_round,
                     select_engines=bool(routes),
@@ -137,8 +138,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         if payload.findings:
             ctx.run.notes.extend(payload.findings[:3])
             ctx.run.current.overview_summary = " | ".join(payload.findings[:3])
-        ctx.run.current.confidence = payload.confidence
-        ctx.run.current.query_strategy = payload.next_query_strategy
         if payload.covered_subthemes:
             ctx.knowledge.covered_subthemes = self._merge_preserving_order(
                 left=ctx.knowledge.covered_subthemes,
@@ -148,17 +147,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
         ctx.run.current.coverage_ratio = min(
             1.0,
             len(ctx.knowledge.covered_subthemes) / total,
-        )
-        ctx.run.current.entity_coverage_complete = payload.entity_coverage_complete
-        ctx.run.current.missing_entities = list(payload.missing_entities)
-        unresolved_topics = self._extract_unresolved_topics(
-            payload.conflict_arbitration
-        )
-        ctx.run.current.unresolved_conflicts = len(unresolved_topics)
-        ctx.run.current.unresolved_conflict_topics = unresolved_topics
-        ctx.run.current.critical_gaps = len(payload.critical_gaps)
-        ctx.run.current.next_queries = list(
-            payload.next_queries[: ctx.run.limits.max_queries_per_round]
         )
         await self.tracker.info(
             name="research.style.applied",
@@ -188,36 +176,25 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
                 "need_content_source_ids": ctx.run.current.need_content_source_ids,
                 "covered_subthemes": len(payload.covered_subthemes),
                 "missing_entities": payload.missing_entities,
-                "critical_gaps": payload.critical_gaps,
-                "unresolved_conflict_topics": unresolved_topics,
-                "next_queries": [
-                    item.model_dump(mode="json")
-                    for item in ctx.run.current.next_queries
-                ],
-                "query_strategy": payload.next_query_strategy,
+                "conflict_topics": len(payload.conflict_topics),
             },
         )
         return ctx
 
-    def _empty_review(self) -> OverviewOutputPayload:
-        return OverviewOutputPayload(
+    def _empty_review(self) -> OverviewReviewPayload:
+        return OverviewReviewPayload(
             findings=[],
-            conflict_arbitration=[],
+            conflict_topics=[],
             covered_subthemes=[],
-            entity_coverage_complete=False,
-            covered_entities=[],
-            missing_entities=[],
-            critical_gaps=[],
-            confidence=0.0,
             need_content_source_ids=[],
-            next_query_strategy="coverage",
-            next_queries=[],
+            missing_entities=[],
+            confidence=0.0,
         )
 
     def _resolve_need_content_source_ids(
         self,
         *,
-        payload: OverviewOutputPayload,
+        payload: OverviewReviewPayload,
     ) -> list[int]:
         if not payload.need_content_source_ids:
             return []
@@ -229,12 +206,6 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
             seen.add(source_id)
             out.append(source_id)
         return out
-
-    def _extract_unresolved_topics(
-        self,
-        conflicts: list[OverviewConflictPayload],
-    ) -> list[str]:
-        return [item.topic for item in conflicts if item.status == "unresolved"]
 
     def _merge_preserving_order(
         self,
@@ -255,7 +226,7 @@ class ResearchOverviewStep(StepBase[ResearchStepContext]):
     def _resolve_context_mix_targets(
         self,
         *,
-        ctx: ResearchStepContext,
+        ctx: RoundStepContext,
         sources: list[ResearchSource],
     ) -> tuple[float, int]:
         mode_key = ctx.run.limits.mode_key

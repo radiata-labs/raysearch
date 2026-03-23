@@ -10,8 +10,9 @@ from serpsage.components.provider.blend import (
 )
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
+    ContentReviewPayload,
     ResearchDecideSignalPayload,
-    ResearchStepContext,
+    RoundStepContext,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_decide_prompt_messages
@@ -19,41 +20,38 @@ from serpsage.steps.research.schema import build_decide_schema
 from serpsage.steps.research.utils import resolve_research_model
 
 
-class ResearchDecideStep(StepBase[ResearchStepContext]):
+class ResearchDecideStep(StepBase[RoundStepContext]):
     llm: LLMClientBase = Depends()
     provider: SearchProviderBase = Depends()
 
     @override
-    async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
+    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
         if ctx.run.current is None:
             return ctx
         budget = ctx.run.limits
         round_state = ctx.run.current
-        if round_state.pending_search_jobs or round_state.search_fetched_candidates:
+        if round_state.needs_resume:
             round_state.waiting_for_budget = True
             round_state.waiting_reason = (
                 round_state.waiting_reason or "budget_resume_required"
             )
-            ctx.run.stop = True
-            ctx.run.stop_reason = round_state.waiting_reason
             return ctx
-        overview_review = ctx.run.current.overview_review
-        content_review = ctx.run.current.content_review
-        unresolved_conflict_topics = list(round_state.unresolved_conflict_topics)
-        gap_objectives = [
-            f"gap:{item}"
-            for item in [
-                *(overview_review.critical_gaps if overview_review is not None else []),
-                *(content_review.remaining_gaps if content_review is not None else []),
-            ]
-        ]
-        entity_objectives = [
-            f"missing_entity:{item}" for item in round_state.missing_entities
-        ]
+        unresolved_conflict_topics = self._get_unresolved_conflict_topics(
+            content_review=round_state.content_review
+        )
+        missing_entities = list(round_state.missing_entities)
+        critical_gaps = (
+            list(round_state.content_review.remaining_gaps)
+            if round_state.content_review is not None
+            else []
+        )
+
+        gap_objectives = [f"gap:{item}" for item in critical_gaps]
+        entity_objectives = [f"missing_entity:{item}" for item in missing_entities]
         conflict_objectives = [
             f"conflict:{item}" for item in unresolved_conflict_topics
         ]
-        round_state.remaining_objectives = self._merge_preserving_order(
+        remaining_objectives = self._merge_preserving_order(
             [
                 *gap_objectives,
                 *entity_objectives,
@@ -66,13 +64,12 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         query_objectives = [f"query:{item.query}" for item in next_queries]
         remaining_objectives = self._merge_preserving_order(
             [
-                *round_state.remaining_objectives,
+                *remaining_objectives,
                 *query_objectives,
             ]
         )
-        stop_ready = (not llm_prefers_continue) and not remaining_objectives
-        search_exhausted = ctx.run.search_calls >= budget.max_search_calls
-        fetch_exhausted = ctx.run.fetch_calls >= budget.max_fetch_calls
+        search_exhausted = ctx.run.allocation.search_remaining <= 0
+        fetch_exhausted = ctx.run.allocation.fetch_remaining <= 0
         can_search_now = (not search_exhausted) and (not fetch_exhausted)
         can_explore_without_search = self._can_continue_with_explore_only(ctx=ctx)
         min_rounds_per_track = max(1, ctx.run.limits.min_rounds_per_track)
@@ -80,6 +77,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         can_execute_next_round = (
             can_search_now and bool(next_queries)
         ) or can_explore_without_search
+        stop_ready = (not llm_prefers_continue) and not remaining_objectives
         stop = False
         stop_reason = ""
         if fetch_exhausted:
@@ -88,25 +86,25 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
         elif search_exhausted and not can_explore_without_search:
             stop = True
             stop_reason = "max_search_calls"
-        elif must_continue_for_min_rounds and (
-            can_search_now or can_explore_without_search
+        elif (
+            must_continue_for_min_rounds
+            and (can_search_now or can_explore_without_search)
+            or remaining_objectives
+            and can_execute_next_round
         ):
             stop = False
-        elif not llm_prefers_continue:
+        elif stop_ready:
             stop = True
             stop_reason = "model_stop"
         elif not can_execute_next_round:
             stop = True
             stop_reason = "no_executable_path"
-        round_state.remaining_objectives = remaining_objectives
-        round_state.unresolved_conflict_topics = unresolved_conflict_topics
         round_state.stop = stop
         round_state.stop_reason = stop_reason
         ctx.run.next_queries = [] if stop else next_queries
         round_state.waiting_for_budget = False
         round_state.waiting_reason = ""
-        ctx.run.history.append(round_state)
-        ctx.run.current = None
+        ctx.run.archive_current_round()
         if llm_signal.reason:
             ctx.run.notes.append(f"Decide signal: {llm_signal.reason}")
         await self.tracker.info(
@@ -144,10 +142,10 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             ctx.run.stop_reason = stop_reason
         return ctx
 
-    def _can_continue_with_explore_only(self, *, ctx: ResearchStepContext) -> bool:
+    def _can_continue_with_explore_only(self, *, ctx: RoundStepContext) -> bool:
         if ctx.run.current is None:
             return False
-        if ctx.run.limits.max_fetch_calls <= ctx.run.fetch_calls:
+        if ctx.run.allocation.fetch_remaining <= 0:
             return False
         return ctx.run.link_candidates_round == ctx.run.current.round_index and bool(
             ctx.run.link_candidates
@@ -156,7 +154,7 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
     async def _query_decide_signal(
         self,
         *,
-        ctx: ResearchStepContext,
+        ctx: RoundStepContext,
     ) -> ResearchDecideSignalPayload:
         model = resolve_research_model(
             settings=self.settings,
@@ -208,6 +206,19 @@ class ResearchDecideStep(StepBase[ResearchStepContext]):
             )
             raise
         return result.data
+
+    def _get_unresolved_conflict_topics(
+        self,
+        *,
+        content_review: ContentReviewPayload | None,
+    ) -> list[str]:
+        if content_review is None:
+            return []
+        return [
+            r.topic
+            for r in content_review.conflict_resolutions
+            if r.status in {"unresolved", "insufficient"}
+        ]
 
     def _merge_preserving_order(self, values: list[str]) -> list[str]:
         seen: set[str] = set()

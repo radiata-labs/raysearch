@@ -37,9 +37,8 @@ class ResearchFinalizeStep(StepBase[ResearchStepContext]):
                 "output_language": theme_plan.output_language,
                 "authority_weight_applied": True,
                 "explore_resolved_relative_links": ctx.run.explore_resolved_relative_links,
-                "budget_restore_applied": ctx.run.restored_budget_applied,
-                "budget_extension_applied": ctx.run.extension_budget_applied,
-                "budget_events": len(ctx.run.budget_events),
+                "budget_tier": ctx.run.budget.tier,
+                "track_count": len(ctx.run.track_runtimes),
             },
         )
         return ctx

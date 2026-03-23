@@ -48,11 +48,5 @@ async def main(
 
 
 if __name__ == "__main__":
-    import time
-    from pathlib import Path
-
-    cache = Path("./.cache/.serpsage_events.jsonl")
-    if cache.exists():
-        cache.unlink()
-    out = anyio.run(main, "latest llm papers", "auto", 5)
+    out = anyio.run(main, "r906 歌曲列表", "fast", 5)
     print(out["search_result"])

@@ -48,6 +48,7 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |  |- fetch/
 |  |  |  |- research/
 |  |  |  |- search/
+|  |  |- telemetry/
 |  |  |- tokenize/
 |  |  |  |- stopwords/
 |  |  |  |  |- files/

@@ -36,7 +36,7 @@ if __name__ == "__main__":
     out = anyio.run(
         main,
         "qwen3.5和kimi-k2.5哪家强？给我综合比较报告。",
-        "research-pro",
+        "research-fast",
         None,
     )
     print(out["research_result"])

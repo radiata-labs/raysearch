@@ -15,8 +15,8 @@ from serpsage.models.steps.research import (
     ResearchLinkCandidate,
     ResearchRound,
     ResearchSearchJob,
-    ResearchStepContext,
     RoundAction,
+    RoundStepContext,
 )
 from serpsage.models.steps.search import QuerySourceSpec
 from serpsage.steps.base import StepBase
@@ -25,12 +25,12 @@ from serpsage.steps.research.schema import build_plan_schema
 from serpsage.steps.research.utils import resolve_research_model
 
 
-class ResearchPlanStep(StepBase[ResearchStepContext]):
+class ResearchPlanStep(StepBase[RoundStepContext]):
     llm: LLMClientBase = Depends()
     provider: SearchProviderBase = Depends()
 
     @override
-    async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
+    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         if ctx.run.stop:
             return ctx
@@ -45,14 +45,12 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             ctx.run.stop = True
             ctx.run.stop_reason = "max_rounds"
             return ctx
-        remaining_fetch = budget.max_fetch_calls - ctx.run.fetch_calls
-        if remaining_fetch <= 0:
+        if ctx.run.allocation.fetch_remaining <= 0:
             ctx.run.stop = True
             ctx.run.stop_reason = "max_fetch_calls"
             return ctx
-        remaining_search = budget.max_search_calls - ctx.run.search_calls
         round_index = ctx.run.round_index + 1
-        if remaining_search <= 0 and not self._can_attempt_explore(
+        if ctx.run.allocation.search_remaining <= 0 and not self._can_attempt_explore(
             ctx=ctx,
             round_index=round_index,
         ):
@@ -145,7 +143,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             0,
             min(
                 budget.max_queries_per_round,
-                budget.max_search_calls - ctx.run.search_calls,
+                ctx.run.allocation.search_remaining,
             ),
         )
         search_jobs = self._build_search_jobs(
@@ -201,12 +199,10 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
             for item in payload.search_jobs[:job_limit]
         ]
 
-    def _can_attempt_explore(
-        self, *, ctx: ResearchStepContext, round_index: int
-    ) -> bool:
+    def _can_attempt_explore(self, *, ctx: RoundStepContext, round_index: int) -> bool:
         if round_index <= 1:
             return False
-        if ctx.run.limits.max_fetch_calls <= ctx.run.fetch_calls:
+        if ctx.run.allocation.fetch_remaining <= 0:
             return False
         return bool(
             self._resolve_last_round_candidates(
@@ -218,7 +214,7 @@ class ResearchPlanStep(StepBase[ResearchStepContext]):
     def _resolve_last_round_candidates(
         self,
         *,
-        ctx: ResearchStepContext,
+        ctx: RoundStepContext,
         round_index: int,
     ) -> list[ResearchLinkCandidate]:
         expected_round = max(0, round_index - 1)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import anyio
@@ -22,7 +23,11 @@ async def main(
         json_schema=json_schema,
     )
     async with Engine.from_settings("demo/search_config_example.yaml") as engine:
+        await anyio.sleep(1)
+        t1 = time.time()
         resp = await engine.answer(req)
+        t2 = time.time()
+        print(f"Answer took {t2 - t1:.4f} seconds")
     return {
         "answer": resp.answer,
         "answer_result": json.dumps(
@@ -34,10 +39,6 @@ async def main(
 
 
 if __name__ == "__main__":
-    import time
-
-    t1 = time.time()
-    out = anyio.run(main, "What is keepalive in http?", False, None)
-    t2 = time.time()
+    out = anyio.run(main, "r906有哪些歌", False, None)
     print(out["answer_result"])
     print(f"Answer: {out['answer']}")
