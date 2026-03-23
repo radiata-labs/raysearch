@@ -23,6 +23,7 @@ CONTROL_FILES = {
     ".codex/SCOPES.md",
     ".codex/ARCHIVED.md",
     "AGENTS.md",
+    "CLAUDE.md",
 }
 PYTHON_EXTENSIONS = {".py", ".pyi"}
 MYPY_CACHE_DIR = ".mypy_cache_codex"
@@ -163,13 +164,17 @@ def _remove_task_from_scopes(lines: list[str], task: TaskBlock) -> str:
     return "\n".join(merged).rstrip("\n") + "\n"
 
 
-def _refresh_agents_tree(repo_root: Path) -> None:
-    agents_path = repo_root / "AGENTS.md"
-    current = agents_path.read_text(encoding="utf-8")
+def _refresh_doc_trees(repo_root: Path) -> None:
+    """Refresh file tree blocks in both AGENTS.md and CLAUDE.md."""
     tree_text = _build_tree_text(repo_root)
-    updated = _replace_tree_block(current, tree_text)
-    if updated != current:
-        agents_path.write_text(updated, encoding="utf-8", newline="\n")
+    for doc_name in ("AGENTS.md", "CLAUDE.md"):
+        doc_path = repo_root / doc_name
+        if not doc_path.is_file():
+            continue
+        current = doc_path.read_text(encoding="utf-8")
+        updated = _replace_tree_block(current, tree_text, doc_name)
+        if updated != current:
+            doc_path.write_text(updated, encoding="utf-8", newline="\n")
 
 
 def _should_skip_tree_path(path: Path, repo_root: Path) -> bool:
@@ -215,11 +220,11 @@ def _build_tree_text(repo_root: Path) -> str:
     return "\n".join(lines)
 
 
-def _replace_tree_block(content: str, tree_text: str) -> str:
+def _replace_tree_block(content: str, tree_text: str, doc_name: str = "AGENTS.md") -> str:
     start = content.find(START_MARKER)
     end = content.find(END_MARKER)
     if start < 0 or end < 0 or end < start:
-        raise FinalizeError("AGENTS.md is missing file-tree markers.")
+        raise FinalizeError(f"{doc_name} is missing file-tree markers.")
     replacement = f"{START_MARKER}\n```text\n{tree_text}\n```\n{END_MARKER}"
     return content[:start] + replacement + content[end + len(END_MARKER) :]
 
@@ -394,7 +399,7 @@ def finalize_task(task_timestamp: str, title_contains: str | None = None) -> int
     updated_scopes = _remove_task_from_scopes(latest_lines, latest_task)
     scopes_path.write_text(updated_scopes, encoding="utf-8", newline="\n")
 
-    _refresh_agents_tree(repo_root)
+    _refresh_doc_trees(repo_root)
 
     print(
         f"Task finalized: {latest_task.timestamp} | {latest_task.title}. "
@@ -404,7 +409,6 @@ def finalize_task(task_timestamp: str, title_contains: str | None = None) -> int
 
 
 def main() -> None:
-    # _refresh_agents_tree(Path(__file__).resolve().parents[1])
     parser = argparse.ArgumentParser(
         description=(
             "Run per-file scoped checks for one task, update status rows "
@@ -428,7 +432,7 @@ def main() -> None:
     parser.add_argument(
         "--refresh-tree-only",
         action="store_true",
-        help="Refresh AGENTS file tree block and exit.",
+        help="Refresh file tree blocks in AGENTS.md and CLAUDE.md, then exit.",
     )
     args = parser.parse_args()
 
@@ -439,8 +443,8 @@ def main() -> None:
         tasks = _parse_tasks(scopes_text.split("\n"))
 
         if args.refresh_tree_only:
-            _refresh_agents_tree(repo_root)
-            print("AGENTS tree refreshed.")
+            _refresh_doc_trees(repo_root)
+            print("AGENTS.md and CLAUDE.md trees refreshed.")
             return
 
         if args.list:

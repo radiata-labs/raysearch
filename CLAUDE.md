@@ -1,6 +1,6 @@
-# AGENTS.md
+# CLAUDE.md
 
-Project-specific operating rules for all agents working in this repository.
+Project-specific operating rules for Claude Code working in this repository.
 
 ## 1) Project Structure Index (Auto-Generated Full Tree)
 
@@ -80,7 +80,7 @@ All edits must be coordinated through `.codex/SCOPES.md`.
 - Keep one active status record per file per task.
 - Status changes are updates, not appends: `WAITING -> MODIFYING -> COMPLETED`.
 - Keep status row format exact: `<YYYY-MM-DD HH:MM:SS> | \`<path>\` | \`<status>\` | <note>`.
-- Non-track control files: `.codex/SCOPES.md`, `AGENTS.md`, and the internal archive store file.
+- Non-track control files: `.codex/SCOPES.md`, `AGENTS.md`, `CLAUDE.md`, and the internal archive store file.
 - Never write occupancy/status records for these control files.
 - Never include these control files in `Declared files` or `Status Records`.
 - If a task only modifies control files, do not create a scope occupancy record for that task.
