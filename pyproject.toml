@@ -1,22 +1,22 @@
 [project]
-name = "serpsage"
+name = "raysearch"
 version = "0.1.0"
 authors = [
     {name = "Kotodama",email = "2682064633@qq.com"}
 ]
 license = {text = "MIT"}
 readme = "README.md"
-description = "AI-overview style SERP context builder on top of SearxNG (sync + async)."
-keywords = ["bot", "chatbot", "qq", "qqbot", "cqhttp", "coolq"]
+description = "Async SERP, fetch, answer, and research engine for building AI-overview style search workflows."
+keywords = ["search", "serp", "research", "rag", "crawler", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
-    "Framework :: Robot Framework",
-    "Framework :: Robot Framework :: Library",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Topic :: Communications :: Chat",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.11,<4"
 dependencies = [
@@ -70,7 +70,7 @@ stopwords = ["marisa-trie>=1.3.1"]
 tracking = ["structlog>=24.1.0"]
 # Convenience extras for common use cases
 full = [
-    "serpsage[extract,extract_pdf,crawl,rank,cache,api,overview,tracking]",
+    "raysearch[extract,extract_pdf,crawl,rank,cache,api,overview,tracking]",
 ]
 
 [build-system]
@@ -203,7 +203,7 @@ namespace_packages = true
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["serpsage.components.extract.markdown.*"]
+module = ["raysearch.components.extract.markdown.*"]
 strict = true
 
 [[tool.mypy.overrides]]

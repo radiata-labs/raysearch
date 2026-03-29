@@ -7,7 +7,7 @@ from typing import Any
 import anyio
 from dotenv import load_dotenv
 
-from serpsage import (
+from raysearch import (
     Engine,
     FetchAbstractsRequest,
     FetchContentRequest,

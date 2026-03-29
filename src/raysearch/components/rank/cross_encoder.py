@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import math
+from typing import Any, cast
+from typing_extensions import override
+
+from anyio import to_thread
+from pydantic import Field
+
+from raysearch.components.base import ComponentConfigBase
+from raysearch.components.rank.base import (
+    RankerBase,
+    RankMode,
+)
+from raysearch.utils import clean_whitespace
+
+try:
+    from sentence_transformers import CrossEncoder as _ImportedCrossEncoder
+
+    _CROSS_ENCODER_CTOR: Any | None = _ImportedCrossEncoder
+    CROSS_ENCODER_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    _CROSS_ENCODER_CTOR = None
+    CROSS_ENCODER_AVAILABLE = False
+
+
+class RankCrossEncoderSettings(ComponentConfigBase):
+    __setting_family__ = "rank"
+    __setting_name__ = "cross_encoder"
+
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    batch_size: int = Field(default=16, ge=1)
+    max_length: int = Field(default=512, ge=1)
+
+
+def _sigmoid(value: float) -> float:
+    if math.isnan(value) or math.isinf(value):
+        return 0.0
+    if value >= 0.0:
+        exp_value = math.exp(-value)
+        return float(1.0 / (1.0 + exp_value))
+    exp_value = math.exp(value)
+    return float(exp_value / (1.0 + exp_value))
+
+
+def _coerce_prediction_value(value: object) -> float:
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return 0.0
+        return _coerce_prediction_value(value[0])
+    try:
+        return _sigmoid(float(cast("Any", value)))
+    except Exception:
+        return 0.0
+
+
+def _normalize_predictions(raw: object) -> list[float]:
+    if hasattr(raw, "tolist"):
+        raw = cast("Any", raw).tolist()
+    if isinstance(raw, (list, tuple)):
+        return [_coerce_prediction_value(item) for item in raw]
+    return [_coerce_prediction_value(raw)]
+
+
+class CrossEncoderRanker(RankerBase[RankCrossEncoderSettings]):
+    model: object | None = None
+
+    @override
+    async def on_init(self) -> None:
+        await self._ensure_model()
+
+    async def _ensure_model(self) -> object:
+        if self.model is not None:
+            return self.model
+        if not CROSS_ENCODER_AVAILABLE or _CROSS_ENCODER_CTOR is None:
+            raise RuntimeError(
+                "cross-encoder ranker is unavailable: install sentence-transformers"
+            )
+        cross_encoder_ctor = cast("Any", _CROSS_ENCODER_CTOR)
+        self.model = await to_thread.run_sync(
+            lambda: cross_encoder_ctor(
+                str(self.config.model_name or "").strip(),
+                max_length=max(1, int(self.config.max_length)),
+            )
+        )
+        return self.model
+
+    @override
+    async def score_texts(
+        self,
+        texts: list[str],
+        *,
+        query: str,
+        query_tokens: list[str],
+        mode: RankMode = "retrieve",
+    ) -> list[float]:
+        _ = self._resolve_mode(mode, supported=("retrieve", "rerank"))
+        if not texts:
+            return []
+        effective_query = clean_whitespace(query) or " ".join(query_tokens)
+        if not effective_query:
+            return [0.0 for _ in texts]
+        model = await self._ensure_model()
+        batch_size = max(1, int(self.config.batch_size))
+        pairs = [(effective_query, text) for text in texts]
+        predictions = await to_thread.run_sync(
+            lambda: cast("Any", model).predict(
+                pairs,
+                batch_size=batch_size,
+                show_progress_bar=False,
+            )
+        )
+        scores = _normalize_predictions(predictions)
+        return [
+            float(scores[index]) if index < len(scores) else 0.0
+            for index in range(len(texts))
+        ]
+
+
+__all__ = ["CROSS_ENCODER_AVAILABLE", "CrossEncoderRanker", "RankCrossEncoderSettings"]

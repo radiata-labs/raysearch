@@ -27,44 +27,44 @@ components:
     openalex:
       enabled: true
       base_url: https://api.openalex.org/works
-      user_agent: serpsage-openalex-provider/1.0
+      user_agent: raysearch-openalex-provider/1.0
       results_per_page: 10
       mailto: ""
     marginalia:
       enabled: false
       base_url: https://api2.marginalia-search.com
-      user_agent: serpsage-marginalia-provider/1.0
+      user_agent: raysearch-marginalia-provider/1.0
       api_key: null
       results_per_page: 20
     reddit:
       enabled: true
       base_url: https://www.reddit.com/search.json
       allow_redirects: true
-      user_agent: serpsage-reddit-provider/1.0
+      user_agent: raysearch-reddit-provider/1.0
       results_per_page: 25
     reuters:
       enabled: true
       base_url: https://www.reuters.com
-      user_agent: serpsage-reuters-provider/1.0
+      user_agent: raysearch-reuters-provider/1.0
       results_per_page: 20
       sort_order: relevance
     semantic_scholar:
       enabled: true
       base_url: https://www.semanticscholar.org/api/1/search
       site_base_url: https://www.semanticscholar.org
-      user_agent: serpsage-semantic-scholar-provider/1.0
+      user_agent: raysearch-semantic-scholar-provider/1.0
       results_per_page: 10
     wikidata:
       enabled: true
       base_url: https://query.wikidata.org/sparql
-      user_agent: serpsage-wikidata-provider/1.0
+      user_agent: raysearch-wikidata-provider/1.0
       results_per_page: 5
     wikipedia:
       enabled: true
       base_url: https://{wiki_netloc}/w/rest.php/v1/search/title
       summary_url_template: https://{wiki_netloc}/api/rest_v1/page/summary/{title}
       page_url_template: https://{wiki_netloc}/wiki/{title}
-      user_agent: serpsage-wikipedia-provider/1.0 (https://example.com)
+      user_agent: raysearch-wikipedia-provider/1.0 (https://example.com)
       allow_redirects: true
       default_language: en
       results_per_page: 5
@@ -73,8 +73,8 @@ components:
       cookies:
         CONSENT: "YES+"
     searxng:
-      enabled: true
-      base_url: https://searxng.lycoreco.dpdns.org/search
+      enabled: false
+      base_url: null
       allow_redirects: false
     duckduckgo:
       enabled: true
@@ -99,11 +99,11 @@ components:
       enabled: true
       timeout_s: 10.0
       follow_redirects: true
-      user_agent: serpsage-bot/4.0
+      user_agent: raysearch-bot/4.0
     playwright:
       enabled: true
       timeout_s: 20.0
-      user_agent: serpsage-bot/4.0
+      user_agent: raysearch-bot/4.0
       js_concurrency: 12
       nav_timeout_ms: 8000
       block_resources: true
@@ -160,7 +160,7 @@ components:
     sqlite:
       enabled: false
       fetch_ttl_s: 86400
-      db_path: ./.cache/serpsage_cache.sqlite3
+      db_path: ./.cache/raysearch_cache.sqlite3
       table: cache
 
   llm:
@@ -171,7 +171,7 @@ components:
       enabled: true
       models:
         - name: gpt-4.1-mini
-          base_url: https://api.chatanywhere.tech/v1
+          base_url: null
           api_key: null
           model: gpt-4.1-mini
           timeout_s: 60.0
@@ -180,8 +180,8 @@ components:
           headers: {}
           enable_structured: true
         - name: kimi-k2.5
-          base_url: https://coding.dashscope.aliyuncs.com/v1
-          api_key: sk-sp-896f874fbb1e432f84733214e0c38297
+          base_url: null
+          api_key: null
           model: kimi-k2.5
           timeout_s: 60.0
           max_retries: 0
@@ -205,7 +205,7 @@ components:
     default: log
     jsonl:
       enabled: true
-      jsonl_path: ./.cache/.serpsage_tracking.jsonl
+      jsonl_path: ./.cache/.raysearch_tracking.jsonl
     log:
       enabled: true
 
@@ -213,10 +213,10 @@ components:
     default: jsonl
     jsonl:
       enabled: true
-      jsonl_path: ./.cache/.serpsage_metering.jsonl
+      jsonl_path: ./.cache/.raysearch_metering.jsonl
     sqlite:
       enabled: false
-      sqlite_db_path: ./.cache/.serpsage_metering.sqlite3
+      sqlite_db_path: ./.cache/.raysearch_metering.sqlite3
 
   rate_limit:
     default: basic

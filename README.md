@@ -1,152 +1,182 @@
-# SerpSage
+# RaySearch
 
-SerpSage is an async-only SERP, fetch, answer, and research engine. Public entry points remain:
+RaySearch is an async-first search orchestration engine for building AI-overview style workflows on top of multiple providers, crawlers, extractors, rankers, and LLM backends.
 
-- `load_settings()`
-- `Engine.from_settings(settings)`
-- `Engine.search(req)`
-- `Engine.fetch(req)`
-- `Engine.answer(req)`
-- `Engine.research(req)`
+It exposes four high-level pipelines:
 
-## Component System
+- `search`: multi-provider retrieval with optional fetch and rerank stages
+- `fetch`: page crawling, extraction, abstracting, overview generation, and related links
+- `answer`: search plus grounded answer generation with citations
+- `research`: multi-round research reports with synthesis and structured output
 
-The component layer now loads through `serpsage.components.loads` and is isolated per
-`Engine.from_settings(...)` call.
+## Why RaySearch
 
-- Each component owns its own `pydantic` config model.
-- `src/serpsage/settings/models.py` only defines generic component-family containers plus non-component business settings.
-- Builtin components self-register through metadata attached at import time.
-- Each `from_settings(...)` call builds a fresh registry and component catalog.
-- Raw user-declared instances are tracked separately from merged defaults.
-- WorkUnit bootstrap uses direct dependency injection for settings, clock, tracking, metering, and component registry.
-- `backend: Literal[...]` is removed from settings. Families now declare `default` and `instances`.
-- Components with `config_optional=True` may load from merged defaults even when
-  the instance was not explicitly written in the config file.
+- Component-based architecture with pluggable providers, crawlers, extractors, rankers, caches, and LLM clients
+- Async-only runtime with a single `Engine` entry point
+- YAML/JSON settings loader plus environment injection for provider and model secrets
+- Built-in tracking and metering sinks for observability
+- Designed for search-heavy and research-heavy agent workflows rather than chat-only use cases
 
-Built-in component families:
+## Installation
 
-- `http`
-- `provider`
-- `fetch`
-- `extract`
-- `rank`
-- `llm`
-- `tracking`
-- `metering`
-- `cache`
-- `rate_limit`
+Core install:
 
-## Configuration Shape
-
-Every component family uses the same structure:
-
-```yaml
-provider:
-  default: google_main
-  instances:
-    google_main:
-      component: google
-      enabled: true
-      config:
-        country: US
+```bash
+uv pip install raysearch
 ```
 
-Example:
+Common full install:
 
-```yaml
-llm:
-  default: router_main
-  instances:
-    router_main:
-      component: router
-      enabled: true
-      config: {}
-    gpt41_mini:
-      component: openai
-      enabled: true
-      config:
-        name: gpt-4.1-mini
-        model: gpt-4.1-mini
-        api_key: null
+```bash
+uv pip install "raysearch[extract,extract_pdf,crawl,rank,cache,api,overview,tracking]"
 ```
 
-Reference config: `demo/search_config_example.yaml`.
+When using Playwright-based crawling, install browser binaries separately:
 
-## Environment Injection
+```bash
+playwright install
+```
 
-`load_settings()` only loads the top-level file and preserves environment values in `AppSettings.runtime_env`. Component-specific env overrides are implemented by each component config model.
+## Public API
 
-Examples:
+```python
+from raysearch import Engine, SearchRequest, load_settings
+```
 
-- `openai` route instances can read `OPENAI_API_KEY` and `OPENAI_BASE_URL`
-- `gemini` route instances can read `GEMINI_API_KEY` and `GEMINI_BASE_URL`
-- `google` and `searxng` providers can read provider/search env overrides
+Primary entry points:
 
-Global loader behavior:
+- `load_settings(path=None, env=None)`
+- `Engine.from_settings(setting_file=None, *, settings=None, overrides=None)`
+- `await engine.search(request)`
+- `await engine.fetch(request)`
+- `await engine.answer(request)`
+- `await engine.research(request)`
 
-- explicit `path`
-- `SERPSAGE_CONFIG_PATH`
-- `serpsage.yaml`
-- defaults
+## Quick Start
+
+```python
+from raysearch import Engine, SearchRequest
+
+async def main() -> None:
+    async with Engine.from_settings("demo/search_config_example.yaml") as engine:
+        response = await engine.search(
+            SearchRequest(
+                query="latest multimodal model papers",
+                mode="deep",
+                max_results=8,
+            )
+        )
+        for item in response.results:
+            print(item.title, item.url)
+```
+
+## Configuration
+
+RaySearch loads settings in this order:
+
+1. Explicit `path` passed to `load_settings(...)`
+2. `RAYSEARCH_CONFIG_PATH`
+3. `raysearch.yaml`
+4. In-code defaults
+
+The main configuration groups are:
+
+- `components`: provider, crawl, extract, rank, llm, cache, tracking, metering, http, and rate limiting
+- `telemetry`: tracking and metering emitter behavior
+- `search`: search-mode profiles and query-expansion behavior
+- `fetch`: extraction, abstract, and overview tuning
+- `answer`: planning and generation model selection
+- `research`: report-generation budgets and model routing
+- `runner`: concurrency and queue limits
+
+Component families use a simple default-plus-instance shape:
+
+```yaml
+components:
+  provider:
+    default: google
+    google:
+      enabled: true
+      cookies:
+        CONSENT: "YES+"
+    duckduckgo:
+      enabled: true
+      base_url: https://html.duckduckgo.com/html
+      allow_redirects: false
+```
+
+Reference configuration:
+
+- `demo/search_config_example.yaml`
+
+## Providers And Pipelines
+
+Built-in provider coverage includes:
+
+- `google`
+- `google_news`
+- `duckduckgo`
+- `searxng`
+- `github`
+- `reddit`
+- `reuters`
+- `openalex`
+- `semantic_scholar`
+- `wikidata`
+- `wikipedia`
+- `arxiv`
+- `marginalia`
+- `blend` for combining providers
+
+Built-in pipeline support includes:
+
+- Search result expansion and reranking
+- Markdown-first fetch extraction
+- Abstract generation and page overview synthesis
+- Citation-grounded answer generation
+- Multi-round research report generation
+
+## Environment Variables
+
+The loader preserves the full process environment in `AppSettings.runtime_env`, and component config models pull values from there as needed.
+
+Common examples:
+
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
+- `GEMINI_API_KEY`
+- `GEMINI_BASE_URL`
+- `DASHSCOPE_API_KEY`
+- `DASHSCOPE_BASE_URL`
+- Provider-specific overrides such as `GITHUB_TOKEN` or `SEARXNG_BASE_URL`
 
 ## Tracking And Metering
 
-Tracking and metering are separate component families.
+Tracking and metering are configured independently from the request pipelines.
 
-Built-in tracking components:
+Default artifact names now follow the package name:
 
-- emitters: `null_emitter`, `async_emitter`
-- sinks: `null_sink`, `jsonl_sink`
+- tracking JSONL: `.raysearch_tracking.jsonl`
+- metering JSONL: `.raysearch_metering.jsonl`
+- metering SQLite: `.raysearch_metering.sqlite3`
+- cache SQLite: `.raysearch_cache.sqlite3`
 
-Built-in metering components:
+## Development
 
-- emitters: `null_emitter`, `async_emitter`
-- sinks: `null_sink`, `jsonl_sink`, `sqlite_sink`
+The repo includes runnable demos:
 
-Example:
+- `demo/search.py`
+- `demo/fetch.py`
+- `demo/answer.py`
+- `demo/research.py`
 
-```yaml
-tracking:
-  default: async_emitter
-  async_emitter:
-    enabled: true
-    queue_size: 2048
-    minimum_level: INFO
-  jsonl_sink:
-    enabled: true
-    jsonl_path: .serpsage_tracking.jsonl
+Example settings:
 
-metering:
-  default: async_emitter
-  async_emitter:
-    enabled: true
-    queue_size: 2048
-  sqlite_sink:
-    enabled: true
-    sqlite_db_path: .serpsage_metering.sqlite3
-```
-
-## Usage
-
-```python
-from serpsage import Engine, SearchRequest, load_settings
-
-settings = load_settings("demo/search_config_example.yaml")
-
-async with Engine.from_settings(settings) as engine:
-    response = await engine.search(
-        SearchRequest(
-            query="latest ai papers",
-            mode="deep",
-            max_results=8,
-        )
-    )
-```
+- `demo/search_config_example.yaml`
 
 ## Notes
 
-- `search.mode`: `fast | auto | deep`
-- Fetch remains markdown-first.
-- Component loading lives under `serpsage.components.loads`.
-- JS rendering still requires Playwright browsers to be installed.
+- `search.mode` supports `fast`, `auto`, and `deep`
+- RaySearch is async-only
+- Component discovery loads from `raysearch.components`
+- JS-heavy crawling requires Playwright plus installed browsers

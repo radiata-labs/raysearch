@@ -22,16 +22,10 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |- research.py
 |  |- search.py
 |  |- search_config_example.yaml
-|  |- test_bm25_detail.py
-|  |- test_bm25_internal.py
-|  |- test_bm25_simple.py
-|  |- test_scores.py
-|  |- test_token_match.py
-|  |- test_tokenize.py
 |- scripts/
 |  |- finalize_task.py
 |- src/
-|  |- serpsage/
+|  |- raysearch/
 |  |  |- app/
 |  |  |- components/
 |  |  |  |- cache/
@@ -64,7 +58,6 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |- tokenize/
 |  |  |  |- stopwords/
 |  |  |  |  |- files/
-|  |- serpsage.egg-info/
 |- AGENTS.md
 |- CLAUDE.md
 |- LICENSE
