@@ -2,16 +2,15 @@
 name = "raysearch"
 version = "0.1.0"
 authors = [
-    {name = "Kotodama",email = "2682064633@qq.com"}
+    {name = "Kotodama",email = "jameswjj0416@gmail.com"}
 ]
-license = {text = "MIT"}
+license = "Apache-2.0"
 readme = "README.md"
-description = "Async SERP, fetch, answer, and research engine for building AI-overview style search workflows."
+description = "Omni meta-search engine for agentic AI."
 keywords = ["search", "serp", "research", "rag", "crawler", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

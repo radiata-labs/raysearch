@@ -1,4 +1,13 @@
-# RaySearch
+![cover-v5-optimized](./images/GitHub_README.png)
+
+<p align="center">
+  <a href="./README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
+  <a href="./docs/zh-TW/README.md"><img alt="繁體中文文件" src="https://img.shields.io/badge/繁體中文-d9d9d9"></a>
+  <a href="./docs/zh-CN/README.md"><img alt="简体中文文件" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
+  <a href="./docs/ja-JP/README.md"><img alt="日本語のREADME" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
+</p>
+
+#
 
 RaySearch is an async-first search orchestration engine for building AI-overview style workflows on top of multiple providers, crawlers, extractors, rankers, and LLM backends.
 
