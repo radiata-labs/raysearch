@@ -17,6 +17,7 @@ Example configuration in this project:
 
    blend:
      enabled: true
+     default_sources: ["google", "duckduckgo"]
      include_sources: ["google", "duckduckgo", "wikipedia"]
      exclude_sources: []
 
@@ -89,11 +90,14 @@ class BlendProviderConfig(ProviderConfigBase):
     __setting_family__ = "provider"
     __setting_name__ = "blend"
 
+    default_sources: set[str] = Field(default_factory=set)
     include_sources: set[str] = Field(default_factory=set)
     exclude_sources: set[str] = Field(default_factory=set)
     original_rank_weight: float = 0.5  # Weight for original provider ranking (0-1)
 
-    @field_validator("include_sources", "exclude_sources", mode="before")
+    @field_validator(
+        "default_sources", "include_sources", "exclude_sources", mode="before"
+    )
     @classmethod
     def _normalize_sources(cls, value: object) -> set[str]:
         return _normalize_source_names(value)
@@ -153,10 +157,19 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         normalized_query = clean_whitespace(query)
         if not normalized_query:
             raise ValueError("query must not be empty")
+        runtime_include_provided = "include_sources" in kwargs
+        runtime_exclude_provided = "exclude_sources" in kwargs
         runtime_include = _normalize_source_names(kwargs.get("include_sources"))
         runtime_exclude = _normalize_source_names(kwargs.get("exclude_sources"))
+        effective_include = runtime_include
+        if (
+            not runtime_include_provided
+            and not runtime_exclude_provided
+            and self.config.default_sources
+        ):
+            effective_include = set(self.config.default_sources)
         selected = self._selected_routes(
-            include=runtime_include,
+            include=effective_include,
             exclude=runtime_exclude,
         )
         if not selected:
@@ -164,7 +177,7 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         provider_kwargs = {
             key: value
             for key, value in kwargs.items()
-            if key not in {"include_sources", "exclude_sources"}
+            if key not in {"default_sources", "include_sources", "exclude_sources"}
         }
 
         outputs: list[list[SearchProviderResult] | None] = [None] * len(selected)

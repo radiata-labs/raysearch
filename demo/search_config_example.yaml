@@ -13,6 +13,7 @@ components:
     default: blend
     blend:
       enabled: true
+      default_sources: ["google", "duckduckgo"]
       include_sources: ["arxiv", "duckduckgo", "github", "google", "google_news", "openalex", "reddit", "reuters", "semantic_scholar", "wikidata", "wikipedia"]
     github:
       enabled: true
