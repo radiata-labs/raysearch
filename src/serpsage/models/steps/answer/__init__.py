@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from pydantic import Field
 
-from serpsage.models.app.request import AnswerRequest
+from serpsage.models.app.request import AnswerRequest, SearchRequest
 from serpsage.models.app.response import AnswerCitation, AnswerResponse, FetchResultItem
 from serpsage.models.base import MutableModel
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.models.steps.search import QuerySourceSpec
-
-if TYPE_CHECKING:
-    from serpsage.models.app.request import SearchRequest
 
 
 class PageSource(MutableModel):

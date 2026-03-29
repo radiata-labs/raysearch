@@ -225,7 +225,7 @@ components:
 
 telemetry:
   tracking:
-    minimum_level: INFO
+    minimum_level: DEBUG
 search:
   max_results: 16
   select_engines: true

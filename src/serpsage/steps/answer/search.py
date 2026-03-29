@@ -6,6 +6,7 @@ from typing_extensions import override
 from serpsage.dependencies import SEARCH_RUNNER, Depends
 from serpsage.models.app.request import (
     FetchAbstractsRequest,
+    FetchContentRequest,
     SearchFetchRequest,
     SearchRequest,
 )
@@ -27,6 +28,7 @@ _MAX_SUB_QUESTIONS = 8
 _FIXED_SEARCH_MODE: Literal["auto"] = "auto"
 _FIXED_MAX_RESULTS = 5
 _FIXED_ABSTRACT_MAX_CHARS = 1000
+_FIXED_CRAWL_TIMEOUT_S = 30.0
 
 
 class AnswerSearchStep(StepBase[AnswerStepContext]):
@@ -153,7 +155,8 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
             max_results=_FIXED_MAX_RESULTS,
             additional_queries=None,
             fetchs=SearchFetchRequest(
-                content=bool(ctx.request.content),
+                crawl_timeout=_FIXED_CRAWL_TIMEOUT_S,
+                content=FetchContentRequest(detail="full"),
                 abstracts=FetchAbstractsRequest(
                     query=query_text,
                     max_chars=_FIXED_ABSTRACT_MAX_CHARS,

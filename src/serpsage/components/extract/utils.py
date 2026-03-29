@@ -16,11 +16,11 @@ _NOISE_LINE_RE = re.compile(
 _FENCE_LINE_RE = re.compile(r"^\s*(`{3,})(.*)$")
 _TABLE_SEP_RE = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$")
 _SPECIAL_BLOCK_RE = re.compile(r"^\s*(#{1,6}\s+|>|[-*+]\s+|\d+[.)]\s+|\|)")
-_IMAGE_RE = re.compile(r"!\[[^\]]*]\([^)]+\)")
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
-_MD_REF_LINK_RE = re.compile(r"\[([^\]]+)\]\[[^\]]*\]")
-_AUTO_URL_RE = re.compile(r"<https?://[^>\s]+>", re.IGNORECASE)
-_BARE_URL_RE = re.compile(r"(?<!<)https?://\S+", re.IGNORECASE)
+_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]+\)")
+_MD_REF_LINK_RE = re.compile(r"\[([^\]]*)\]\[[^\]]*\]")
+_MD_REF_DEF_RE = re.compile(r"^\s*\[[^\]]+]:\s+\S+.*$")
+_URL_RE = re.compile(r"<?https?://[^>\s]+>?", re.IGNORECASE)
 _HTML_LINK_RE = re.compile(
     r"<a\b[^>]*href\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)[^>]*>(.*?)</a>",
     re.IGNORECASE | re.DOTALL,
@@ -29,8 +29,7 @@ _HTML_LINK_TAG_RE = re.compile(r"</?a\b[^>]*>", re.IGNORECASE)
 _ABSTRACT_NOISE_RE = re.compile(
     r"^\s*(跳到主要内容|skip to main content)\s*$", re.IGNORECASE
 )
-_SETEXT_HEADING_LINE_RE = re.compile(r"^\s*[=-]{2,}\s*$")
-_HR_LINE_RE = re.compile(r"^\s*(?:[-*_]\s*){3,}\s*$")
+_BLOCK_SEPARATOR_RE = re.compile(r"^\s*(?:[=-]{2,}|(?:[-*_]\s*){3,})\s*$")
 ContentKind = Literal["html", "text"]
 _WS_RE = re.compile(r"\s+")
 _META_CHARSET_RE = re.compile(
@@ -38,30 +37,22 @@ _META_CHARSET_RE = re.compile(
 )
 _CT_CHARSET_RE = re.compile(r"charset\s*=\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
 
-# Characters that require quoting in YAML values
 _YAML_SPECIAL_CHARS = set(":\\\"'\n#[{}]")
 
 
-def _format_yaml_value(value: str) -> str:
-    """Format a value for YAML frontmatter."""
-    if not value:
-        return '""'
-    # Quote if contains special chars
-    if any(ch in _YAML_SPECIAL_CHARS for ch in value):
-        # Escape double quotes and backslashes, wrap in double quotes
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    return value
-
-
 def _build_frontmatter(metadata: dict[str, str]) -> str:
-    """Build YAML frontmatter from metadata dict."""
     if not metadata:
         return ""
     lines = ["---"]
     for key, value in metadata.items():
-        if value:  # Only include non-empty values
-            lines.append(f"{key}: {_format_yaml_value(str(value))}")
+        if not value:
+            continue
+        item = str(value)
+        if not item:
+            item = '""'
+        elif any(ch in _YAML_SPECIAL_CHARS for ch in item):
+            item = '"' + item.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        lines.append(f"{key}: {item}")
     lines.append("---")
     return "\n".join(lines)
 
@@ -94,7 +85,15 @@ def decode_best_effort(
 ) -> tuple[str, ContentKind]:
     if not data:
         return "", "text"
-    kind: ContentKind = "html" if _looks_like_html(data) else "text"
+    head = data[:8192].lower()
+    kind: ContentKind = (
+        "html"
+        if any(
+            tok in head
+            for tok in (b"<!doctype", b"<html", b"<meta", b"<body", b"</p", b"</div")
+        )
+        else "text"
+    )
     candidates: list[str] = []
     declared: list[str] = []
     if data.startswith(codecs.BOM_UTF8):
@@ -109,10 +108,13 @@ def decode_best_effort(
             cs = m.group(1)
             candidates.append(cs)
             declared.append(cs)
-    meta = _extract_meta_charset(data)
-    if meta:
-        candidates.append(meta)
-        declared.append(meta)
+    meta_head = data[:16384].decode("ascii", errors="ignore")
+    meta_match = _META_CHARSET_RE.search(meta_head)
+    if meta_match:
+        meta = (meta_match.group(1) or "").strip()
+        if meta:
+            candidates.append(meta)
+            declared.append(meta)
     if resp_encoding:
         candidates.append(resp_encoding)
     if apparent_encoding:
@@ -180,33 +182,9 @@ def decode_best_effort(
     return best_text, kind
 
 
-def _looks_like_html(sample: bytes) -> bool:
-    head = sample[:8192].lower()
-    return any(
-        tok in head
-        for tok in (b"<!doctype", b"<html", b"<meta", b"<body", b"</p", b"</div")
-    )
-
-
-def _extract_meta_charset(data: bytes) -> str | None:
-    head = data[:16384].decode("ascii", errors="ignore")
-    m = _META_CHARSET_RE.search(head)
-    if not m:
-        return None
-    cs = (m.group(1) or "").strip()
-    return cs or None
-
-
 def finalize_markdown(
     *, markdown: str, max_chars: int, metadata: dict[str, str] | None = None
 ) -> str:
-    """Finalize markdown content with optional YAML frontmatter.
-
-    Args:
-        markdown: The markdown content to process
-        max_chars: Maximum characters for the final output
-        metadata: Optional dict of metadata to prepend as YAML frontmatter
-    """
     if not markdown:
         return _build_frontmatter(metadata) if metadata else ""
 
@@ -218,34 +196,6 @@ def finalize_markdown(
     mode = "normal"
     active_fence = ""
 
-    def append_blank_once() -> None:
-        if out and out[-1] != "":
-            out.append("")
-
-    def flush_paragraph() -> None:
-        nonlocal paragraph_buf
-        if not paragraph_buf:
-            return
-        block = "\n".join(paragraph_buf).strip()
-        paragraph_buf = []
-        if not block:
-            return
-        key = _paragraph_key(block)
-        if key and key in seen_paragraphs:
-            return
-        if key:
-            seen_paragraphs.add(key)
-        out.append(block)
-
-    def flush_table() -> None:
-        nonlocal table_buf
-        if not table_buf:
-            return
-        table_block = "\n".join(table_buf).strip("\n")
-        table_buf = []
-        if table_block:
-            out.append(table_block)
-
     for raw_line in source_lines:
         fence = _fence_delimiter(raw_line)
         if mode == "fenced_code":
@@ -256,41 +206,118 @@ def finalize_markdown(
             continue
         if mode == "table":
             if _is_table_line(raw_line):
-                table_buf.append(_normalize_table_line(raw_line))
+                table_buf.append(raw_line.rstrip())
                 continue
-            flush_table()
+            table_block = "\n".join(table_buf).strip("\n")
+            table_buf = []
+            if table_block:
+                out.append(table_block)
             mode = "normal"
         if fence:
-            flush_paragraph()
-            append_blank_once()
+            if paragraph_buf:
+                block = "\n".join(paragraph_buf).strip()
+                paragraph_buf = []
+                if block:
+                    key = _collapse_ws_outside_inline_code(block).lower().strip()
+                    if len(key) <= 10:
+                        key = ""
+                    if not key or key not in seen_paragraphs:
+                        if key:
+                            seen_paragraphs.add(key)
+                        out.append(block)
+            if out and out[-1] != "":
+                out.append("")
             out.append(raw_line.rstrip())
             mode = "fenced_code"
             active_fence = fence
             continue
         if _is_table_line(raw_line):
-            flush_paragraph()
-            append_blank_once()
+            if paragraph_buf:
+                block = "\n".join(paragraph_buf).strip()
+                paragraph_buf = []
+                if block:
+                    key = _collapse_ws_outside_inline_code(block).lower().strip()
+                    if len(key) <= 10:
+                        key = ""
+                    if not key or key not in seen_paragraphs:
+                        if key:
+                            seen_paragraphs.add(key)
+                        out.append(block)
+            if out and out[-1] != "":
+                out.append("")
             mode = "table"
-            table_buf.append(_normalize_table_line(raw_line))
+            table_buf.append(raw_line.rstrip())
             continue
-        normalized = _normalize_normal_line(raw_line)
+        if not raw_line.strip():
+            if paragraph_buf:
+                block = "\n".join(paragraph_buf).strip()
+                paragraph_buf = []
+                if block:
+                    key = _collapse_ws_outside_inline_code(block).lower().strip()
+                    if len(key) <= 10:
+                        key = ""
+                    if not key or key not in seen_paragraphs:
+                        if key:
+                            seen_paragraphs.add(key)
+                        out.append(block)
+            if out and out[-1] != "":
+                out.append("")
+            continue
+        leading = raw_line[: len(raw_line) - len(raw_line.lstrip(" \t"))]
+        leading = leading.replace("\t", "    ")
+        body = _collapse_ws_outside_inline_code(raw_line[len(leading) :]).strip()
+        normalized = (
+            ""
+            if not body
+            else f"{leading}{body}".rstrip()
+            if _SPECIAL_BLOCK_RE.match(body)
+            else body
+        )
         if not normalized:
-            flush_paragraph()
-            append_blank_once()
             continue
         if _NOISE_LINE_RE.search(_collapse_ws_outside_inline_code(normalized).strip()):
             continue
         if _SPECIAL_BLOCK_RE.match(normalized):
-            flush_paragraph()
+            if paragraph_buf:
+                block = "\n".join(paragraph_buf).strip()
+                paragraph_buf = []
+                if block:
+                    key = _collapse_ws_outside_inline_code(block).lower().strip()
+                    if len(key) <= 10:
+                        key = ""
+                    if not key or key not in seen_paragraphs:
+                        if key:
+                            seen_paragraphs.add(key)
+                        out.append(block)
             out.append(normalized)
             continue
         paragraph_buf.append(normalized)
-    flush_table()
-    flush_paragraph()
-    compact = _compact_blank_lines(out)
+    if table_buf:
+        table_block = "\n".join(table_buf).strip("\n")
+        if table_block:
+            out.append(table_block)
+    if paragraph_buf:
+        block = "\n".join(paragraph_buf).strip()
+        if block:
+            key = _collapse_ws_outside_inline_code(block).lower().strip()
+            if len(key) <= 10:
+                key = ""
+            if not key or key not in seen_paragraphs:
+                if key:
+                    seen_paragraphs.add(key)
+                out.append(block)
+    compact: list[str] = []
+    blank = 0
+    for line in out:
+        if line == "":
+            blank += 1
+            if blank <= 1:
+                compact.append(line)
+            continue
+        blank = 0
+        compact.append(line)
     result = "\n".join(compact).strip()
 
-    # Prepend frontmatter if metadata provided
     if metadata:
         frontmatter = _build_frontmatter(metadata)
         if frontmatter:
@@ -320,8 +347,8 @@ def markdown_to_text(markdown: str) -> str:
                 out.append(raw)
             continue
         line = _MD_PREFIX_RE.sub("", raw.strip())
+        line = _strip_markdown_line(line, keep_image_text=False)
         line = re.sub(r"`([^`]+)`", r"\1", line)
-        line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", line)
         line = line.replace("|", " ")
         line = clean_whitespace(line)
         if line:
@@ -348,20 +375,17 @@ def markdown_to_abstract_text(markdown: str) -> str:
         line = raw.strip()
         if not line:
             continue
+        if _MD_REF_DEF_RE.match(line):
+            continue
         if _ABSTRACT_NOISE_RE.match(line):
             continue
-        if _SETEXT_HEADING_LINE_RE.match(line):
-            continue
-        if _HR_LINE_RE.match(line):
+        if _BLOCK_SEPARATOR_RE.match(line):
             continue
         if _TABLE_SEP_RE.match(line):
             continue
         line = _MD_PREFIX_RE.sub("", line)
+        line = _strip_markdown_line(line, keep_image_text=False)
         line = re.sub(r"`([^`]+)`", r"\1", line)
-        line = _IMAGE_RE.sub("", line)
-        line = _MD_LINK_RE.sub(r"\1", line)
-        line = _AUTO_URL_RE.sub("", line)
-        line = _BARE_URL_RE.sub("", line)
         line = line.replace("\\*", "*").replace("\\_", "_")
         line = line.replace("**", "").replace("__", "")
         line = line.replace("|", " ")
@@ -395,51 +419,20 @@ def strip_markdown_links(markdown: str) -> str:
             out.append(raw.rstrip())
             continue
         line = raw.rstrip()
-        line = _HTML_LINK_RE.sub(r"\1", line)
-        line = _HTML_LINK_TAG_RE.sub("", line)
-        line = _MD_LINK_RE.sub(r"\1", line)
-        line = _MD_REF_LINK_RE.sub(r"\1", line)
-        line = _AUTO_URL_RE.sub("", line)
+        if _MD_REF_DEF_RE.match(line.strip()):
+            continue
+        line = _strip_markdown_line(line, keep_image_text=True)
         out.append(line)
     return "\n".join(out).strip()
 
 
-def _paragraph_key(block: str) -> str:
-    compact = _collapse_ws_outside_inline_code(block).lower().strip()
-    if len(compact) <= 10:
-        return ""
-    return compact
-
-
-def _normalize_normal_line(line: str) -> str:
-    if not line.strip():
-        return ""
-    leading = line[: len(line) - len(line.lstrip(" \t"))]
-    leading = leading.replace("\t", "    ")
-    body = _collapse_ws_outside_inline_code(line[len(leading) :]).strip()
-    if not body:
-        return ""
-    if _SPECIAL_BLOCK_RE.match(body):
-        return f"{leading}{body}".rstrip()
-    return body
-
-
-def _normalize_table_line(line: str) -> str:
-    return line.rstrip()
-
-
-def _compact_blank_lines(lines: list[str]) -> list[str]:
-    out: list[str] = []
-    blank = 0
-    for line in lines:
-        if line == "":
-            blank += 1
-            if blank <= 1:
-                out.append(line)
-            continue
-        blank = 0
-        out.append(line)
-    return out
+def _strip_markdown_line(line: str, *, keep_image_text: bool) -> str:
+    line = _HTML_LINK_RE.sub(r"\1", line)
+    line = _HTML_LINK_TAG_RE.sub("", line)
+    line = _IMAGE_RE.sub(r"\1" if keep_image_text else "", line)
+    line = _MD_LINK_RE.sub(r"\1", line)
+    line = _MD_REF_LINK_RE.sub(r"\1", line)
+    return _URL_RE.sub("", line)
 
 
 def _fence_delimiter(line: str) -> str | None:
@@ -526,28 +519,23 @@ def _clip_with_structure(*, result: str, max_chars: int) -> str:
     if last_safe > int(max_chars * 0.55):
         cut = last_safe
     clipped = result[:cut].rstrip()
-    unclosed_start = _find_unclosed_fence_start(clipped)
-    if unclosed_start >= 0:
-        clipped = clipped[:unclosed_start].rstrip()
-    return clipped
-
-
-def _find_unclosed_fence_start(markdown: str) -> int:
     offset = 0
     open_fence = ""
-    open_pos = -1
-    for line in markdown.splitlines(keepends=True):
+    unclosed_start = -1
+    for line in clipped.splitlines(keepends=True):
         stripped = line.strip()
         fence = _fence_delimiter(stripped)
         if fence:
             if not open_fence:
                 open_fence = fence
-                open_pos = offset
+                unclosed_start = offset
             elif len(fence) >= len(open_fence):
                 open_fence = ""
-                open_pos = -1
+                unclosed_start = -1
         offset += len(line)
-    return open_pos
+    if unclosed_start >= 0:
+        clipped = clipped[:unclosed_start].rstrip()
+    return clipped
 
 
 __all__ = [

@@ -117,6 +117,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                 "freshness_intent",
                 "query_language",
                 "planner_action",
+                "direct_answer",
                 "tool_calls",
             ],
             "properties": {
@@ -238,8 +239,10 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                         "- You operate like a tiny agent with one available tool named search.",
                         "- search tool output must be returned via tool_calls only; do not narrate intermediate reasoning.",
                         "- If search is required, set planner_action=search and return 1-8 search tool calls.",
+                        "- Always include direct_answer as a string field.",
                         "- If you can answer from stable world knowledge without searching, set planner_action=respond, set tool_calls=[], and provide direct_answer.",
                         "- direct_answer is allowed only for extremely stable, widely known, non-current facts that you can answer with very high confidence.",
+                        "- When planner_action=search, set direct_answer to an empty string.",
                         "- if the question may depend on recency, niche knowledge, ambiguity resolution, evidence gathering, or nontrivial synthesis, do not use direct_answer; use search tool calls instead.",
                         "Decision policy:",
                         "- answer_mode is defined by the expected final response style, not by superficial question length.",
@@ -270,7 +273,7 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
                         "- freshness_intent: boolean",
                         "- query_language: language+script",
                         "- planner_action: search|respond",
-                        "- direct_answer: string; required only when planner_action=respond",
+                        "- direct_answer: string; use empty string when planner_action=search",
                         (
                             "- tool_calls: [{tool_name:'search', arguments:{question, search_query}}] (0-8)"
                             if select_engines

@@ -157,10 +157,10 @@ class BlendProvider(SearchProviderBase[BlendProviderConfig]):
         normalized_query = clean_whitespace(query)
         if not normalized_query:
             raise ValueError("query must not be empty")
-        runtime_include_provided = "include_sources" in kwargs
-        runtime_exclude_provided = "exclude_sources" in kwargs
         runtime_include = _normalize_source_names(kwargs.get("include_sources"))
         runtime_exclude = _normalize_source_names(kwargs.get("exclude_sources"))
+        runtime_include_provided = bool(runtime_include)
+        runtime_exclude_provided = bool(runtime_exclude)
         effective_include = runtime_include
         if (
             not runtime_include_provided

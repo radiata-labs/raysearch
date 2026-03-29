@@ -20,15 +20,38 @@ def safe_float(x: object) -> float:
 
 
 def rank_scales(scores: list[float]) -> list[float]:
+    """Convert raw scores to percentile ranks in [0, 1].
+
+    Handles three cases:
+    1. Empty list: return empty
+    2. Single item with score > 0: return [0.75] (above neutral, not saturated)
+    3. Single item with score = 0: return [0.0] (no match signal)
+    4. All scores identical (non-zero): use positional tiebreaker
+    5. All scores zero: return [0.0] for all (no match signal)
+    6. Normal case: compute percentile ranks based on score ordering
+    """
     cleaned = [safe_float(s) for s in (scores or [])]
     n = len(cleaned)
     if n == 0:
         return []
     if n == 1:
-        # Single item: keep a neutral-ish rank signal instead of saturating at 1.0.
-        return [0.5 if cleaned[0] > 0 else 0.0]
-    if max(cleaned) - min(cleaned) < 1e-9:
-        return [0.5 for _ in cleaned]
+        # Single item: return meaningful signal based on actual score
+        return [0.75 if cleaned[0] > 0 else 0.0]
+
+    max_val = max(cleaned)
+    min_val = min(cleaned)
+
+    # All scores are zero: no match signal for any document
+    if max_val <= 0.0:
+        return [0.0 for _ in cleaned]
+
+    # All scores identical but positive: use positional tiebreaker
+    # Earlier documents get higher percentile (first-match advantage)
+    if max_val - min_val < 1e-9:
+        # Distribute uniformly across positions, first gets highest
+        return [1.0 - (i / (n - 1)) for i in range(n)]
+
+    # Normal case: compute percentile based on score ranking
     ordered = sorted(enumerate(cleaned), key=lambda t: t[1], reverse=True)
     out = [0.0 for _ in cleaned]
     i = 0
