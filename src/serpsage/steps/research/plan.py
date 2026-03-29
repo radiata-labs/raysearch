@@ -11,14 +11,15 @@ from serpsage.components.provider.blend import (
 )
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
-    PlanOutputPayload,
-    ResearchLinkCandidate,
     ResearchRound,
-    ResearchSearchJob,
-    RoundAction,
     RoundStepContext,
 )
-from serpsage.models.steps.search import QuerySourceSpec
+from serpsage.models.steps.research.payloads import (
+    PlanOutputPayload,
+    PlanSearchJobPayload,
+    RoundAction,
+)
+from serpsage.models.steps.search import QuerySourceSpec, SearchFetchedCandidate
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_plan_prompt_messages
 from serpsage.steps.research.schema import build_plan_schema
@@ -191,13 +192,10 @@ class ResearchPlanStep(StepBase[RoundStepContext]):
         *,
         payload: PlanOutputPayload,
         job_limit: int,
-    ) -> list[ResearchSearchJob]:
+    ) -> list[PlanSearchJobPayload]:
         if job_limit <= 0:
             return []
-        return [
-            ResearchSearchJob.model_validate(item.model_dump())
-            for item in payload.search_jobs[:job_limit]
-        ]
+        return [item.model_copy(deep=True) for item in payload.search_jobs[:job_limit]]
 
     def _can_attempt_explore(self, *, ctx: RoundStepContext, round_index: int) -> bool:
         if round_index <= 1:
@@ -216,11 +214,14 @@ class ResearchPlanStep(StepBase[RoundStepContext]):
         *,
         ctx: RoundStepContext,
         round_index: int,
-    ) -> list[ResearchLinkCandidate]:
+    ) -> dict[int, SearchFetchedCandidate]:
         expected_round = max(0, round_index - 1)
         if ctx.run.link_candidates_round != expected_round:
-            return []
-        return [item.model_copy(deep=True) for item in ctx.run.link_candidates]
+            return {}
+        return {
+            source_id: item.model_copy(deep=True)
+            for source_id, item in ctx.run.link_candidates.items()
+        }
 
     def _resolve_round_action(
         self,
@@ -239,12 +240,12 @@ class ResearchPlanStep(StepBase[RoundStepContext]):
         self,
         *,
         raw_source_ids: list[int],
-        candidates: list[ResearchLinkCandidate],
+        candidates: dict[int, SearchFetchedCandidate],
         limit: int,
     ) -> list[int]:
         if not raw_source_ids or not candidates:
             return []
-        allowed_source_ids = {item.source_id for item in candidates}
+        allowed_source_ids = set(candidates)
         result: list[int] = []
         for source_id in raw_source_ids:
             if source_id not in allowed_source_ids:

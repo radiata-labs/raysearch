@@ -9,9 +9,11 @@ from serpsage.components.llm.base import LLMClientBase
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
-    OverviewReviewPayload,
     ResearchSource,
     ResearchStepContext,
+)
+from serpsage.models.steps.research.payloads import (
+    OverviewReviewPayload,
     SubreportOutputPayload,
     SubreportUpdatePayload,
 )
@@ -21,13 +23,15 @@ from serpsage.steps.research.prompt import (
     build_subreport_prompt_messages,
     build_subreport_update_prompt_messages,
 )
-from serpsage.steps.research.rank import rerank_research_sources
 from serpsage.steps.research.schema import (
     build_overview_schema,
     build_subreport_update_schema,
 )
-from serpsage.steps.research.search import source_authority_score
-from serpsage.steps.research.utils import resolve_research_model
+from serpsage.steps.research.utils import (
+    rerank_research_sources,
+    resolve_research_model,
+    source_authority_score,
+)
 
 
 class ResearchSubreportStep(StepBase[ResearchStepContext]):

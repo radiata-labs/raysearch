@@ -4,26 +4,26 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 from serpsage.models.steps.research import (
-    OverviewReviewPayload,
-    RenderArchitectOutput,
-    RenderArchitectSectionPlan,
-    ReportStyle,
-    ResearchLinkCandidate,
-    ResearchQuestionCard,
     ResearchRound,
     ResearchSource,
     ResearchStepContext,
     ResearchTask,
     ResearchThemePlan,
-    ResearchThemePlanCard,
     ResearchTrackResult,
     RoundState,
     RoundStepContext,
-    TaskComplexity,
-    TaskIntent,
     TrackAllocation,
 )
-from serpsage.models.steps.search import QuerySourceSpec
+from serpsage.models.steps.research.payloads import (
+    OverviewReviewPayload,
+    RenderArchitectOutput,
+    RenderArchitectSectionPlan,
+    ReportStyle,
+    ResearchThemePlanCard,
+    TaskComplexity,
+    TaskIntent,
+)
+from serpsage.models.steps.search import QuerySourceSpec, SearchFetchedCandidate
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -99,17 +99,7 @@ def _theme_plan_from_task(task: ResearchTask) -> ResearchThemePlan:
         required_entities=list(task.entities),
         input_language=task.input_language,
         output_language=task.output_language,
-        question_cards=[
-            ResearchThemePlanCard(
-                question_id=card.question_id,
-                question=card.question,
-                priority=card.priority,
-                seed_queries=list(card.seed_queries),
-                evidence_focus=list(card.evidence_focus),
-                expected_gain=card.expected_gain or card.question,
-            )
-            for card in task.cards
-        ],
+        question_cards=[card.model_copy(deep=True) for card in task.cards],
     )
 
 
@@ -1598,7 +1588,7 @@ def build_plan_prompt_messages(
     candidate_queries: list[QuerySourceSpec],
     core_question: str,
     now_utc: datetime,
-    last_round_candidates: list[ResearchLinkCandidate],
+    last_round_candidates: dict[int, SearchFetchedCandidate],
     engine_selection_context: str = "",
 ) -> list[dict[str, str]]:
     budget = ctx.run.limits
@@ -1611,6 +1601,7 @@ def build_plan_prompt_messages(
     allocation = _get_allocation(ctx)
     last_round_candidates_markdown = render_link_candidates_markdown(
         last_round_candidates,
+        round_index=max(0, round_index - 1),
         max_pages=max(1, mode_depth.explore_target_pages_per_round),
         max_links_per_page=6,
     )
@@ -1816,7 +1807,7 @@ def build_track_orchestrator_prompt_messages(
 
 def build_gap_closure_prompt_messages(
     *,
-    card: ResearchQuestionCard,
+    card: ResearchThemePlanCard,
     track_ctx: ResearchStepContext,
     pass_index: int,
 ) -> list[dict[str, str]]:
@@ -2068,7 +2059,7 @@ def _can_attempt_explore(
     *,
     ctx: StepContext,
     round_index: int,
-    last_round_candidates: list[ResearchLinkCandidate],
+    last_round_candidates: dict[int, SearchFetchedCandidate],
 ) -> bool:
     if round_index <= 1:
         return False
@@ -2222,7 +2213,7 @@ def render_theme_plan_markdown(
 
 def _render_theme_plan_card_lines(
     *,
-    card: ResearchThemePlanCard | ResearchQuestionCard,
+    card: ResearchThemePlanCard,
     index: int,
     indent: str,
 ) -> list[str]:
@@ -2231,14 +2222,14 @@ def _render_theme_plan_card_lines(
     lines: list[str] = [
         (
             f"{indent}- Card {index} "
-            f"(id={_normalize_scalar_text(getattr(card, 'question_id', '')) or f'q{index}'}, "
-            f"priority={getattr(card, 'priority', 0) or 0})"
+            f"(id={_normalize_scalar_text(card.question_id) or f'q{index}'}, "
+            f"priority={card.priority})"
         ),
-        f"{subindent}- Question: {_normalize_scalar_text(getattr(card, 'question', '')) or 'n/a'}",
+        f"{subindent}- Question: {_normalize_scalar_text(card.question) or 'n/a'}",
     ]
-    seed_queries = list(getattr(card, "seed_queries", []))
-    evidence_focus = list(getattr(card, "evidence_focus", []))
-    expected_gain = _normalize_scalar_text(getattr(card, "expected_gain", "")) or "n/a"
+    seed_queries = list(card.seed_queries)
+    evidence_focus = list(card.evidence_focus)
+    expected_gain = _normalize_scalar_text(card.expected_gain) or "n/a"
     lines.append(f"{subindent}- Seed queries:")
     lines.extend(
         _render_markdown_bullets(seed_queries, indent=leaf_indent)
@@ -2346,8 +2337,9 @@ def render_queries_markdown(queries: Iterable[str | QuerySourceSpec]) -> str:
 
 
 def render_link_candidates_markdown(
-    candidates: list[ResearchLinkCandidate],
+    candidates: dict[int, SearchFetchedCandidate],
     *,
+    round_index: int,
     max_pages: int = 8,
     max_links_per_page: int = 6,
 ) -> str:
@@ -2356,7 +2348,7 @@ def render_link_candidates_markdown(
     page_limit = max(1, max_pages)
     link_limit = max(1, max_links_per_page)
     lines: list[str] = []
-    for item in list(candidates)[:page_limit]:
+    for source_id, item in list(candidates.items())[:page_limit]:
         main_links = list(item.links or [])
         flat_subpage_links = [
             link
@@ -2365,10 +2357,10 @@ def render_link_candidates_markdown(
         ]
         lines.extend(
             [
-                f"### Source {item.source_id}",
-                f"- URL: {_normalize_scalar_text(item.url) or 'n/a'}",
-                f"- Title: {_normalize_scalar_text(item.title) or 'n/a'}",
-                f"- Round index: {item.round_index}",
+                f"### Source {source_id}",
+                f"- URL: {_normalize_scalar_text(item.result.url) or 'n/a'}",
+                f"- Title: {_normalize_scalar_text(item.result.title) or 'n/a'}",
+                f"- Round index: {round_index}",
                 f"- Main links count: {len(main_links)}",
                 f"- Subpage links count: {len(flat_subpage_links)}",
                 "- Link samples:",
@@ -2605,7 +2597,7 @@ def build_render_final_context_packet_markdown(
     utc_timestamp: str,
     utc_date: str,
     theme_plan: ResearchThemePlan,
-    question_cards: list[ResearchQuestionCard],
+    question_cards: list[ResearchThemePlanCard],
     track_results: list[ResearchTrackResult],
     render_objective: str,
 ) -> str:
@@ -2643,7 +2635,7 @@ def build_render_final_context_packet_markdown(
     return "\n".join(lines).strip()
 
 
-def render_question_cards_markdown(cards: list[ResearchQuestionCard]) -> str:
+def render_question_cards_markdown(cards: list[ResearchThemePlanCard]) -> str:
     if not cards:
         return _NONE_BULLET[0]
     lines: list[str] = []

@@ -12,10 +12,12 @@ from serpsage.components.provider.blend import (
 )
 from serpsage.dependencies import Depends
 from serpsage.models.steps.answer import (
-    AnswerPlanPayload,
     AnswerStepContext,
-    AnswerSubQuestionPayload,
     AnswerSubQuestionPlan,
+)
+from serpsage.models.steps.answer.payloads import (
+    AnswerPlanPayload,
+    AnswerSubQuestionPayload,
 )
 from serpsage.models.steps.search import QuerySourceSpec
 from serpsage.steps.base import StepBase

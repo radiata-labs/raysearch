@@ -1,187 +1,102 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import Field, StringConstraints
+from pydantic import Field
 
 from serpsage.models.app.request import ResearchRequest
 from serpsage.models.app.response import ResearchResponse
 from serpsage.models.base import MutableModel
-from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.base import BaseStepContext
+from serpsage.models.steps.research.payloads import (
+    ContentReviewPayload,
+    LanguageCode,
+    OverviewReviewPayload,
+    PlanSearchJobPayload,
+    ReportStyle,
+    ResearchBudgetTier,
+    ResearchThemePlan,
+    ResearchThemePlanCard,
+    ResearchTrackState,
+    RoundAction,
+    TaskComplexity,
+    TaskIntent,
+    TrackInsightCardPayload,
+)
 from serpsage.models.steps.search import QuerySourceSpec, SearchFetchedCandidate
 
-ReportStyle = Literal["decision", "explainer", "execution"]
-RoundAction = Literal["search", "explore"]
-TaskIntent = Literal["how_to", "comparison", "explainer", "diagnosis", "other"]
-TaskComplexity = Literal["low", "medium", "high"]
-LanguageCode = Literal[
-    "zh-Hans",
-    "zh-Hant",
-    "en",
-    "ja",
-    "ko",
-    "fr",
-    "de",
-    "es",
-    "pt",
-    "it",
-    "ru",
-    "ar",
-    "hi",
-    "tr",
-    "other",
-]
-SearchJobIntent = Literal["coverage", "deepen", "verify", "refresh"]
-SearchJobMode = Literal["auto", "deep"]
-ConflictResolutionStatus = Literal["resolved", "unresolved", "insufficient", "closed"]
-ResearchTrackState = Literal["active", "waiting_for_budget", "completed", "stopped"]
-ResearchBudgetTier = Literal["base", "restored", "extension"]
-SubreportUpdateAction = Literal["update", "no_update", "stop_after_update"]
-NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-LooseText = Annotated[str, StringConstraints(strip_whitespace=True)]
+
+class SourceDiversityMetrics(MutableModel):
+    """Metrics for tracking source diversity across domains."""
+
+    unique_domains: int = 0
+    domain_distribution: dict[str, int] = Field(default_factory=dict)
+    perspective_diversity_score: float = 0.0
+    geographic_diversity_score: float = 0.0
+    content_type_distribution: dict[str, int] = Field(default_factory=dict)
+    authority_tier_distribution: dict[str, int] = Field(default_factory=dict)
 
 
-class ThemeQuestionCardPayload(MutableModel):
-    question: NonEmptyText
-    priority: int = Field(ge=1, le=5)
-    seed_queries: list[QuerySourceSpec] = Field(min_length=1, max_length=8)
-    evidence_focus: list[NonEmptyText] = Field(default_factory=list, max_length=8)
-    expected_gain: NonEmptyText
+class InformationGainEstimate(MutableModel):
+    """Estimation of information gain for adaptive stopping."""
+
+    estimated_gain: float = 0.0
+    marginal_gain: float = 0.0
+    diminishing_returns_factor: float = 0.0
+    coverage_gap_score: float = 0.0
+    novelty_potential: float = 0.0
+    confidence_improvement_potential: float = 0.0
 
 
-class ThemeOutputPayload(MutableModel):
-    detected_input_language: LanguageCode
-    core_question: NonEmptyText
-    report_style: ReportStyle
-    task_intent: TaskIntent
-    complexity_tier: TaskComplexity
-    subthemes: list[NonEmptyText] = Field(max_length=12)
-    required_entities: list[NonEmptyText] = Field(max_length=16)
-    question_cards: list[ThemeQuestionCardPayload] = Field(min_length=1, max_length=24)
+class CorroborationScore(MutableModel):
+    """Cross-source corroboration and verification score."""
+
+    claim: str = ""
+    supporting_source_ids: list[int] = Field(default_factory=list)
+    contradicting_source_ids: list[int] = Field(default_factory=list)
+    neutral_source_ids: list[int] = Field(default_factory=list)
+    corroboration_ratio: float = 0.0
+    consensus_strength: Literal["strong", "moderate", "weak", "conflicted"] = "weak"
+    key_evidence_points: list[str] = Field(default_factory=list)
 
 
-class ResearchThemePlanCard(MutableModel):
-    question_id: NonEmptyText
-    question: NonEmptyText
-    priority: int = Field(ge=1, le=5)
-    seed_queries: list[QuerySourceSpec] = Field(min_length=1)
-    evidence_focus: list[NonEmptyText] = Field(default_factory=list)
-    expected_gain: NonEmptyText
+class UncertaintyQuantification(MutableModel):
+    """Quantification of uncertainty in research findings."""
+
+    epistemic_uncertainty: float = 0.0  # Uncertainty due to lack of knowledge
+    aleatoric_uncertainty: float = 0.0  # Uncertainty due to inherent randomness
+    confidence_interval_lower: float = 0.0
+    confidence_interval_upper: float = 1.0
+    uncertainty_sources: list[str] = Field(default_factory=list)
+    mitigating_evidence_count: int = 0
 
 
-class ResearchThemePlan(MutableModel):
-    core_question: str = ""
-    report_style: ReportStyle = "explainer"
-    task_intent: TaskIntent = "other"
-    complexity_tier: TaskComplexity = "medium"
-    subthemes: list[NonEmptyText] = Field(default_factory=list, max_length=12)
-    required_entities: list[NonEmptyText] = Field(default_factory=list, max_length=16)
-    input_language: LanguageCode = "other"
-    output_language: LanguageCode = "other"
-    question_cards: list[ResearchThemePlanCard] = Field(
-        default_factory=list, max_length=24
+class ReasoningStep(MutableModel):
+    """A single step in a multi-hop reasoning chain."""
+
+    step_id: str = ""
+    step_type: Literal["premise", "inference", "conclusion", "verification"] = "premise"
+    claim: str = ""
+    evidence_source_ids: list[int] = Field(default_factory=list)
+    confidence: float = 0.0
+    reasoning_logic: str = ""
+    dependencies: list[str] = Field(
+        default_factory=list
+    )  # IDs of steps this depends on
+
+
+class ReasoningChain(MutableModel):
+    """A multi-hop reasoning chain for complex deductions."""
+
+    chain_id: str = ""
+    question_id: str = ""
+    steps: list[ReasoningStep] = Field(default_factory=list)
+    final_conclusion: str = ""
+    overall_confidence: float = 0.0
+    chain_validity: Literal["valid", "partially_valid", "invalid", "inconclusive"] = (
+        "inconclusive"
     )
-
-
-class PlanSearchJobPayload(MutableModel):
-    query: QuerySourceSpec
-    intent: SearchJobIntent
-    mode: SearchJobMode
-    additional_queries: list[QuerySourceSpec] = Field(max_length=8)
-
-
-class PlanOutputPayload(MutableModel):
-    query_strategy: NonEmptyText
-    round_action: RoundAction
-    explore_target_source_ids: list[int] = Field(max_length=12)
-    search_jobs: list[PlanSearchJobPayload] = Field(max_length=8)
-
-
-class ConflictTopicPayload(MutableModel):
-    """Conflict topic detected during overview stage."""
-
-    topic: NonEmptyText
-    source_ids: list[int] = Field(default_factory=list, max_length=8)
-
-
-class ConflictResolutionPayload(MutableModel):
-    """Conflict resolution result from content stage."""
-
-    topic: NonEmptyText
-    status: ConflictResolutionStatus
-
-
-class OverviewReviewPayload(MutableModel):
-    """Overview stage output - rapid screening + coverage analysis."""
-
-    findings: list[NonEmptyText] = Field(max_length=20)
-    conflict_topics: list[ConflictTopicPayload] = Field(max_length=16)
-    covered_subthemes: list[NonEmptyText] = Field(max_length=16)
-    need_content_source_ids: list[int] = Field(max_length=20)
-    missing_entities: list[NonEmptyText] = Field(max_length=24)
-    confidence: float = Field(ge=-1.0, le=1.0)
-
-
-class ContentReviewPayload(MutableModel):
-    """Content stage output - deep arbitration + conflict resolution."""
-
-    resolved_findings: list[NonEmptyText] = Field(max_length=20)
-    conflict_resolutions: list[ConflictResolutionPayload] = Field(max_length=16)
-    remaining_gaps: list[NonEmptyText] = Field(max_length=12)
-    confidence_adjustment: float = Field(ge=-1.0, le=1.0)
-
-
-class TrackInsightPointPayload(MutableModel):
-    conclusion: NonEmptyText
-    condition: NonEmptyText
-    impact: NonEmptyText
-
-
-class TrackInsightCardPayload(MutableModel):
-    direct_answer: NonEmptyText
-    high_value_points: list[TrackInsightPointPayload] = Field(max_length=12)
-    key_tradeoffs_or_mechanisms: list[NonEmptyText] = Field(max_length=10)
-    unknowns_and_risks: list[NonEmptyText] = Field(max_length=10)
-    next_actions: list[NonEmptyText] = Field(max_length=10)
-
-
-class SubreportOutputPayload(MutableModel):
-    subreport_markdown: NonEmptyText
-    track_insight_card: TrackInsightCardPayload | None = None
-
-
-class SubreportUpdatePayload(MutableModel):
-    action: SubreportUpdateAction
-    updated_subreport_markdown: str = ""
-    updated_track_insight_card: TrackInsightCardPayload | None = None
-
-
-class RenderArchitectSectionPlan(MutableModel):
-    section_id: NonEmptyText
-    subhead: NonEmptyText
-    section_role: Literal["opening", "body", "closing"]
-    question_ids: list[NonEmptyText] = Field(default_factory=list, max_length=16)
-    scope_requirements: list[NonEmptyText] = Field(default_factory=list, max_length=12)
-    writing_boundaries: list[NonEmptyText] = Field(default_factory=list, max_length=12)
-    must_cover_points: list[NonEmptyText] = Field(default_factory=list, max_length=12)
-    angle: LooseText = ""
-    progression_hint: LooseText = ""
-
-
-class RenderArchitectOutput(MutableModel):
-    report_objective: NonEmptyText
-    sections: list[RenderArchitectSectionPlan] = Field(min_length=5, max_length=10)
-
-
-class ResearchDecideSignalPayload(MutableModel):
-    continue_research: bool
-    next_queries: list[QuerySourceSpec] = Field(max_length=8)
-    reason: LooseText = ""
-
-
-class ResearchLinkPickerPayload(MutableModel):
-    selected_link_ids: list[int] = Field(default_factory=list, max_length=24)
+    missing_premises: list[str] = Field(default_factory=list)
 
 
 class ResearchLimits(MutableModel):
@@ -287,15 +202,6 @@ class ResearchWriterSectionFailure(MutableModel):
     cause_type: str
     cause_message: str
 
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "index": self.index,
-            "section_id": self.section_id,
-            "subhead": self.subhead,
-            "cause_type": self.cause_type,
-            "cause_message": self.cause_message,
-        }
-
 
 class ResearchSource(MutableModel):
     source_id: int
@@ -309,22 +215,26 @@ class ResearchSource(MutableModel):
     seen_count: int = 1
     content_fingerprint: str = ""
     used_in_report: bool = False
-
-
-class ResearchSearchJob(MutableModel):
-    query: QuerySourceSpec
-    intent: SearchJobIntent = "coverage"
-    mode: SearchJobMode = "auto"
-    additional_queries: list[QuerySourceSpec] = Field(default_factory=list)
-
-
-class ResearchQuestionCard(MutableModel):
-    question_id: NonEmptyText
-    question: NonEmptyText
-    priority: int = Field(default=3, ge=1, le=5)
-    seed_queries: list[QuerySourceSpec] = Field(default_factory=list)
-    evidence_focus: list[NonEmptyText] = Field(default_factory=list)
-    expected_gain: str = ""
+    # Advanced fields for world-class research
+    domain: str = ""
+    content_type: Literal[
+        "article",
+        "documentation",
+        "paper",
+        "blog",
+        "forum",
+        "official",
+        "news",
+        "reference",
+        "unknown",
+    ] = "unknown"
+    publication_date: str = ""  # ISO date string if available
+    last_updated_date: str = ""  # ISO date string if available
+    freshness_score: float = 0.0  # 0.0 to 1.0 based on recency
+    credibility_signals: list[str] = Field(default_factory=list)
+    bias_indicators: list[str] = Field(default_factory=list)
+    geographic_region: str = ""
+    language: str = ""
 
 
 class ResearchTrackResult(MutableModel):
@@ -344,16 +254,6 @@ class ResearchTrackResult(MutableModel):
     waiting_rounds: int = 0
 
 
-class ResearchLinkCandidate(MutableModel):
-    source_id: int
-    url: str = ""
-    title: str = ""
-    links: list[ExtractRef] = Field(default_factory=list)
-    subpage_links: list[list[ExtractRef]] = Field(default_factory=list)
-    subpage_urls: list[str] = Field(default_factory=list)
-    round_index: int = 0
-
-
 class ResearchTask(MutableModel):
     question: str = ""
     style: ReportStyle = "explainer"
@@ -361,9 +261,9 @@ class ResearchTask(MutableModel):
     complexity: TaskComplexity = "medium"
     input_language: LanguageCode = "other"
     output_language: LanguageCode = "other"
-    subthemes: list[NonEmptyText] = Field(default_factory=list, max_length=12)
-    entities: list[NonEmptyText] = Field(default_factory=list, max_length=16)
-    cards: list[ResearchQuestionCard] = Field(default_factory=list, max_length=24)
+    subthemes: list[str] = Field(default_factory=list, max_length=12)
+    entities: list[str] = Field(default_factory=list, max_length=16)
+    cards: list[ResearchThemePlanCard] = Field(default_factory=list, max_length=24)
 
 
 class ResearchKnowledge(MutableModel):
@@ -380,12 +280,12 @@ class ResearchRound(MutableModel):
     round_action: RoundAction = "search"
     query_strategy: str = ""
     queries: list[QuerySourceSpec] = Field(default_factory=list)
-    search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
+    search_jobs: list[PlanSearchJobPayload] = Field(default_factory=list)
     explore_target_source_ids: list[int] = Field(default_factory=list)
     search_fetched_candidates: list[SearchFetchedCandidate] = Field(
         default_factory=list
     )
-    pending_search_jobs: list[ResearchSearchJob] = Field(default_factory=list)
+    pending_search_jobs: list[PlanSearchJobPayload] = Field(default_factory=list)
     overview_review: OverviewReviewPayload | None = None
     content_review: ContentReviewPayload | None = None
     need_content_source_ids: list[int] = Field(default_factory=list)
@@ -398,6 +298,17 @@ class ResearchRound(MutableModel):
     waiting_reason: str = ""
     stop_reason: str = ""
     stop: bool = False
+    source_diversity: SourceDiversityMetrics = Field(
+        default_factory=SourceDiversityMetrics
+    )
+    information_gain: InformationGainEstimate = Field(
+        default_factory=InformationGainEstimate
+    )
+    corroborations: list[CorroborationScore] = Field(default_factory=list)
+    reasoning_chains: list[ReasoningChain] = Field(default_factory=list)
+    uncertainty: UncertaintyQuantification = Field(
+        default_factory=UncertaintyQuantification
+    )
 
     @property
     def has_pending_io(self) -> bool:
@@ -454,7 +365,7 @@ class RoundState(MutableModel):
     stop_reason: str = ""
     next_queries: list[QuerySourceSpec] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
-    link_candidates: list[ResearchLinkCandidate] = Field(default_factory=list)
+    link_candidates: dict[int, SearchFetchedCandidate] = Field(default_factory=dict)
     link_candidates_round: int = 0
     explore_resolved_relative_links: int = 0
 
@@ -499,11 +410,6 @@ class ResearchResult(MutableModel):
     tracks: list[ResearchTrackResult] = Field(default_factory=list)
 
 
-# =============================================================================
-# Context Models
-# =============================================================================
-
-
 class RoundStepContext(BaseStepContext[ResearchRequest, ResearchResponse]):
     """Track-scoped context for round runner execution."""
 
@@ -537,52 +443,27 @@ ResearchRun.model_rebuild()
 
 
 __all__ = [
-    "ConflictResolutionPayload",
-    "ConflictResolutionStatus",
-    "ConflictTopicPayload",
-    "ContentReviewPayload",
+    "CorroborationScore",
     "GlobalBudget",
-    "LanguageCode",
-    "OverviewReviewPayload",
-    "PlanOutputPayload",
-    "PlanSearchJobPayload",
-    "RenderArchitectOutput",
-    "RenderArchitectSectionPlan",
-    "ReportStyle",
-    "ResearchBudgetTier",
+    "InformationGainEstimate",
+    "ReasoningChain",
+    "ReasoningStep",
     "ResearchCorpusUpsertResult",
-    "ResearchDecideSignalPayload",
     "ResearchKnowledge",
-    "ResearchLinkCandidate",
-    "ResearchLinkPickerPayload",
     "ResearchLimits",
-    "ResearchQuestionCard",
     "ResearchResult",
     "ResearchRound",
     "ResearchRun",
-    "ResearchSearchJob",
     "ResearchSource",
     "ResearchStepContext",
     "ResearchTask",
     "ResearchThemePlan",
-    "ResearchThemePlanCard",
     "ResearchTrackResult",
     "ResearchTrackRuntime",
-    "ResearchTrackState",
     "ResearchWriterSectionFailure",
-    "RoundAction",
     "RoundState",
     "RoundStepContext",
-    "SearchJobIntent",
-    "SearchJobMode",
-    "SubreportOutputPayload",
-    "SubreportUpdateAction",
-    "SubreportUpdatePayload",
-    "TaskComplexity",
-    "TaskIntent",
-    "ThemeOutputPayload",
-    "ThemeQuestionCardPayload",
+    "SourceDiversityMetrics",
     "TrackAllocation",
-    "TrackInsightCardPayload",
-    "TrackInsightPointPayload",
+    "UncertaintyQuantification",
 ]

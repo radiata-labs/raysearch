@@ -1,40 +1,17 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
-from serpsage.models.app.request import (
-    AnswerRequest,
-    SearchRequest,
-)
-from serpsage.models.app.response import (
-    AnswerCitation,
-    AnswerResponse,
-    FetchResultItem,
-)
-from serpsage.models.base import MutableModel, UnvalidatedModel
+from serpsage.models.app.request import AnswerRequest
+from serpsage.models.app.response import AnswerCitation, AnswerResponse, FetchResultItem
+from serpsage.models.base import MutableModel
 from serpsage.models.steps.base import BaseStepContext
 from serpsage.models.steps.search import QuerySourceSpec
 
-
-class AnswerSubQuestionPayload(UnvalidatedModel):
-    question: str
-    search_query: QuerySourceSpec
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_raw(cls, value: object) -> object:
-        if isinstance(value, str):
-            return {"question": value, "search_query": value}
-        return value
-
-
-class AnswerPlanPayload(UnvalidatedModel):
-    answer_mode: Literal["direct", "summary"]
-    freshness_intent: bool
-    query_language: str
-    sub_questions: list[AnswerSubQuestionPayload]
+if TYPE_CHECKING:
+    from serpsage.models.app.request import SearchRequest
 
 
 class PageSource(MutableModel):
@@ -106,8 +83,6 @@ class AnswerStepContext(BaseStepContext[AnswerRequest, AnswerResponse]):
 
 
 __all__ = [
-    "AnswerPlanPayload",
-    "AnswerSubQuestionPayload",
     "PageSource",
     "PromptSource",
     "QuestionPromptContext",

@@ -11,9 +11,11 @@ from serpsage.components.provider.blend import (
 )
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
-    ResearchQuestionCard,
     ResearchStepContext,
     ResearchTask,
+)
+from serpsage.models.steps.research.payloads import (
+    ResearchThemePlanCard,
     ThemeOutputPayload,
 )
 from serpsage.steps.base import StepBase
@@ -152,9 +154,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
         *,
         payload: ThemeOutputPayload,
         card_cap: int,
-    ) -> list[ResearchQuestionCard]:
+    ) -> list[ResearchThemePlanCard]:
         return [
-            ResearchQuestionCard(
+            ResearchThemePlanCard(
                 question_id=f"q{index}",
                 question=item.question,
                 priority=item.priority,

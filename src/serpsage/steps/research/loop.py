@@ -17,7 +17,6 @@ from serpsage.models.steps.research import (
     GlobalBudget,
     ResearchKnowledge,
     ResearchLimits,
-    ResearchQuestionCard,
     ResearchResult,
     ResearchRound,
     ResearchRun,
@@ -27,6 +26,9 @@ from serpsage.models.steps.research import (
     RoundState,
     RoundStepContext,
     TrackAllocation,
+)
+from serpsage.models.steps.research.payloads import (
+    ResearchThemePlanCard,
     TrackInsightCardPayload,
 )
 from serpsage.steps.base import RunnerBase, StepBase
@@ -346,7 +348,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _init_budget_allocation(
         self,
         ctx: ResearchStepContext,
-        cards: list[ResearchQuestionCard],
+        cards: list[ResearchThemePlanCard],
         track_contexts: dict[str, RoundStepContext],
     ) -> None:
         """Initialize budget allocation based on priority with minimum guarantees."""
@@ -393,7 +395,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
 
     def _allocate_by_priority(
         self,
-        cards: list[ResearchQuestionCard],
+        cards: list[ResearchThemePlanCard],
         total_search: int,
         total_fetch: int,
         limits: ResearchLimits,
@@ -432,7 +434,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _allocate_resource_by_priority(
         self,
         *,
-        cards: list[ResearchQuestionCard],
+        cards: list[ResearchThemePlanCard],
         total: int,
         protected_cap: int,
     ) -> tuple[dict[str, int], dict[str, int]]:
@@ -863,7 +865,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
 
     def _resolve_question_cards(
         self, ctx: ResearchStepContext
-    ) -> list[ResearchQuestionCard]:
+    ) -> list[ResearchThemePlanCard]:
         return [
             item.model_copy(deep=True)
             for item in ctx.task.cards[
@@ -874,7 +876,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _build_track_contexts(
         self,
         ctx: ResearchStepContext,
-        cards: list[ResearchQuestionCard],
+        cards: list[ResearchThemePlanCard],
     ) -> dict[str, RoundStepContext]:
         """Build RoundStepContext instances for each track.
 
@@ -890,7 +892,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _build_track_context(
         self,
         root: ResearchStepContext,
-        card: ResearchQuestionCard,
+        card: ResearchThemePlanCard,
     ) -> RoundStepContext:
         """Build a single RoundStepContext for a track.
 
@@ -917,7 +919,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 stop_reason="",
                 round_index=0,
                 next_queries=[q.model_copy(deep=True) for q in card.seed_queries],
-                link_candidates=[],
+                link_candidates={},
                 link_candidates_round=0,
                 notes=[f"Track initialized for question `{card.question_id}`."],
                 current=None,
@@ -932,7 +934,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _determine_stop_reason(
         self,
         results: dict[str, ResearchTrackResult],
-        cards: list[ResearchQuestionCard],
+        cards: list[ResearchThemePlanCard],
     ) -> str:
         budget_stop_reasons = {
             "budget_exhausted",

@@ -12,15 +12,22 @@ from serpsage.components.provider.blend import (
 from serpsage.components.rank.base import RankerBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
-    ContentReviewPayload,
+    ReasoningChain,
+    ReasoningStep,
+    ResearchSource,
     RoundStepContext,
+    UncertaintyQuantification,
 )
+from serpsage.models.steps.research.payloads import ContentReviewPayload
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import build_content_prompt_messages
-from serpsage.steps.research.rank import rerank_research_sources
 from serpsage.steps.research.schema import build_content_schema
-from serpsage.steps.research.search import pick_sources_by_ids, sort_source_ids_by_score
-from serpsage.steps.research.utils import resolve_research_model
+from serpsage.steps.research.utils import (
+    pick_sources_by_ids,
+    rerank_research_sources,
+    resolve_research_model,
+    source_authority_score,
+)
 
 
 class ResearchContentStep(StepBase[RoundStepContext]):
@@ -40,7 +47,7 @@ class ResearchContentStep(StepBase[RoundStepContext]):
             ctx.run.current.need_content_source_ids
             or ctx.run.current.context_source_ids
         )
-        source_ids = sort_source_ids_by_score(
+        source_ids = self._sort_source_ids_by_score(
             ctx=ctx,
             source_ids=source_ids,
         )[:review_source_window]
@@ -129,6 +136,20 @@ class ResearchContentStep(StepBase[RoundStepContext]):
             -1.0, min(1.0, base_confidence + payload.confidence_adjustment)
         )
 
+        # Compute uncertainty quantification
+        ctx.run.current.uncertainty = self._compute_uncertainty(
+            content_review=payload,
+            sources=selected_sources,
+            final_confidence=final_confidence,
+        )
+
+        # Build reasoning chains for multi-hop reasoning support
+        ctx.run.current.reasoning_chains = self._build_reasoning_chains(
+            findings=payload.resolved_findings,
+            sources=selected_sources,
+            source_ids=source_ids,
+        )
+
         await self.tracker.info(
             name="research.style.applied",
             request_id=ctx.request_id,
@@ -139,6 +160,7 @@ class ResearchContentStep(StepBase[RoundStepContext]):
                 "resolved_findings": len(payload.resolved_findings),
                 "remaining_gaps": len(payload.remaining_gaps),
                 "confidence": final_confidence,
+                "epistemic_uncertainty": ctx.run.current.uncertainty.epistemic_uncertainty,
             },
         )
         await self.tracker.debug(
@@ -159,9 +181,202 @@ class ResearchContentStep(StepBase[RoundStepContext]):
                     for r in payload.conflict_resolutions
                 ],
                 "confidence_adjustment": payload.confidence_adjustment,
+                "uncertainty_quantification": ctx.run.current.uncertainty.model_dump(),
             },
         )
         return ctx
+
+    def _compute_uncertainty(
+        self,
+        *,
+        content_review: ContentReviewPayload,
+        sources: list[ResearchSource],
+        final_confidence: float,
+    ) -> UncertaintyQuantification:
+        """Compute uncertainty quantification based on content review.
+
+        Uses multi-factor analysis to separate epistemic (knowledge-based)
+        uncertainty from aleatoric (inherent randomness) uncertainty.
+        """
+        # Epistemic uncertainty: based on knowledge gaps and unresolved conflicts
+        unresolved_count = sum(
+            1
+            for r in content_review.conflict_resolutions
+            if r.status in {"unresolved", "insufficient"}
+        )
+        gap_count = len(content_review.remaining_gaps)
+
+        # More gaps and conflicts = higher epistemic uncertainty
+        epistemic = min(1.0, (unresolved_count * 0.2 + gap_count * 0.1))
+
+        # Aleatoric uncertainty: inherent randomness in the domain
+        # Based on conflicting evidence even with good sources
+        total_resolutions = len(content_review.conflict_resolutions)
+        if total_resolutions > 0:
+            aleatoric = unresolved_count / total_resolutions * 0.5
+        else:
+            aleatoric = 0.0
+
+        # Adjust epistemic based on evidence quality and quantity
+        if sources:
+            avg_authority = sum(
+                self._compute_source_authority(s) for s in sources
+            ) / len(sources)
+            # High authority sources reduce epistemic uncertainty
+            epistemic *= max(0.3, 1.0 - avg_authority * 0.5)
+
+        # Confidence interval based on final confidence and uncertainty
+        uncertainty_adjustment = max(epistemic, aleatoric) * 0.5
+        ci_lower = max(-1.0, final_confidence - uncertainty_adjustment)
+        ci_upper = min(1.0, final_confidence + uncertainty_adjustment)
+
+        # Identify uncertainty sources
+        sources_list: list[str] = []
+        if unresolved_count > 0:
+            sources_list.append(f"unresolved_conflicts:{unresolved_count}")
+        if gap_count > 0:
+            sources_list.append(f"knowledge_gaps:{gap_count}")
+        if final_confidence < 0.3:
+            sources_list.append("low_confidence")
+        if len(sources) < 3:
+            sources_list.append("limited_evidence")
+
+        # Add advanced uncertainty indicators
+        if epistemic > 0.5:
+            sources_list.append("high_epistemic_uncertainty")
+        if aleatoric > 0.3:
+            sources_list.append("domain_inherent_uncertainty")
+
+        # Check for contradictory evidence patterns
+        if content_review.conflict_resolutions:
+            contradiction_ratio = unresolved_count / max(1, total_resolutions)
+            if contradiction_ratio > 0.5:
+                sources_list.append("high_contradiction_ratio")
+
+        return UncertaintyQuantification(
+            epistemic_uncertainty=epistemic,
+            aleatoric_uncertainty=aleatoric,
+            confidence_interval_lower=ci_lower,
+            confidence_interval_upper=ci_upper,
+            uncertainty_sources=sources_list,
+            mitigating_evidence_count=len(content_review.resolved_findings),
+        )
+
+    def _compute_source_authority(self, source: ResearchSource) -> float:
+        """Compute authority score for a source."""
+        return source_authority_score(source)
+
+    def _sort_source_ids_by_score(
+        self,
+        *,
+        ctx: RoundStepContext,
+        source_ids: list[int],
+    ) -> list[int]:
+        """Sort source IDs by their scores."""
+        source_by_id = {source.source_id: source for source in ctx.knowledge.sources}
+        out: list[int] = []
+        seen: set[int] = set()
+        for raw in source_ids:
+            source_id = raw
+            if source_id in seen or source_id not in source_by_id:
+                continue
+            seen.add(source_id)
+            out.append(source_id)
+        out.sort(
+            key=lambda sid: (
+                float(ctx.knowledge.source_scores.get(sid, 0.0)),
+                source_authority_score(source_by_id[sid]),
+                source_by_id[sid].round_index,
+                sid,
+            ),
+            reverse=True,
+        )
+        return out
+
+    def _build_reasoning_chains(
+        self,
+        *,
+        findings: list[str],
+        sources: list[ResearchSource],
+        source_ids: list[int],
+    ) -> list[ReasoningChain]:
+        """Build reasoning chains from findings for multi-hop reasoning support.
+
+        This method constructs simple reasoning chains that can be used
+        to understand the logical flow from evidence to conclusions.
+        """
+        if not findings or not sources:
+            return []
+
+        chains: list[ReasoningChain] = []
+
+        for idx, finding in enumerate(findings[:5]):
+            # Create a simple reasoning chain for each finding
+            steps: list[ReasoningStep] = []
+
+            # Step 1: Premise (evidence observation)
+            relevant_sources = [
+                s
+                for s in sources
+                if finding.casefold()[:50] in (s.overview + s.content).casefold()
+            ][:3]
+
+            if relevant_sources:
+                steps.append(
+                    ReasoningStep(
+                        step_id=f"chain_{idx}_premise",
+                        step_type="premise",
+                        claim=f"Evidence observed from {len(relevant_sources)} source(s)",
+                        evidence_source_ids=[s.source_id for s in relevant_sources],
+                        confidence=0.8 if len(relevant_sources) >= 2 else 0.6,
+                        reasoning_logic="Direct observation from source content",
+                        dependencies=[],
+                    )
+                )
+
+            # Step 2: Inference
+            steps.append(
+                ReasoningStep(
+                    step_id=f"chain_{idx}_inference",
+                    step_type="inference",
+                    claim=finding[:200],
+                    evidence_source_ids=[s.source_id for s in relevant_sources]
+                    if relevant_sources
+                    else [],
+                    confidence=0.7,
+                    reasoning_logic="Synthesized from evidence analysis",
+                    dependencies=[f"chain_{idx}_premise"] if relevant_sources else [],
+                )
+            )
+
+            # Step 3: Conclusion
+            steps.append(
+                ReasoningStep(
+                    step_id=f"chain_{idx}_conclusion",
+                    step_type="conclusion",
+                    claim=finding[:150],
+                    evidence_source_ids=[],
+                    confidence=0.75,
+                    reasoning_logic="Conclusion drawn from inference chain",
+                    dependencies=[f"chain_{idx}_inference"],
+                )
+            )
+
+            chains.append(
+                ReasoningChain(
+                    chain_id=f"finding_chain_{idx}",
+                    question_id="",
+                    steps=steps,
+                    final_conclusion=finding[:200],
+                    overall_confidence=0.7,
+                    chain_validity="valid" if len(steps) >= 2 else "inconclusive",
+                    missing_premises=[]
+                    if relevant_sources
+                    else ["supporting_evidence"],
+                )
+            )
+
+        return chains
 
     def _empty_review(self) -> ContentReviewPayload:
         return ContentReviewPayload(

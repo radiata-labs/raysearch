@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import re
 from datetime import UTC, datetime
 from typing import Literal
 from typing_extensions import override
@@ -24,21 +26,19 @@ from serpsage.models.components.extract import ExtractRef
 from serpsage.models.steps.fetch import FetchStepContext
 from serpsage.models.steps.research import (
     ResearchCorpusUpsertResult,
-    ResearchLinkCandidate,
-    ResearchLinkPickerPayload,
+    ResearchSource,
     RoundStepContext,
 )
-from serpsage.models.steps.search import SearchFetchedCandidate
+from serpsage.models.steps.research.payloads import ResearchLinkPickerPayload
+from serpsage.models.steps.search import QuerySourceSpec, SearchFetchedCandidate
 from serpsage.steps.base import RunnerBase, StepBase
 from serpsage.steps.research.prompt import build_link_picker_prompt_messages
 from serpsage.steps.research.schema import build_link_picker_schema
-from serpsage.steps.research.search import (
-    append_source_version,
+from serpsage.steps.research.utils import (
     canonicalize_url,
-    rebuild_corpus_ranking,
-    synchronize_corpus_indexes,
+    resolve_research_model,
+    source_authority_score,
 )
-from serpsage.steps.research.utils import resolve_research_model
 from serpsage.tokenize import tokenize_for_query
 from serpsage.utils import clean_whitespace
 
@@ -53,6 +53,15 @@ _EXPLORE_LOW_VALUE_PATH_PREFIXES = (
 )
 _LINK_PICKER_PRERANK_MULTIPLIER = 4
 _LINK_PICKER_PRERANK_FLOOR = 16
+
+# Corpus scoring weights
+_CORPUS_SCORE_WEIGHT_NEWNESS = 0.35
+_CORPUS_SCORE_WEIGHT_RELEVANCE = 0.25
+_CORPUS_SCORE_WEIGHT_DEPTH = 0.15
+_CORPUS_SCORE_WEIGHT_STABILITY = 0.10
+_CORPUS_SCORE_WEIGHT_AUTHORITY = 0.15
+
+_TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
 
 
 class ResearchFetchStep(StepBase[RoundStepContext]):
@@ -112,7 +121,7 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
             return ctx
         all_results: list[FetchResultItem] = []
         per_round_fetch_calls = 0
-        round_link_candidates: list[ResearchLinkCandidate] = []
+        round_link_candidates: dict[int, SearchFetchedCandidate] = {}
         selected_candidates, deferred_candidates, per_round_fetch_calls = (
             self._select_candidates_for_fetch_budget(
                 candidates=candidates,
@@ -121,16 +130,14 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         )
         for trimmed_candidate in selected_candidates:
             all_results.append(trimmed_candidate.result)
-            main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
+            main_source_id, _, _ = self._append_sources_from_fetch_result(
                 ctx=ctx,
                 result=trimmed_candidate.result,
                 round_index=ctx.run.current.round_index,
             )
-            round_link_candidates.append(
+            round_link_candidates[main_source_id] = (
                 self._build_link_candidate_from_search_candidate(
-                    source_id=main_source_id,
                     candidate=trimmed_candidate,
-                    round_index=ctx.run.current.round_index,
                 )
             )
         ctx.run.current.search_fetched_candidates = [
@@ -186,37 +193,30 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         fetched = await self.fetch_runner.run_batch(fetch_contexts)
         all_results: list[FetchResultItem] = []
         per_round_fetch_calls = 0
-        next_round_link_candidates: list[ResearchLinkCandidate] = []
+        next_round_link_candidates: dict[int, SearchFetchedCandidate] = {}
         for item in fetched:
             if item.error.failed or item.result is None:
                 continue
             result = item.result
             per_round_fetch_calls += 1
             all_results.append(result)
-            main_source_id, canonical_ids, _ = self._append_sources_from_fetch_result(
+            main_source_id, _, _ = self._append_sources_from_fetch_result(
                 ctx=ctx,
                 result=result,
                 round_index=ctx.run.current.round_index,
             )
-            next_round_link_candidates.append(
+            next_round_link_candidates[main_source_id] = (
                 self._build_link_candidate_from_explore_result(
-                    source_id=main_source_id,
                     result=result,
-                    round_index=ctx.run.current.round_index,
                 )
             )
         if per_round_fetch_calls <= 0:
             return False
         if not next_round_link_candidates:
-            next_round_link_candidates = [
-                item.model_copy(
-                    update={
-                        "round_index": ctx.run.current.round_index,
-                    },
-                    deep=True,
-                )
-                for item in target_pages
-            ]
+            next_round_link_candidates = {
+                source_id: item.model_copy(deep=True)
+                for source_id, item in target_pages.items()
+            }
         self._finalize_round_state(
             ctx=ctx,
             result_count=len(all_results),
@@ -231,21 +231,19 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         ctx: RoundStepContext,
         result_count: int,
         per_round_fetch_calls: int,
-        next_round_link_candidates: list[ResearchLinkCandidate],
+        next_round_link_candidates: dict[int, SearchFetchedCandidate],
     ) -> None:
         assert ctx.run.current is not None
-        dedup_link_candidates = self._dedupe_link_candidates_by_source_id(
-            [*list(ctx.run.link_candidates or []), *next_round_link_candidates]
-        )
-        ctx.run.link_candidates = [
-            item.model_copy(deep=True) for item in dedup_link_candidates
-        ]
+        ctx.run.link_candidates = {
+            source_id: item.model_copy(deep=True)
+            for source_id, item in next_round_link_candidates.items()
+        }
         ctx.run.link_candidates_round = ctx.run.current.round_index
         ctx.run.current.result_count = max(
             0, ctx.run.current.result_count + max(0, result_count)
         )
         if ctx.run.current.result_count > 0:
-            rebuild_corpus_ranking(
+            self._rebuild_corpus_ranking(
                 ctx=ctx,
                 round_index=ctx.run.current.round_index,
             )
@@ -255,27 +253,22 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         self,
         *,
         ctx: RoundStepContext,
-    ) -> list[ResearchLinkCandidate]:
+    ) -> dict[int, SearchFetchedCandidate]:
         if ctx.run.current is None:
-            return []
-        candidates = list(ctx.run.link_candidates or [])
+            return {}
+        candidates = dict(ctx.run.link_candidates or {})
         if not candidates:
-            return []
-        source_map = {item.source_id: item for item in candidates}
+            return {}
         target_ids = list(ctx.run.current.explore_target_source_ids or [])
         if not target_ids:
-            return []
+            return {}
         cap = max(1, ctx.run.limits.explore_target_pages_per_round)
-        out: list[ResearchLinkCandidate] = []
-        seen: set[int] = set()
+        out: dict[int, SearchFetchedCandidate] = {}
         for source_id in target_ids:
-            if source_id in seen:
-                continue
-            source = source_map.get(source_id)
+            source = candidates.get(source_id)
             if source is None:
                 continue
-            seen.add(source_id)
-            out.append(source.model_copy(deep=True))
+            out[source_id] = source.model_copy(deep=True)
             if len(out) >= cap:
                 break
         return out
@@ -284,12 +277,12 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         self,
         *,
         ctx: RoundStepContext,
-        target_pages: list[ResearchLinkCandidate],
+        target_pages: dict[int, SearchFetchedCandidate],
     ) -> list[str]:
         per_page_limit = max(1, ctx.run.limits.explore_links_per_page)
         if ctx.run.limits.mode_key == "research-fast":
             selected: list[str] = []
-            for page in target_pages:
+            for page in target_pages.values():
                 selected.extend(
                     await self._select_links_fast(
                         ctx=ctx,
@@ -298,18 +291,24 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
                     )
                 )
             return self._merge_and_dedupe_urls(selected)
-        selected_by_page: list[list[str] | None] = [None] * len(target_pages)
+        page_items = list(target_pages.items())
+        selected_by_page: list[list[str] | None] = [None] * len(page_items)
 
-        async def _pick_for_page(index: int, page: ResearchLinkCandidate) -> None:
+        async def _pick_for_page(
+            index: int,
+            source_id: int,
+            page: SearchFetchedCandidate,
+        ) -> None:
             selected_by_page[index] = await self._select_links_with_llm(
                 ctx=ctx,
+                source_id=source_id,
                 candidate=page,
                 max_links=per_page_limit,
             )
 
         async with anyio.create_task_group() as tg:
-            for idx, page in enumerate(target_pages):
-                tg.start_soon(_pick_for_page, idx, page)
+            for idx, (source_id, page) in enumerate(page_items):
+                tg.start_soon(_pick_for_page, idx, source_id, page)
         merged: list[str] = []
         for links in selected_by_page:
             if not links:
@@ -321,7 +320,7 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         self,
         *,
         ctx: RoundStepContext,
-        candidate: ResearchLinkCandidate,
+        candidate: SearchFetchedCandidate,
         max_links: int,
     ) -> list[str]:
         links = self._merge_and_dedupe_links(ctx=ctx, candidate=candidate)
@@ -340,7 +339,8 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         self,
         *,
         ctx: RoundStepContext,
-        candidate: ResearchLinkCandidate,
+        source_id: int,
+        candidate: SearchFetchedCandidate,
         max_links: int,
     ) -> list[str]:
         links = self._merge_and_dedupe_links(ctx=ctx, candidate=candidate)
@@ -379,9 +379,9 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
                     )
                     .date()
                     .isoformat(),
-                    source_id=candidate.source_id,
-                    source_url=candidate.url,
-                    source_title=candidate.title,
+                    source_id=source_id,
+                    source_url=candidate.result.url,
+                    source_title=candidate.result.title,
                     max_links_to_select=max_links,
                     candidate_links_markdown=candidate_links_markdown,
                 ),
@@ -492,16 +492,16 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         self,
         *,
         ctx: RoundStepContext | None = None,
-        candidate: ResearchLinkCandidate,
+        candidate: SearchFetchedCandidate,
     ) -> list[ExtractRef]:
         merged: list[tuple[ExtractRef, str]] = [
-            (item, candidate.url) for item in list(candidate.links or [])
+            (item, candidate.result.url) for item in list(candidate.links or [])
         ]
         for index, links in enumerate(list(candidate.subpage_links or [])):
             base_url = (
-                candidate.subpage_urls[index]
-                if index < len(candidate.subpage_urls)
-                else candidate.url
+                candidate.result.subpages[index].url
+                if index < len(candidate.result.subpages)
+                else candidate.result.url
             )
             merged.extend((item, base_url) for item in list(links or []))
         out: list[ExtractRef] = []
@@ -553,7 +553,7 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         ctx: RoundStepContext,
         urls: list[str],
     ) -> list[str]:
-        synchronize_corpus_indexes(ctx=ctx)
+        self._synchronize_corpus_indexes(ctx=ctx)
         fetched_canonical_urls: set[str] = set()
         for item in ctx.knowledge.source_ids_by_url:
             token = clean_whitespace(item)
@@ -798,7 +798,7 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
     ) -> tuple[int, list[int], list[int]]:
         new_canonical_ids: list[int] = []
         new_version_ids: list[int] = []
-        upserted = append_source_version(
+        upserted = self._append_source_version(
             ctx=ctx,
             url=result.url,
             title=result.title,
@@ -830,7 +830,7 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         sub: FetchSubpagesResult,
         round_index: int,
     ) -> ResearchCorpusUpsertResult:
-        return append_source_version(
+        return self._append_source_version(
             ctx=ctx,
             url=sub.url,
             title=sub.title,
@@ -843,70 +843,319 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
     def _build_link_candidate_from_search_candidate(
         self,
         *,
-        source_id: int,
         candidate: SearchFetchedCandidate,
-        round_index: int,
-    ) -> ResearchLinkCandidate:
-        return ResearchLinkCandidate(
-            source_id=source_id,
-            url=candidate.result.url,
-            title=candidate.result.title,
-            links=[item.model_copy(deep=True) for item in list(candidate.links or [])],
-            subpage_links=[
-                [item.model_copy(deep=True) for item in list(group or [])]
-                for group in list(candidate.subpage_links or [])
-            ],
-            subpage_urls=[
-                clean_whitespace(item.url)
-                for item in list(candidate.result.subpages or [])
-            ],
-            round_index=round_index,
-        )
+    ) -> SearchFetchedCandidate:
+        return candidate.model_copy(deep=True)
 
     def _build_link_candidate_from_explore_result(
         self,
         *,
-        source_id: int,
         result: FetchResultItem,
-        round_index: int,
-    ) -> ResearchLinkCandidate:
+    ) -> SearchFetchedCandidate:
         raw_links = [
             ExtractRef(url=clean_whitespace(url))
             for url in list((result.others.links if result.others else []) or [])
         ]
-        candidate = ResearchLinkCandidate(
-            source_id=source_id,
-            url=clean_whitespace(result.url),
-            title=clean_whitespace(result.title),
+        candidate = SearchFetchedCandidate(
+            result=result.model_copy(deep=True),
             links=raw_links,
             subpage_links=[],
-            subpage_urls=[],
-            round_index=round_index,
         )
         return candidate.model_copy(
             update={
                 "links": self._merge_and_dedupe_links(candidate=candidate),
-                "subpage_links": [],
             },
             deep=True,
         )
 
-    def _dedupe_link_candidates_by_source_id(
-        self,
-        candidates: list[ResearchLinkCandidate],
-    ) -> list[ResearchLinkCandidate]:
-        out: list[ResearchLinkCandidate] = []
-        seen_source_ids: set[int] = set()
-        for item in candidates:
-            source_id = item.source_id
-            if source_id in seen_source_ids:
-                continue
-            seen_source_ids.add(source_id)
-            out.append(item.model_copy(deep=True))
-        return out
-
     def _derive_subpage_links_limit(self, main_links_limit: int) -> int:
         return max(8, round(main_links_limit * 0.30))
+
+    def _synchronize_corpus_indexes(self, *, ctx: RoundStepContext) -> None:
+        """Synchronize corpus indexes in the knowledge state."""
+        sorted_sources = sorted(ctx.knowledge.sources, key=lambda item: item.source_id)
+        url_to_ids: dict[str, list[int]] = {}
+        for idx, source in enumerate(sorted_sources):
+            canonical = source.canonical_url or canonicalize_url(source.url)
+            if canonical != source.canonical_url:
+                source = source.model_copy(update={"canonical_url": canonical})
+                sorted_sources[idx] = source
+            if not canonical:
+                continue
+            ids = list(url_to_ids.get(canonical, []))
+            ids.append(source.source_id)
+            url_to_ids[canonical] = ids
+        ctx.knowledge.sources = sorted_sources
+        ctx.knowledge.source_ids_by_url = url_to_ids
+
+    def _append_source_version(
+        self,
+        *,
+        ctx: RoundStepContext,
+        url: str,
+        title: str,
+        overview: str,
+        content: str,
+        round_index: int,
+        is_subpage: bool,
+        source_id: int | None = None,
+    ) -> ResearchCorpusUpsertResult:
+        """Append or update a source version in the knowledge corpus.
+
+        Args:
+            ctx: The round step context containing knowledge.
+            url: The source URL.
+            title: The source title.
+            overview: The source overview/summary text.
+            content: The full source content.
+            round_index: The current round index.
+            is_subpage: Whether this is a subpage.
+            source_id: Pre-allocated unique source ID. If None, generates from list length
+                (not safe for parallel tracks; prefer passing pre-allocated ID).
+
+        Returns:
+            ResearchCorpusUpsertResult with source_id and status flags.
+        """
+        normalized_url = clean_whitespace(url)
+        canonical_url = canonicalize_url(normalized_url) or normalized_url
+        normalized_title = clean_whitespace(title)
+        normalized_overview = self._normalize_text(overview)
+        normalized_content = self._normalize_text(content)
+        fingerprint = self._build_content_fingerprint(
+            content=normalized_content,
+            overview=normalized_overview,
+        )
+        self._synchronize_corpus_indexes(ctx=ctx)
+        source_idx_by_id = self._build_source_idx_by_id(ctx.knowledge.sources)
+        existing_ids = list(ctx.knowledge.source_ids_by_url.get(canonical_url, []))
+        for existing_source_id in reversed(existing_ids):
+            idx = source_idx_by_id.get(existing_source_id)
+            if idx is None:
+                continue
+            source = ctx.knowledge.sources[idx]
+            if source.round_index != round_index:
+                continue
+            if source.content_fingerprint != fingerprint:
+                continue
+            updated = source.model_copy(
+                update={
+                    "title": source.title or normalized_title,
+                    "overview": source.overview or normalized_overview,
+                    "content": source.content or normalized_content,
+                    "seen_count": max(1, source.seen_count) + 1,
+                    "canonical_url": canonical_url,
+                    "content_fingerprint": fingerprint,
+                }
+            )
+            ctx.knowledge.sources[idx] = updated
+            return ResearchCorpusUpsertResult(
+                source_id=existing_source_id,
+                canonical_url=canonical_url,
+                is_new_canonical=False,
+                is_new_version=False,
+            )
+        allocated_source_id = (
+            source_id if source_id is not None else len(ctx.knowledge.sources) + 1
+        )
+        ctx.knowledge.sources.append(
+            ResearchSource(
+                source_id=allocated_source_id,
+                url=normalized_url,
+                canonical_url=canonical_url,
+                title=normalized_title,
+                overview=normalized_overview,
+                content=normalized_content,
+                round_index=round_index,
+                is_subpage=is_subpage,
+                seen_count=1,
+                content_fingerprint=fingerprint,
+            )
+        )
+        ids = list(ctx.knowledge.source_ids_by_url.get(canonical_url, []))
+        ids.append(allocated_source_id)
+        ctx.knowledge.source_ids_by_url[canonical_url] = ids
+        return ResearchCorpusUpsertResult(
+            source_id=allocated_source_id,
+            canonical_url=canonical_url,
+            is_new_canonical=len(existing_ids) == 0,
+            is_new_version=True,
+        )
+
+    def _rebuild_corpus_ranking(
+        self,
+        *,
+        ctx: RoundStepContext,
+        round_index: int,
+    ) -> float:
+        """Rebuild corpus ranking scores."""
+        self._synchronize_corpus_indexes(ctx=ctx)
+        old_scores = dict(ctx.knowledge.source_scores)
+        old_ranked = list(ctx.knowledge.ranked_source_ids)
+        source_idx_by_id = self._build_source_idx_by_id(ctx.knowledge.sources)
+        canonical_to_latest: dict[str, int] = {}
+        canonical_seen: dict[str, int] = {}
+        for source in ctx.knowledge.sources:
+            canonical = source.canonical_url
+            if not canonical:
+                canonical = canonicalize_url(source.url)
+            if not canonical:
+                continue
+            canonical_seen[canonical] = canonical_seen.get(canonical, 0) + max(
+                1, source.seen_count
+            )
+            prev = canonical_to_latest.get(canonical)
+            if prev is None:
+                canonical_to_latest[canonical] = source.source_id
+                continue
+            prev_source = ctx.knowledge.sources[source_idx_by_id[prev]]
+            if (
+                source.round_index,
+                source.source_id,
+            ) >= (
+                prev_source.round_index,
+                prev_source.source_id,
+            ):
+                canonical_to_latest[canonical] = source.source_id
+        max_seen = max(canonical_seen.values(), default=1)
+        query_tokens = self._build_query_tokens(ctx=ctx)
+        scored: list[tuple[int, float]] = []
+        score_map: dict[int, float] = {}
+        for canonical, latest_id in canonical_to_latest.items():
+            idx = source_idx_by_id.get(latest_id)
+            if idx is None:
+                continue
+            source = ctx.knowledge.sources[idx]
+            newness_score = self._compute_newness_score(
+                source_round_index=source.round_index,
+                current_round_index=round_index,
+            )
+            relevance_score = self._compute_relevance_score(
+                source=source,
+                query_tokens=query_tokens,
+            )
+            depth_score = self._compute_depth_score(source)
+            authority_score = source_authority_score(source)
+            stability_score = min(
+                1.0,
+                float(canonical_seen.get(canonical, 0)) / float(max_seen or 1),
+            )
+            final_score = (
+                float(_CORPUS_SCORE_WEIGHT_NEWNESS) * newness_score
+                + float(_CORPUS_SCORE_WEIGHT_RELEVANCE) * relevance_score
+                + float(_CORPUS_SCORE_WEIGHT_DEPTH) * depth_score
+                + float(_CORPUS_SCORE_WEIGHT_STABILITY) * stability_score
+                + float(_CORPUS_SCORE_WEIGHT_AUTHORITY) * authority_score
+            )
+            score_map[latest_id] = float(final_score)
+            scored.append((latest_id, float(final_score)))
+        scored.sort(
+            key=lambda item: (
+                float(item[1]),
+                self._source_round_index(ctx=ctx, source_id=item[0]),
+                item[0],
+            ),
+            reverse=True,
+        )
+        ranked_source_ids = [source_id for source_id, _ in scored]
+        full_score_map: dict[int, float] = {}
+        for canonical, ids in ctx.knowledge.source_ids_by_url.items():
+            canonical_score = 0.0
+            latest_source_id = canonical_to_latest.get(canonical)
+            if latest_source_id is not None:
+                canonical_score = float(score_map.get(latest_source_id, 0.0))
+            for source_id in ids:
+                full_score_map[source_id] = canonical_score
+        for idx, source in enumerate(ctx.knowledge.sources):
+            canonical = source.canonical_url or canonicalize_url(source.url)
+            if canonical != source.canonical_url:
+                ctx.knowledge.sources[idx] = source.model_copy(
+                    update={
+                        "canonical_url": canonical,
+                    }
+                )
+        ctx.knowledge.ranked_source_ids = list(ranked_source_ids)
+        ctx.knowledge.source_scores = dict(full_score_map)
+        old_total = sum(
+            float(old_scores.get(source_id, 0.0)) for source_id in old_ranked
+        )
+        new_total = sum(
+            float(ctx.knowledge.source_scores.get(source_id, 0.0))
+            for source_id in ranked_source_ids
+        )
+        return max(0.0, float(new_total - old_total))
+
+    def _build_content_fingerprint(self, *, content: str, overview: str) -> str:
+        """Build a SHA-256 fingerprint for content."""
+        normalized_content = self._normalize_text(content)
+        lines = [normalized_content[:5000]]
+        if overview:
+            lines.append(overview[:5000])
+        payload = "\n".join(lines).strip() or "__empty__"
+        return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
+
+    def _normalize_text(self, raw: str) -> str:
+        return raw.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    def _build_source_idx_by_id(self, sources: list[ResearchSource]) -> dict[int, int]:
+        return {item.source_id: idx for idx, item in enumerate(sources)}
+
+    def _source_round_index(self, *, ctx: RoundStepContext, source_id: int) -> int:
+        for source in ctx.knowledge.sources:
+            if source.source_id == source_id:
+                return source.round_index
+        return 0
+
+    def _compute_newness_score(
+        self,
+        *,
+        source_round_index: int,
+        current_round_index: int,
+    ) -> float:
+        round_gap = max(0, current_round_index - source_round_index)
+        if round_gap <= 0:
+            return 1.0
+        return max(0.0, 1.0 - (float(round_gap) / 5.0))
+
+    def _compute_relevance_score(
+        self,
+        *,
+        source: ResearchSource,
+        query_tokens: set[str],
+    ) -> float:
+        if not query_tokens:
+            return 0.0
+        parts = [
+            source.title,
+            source.url,
+            (source.overview)[:1800],
+            self._normalize_text(source.content)[:1800],
+        ]
+        haystack = " ".join(parts).casefold()
+        if not haystack:
+            return 0.0
+        hits = sum(1 for token in query_tokens if token in haystack)
+        return min(1.0, float(hits) / float(len(query_tokens)))
+
+    def _compute_depth_score(self, source: ResearchSource) -> float:
+        content_len = len(self._normalize_text(source.content))
+        content_score = min(1.0, float(content_len) / 2400.0)
+        overview_len = len(source.overview)
+        overview_score = min(1.0, float(overview_len) / 1200.0)
+        return min(1.0, 0.7 * content_score + 0.3 * overview_score)
+
+    def _build_query_tokens(self, *, ctx: RoundStepContext) -> set[str]:
+        tokens: set[str] = set()
+        values: list[QuerySourceSpec | str] = list(ctx.run.next_queries)
+        if ctx.run.current is not None:
+            values.extend(ctx.run.current.queries)
+        values.append(ctx.task.question)
+        for value in values:
+            query = value.query if isinstance(value, QuerySourceSpec) else value
+            for token in _TOKEN_PATTERN.findall(query.casefold()):
+                if len(token) < 2:
+                    continue
+                tokens.add(token)
+        return tokens
 
 
 def _score_at(*, scores: list[float], idx: int) -> float:

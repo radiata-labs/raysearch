@@ -42,6 +42,10 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |  |- app/
 |  |  |  |- components/
 |  |  |  |- steps/
+|  |  |  |  |- answer/
+|  |  |  |  |- fetch/
+|  |  |  |  |- research/
+|  |  |  |  |- search/
 |  |  |- settings/
 |  |  |- steps/
 |  |  |  |- answer/

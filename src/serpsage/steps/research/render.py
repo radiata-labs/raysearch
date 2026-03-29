@@ -10,11 +10,13 @@ import anyio
 from serpsage.components.llm.base import LLMClientBase
 from serpsage.dependencies import Depends
 from serpsage.models.steps.research import (
-    RenderArchitectOutput,
-    RenderArchitectSectionPlan,
     ResearchStepContext,
     ResearchTrackResult,
     ResearchWriterSectionFailure,
+)
+from serpsage.models.steps.research.payloads import (
+    RenderArchitectOutput,
+    RenderArchitectSectionPlan,
 )
 from serpsage.steps.base import StepBase
 from serpsage.steps.research.prompt import (
@@ -222,7 +224,9 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
                     "phase": "writer",
                     "model": model,
                     "sections_total": len(architect_output.sections),
-                    "failed_sections": [item.to_payload() for item in failed_sections],
+                    "failed_sections": [
+                        item.model_dump(mode="json") for item in failed_sections
+                    ],
                 },
             )
             raise
