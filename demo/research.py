@@ -1,7 +1,9 @@
+"""Demo: ResearchRequest - comprehensive field showcase."""
+
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 from dotenv import load_dotenv
@@ -13,13 +15,23 @@ load_dotenv()
 
 async def main(
     themes: str,
-    search_mode: str = "research",
-    json_schema: dict[str, Any] | None = None,
+    search_mode: Literal["research-fast", "research", "research-pro"] = "research",
 ) -> dict[str, Any]:
+    """
+    Demonstrate ResearchRequest.
+
+    Args:
+        themes: Research topic or question (required).
+        search_mode: Research depth - research-fast/research/research-pro.
+
+    Returns:
+        Dict containing research result as JSON.
+    """
+    # ResearchRequest fields: themes (required), search_mode, json_schema
     req = ResearchRequest(
-        search_mode=search_mode,  # type: ignore[arg-type]
         themes=themes,
-        json_schema=json_schema,
+        search_mode=search_mode,
+        json_schema=None,  # Optional: JSON Schema for structured output
     )
     async with Engine.from_settings("demo/search_config_example.yaml") as engine:
         resp = await engine.research(req)
@@ -33,10 +45,10 @@ async def main(
 
 
 if __name__ == "__main__":
+    # Classic research question: Compare major programming languages
     out = anyio.run(
         main,
-        "qwen3.5和kimi-k2.5哪家强？给我综合比较报告。",
+        "Compare Python, JavaScript, and Go for web backend development",
         "research-fast",
-        None,
     )
     print(out["research_result"])

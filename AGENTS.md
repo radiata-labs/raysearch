@@ -13,15 +13,26 @@ Inside `src`, show directory structure only (folders only, no files).
 ```text
 .
 |- .codex/
-|  |- answer_debug_run.log
-|  |- fetch_demo_run.txt
 |  |- SCOPES.md
+|- build/
 |- demo/
 |  |- answer.py
 |  |- fetch.py
 |  |- research.py
 |  |- search.py
 |  |- search_config_example.yaml
+|- dist/
+|  |- raysearch-0.1.0-py3-none-any.whl
+|  |- raysearch-0.1.0.tar.gz
+|- docs/
+|  |- ja-JP/
+|  |  |- README.md
+|  |- zh-CN/
+|  |  |- README.md
+|  |- zh-TW/
+|  |  |- README.md
+|- images/
+|  |- GitHub_README.png
 |- scripts/
 |  |- finalize_task.py
 |- src/
@@ -58,13 +69,12 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |  |- tokenize/
 |  |  |  |- stopwords/
 |  |  |  |  |- files/
+|  |- raysearch.egg-info/
 |- AGENTS.md
 |- CLAUDE.md
 |- LICENSE
 |- pyproject.toml
-|- pytest.ini
 |- README.md
-|- uv.lock
 ```
 <!-- END AUTO-GENERATED FILE TREE -->
 

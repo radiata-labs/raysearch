@@ -1,3 +1,5 @@
+"""Demo: AnswerRequest - comprehensive field showcase."""
+
 from __future__ import annotations
 
 import json
@@ -14,9 +16,21 @@ load_dotenv()
 
 async def main(
     query: str,
-    content: bool = True,
+    content: bool = False,
     json_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """
+    Demonstrate AnswerRequest.
+
+    Args:
+        query: The question to answer (required).
+        content: Whether to fetch full content for deeper analysis.
+        json_schema: Optional JSON Schema for structured output.
+
+    Returns:
+        Dict containing answer text and full JSON result.
+    """
+    # AnswerRequest fields: query (required), content, json_schema
     req = AnswerRequest(
         query=query,
         content=content,
@@ -39,6 +53,12 @@ async def main(
 
 
 if __name__ == "__main__":
-    out = anyio.run(main, "r906有哪些歌", False, None)
+    # Classic English question: What is the capital of France?
+    out = anyio.run(
+        main,
+        "What is the capital of France?",
+        False,
+        None,
+    )
     print(out["answer_result"])
-    print(f"Answer: {out['answer']}")
+    print(f"\nAnswer: {out['answer']}")

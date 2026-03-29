@@ -3,7 +3,6 @@ components:
     default: httpx
     httpx:
       enabled: true
-      proxy: http://127.0.0.1:7890
       trust_env: true
       max_connections: 100
       max_keepalive_connections: 50
@@ -214,9 +213,6 @@ components:
     jsonl:
       enabled: true
       jsonl_path: ./.cache/.raysearch_metering.jsonl
-    sqlite:
-      enabled: false
-      sqlite_db_path: ./.cache/.raysearch_metering.sqlite3
 
   rate_limit:
     default: basic
