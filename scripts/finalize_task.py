@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+DIRS_SHOW_ONLY_NAME = {"build", "dist"}
 TASK_LOG_HEADER = "## Task Log"
 START_MARKER = "<!-- BEGIN AUTO-GENERATED FILE TREE -->"
 END_MARKER = "<!-- END AUTO-GENERATED FILE TREE -->"
@@ -200,6 +201,10 @@ def _sorted_tree_children(path: Path, repo_root: Path) -> list[Path]:
 def _build_tree_text(repo_root: Path) -> str:
     lines: list[str] = ["."]
 
+    def _is_shallow_dir(path: Path) -> bool:
+        rel_parts = path.relative_to(repo_root).parts
+        return len(rel_parts) == 1 and rel_parts[0] in DIRS_SHOW_ONLY_NAME
+
     def _is_in_src_subtree(path: Path) -> bool:
         rel_parts = path.relative_to(repo_root).parts
         return len(rel_parts) > 0 and rel_parts[0] == "src"
@@ -207,20 +212,24 @@ def _build_tree_text(repo_root: Path) -> str:
     def walk(current: Path, prefix: str) -> None:
         children = _sorted_tree_children(current, repo_root)
         dirs = [child for child in children if child.is_dir()]
-        if _is_in_src_subtree(current):
+        if _is_shallow_dir(current) or _is_in_src_subtree(current):
             visible_files: list[Path] = []
         else:
             visible_files = [child for child in children if child.is_file()]
         for child in dirs:
             lines.append(f"{prefix}|- {child.name}/")
-            walk(child, prefix + "|  ")
+            # Only recurse if child is not a shallow directory
+            if not _is_shallow_dir(child):
+                walk(child, prefix + "|  ")
         lines.extend(f"{prefix}|- {child.name}" for child in visible_files)
 
     walk(repo_root, "")
     return "\n".join(lines)
 
 
-def _replace_tree_block(content: str, tree_text: str, doc_name: str = "AGENTS.md") -> str:
+def _replace_tree_block(
+    content: str, tree_text: str, doc_name: str = "AGENTS.md"
+) -> str:
     start = content.find(START_MARKER)
     end = content.find(END_MARKER)
     if start < 0 or end < 0 or end < start:

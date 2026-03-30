@@ -90,7 +90,6 @@ class RunnerBase(WorkUnit, Generic[TContext]):
         self._seq_lock = anyio.Lock()
         self._state_lock = anyio.Lock()
         self._orphan_lock = anyio.Lock()
-        self._result_lock = self._orphan_lock
         self.bind_deps(*steps)
 
     @override

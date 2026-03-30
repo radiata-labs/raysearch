@@ -36,7 +36,7 @@ async def main(
         content=content,
         json_schema=json_schema,
     )
-    async with Engine.from_settings("demo/search_config_example.yaml") as engine:
+    async with Engine("demo/search_config_example.yaml") as engine:
         await anyio.sleep(1)
         t1 = time.time()
         resp = await engine.answer(req)

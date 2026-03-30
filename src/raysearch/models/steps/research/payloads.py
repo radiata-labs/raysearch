@@ -95,37 +95,31 @@ class PlanOutputPayload(MutableModel):
 
 
 class ConflictTopicPayload(MutableModel):
-    """Conflict topic detected during overview stage."""
-
     topic: NonEmptyText
     source_ids: list[int] = Field(default_factory=list, max_length=8)
 
 
 class ConflictResolutionPayload(MutableModel):
-    """Conflict resolution result from content stage."""
-
     topic: NonEmptyText
     status: ConflictResolutionStatus
 
 
 class OverviewReviewPayload(MutableModel):
-    """Overview stage output - rapid screening + coverage analysis."""
-
     findings: list[NonEmptyText] = Field(max_length=20)
     conflict_topics: list[ConflictTopicPayload] = Field(max_length=16)
     covered_subthemes: list[NonEmptyText] = Field(max_length=16)
     need_content_source_ids: list[int] = Field(max_length=20)
     missing_entities: list[NonEmptyText] = Field(max_length=24)
-    confidence: float = Field(ge=-1.0, le=1.0)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    coverage_score: float = Field(ge=0.0, le=1.0)
 
 
 class ContentReviewPayload(MutableModel):
-    """Content stage output - deep arbitration + conflict resolution."""
-
     resolved_findings: list[NonEmptyText] = Field(max_length=20)
     conflict_resolutions: list[ConflictResolutionPayload] = Field(max_length=16)
     remaining_gaps: list[NonEmptyText] = Field(max_length=12)
-    confidence_adjustment: float = Field(ge=-1.0, le=1.0)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    uncertainty_score: float = Field(ge=0.0, le=1.0)
 
 
 class TrackInsightPointPayload(MutableModel):
@@ -174,6 +168,7 @@ class ResearchDecideSignalPayload(MutableModel):
     continue_research: bool
     next_queries: list[QuerySourceSpec] = Field(max_length=8)
     reason: LooseText = ""
+    information_gain_score: float = Field(ge=0.0, le=1.0)
 
 
 class ResearchLinkPickerPayload(MutableModel):
@@ -197,6 +192,7 @@ __all__ = [
     "ResearchLinkPickerPayload",
     "ResearchThemePlan",
     "ResearchThemePlanCard",
+    "ResearchTrackState",
     "RoundAction",
     "SearchJobIntent",
     "SearchJobMode",

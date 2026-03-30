@@ -119,7 +119,9 @@ class SearchRerankStep(StepBase[SearchStepContext]):
         candidates = list(ctx.fetch.candidates or [])
         if candidates or not ctx.output.results:
             return candidates
-        from raysearch.models.steps.search import SearchFetchedCandidate  # noqa: PLC0415
+        from raysearch.models.steps.search import (
+            SearchFetchedCandidate,  # noqa: PLC0415
+        )
 
         return [
             SearchFetchedCandidate(

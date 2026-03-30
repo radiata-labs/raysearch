@@ -33,7 +33,7 @@ async def main(
         search_mode=search_mode,
         json_schema=None,  # Optional: JSON Schema for structured output
     )
-    async with Engine.from_settings("demo/search_config_example.yaml") as engine:
+    async with Engine("demo/search_config_example.yaml") as engine:
         resp = await engine.research(req)
     return {
         "research_result": json.dumps(
