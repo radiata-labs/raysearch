@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import threading
 import time
 import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 from typing_extensions import override
 
 import anyio
@@ -108,20 +109,51 @@ class SystemClock(ClockBase):
 
 
 class Engine(WorkUnit):
-    """Async-only engine with integrated bootstrap/search/fetch/answer/research paths."""
+    """Async-only engine with safe runtime swapping for config and component reloads."""
+
+    _search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER)
+    _fetch_runner: RunnerBase[FetchStepContext] = Depends(FETCH_RUNNER)
+    _answer_runner: RunnerBase[AnswerStepContext] = Depends(ANSWER_RUNNER)
+    _research_runner: RunnerBase[ResearchStepContext] = Depends(RESEARCH_RUNNER)
+
+    def __new__(
+        cls,
+        setting_file: str | None = None,
+        settings: AppSettings | dict[str, Any] | None = None,
+    ) -> Self:
+        if cls is Engine and (setting_file is not None or settings is not None):
+            return cast(
+                "Self",
+                cls.from_settings(setting_file=setting_file, settings=settings),
+            )
+        return super().__new__(cls)
 
     def __init__(
         self,
-        *,
-        search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER),
-        fetch_runner: RunnerBase[FetchStepContext] = Depends(FETCH_RUNNER),
-        answer_runner: RunnerBase[AnswerStepContext] = Depends(ANSWER_RUNNER),
-        research_runner: RunnerBase[ResearchStepContext] = Depends(RESEARCH_RUNNER),
+        setting_file: str | None = None,
+        settings: AppSettings | dict[str, Any] | None = None,
     ) -> None:
-        self._search_runner = search_runner
-        self._fetch_runner = fetch_runner
-        self._answer_runner = answer_runner
-        self._research_runner = research_runner
+        if bool(getattr(self, "_engine_is_host", False)):
+            return
+        if not bool(getattr(self, "_wu_bootstrapped", False)):
+            raise TypeError(
+                "Engine must be constructed with a `setting_file` or `settings`, "
+                "or via `Engine.from_settings(...)`"
+            )
+        self._engine_is_host = False
+        self._engine_runtime_lock = anyio.Lock()
+        self._engine_reload_lock = anyio.Lock()
+        self._engine_current_runtime: Engine | None = None
+        self._engine_retired_runtimes: dict[int, Engine] = {}
+        self._engine_runtime_refs: dict[int, int] = {}
+        self._engine_accept_requests = True
+        self._engine_generation = 0
+        self._engine_setting_file = setting_file
+        self._engine_settings_source = (
+            None if settings is None else self._clone_settings_source(settings)
+        )
+        self._engine_overrides: Overrides | None = None
+        self._engine_component_packages: tuple[str, ...] = ("raysearch.components",)
         self.bind_deps(
             self._search_runner,
             self._fetch_runner,
@@ -136,12 +168,53 @@ class Engine(WorkUnit):
         *,
         settings: AppSettings | dict[str, Any] | None = None,
         overrides: Overrides | None = None,
+        component_packages: tuple[str, ...] = ("raysearch.components",),
     ) -> Engine:
-        if settings is None:
-            from raysearch.settings.load import load_settings  # noqa: PLC0415
-
-            settings = load_settings(path=setting_file)
+        stored_settings = (
+            None if settings is None else cls._clone_settings_source(settings)
+        )
+        normalized_packages = cls._normalize_component_packages(component_packages)
         overrides = overrides or Overrides()
+        cls._validate_overrides(overrides)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return anyio.run(
+                cls._build_host_engine,
+                setting_file,
+                stored_settings,
+                overrides,
+                normalized_packages,
+            )
+
+        payload: Any = None
+        failure: BaseException | None = None
+
+        def _worker() -> None:
+            nonlocal payload, failure
+            try:
+                payload = anyio.run(
+                    cls._build_host_engine,
+                    setting_file,
+                    stored_settings,
+                    overrides,
+                    normalized_packages,
+                )
+            except BaseException as exc:  # noqa: BLE001
+                failure = exc
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        thread.join()
+        if failure is not None:
+            raise failure
+        if payload is None:
+            raise RuntimeError("failed to assemble engine")
+        return cast("Engine", payload)
+
+    @classmethod
+    def _validate_overrides(cls, overrides: Overrides) -> None:
         for name, override_value in {
             "cache": overrides.cache,
             "rate_limiter": overrides.rate_limiter,
@@ -165,37 +238,108 @@ class Engine(WorkUnit):
                     f"override `{name}` must already be bootstrapped as a WorkUnit"
                 )
 
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return anyio.run(cls._build_engine, settings, overrides)
+    @classmethod
+    def _clone_settings_source(
+        cls,
+        settings: AppSettings | dict[str, Any],
+    ) -> AppSettings | dict[str, Any]:
+        if isinstance(settings, AppSettings):
+            return settings.model_copy(deep=True)
+        return copy.deepcopy(dict(settings))
 
-        payload: Any = None
-        failure: BaseException | None = None
+    @classmethod
+    def _normalize_component_packages(
+        cls,
+        component_packages: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        packages = tuple(
+            dict.fromkeys(item.strip() for item in component_packages if item.strip())
+        )
+        if not packages:
+            return ("raysearch.components",)
+        if "raysearch.components" in packages:
+            return packages
+        return ("raysearch.components", *packages)
 
-        def _worker() -> None:
-            nonlocal payload, failure
-            try:
-                payload = anyio.run(cls._build_engine, settings, overrides)
-            except BaseException as exc:  # noqa: BLE001
-                failure = exc
+    @classmethod
+    def _resolve_settings_input(
+        cls,
+        *,
+        setting_file: str | None,
+        settings_source: AppSettings | dict[str, Any] | None,
+    ) -> AppSettings | dict[str, Any]:
+        if settings_source is not None:
+            return cls._clone_settings_source(settings_source)
+        from raysearch.settings.load import load_settings  # noqa: PLC0415
 
-        thread = threading.Thread(target=_worker, daemon=True)
-        thread.start()
-        thread.join()
-        if failure is not None:
-            raise failure
-        if payload is None:
-            raise RuntimeError("failed to assemble engine")
-        return cast("Engine", payload)
+        return load_settings(path=setting_file)
+
+    @classmethod
+    async def _build_host_engine(
+        cls,
+        setting_file: str | None,
+        settings_source: AppSettings | dict[str, Any] | None,
+        overrides: Overrides,
+        component_packages: tuple[str, ...],
+    ) -> Engine:
+        runtime = await cls._build_engine(
+            cls._resolve_settings_input(
+                setting_file=setting_file,
+                settings_source=settings_source,
+            ),
+            overrides,
+            component_packages=component_packages,
+            rescan_components=True,
+        )
+        host = cls.__new__(cls)
+        host._wu_bootstrap(
+            settings=runtime.settings,
+            clock=runtime.clock,
+            components=runtime.components,
+        )
+        host._engine_is_host = True
+        host._engine_runtime_lock = anyio.Lock()
+        host._engine_reload_lock = anyio.Lock()
+        host._engine_current_runtime = runtime
+        host._engine_retired_runtimes = {}
+        host._engine_runtime_refs = {id(runtime): 0}
+        host._engine_accept_requests = True
+        host._engine_generation = 1
+        host._engine_setting_file = setting_file
+        host._engine_settings_source = (
+            None
+            if settings_source is None
+            else cls._clone_settings_source(settings_source)
+        )
+        host._engine_overrides = overrides
+        host._engine_component_packages = component_packages
+        host._adopt_runtime(runtime)
+        return host
+
+    def _adopt_runtime(self, runtime: Engine) -> None:
+        self.settings = runtime.settings
+        self.clock = runtime.clock
+        self.components = runtime.components
+        self._tracker = getattr(runtime, "_tracker", None)
+        self._meter = getattr(runtime, "_meter", None)
+        self._search_runner = runtime._search_runner
+        self._fetch_runner = runtime._fetch_runner
+        self._answer_runner = runtime._answer_runner
+        self._research_runner = runtime._research_runner
 
     @classmethod
     async def _build_engine(
         cls,
         settings: AppSettings | dict[str, Any],
         overrides: Overrides,
+        *,
+        component_packages: tuple[str, ...] = ("raysearch.components",),
+        rescan_components: bool = False,
     ) -> Engine:
-        components = load_components()
+        components = load_components(
+            package_names=component_packages,
+            rescan=rescan_components,
+        )
         normalized_settings = materialize_settings(
             settings=settings,
             components=components,
@@ -260,14 +404,11 @@ class Engine(WorkUnit):
                 out.append(instance)
             return out
 
-        # Telemetry setup: resolve sinks first, then emitters via dependency injection
-        # Sink -> Emitter dependency is handled by WorkUnit lifecycle
         if registry.enabled_specs("tracking"):
             cache[TrackingSinkBase] = await solve(registry.default_spec("tracking").cls)
         if registry.enabled_specs("metering"):
             cache[MeteringSinkBase] = await solve(registry.default_spec("metering").cls)
 
-        # Resolve emitters via DI (they depend on sinks)
         if overrides.tracker is not None:
             cache[TrackingEmitterBase] = overrides.tracker
             cache[type(overrides.tracker)] = overrides.tracker
@@ -301,7 +442,6 @@ class Engine(WorkUnit):
                 continue
             cache[contract] = await solve(registry.default_spec(family).cls)
 
-        # Provider setup
         if overrides.provider is not None:
             cache[SearchProviderBase] = overrides.provider
             cache[type(overrides.provider)] = overrides.provider
@@ -310,7 +450,6 @@ class Engine(WorkUnit):
                 registry.default_spec("provider").cls
             )
 
-        # LLM setup
         if overrides.llm is not None:
             cache[LLMClientBase] = overrides.llm
             cache[type(overrides.llm)] = overrides.llm
@@ -393,7 +532,168 @@ class Engine(WorkUnit):
             raise TypeError("engine was not constructed")
         return engine
 
+    @override
+    async def on_init(self) -> None:
+        if not self._engine_is_host:
+            return
+        runtime = self._engine_current_runtime
+        if runtime is None:
+            raise RuntimeError("engine host has no active runtime")
+        await runtime.ainit()
+        self._adopt_runtime(runtime)
+        async with self._engine_runtime_lock:
+            self._engine_accept_requests = True
+
+    @override
+    async def on_close(self) -> None:
+        if not self._engine_is_host:
+            return
+        async with self._engine_runtime_lock:
+            self._engine_accept_requests = False
+            runtime = self._engine_current_runtime
+            self._engine_current_runtime = None
+            if runtime is not None:
+                runtime_id = id(runtime)
+                self._engine_retired_runtimes[runtime_id] = runtime
+                self._engine_runtime_refs.setdefault(runtime_id, 0)
+        await self._drain_retired_runtimes(wait_for_all=True)
+
+    async def _lease_runtime(self) -> Engine:
+        if not self._engine_is_host:
+            return self
+        if not bool(getattr(self, "_wu_initialized", False)):
+            await self.ainit()
+        async with self._engine_runtime_lock:
+            if not self._engine_accept_requests:
+                raise RuntimeError("engine is closing and cannot accept new requests")
+            runtime = self._engine_current_runtime
+            if runtime is None:
+                raise RuntimeError("engine host has no active runtime")
+            runtime_id = id(runtime)
+            self._engine_runtime_refs[runtime_id] = (
+                self._engine_runtime_refs.get(runtime_id, 0) + 1
+            )
+            return runtime
+
+    async def _release_runtime(self, runtime: Engine) -> None:
+        if not self._engine_is_host:
+            return
+        runtime_id = id(runtime)
+        should_drain = False
+        async with self._engine_runtime_lock:
+            refs = self._engine_runtime_refs.get(runtime_id, 0)
+            if refs <= 1:
+                self._engine_runtime_refs[runtime_id] = 0
+                should_drain = runtime_id in self._engine_retired_runtimes
+            else:
+                self._engine_runtime_refs[runtime_id] = refs - 1
+        if should_drain:
+            await self._drain_retired_runtimes(wait_for_all=False)
+
+    async def _drain_retired_runtimes(self, *, wait_for_all: bool) -> None:
+        close_errors: list[Exception] = []
+        while True:
+            ready_to_close: list[Engine] = []
+            async with self._engine_runtime_lock:
+                for runtime_id, runtime in list(self._engine_retired_runtimes.items()):
+                    if self._engine_runtime_refs.get(runtime_id, 0) > 0:
+                        continue
+                    ready_to_close.append(runtime)
+                    self._engine_retired_runtimes.pop(runtime_id, None)
+                    self._engine_runtime_refs.pop(runtime_id, None)
+                pending = wait_for_all and bool(self._engine_retired_runtimes)
+            for runtime in ready_to_close:
+                try:
+                    await runtime.aclose()
+                except Exception as exc:  # noqa: BLE001
+                    close_errors.append(
+                        exc if isinstance(exc, Exception) else Exception(str(exc))
+                    )
+            if not pending:
+                break
+            await anyio.sleep(0.05)
+        if close_errors:
+            raise ExceptionGroup("engine runtime close failed", close_errors)
+
+    async def reload(
+        self,
+        setting_file: str | None = None,
+        *,
+        settings: AppSettings | dict[str, Any] | None = None,
+        overrides: Overrides | None = None,
+        component_packages: tuple[str, ...] | None = None,
+        rescan_components: bool = True,
+    ) -> None:
+        if not self._engine_is_host:
+            raise RuntimeError("reload is only available on the top-level Engine host")
+        if bool(getattr(self, "_wu_closed", False)):
+            raise RuntimeError("engine is already closed")
+        async with self._engine_reload_lock:
+            async with self._engine_runtime_lock:
+                next_setting_file = (
+                    self._engine_setting_file if setting_file is None else setting_file
+                )
+                next_settings_source = (
+                    self._engine_settings_source
+                    if settings is None
+                    else self._clone_settings_source(settings)
+                )
+                next_overrides = (
+                    self._engine_overrides if overrides is None else overrides
+                )
+                next_component_packages = (
+                    self._engine_component_packages
+                    if component_packages is None
+                    else self._normalize_component_packages(component_packages)
+                )
+                host_started = bool(getattr(self, "_wu_initialized", False))
+            if next_overrides is None:
+                next_overrides = Overrides()
+            self._validate_overrides(next_overrides)
+            new_runtime = await self._build_engine(
+                self._resolve_settings_input(
+                    setting_file=next_setting_file,
+                    settings_source=next_settings_source,
+                ),
+                next_overrides,
+                component_packages=next_component_packages,
+                rescan_components=rescan_components,
+            )
+            try:
+                if host_started:
+                    await new_runtime.ainit()
+            except Exception:
+                with suppress(Exception):
+                    await new_runtime.aclose()
+                raise
+            async with self._engine_runtime_lock:
+                old_runtime = self._engine_current_runtime
+                new_runtime_id = id(new_runtime)
+                self._engine_current_runtime = new_runtime
+                self._engine_runtime_refs.setdefault(new_runtime_id, 0)
+                self._engine_generation += 1
+                self._engine_setting_file = next_setting_file
+                self._engine_settings_source = (
+                    None
+                    if next_settings_source is None
+                    else self._clone_settings_source(next_settings_source)
+                )
+                self._engine_overrides = next_overrides
+                self._engine_component_packages = next_component_packages
+                self._adopt_runtime(new_runtime)
+                if old_runtime is not None:
+                    old_runtime_id = id(old_runtime)
+                    self._engine_retired_runtimes[old_runtime_id] = old_runtime
+                    self._engine_runtime_refs.setdefault(old_runtime_id, 0)
+            await self._drain_retired_runtimes(wait_for_all=False)
+
     async def search(self, req: SearchRequest) -> SearchResponse:
+        if self._engine_is_host:
+            runtime = await self._lease_runtime()
+            try:
+                return await runtime.search(req)
+            finally:
+                await self._release_runtime(runtime)
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)
@@ -451,6 +751,12 @@ class Engine(WorkUnit):
             self._pop_request_context(token)
 
     async def fetch(self, req: FetchRequest) -> FetchResponse:
+        if self._engine_is_host:
+            runtime = await self._lease_runtime()
+            try:
+                return await runtime.fetch(req)
+            finally:
+                await self._release_runtime(runtime)
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)
@@ -568,6 +874,12 @@ class Engine(WorkUnit):
             self._pop_request_context(token)
 
     async def answer(self, req: AnswerRequest) -> AnswerResponse:
+        if self._engine_is_host:
+            runtime = await self._lease_runtime()
+            try:
+                return await runtime.answer(req)
+            finally:
+                await self._release_runtime(runtime)
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)
@@ -639,6 +951,12 @@ class Engine(WorkUnit):
             self._pop_request_context(token)
 
     async def research(self, req: ResearchRequest) -> ResearchResponse:
+        if self._engine_is_host:
+            runtime = await self._lease_runtime()
+            try:
+                return await runtime.research(req)
+            finally:
+                await self._release_runtime(runtime)
         request_id = uuid.uuid4().hex
         started_ms = int(self.clock.now_ms())
         token = self._push_request_context(request_id)

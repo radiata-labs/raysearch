@@ -68,7 +68,7 @@ async def main(
             max_image_links=3,  # Optional: maximum image links to extract
         ),
     )
-    async with Engine.from_settings("demo/search_config_example.yaml") as engine:
+    async with Engine("demo/search_config_example.yaml") as engine:
         await anyio.sleep(1)
         t1 = time.time()
         resp = await engine.fetch(req)
@@ -83,6 +83,6 @@ if __name__ == "__main__":
         main,
         ["https://en.wikipedia.org/wiki/Python_(programming_language)"],
         "fallback",
-        30.0,
+        60.0,
     )
     print(out["fetch_result"])

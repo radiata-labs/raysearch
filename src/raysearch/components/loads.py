@@ -170,43 +170,64 @@ class ComponentRegistry:
         return defaults
 
 
-def load_components() -> tuple[ComponentClass, ...]:
-    items: list[ComponentClass] = []
-    package = importlib.import_module("raysearch.components")
-    module_infos = sorted(
-        pkgutil.walk_packages(
-            package.__path__,
-            prefix=f"{package.__name__}.",
-        ),
-        key=lambda item: item.name,
+def load_components(
+    *,
+    package_names: tuple[str, ...] = ("raysearch.components",),
+    rescan: bool = False,
+) -> tuple[ComponentClass, ...]:
+    normalized_packages = tuple(
+        dict.fromkeys(
+            package_name.strip()
+            for package_name in package_names
+            if package_name.strip()
+        )
     )
-    for module_info in module_infos:
-        if module_info.ispkg:
-            continue
-        try:
-            module = importlib.import_module(module_info.name)
-        except Exception as exc:
-            raise RuntimeError(
-                f"failed to import component module `{module_info.name}`"
-            ) from exc
-        for value in module.__dict__.values():
-            if not (
-                isinstance(value, type)
-                and value.__module__ == module.__name__
-                and issubclass(value, ComponentBase)
-                and ABC not in value.__bases__
-                and not inspect.isabstract(value)
-            ):
+    if not normalized_packages:
+        raise ValueError("package_names must include at least one package")
+    if rescan:
+        importlib.invalidate_caches()
+    items: list[ComponentClass] = []
+    seen_modules: set[str] = set()
+    for package_name in normalized_packages:
+        package = importlib.import_module(package_name)
+        package_path = getattr(package, "__path__", None)
+        if package_path is None:
+            raise TypeError(f"component package `{package_name}` must be a package")
+        module_infos = sorted(
+            pkgutil.walk_packages(
+                package_path,
+                prefix=f"{package.__name__}.",
+            ),
+            key=lambda item: item.name,
+        )
+        for module_info in module_infos:
+            if module_info.ispkg or module_info.name in seen_modules:
                 continue
-            config_cls = getattr(value, "Config", None)
-            if _is_setting_class(config_cls):
-                family = config_cls.__setting_family__
-                if family not in _FAMILY_SETTING_BASES:
-                    raise TypeError(
-                        f"{value.__name__} must expose a concrete Config class with "
-                        "`__setting_family__` in `{_FAMILY_SETTING_BASES}`"
-                    )
-                items.append(value)
+            try:
+                module = importlib.import_module(module_info.name)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"failed to import component module `{module_info.name}`"
+                ) from exc
+            seen_modules.add(module_info.name)
+            for value in module.__dict__.values():
+                if not (
+                    isinstance(value, type)
+                    and value.__module__ == module.__name__
+                    and issubclass(value, ComponentBase)
+                    and ABC not in value.__bases__
+                    and not inspect.isabstract(value)
+                ):
+                    continue
+                config_cls = getattr(value, "Config", None)
+                if _is_setting_class(config_cls):
+                    family = config_cls.__setting_family__
+                    if family not in _FAMILY_SETTING_BASES:
+                        raise TypeError(
+                            f"{value.__name__} must expose a concrete Config class with "
+                            "`__setting_family__` in `{_FAMILY_SETTING_BASES}`"
+                        )
+                    items.append(value)
     return tuple(items)
 
 
