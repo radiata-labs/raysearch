@@ -2814,6 +2814,9 @@ dev = [
     { name = "tomlkit" },
     { name = "trio" },
 ]
+typecheck = [
+    { name = "raysearch", extra = ["full"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2871,6 +2874,7 @@ dev = [
     { name = "tomlkit", specifier = ">=0.13" },
     { name = "trio", specifier = ">=0.26" },
 ]
+typecheck = [{ name = "raysearch", extras = ["full"] }]
 
 [[package]]
 name = "referencing"
