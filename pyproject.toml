@@ -102,6 +102,9 @@ dev = [
     "pytest-xdist>=3",
     "pytest-cov>=5",
 ]
+typecheck = [
+    "raysearch[full]",
+]
 
 [tool.ruff]
 line-length = 88

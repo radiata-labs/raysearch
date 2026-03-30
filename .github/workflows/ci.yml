@@ -35,7 +35,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --locked --dev
+        run: uv sync --locked --dev --group typecheck
 
       - name: Run Ruff lint
         run: uv run ruff check src/
