@@ -408,7 +408,8 @@ def _overview_field_contract() -> str:
         "- covered_subthemes: include only subthemes with meaningful evidence, not merely mentioned topics.\n"
         "- need_content_source_ids: choose sources that are high-impact, contradictory, authority-rich, or too important to judge from overview alone.\n"
         "- missing_entities: required entities still lacking adequate evidence.\n"
-        "- confidence scale: 0.8 to 1.0=strong and well-supported, 0.4 to 0.79=useful but incomplete, 0.0 to 0.39=weak/mixed, below 0=conflicted, stale, or likely misleading.\n"
+        "- confidence_score and coverage_score must both be 0..1 floats.\n"
+        "- Shared scoring standard for all research floats: 0.0-0.2 very weak, 0.2-0.4 limited, 0.4-0.6 partial but usable, 0.6-0.8 strong, 0.8-1.0 very strong / near-complete.\n"
     )
 
 
@@ -418,7 +419,19 @@ def _content_field_contract() -> str:
         "- resolved_findings: each item should compress one full-content conclusion into conclusion -> condition/boundary -> impact.\n"
         "- conflict_resolutions.status: resolved=clear winner supported by content, unresolved=real tie remains, insufficient=not enough evidence, closed=topic no longer matters after review.\n"
         "- remaining_gaps: include only gaps that still materially weaken the answer.\n"
-        "- confidence_adjustment scale: +0.4 to +1.0 for major strengthening evidence, +0.1 to +0.39 for moderate strengthening, around 0 for little change, -0.1 to -0.39 for meaningful weakening, below -0.4 for severe contradiction or staleness.\n"
+        "- confidence_score and uncertainty_score must both be 0..1 floats.\n"
+        "- Shared scoring standard for all research floats: 0.0-0.2 very weak, 0.2-0.4 limited, 0.4-0.6 partial but usable, 0.6-0.8 strong, 0.8-1.0 very strong / near-complete.\n"
+    )
+
+
+def _decide_field_contract() -> str:
+    return (
+        "Decision fields and scoring rubrics:\n"
+        "- continue_research: true only when another round is likely to produce meaningful answer-quality improvement.\n"
+        "- next_queries: include only focused, non-overlapping queries that directly reduce current uncertainty.\n"
+        "- information_gain_score must be a 0..1 float using the shared research scoring standard.\n"
+        "- 0.0-0.2 means another round is almost useless, 0.2-0.4 limited gain, 0.4-0.6 meaningful but moderate gain, 0.6-0.8 strong gain, 0.8-1.0 critical missing evidence remains.\n"
+        "- reason: briefly explain the stop/continue judgment when useful; omit fluff.\n"
     )
 
 
@@ -809,7 +822,7 @@ def _build_overview_messages(
         "Failure Policy:\n"
         "- If information is weak or stale for a recency query, lower confidence and escalate the affected sources for content review.\n"
         "Quality Checklist:\n"
-        "- Coverage progression, conflict detection, economical content escalation, calibrated confidence.\n"
+        "- Coverage progression, conflict detection, economical content escalation, calibrated confidence, LLM-generated scoring consistency.\n"
         "- Every returned field must add practical value; avoid filler statements."
     ) + _overview_field_contract()
     return [
@@ -859,7 +872,10 @@ def _build_overview_messages(
                 "- Prefer IDs from authoritative URLs (official docs/specs, papers/preprints, repositories/model hubs, government/education domains, vendor technical docs).\n"
                 "- Include IDs when overview evidence is vague but potentially important.\n"
                 "- For media/blog/secondary pages, include IDs only when they carry unique high-impact facts absent elsewhere.\n"
-                "- Include IDs when evidence freshness is uncertain for latest/current requests.\n\n"
+                "- Include IDs when evidence freshness is uncertain for latest/current requests.\n"
+                "Scoring policy:\n"
+                "- You must assign confidence_score and coverage_score yourself from the evidence packet.\n"
+                "- Do not leave score fields at default values unless the packet is genuinely empty.\n\n"
                 f"{_overview_field_contract()}"
             ),
         },
@@ -906,9 +922,9 @@ def _build_content_messages(
         "Allowed Inputs:\n"
         "- Theme, theme plan, overview review with detected conflicts, selected content packet.\n"
         "Failure Policy:\n"
-        "- If information is insufficient or stale for recency intent, avoid overclaiming and set negative confidence_adjustment.\n"
+        "- If information is insufficient or stale for recency intent, lower confidence_score and raise uncertainty_score.\n"
         "Quality Checklist:\n"
-        "- Clear arbitration, traceable rationale, realistic confidence adjustment, gap transparency.\n"
+        "- Clear arbitration, traceable rationale, realistic score calibration, gap transparency.\n"
         "- Preserve detail that can later be rendered compactly (fact, conflict, constraint, gap)."
         f"{_content_field_contract()}"
     )
@@ -953,7 +969,7 @@ def _build_content_messages(
                 "- Prefer specific, decision-useful findings over generic statements.\n"
                 "- Every resolved_findings item should include conclusion, condition/boundary, and impact.\n"
                 "- Capture trade-offs and boundary conditions when relevant.\n"
-                "- Keep confidence_adjustment calibrated to evidence strength.\n\n"
+                "- Keep confidence_score and uncertainty_score calibrated to evidence strength.\n\n"
                 f"{_content_field_contract()}"
             ),
         },
@@ -966,6 +982,7 @@ def _build_decide_signal_messages(
     mode_depth_profile: str,
     confidence: float,
     coverage_ratio: float,
+    uncertainty_score: float,
     unresolved_conflicts: int,
     remaining_gaps: int,
     missing_entities: list[str],
@@ -977,15 +994,16 @@ def _build_decide_signal_messages(
             "role": "system",
             "content": (
                 "Role: stop/continue advisor.\n"
-                "Mission: judge whether another round can still generate high-yield information.\n"
+                "Mission: judge whether another round can still generate high-yield information and assign the raw information_gain_score yourself.\n"
                 "Rules:\n"
-                "1) Make the stop/continue call directly from the full context. Do not imitate a fixed numeric threshold.\n"
-                "2) Treat confidence, coverage, and low-gain signals as supporting evidence, not deterministic gates.\n"
+                "1) You must produce information_gain_score from the evidence in context; do not copy or infer a hidden threshold from the caller.\n"
+                "2) Treat confidence, coverage, unresolved conflicts, and missing entities as evidence for your scoring.\n"
                 "3) Continue only when expected gain is still meaningful.\n"
                 "4) Prefer compact, non-overlapping next queries.\n"
                 "5) If stopping, next_queries should usually be empty.\n"
                 "6) Omit reason when there is nothing useful to say.\n"
-                "7) Output JSON only."
+                "7) Output JSON only.\n"
+                f"{_decide_field_contract()}"
             ),
         },
         {
@@ -996,12 +1014,19 @@ def _build_decide_signal_messages(
                 "CURRENT_ROUND:\n"
                 f"- confidence={confidence:.3f}\n"
                 f"- coverage_ratio={coverage_ratio:.3f}\n"
+                f"- uncertainty_score={uncertainty_score:.3f}\n"
                 f"- unresolved_conflicts={unresolved_conflicts}\n"
                 f"- remaining_gaps={remaining_gaps}\n"
                 f"- missing_entities={missing_entities}\n\n"
                 "BUDGET_REMAINING:\n"
                 f"- search={search_remaining}\n"
-                f"- fetch={fetch_remaining}\n"
+                f"- fetch={fetch_remaining}\n\n"
+                "Scoring instructions:\n"
+                "- Assign information_gain_score directly from this context.\n"
+                "- High information_gain_score requires concrete, retrievable missing evidence, not vague optimism.\n"
+                "- Low information_gain_score means another round is likely redundant or low impact.\n"
+                "- Keep the same scoring standard regardless of which model is serving this prompt.\n\n"
+                f"{_decide_field_contract()}"
             ),
         },
     ]
@@ -1774,6 +1799,7 @@ def build_decide_prompt_messages(
         mode_depth_profile=ctx.run.limits.mode_key,
         confidence=_round_confidence(round_state),
         coverage_ratio=round_state.coverage_ratio,
+        uncertainty_score=float(round_state.uncertainty_score),
         unresolved_conflicts=_round_unresolved_conflicts(round_state),
         remaining_gaps=_round_remaining_gap_count(round_state),
         missing_entities=_round_missing_entities(round_state),
@@ -2301,7 +2327,8 @@ def render_rounds_markdown(rounds: list[ResearchRound], *, limit: int) -> str:
 def render_overview_review_markdown(review: OverviewReviewPayload) -> str:
     lines: list[str] = [
         "### Overview Review",
-        f"- Confidence: {float(review.confidence):.3f}",
+        f"- Confidence score: {float(review.confidence_score):.3f}",
+        f"- Coverage score: {float(review.coverage_score):.3f}",
         "- Findings:",
     ]
     lines.extend(_render_markdown_bullets(review.findings, indent="  ") or _NONE_BULLET)

@@ -22,8 +22,6 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |- search.py
 |  |- search_config_example.yaml
 |- dist/
-|  |- raysearch-0.1.0-py3-none-any.whl
-|  |- raysearch-0.1.0.tar.gz
 |- docs/
 |  |- ja-JP/
 |  |  |- README.md

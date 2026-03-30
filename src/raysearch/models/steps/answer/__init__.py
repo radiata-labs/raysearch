@@ -3,7 +3,11 @@ from __future__ import annotations
 from pydantic import Field
 
 from raysearch.models.app.request import AnswerRequest, SearchRequest
-from raysearch.models.app.response import AnswerCitation, AnswerResponse, FetchResultItem
+from raysearch.models.app.response import (
+    AnswerCitation,
+    AnswerResponse,
+    FetchResultItem,
+)
 from raysearch.models.base import MutableModel
 from raysearch.models.steps.base import BaseStepContext
 from raysearch.models.steps.search import QuerySourceSpec

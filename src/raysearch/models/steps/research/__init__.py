@@ -26,79 +26,6 @@ from raysearch.models.steps.research.payloads import (
 from raysearch.models.steps.search import QuerySourceSpec, SearchFetchedCandidate
 
 
-class SourceDiversityMetrics(MutableModel):
-    """Metrics for tracking source diversity across domains."""
-
-    unique_domains: int = 0
-    domain_distribution: dict[str, int] = Field(default_factory=dict)
-    perspective_diversity_score: float = 0.0
-    geographic_diversity_score: float = 0.0
-    content_type_distribution: dict[str, int] = Field(default_factory=dict)
-    authority_tier_distribution: dict[str, int] = Field(default_factory=dict)
-
-
-class InformationGainEstimate(MutableModel):
-    """Estimation of information gain for adaptive stopping."""
-
-    estimated_gain: float = 0.0
-    marginal_gain: float = 0.0
-    diminishing_returns_factor: float = 0.0
-    coverage_gap_score: float = 0.0
-    novelty_potential: float = 0.0
-    confidence_improvement_potential: float = 0.0
-
-
-class CorroborationScore(MutableModel):
-    """Cross-source corroboration and verification score."""
-
-    claim: str = ""
-    supporting_source_ids: list[int] = Field(default_factory=list)
-    contradicting_source_ids: list[int] = Field(default_factory=list)
-    neutral_source_ids: list[int] = Field(default_factory=list)
-    corroboration_ratio: float = 0.0
-    consensus_strength: Literal["strong", "moderate", "weak", "conflicted"] = "weak"
-    key_evidence_points: list[str] = Field(default_factory=list)
-
-
-class UncertaintyQuantification(MutableModel):
-    """Quantification of uncertainty in research findings."""
-
-    epistemic_uncertainty: float = 0.0  # Uncertainty due to lack of knowledge
-    aleatoric_uncertainty: float = 0.0  # Uncertainty due to inherent randomness
-    confidence_interval_lower: float = 0.0
-    confidence_interval_upper: float = 1.0
-    uncertainty_sources: list[str] = Field(default_factory=list)
-    mitigating_evidence_count: int = 0
-
-
-class ReasoningStep(MutableModel):
-    """A single step in a multi-hop reasoning chain."""
-
-    step_id: str = ""
-    step_type: Literal["premise", "inference", "conclusion", "verification"] = "premise"
-    claim: str = ""
-    evidence_source_ids: list[int] = Field(default_factory=list)
-    confidence: float = 0.0
-    reasoning_logic: str = ""
-    dependencies: list[str] = Field(
-        default_factory=list
-    )  # IDs of steps this depends on
-
-
-class ReasoningChain(MutableModel):
-    """A multi-hop reasoning chain for complex deductions."""
-
-    chain_id: str = ""
-    question_id: str = ""
-    steps: list[ReasoningStep] = Field(default_factory=list)
-    final_conclusion: str = ""
-    overall_confidence: float = 0.0
-    chain_validity: Literal["valid", "partially_valid", "invalid", "inconclusive"] = (
-        "inconclusive"
-    )
-    missing_premises: list[str] = Field(default_factory=list)
-
-
 class ResearchLimits(MutableModel):
     """Research mode configuration and limits."""
 
@@ -288,27 +215,15 @@ class ResearchRound(MutableModel):
     pending_search_jobs: list[PlanSearchJobPayload] = Field(default_factory=list)
     overview_review: OverviewReviewPayload | None = None
     content_review: ContentReviewPayload | None = None
-    need_content_source_ids: list[int] = Field(default_factory=list)
     result_count: int = 0
-    context_source_ids: list[int] = Field(default_factory=list)
     overview_summary: str = ""
     content_summary: str = ""
     coverage_ratio: float = 0.0
+    uncertainty_score: float = 0.0
     waiting_for_budget: bool = False
     waiting_reason: str = ""
     stop_reason: str = ""
     stop: bool = False
-    source_diversity: SourceDiversityMetrics = Field(
-        default_factory=SourceDiversityMetrics
-    )
-    information_gain: InformationGainEstimate = Field(
-        default_factory=InformationGainEstimate
-    )
-    corroborations: list[CorroborationScore] = Field(default_factory=list)
-    reasoning_chains: list[ReasoningChain] = Field(default_factory=list)
-    uncertainty: UncertaintyQuantification = Field(
-        default_factory=UncertaintyQuantification
-    )
 
     @property
     def has_pending_io(self) -> bool:
@@ -324,13 +239,11 @@ class ResearchRound(MutableModel):
 
     @property
     def confidence(self) -> float:
-        confidence = self.overview_review.confidence if self.overview_review else 0.0
         if self.content_review is not None:
-            confidence = max(
-                -1.0,
-                min(1.0, confidence + self.content_review.confidence_adjustment),
-            )
-        return confidence
+            return float(self.content_review.confidence_score)
+        if self.overview_review is not None:
+            return float(self.overview_review.confidence_score)
+        return 0.0
 
     @property
     def missing_entities(self) -> list[str]:
@@ -443,11 +356,7 @@ ResearchRun.model_rebuild()
 
 
 __all__ = [
-    "CorroborationScore",
     "GlobalBudget",
-    "InformationGainEstimate",
-    "ReasoningChain",
-    "ReasoningStep",
     "ResearchCorpusUpsertResult",
     "ResearchKnowledge",
     "ResearchLimits",
@@ -463,7 +372,5 @@ __all__ = [
     "ResearchWriterSectionFailure",
     "RoundState",
     "RoundStepContext",
-    "SourceDiversityMetrics",
     "TrackAllocation",
-    "UncertaintyQuantification",
 ]

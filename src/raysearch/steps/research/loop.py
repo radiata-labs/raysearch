@@ -35,14 +35,6 @@ from raysearch.steps.base import RunnerBase, StepBase
 
 
 class BudgetLockManager:
-    """Budget/knowledge lock manager with reservation accounting.
-
-    Lock Acquisition Order:
-    1. search_lock
-    2. fetch_lock
-    3. knowledge_lock
-    """
-
     __slots__ = (
         "_fetch_lock",
         "_knowledge_lock",
@@ -193,11 +185,6 @@ class BudgetReclamationManager:
 
             return (search_share, fetch_share)
 
-    @property
-    def has_reclaimable(self) -> bool:
-        """Check if there is reclaimable budget available."""
-        return self._reclaimable_search > 0 or self._reclaimable_fetch > 0
-
     async def wait_for_progress(self, timeout: float = 2.0) -> None:
         async with self._condition:
             with move_on_after(timeout):
@@ -237,9 +224,7 @@ def _merge_track_knowledge(
     new_sources: list[ResearchSource] = []
 
     for src_source in source.sources:
-        canonical_url = src_source.canonical_url
-        if not canonical_url:
-            continue
+        canonical_url = src_source.canonical_url or src_source.url
 
         # Skip if this URL already exists in global knowledge
         if canonical_url in existing_canonical_urls:

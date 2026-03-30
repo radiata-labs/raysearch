@@ -78,13 +78,6 @@ class ComponentRegistry:
     def all_specs(self) -> tuple[ComponentSpec, ...]:
         return self._all_specs
 
-    def iter_enabled(self) -> tuple[ComponentSpec, ...]:
-        return tuple(
-            spec
-            for family_specs in self._enabled_specs_by_family.values()
-            for spec in family_specs
-        )
-
     def enabled_specs(self, family: str) -> tuple[ComponentSpec, ...]:
         return self._enabled_specs_by_family.get(str(family), ())
 

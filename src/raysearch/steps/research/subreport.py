@@ -30,7 +30,6 @@ from raysearch.steps.research.schema import (
 from raysearch.steps.research.utils import (
     rerank_research_sources,
     resolve_research_model,
-    source_authority_score,
 )
 
 
@@ -385,7 +384,6 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
         selected_sources.sort(
             key=lambda item: (
                 float(ctx.knowledge.source_scores.get(item.source_id, 0.0)),
-                source_authority_score(item),
                 item.round_index,
                 item.source_id,
             ),

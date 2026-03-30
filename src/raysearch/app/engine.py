@@ -65,7 +65,6 @@ from raysearch.steps.fetch import (
     FetchPrepareStep,
 )
 from raysearch.steps.research import (
-    ResearchContentStep,
     ResearchDecideStep,
     ResearchFetchStep,
     ResearchFinalizeStep,
@@ -369,11 +368,9 @@ class Engine(WorkUnit):
             RunnerBase,
             steps=[
                 await solve(ResearchPlanStep),
-                await solve_transient(ResearchFetchStep, phase="pre"),
+                await solve(ResearchFetchStep),
                 await solve(ResearchSearchStep),
-                await solve_transient(ResearchFetchStep, phase="post"),
                 await solve(ResearchOverviewStep),
-                await solve(ResearchContentStep),
                 await solve(ResearchDecideStep),
             ],
             kind="search",

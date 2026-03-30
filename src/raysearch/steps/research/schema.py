@@ -29,6 +29,15 @@ def _non_empty_string_schema(*, description: str) -> dict[str, Any]:
     }
 
 
+def _score_schema(*, description: str) -> dict[str, Any]:
+    return {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "description": description,
+    }
+
+
 def _query_schema(*, description: str, select_engines: bool) -> dict[str, Any]:
     if not select_engines:
         return _non_empty_string_schema(description=description)
@@ -182,10 +191,7 @@ def build_plan_schema(*, select_engines: bool = False) -> dict[str, Any]:
                 "type": "array",
                 "maxItems": 12,
                 "description": "Source IDs to explore this round. Must be empty when round_action=search.",
-                "items": {
-                    "type": "integer",
-                    "minimum": 1,
-                },
+                "items": {"type": "integer", "minimum": 1},
             },
             "search_jobs": {
                 "type": "array",
@@ -239,7 +245,8 @@ def build_overview_schema(
             "covered_subthemes",
             "need_content_source_ids",
             "missing_entities",
-            "confidence",
+            "confidence_score",
+            "coverage_score",
         ],
         "properties": {
             "findings": {
@@ -289,12 +296,12 @@ def build_overview_schema(
                     description="One missing required entity."
                 ),
             },
-            "confidence": {
-                "type": "number",
-                "minimum": -1.0,
-                "maximum": 1.0,
-                "description": "Calibrated confidence: 1.0=strongly supported, 0=mixed/unclear, negative=conflicted or weak.",
-            },
+            "confidence_score": _score_schema(
+                description="LLM-assigned 0..1 evidence confidence score."
+            ),
+            "coverage_score": _score_schema(
+                description="LLM-assigned 0..1 answer coverage score."
+            ),
         },
     }
 
@@ -310,7 +317,8 @@ def build_content_schema(
             "resolved_findings",
             "conflict_resolutions",
             "remaining_gaps",
-            "confidence_adjustment",
+            "confidence_score",
+            "uncertainty_score",
         ],
         "properties": {
             "resolved_findings": {
@@ -350,12 +358,12 @@ def build_content_schema(
                 "description": "Highest-impact gaps that remain after content arbitration.",
                 "items": _non_empty_string_schema(description="One remaining gap."),
             },
-            "confidence_adjustment": {
-                "type": "number",
-                "minimum": -1.0,
-                "maximum": 1.0,
-                "description": "Signed confidence delta to apply after this content pass.",
-            },
+            "confidence_score": _score_schema(
+                description="LLM-assigned 0..1 post-content confidence score."
+            ),
+            "uncertainty_score": _score_schema(
+                description="LLM-assigned 0..1 remaining uncertainty score."
+            ),
         },
     }
 
@@ -385,6 +393,7 @@ def build_decide_schema(
         "required": [
             "continue_research",
             "next_queries",
+            "information_gain_score",
         ],
         "properties": {
             "continue_research": {"type": "boolean"},
@@ -397,6 +406,9 @@ def build_decide_schema(
                 ),
             },
             "reason": {"type": "string"},
+            "information_gain_score": _score_schema(
+                description="LLM-assigned 0..1 expected value of another round."
+            ),
         },
     }
 
