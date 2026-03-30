@@ -82,8 +82,8 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     # dev
     "setuptools>=74",
     "trio>=0.26",
@@ -200,6 +200,52 @@ python_version = "3.11"
 warn_unused_configs = true
 namespace_packages = true
 mypy_path = "src"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--asyncio-mode=auto",
+]
+markers = [
+    "unit: Unit tests for individual functions and classes",
+    "integration: Integration tests for component interactions",
+    "e2e: End-to-end tests for complete workflows",
+    "slow: Tests that take longer to run",
+]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src/raysearch"]
+branch = true
+parallel = true
+omit = [
+    "src/raysearch/__init__.py",
+    "src/raysearch/*/__init__.py",
+    "tests/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+    "def __repr__",
+]
+fail_under = 80
+show_missing = true
+skip_covered = true
 
 [[tool.mypy.overrides]]
 module = ["raysearch.components.extract.markdown.*"]
