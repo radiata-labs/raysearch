@@ -22,6 +22,10 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |- search.py
 |  |- search_config_example.yaml
 |- dist/
+|- docker/
+|  |- docker-compose.yml
+|  |- Dockerfile
+|  |- raysearch.example.yaml
 |- docs/
 |  |- ja-JP/
 |  |  |- README.md
@@ -35,6 +39,7 @@ Inside `src`, show directory structure only (folders only, no files).
 |  |- finalize_task.py
 |- src/
 |  |- raysearch/
+|  |  |- api/
 |  |  |- app/
 |  |  |- components/
 |  |  |  |- cache/
@@ -73,6 +78,7 @@ Inside `src`, show directory structure only (folders only, no files).
 |- LICENSE
 |- pyproject.toml
 |- README.md
+|- uv.lock
 ```
 <!-- END AUTO-GENERATED FILE TREE -->
 

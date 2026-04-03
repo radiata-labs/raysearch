@@ -40,6 +40,30 @@ class SettingModel(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+def _parse_env_bool(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    token = str(value).strip().lower()
+    if not token:
+        return default
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("boolean environment value is invalid")
+
+
+def _parse_env_int(value: object, *, default: int) -> int:
+    if value is None:
+        return default
+    token = str(value).strip()
+    if not token:
+        return default
+    return int(token)
+
+
 ReportStyleKey = Literal["decision", "explainer", "execution"]
 
 
@@ -358,6 +382,27 @@ class RunnerSettings(SettingModel):
     queue_size: int = Field(default=256, ge=1)
 
 
+class ApiSettings(SettingModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+    bearer_token: str = ""
+    enable_docs: bool = False
+
+    @field_validator("host")
+    @classmethod
+    def _normalize_host(cls, value: str) -> str:
+        host = str(value).strip()
+        if not host:
+            raise ValueError("api.host must not be empty")
+        return host
+
+    @field_validator("bearer_token")
+    @classmethod
+    def _normalize_bearer_token(cls, value: str) -> str:
+        return str(value).strip()
+
+
 class ComponentFamilySettings(SettingModel):
     default: str = ""
 
@@ -430,10 +475,39 @@ class AppSettings(SettingModel):
     answer: AnswerSettings = Field(default_factory=AnswerSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
+    api: ApiSettings = Field(default_factory=ApiSettings)
     runtime_env: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_api_env_defaults(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        env_raw = payload.get("runtime_env")
+        env = env_raw if isinstance(env_raw, dict) else {}
+        api_raw = payload.get("api")
+        api = dict(api_raw) if isinstance(api_raw, dict) else {}
+        if "host" not in api and env.get("RAYSEARCH_API_HOST") is not None:
+            api["host"] = str(env["RAYSEARCH_API_HOST"]).strip()
+        if "port" not in api and env.get("RAYSEARCH_API_PORT") is not None:
+            api["port"] = _parse_env_int(env["RAYSEARCH_API_PORT"], default=8000)
+        if "bearer_token" not in api and env.get("RAYSEARCH_API_KEY") is not None:
+            api["bearer_token"] = str(env["RAYSEARCH_API_KEY"]).strip()
+        if (
+            "enable_docs" not in api
+            and env.get("RAYSEARCH_API_ENABLE_DOCS") is not None
+        ):
+            api["enable_docs"] = _parse_env_bool(
+                env["RAYSEARCH_API_ENABLE_DOCS"],
+                default=False,
+            )
+        payload["api"] = api
+        return payload
 
 
 __all__ = [
+    "ApiSettings",
     "AppSettings",
     "FetchAbstractSettings",
     "FetchExtractSettings",

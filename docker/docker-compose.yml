@@ -1,0 +1,17 @@
+services:
+  raysearch-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: raysearch-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      RAYSEARCH_CONFIG_PATH: /app/config/raysearch.yaml
+      RAYSEARCH_API_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:${RAYSEARCH_HOST_PORT:-8000}:8000"
+    volumes:
+      - "./${RAYSEARCH_CONFIG_FILE:-raysearch.example.yaml}:/app/config/raysearch.yaml:ro"
+      - "./data:/app/.cache"
