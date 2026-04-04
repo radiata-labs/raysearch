@@ -23,9 +23,13 @@ class FetchLoadStep(StepBase[FetchStepContext]):
     cache: CacheBase = Depends()
 
     @override
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless previous step failed."""
+        return not ctx.error.failed
+
+    @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.error.failed:
-            return ctx
+        # Pre-condition: should_run() verified no prior error
         url = (ctx.url or "").strip()
         if not url:
             ctx.error.failed = True

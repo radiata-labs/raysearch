@@ -31,6 +31,12 @@ class AnswerPlanStep(StepBase[AnswerStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
+    async def should_run(self, ctx: AnswerStepContext) -> bool:
+        """Plan always runs (first step in answer pipeline)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         query_text = clean_whitespace(ctx.request.query)

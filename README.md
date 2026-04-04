@@ -38,7 +38,13 @@ Then edit `.env` with your own values. At minimum:
 Start the service:
 
 ```bash
-docker compose up -d --build
+docker compose up -d
+```
+
+For development with hot reload:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml up
 ```
 
 The compose setup reads:

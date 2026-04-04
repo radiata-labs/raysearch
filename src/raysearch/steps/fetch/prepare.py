@@ -33,6 +33,12 @@ _DETAIL_SECTIONS: dict[str, tuple[ExtractContentTag, ...]] = {
 
 class FetchPrepareStep(StepBase[FetchStepContext]):
     @override
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Prepare always runs (validates URL, initializes context)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
         url = clean_whitespace(ctx.url or "")
         if not url:

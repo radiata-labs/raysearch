@@ -38,7 +38,13 @@ cp .env.example .env
 启动服务：
 
 ```bash
-docker compose up -d --build
+docker compose up -d
+```
+
+开发模式（热重载）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml up
 ```
 
 Compose 配置读取：

@@ -1,8 +1,17 @@
+# =============================================================================
+# RaySearch API - Docker Compose
+# =============================================================================
+# Usage:
+#   Production: docker compose up -d
+#   Development: docker compose -f docker-compose.yml -f docker-compose.override.yml up
+# =============================================================================
+
 services:
   raysearch-api:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      target: prod                   # Production by default
     container_name: raysearch-api
     restart: unless-stopped
     env_file:
@@ -15,3 +24,15 @@ services:
     volumes:
       - "./${RAYSEARCH_CONFIG_FILE:-raysearch.example.yaml}:/app/config/raysearch.yaml:ro"
       - "./data:/app/.cache"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks:
+      - raysearch-net
+
+networks:
+  raysearch-net:
+    driver: bridge

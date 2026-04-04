@@ -19,11 +19,16 @@ class SearchFetchStep(StepBase[SearchStepContext]):
     fetch_runner: RunnerBase[FetchStepContext] = Depends(FETCH_RUNNER)
 
     @override
-    async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
+    async def should_run(self, ctx: SearchStepContext) -> bool:
+        """Execute unless aborted or no URLs to fetch."""
         if bool(ctx.plan.aborted):
-            ctx.fetch.candidates = []
-            ctx.output.results = []
-            return ctx
+            return False
+        urls = list(ctx.retrieval.urls or [])
+        return bool(urls)
+
+    @override
+    async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
+        # Pre-condition: should_run() verified URLs exist and not aborted
         urls = list(ctx.retrieval.urls or [])
         if not urls:
             ctx.fetch.candidates = []

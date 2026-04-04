@@ -240,12 +240,12 @@ def _merge_track_knowledge(
         current_id += 1
         id_mapping[src_source.source_id] = new_source_id
 
-        # Create new source with remapped ID
+        # ResearchSource fields are primitives or list[str] (immutable strings).
+        # Shallow copy suffices since nested lists are not modified after merge.
         new_source = src_source.model_copy(
             update={
                 "source_id": new_source_id,
             },
-            deep=True,
         )
         new_sources.append(new_source)
 
@@ -286,6 +286,12 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     llm: LLMClientBase = Depends()
     round_runner: RunnerBase[RoundStepContext] = Depends(RESEARCH_ROUND_RUNNER)
     render_step: StepBase[ResearchStepContext] = Depends(RESEARCH_SUBREPORT_STEP)
+
+    @override
+    async def should_run(self, ctx: ResearchStepContext) -> bool:
+        """Loop always runs (orchestrates all tracks)."""
+        _ = ctx
+        return True
 
     @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
@@ -729,6 +735,7 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 )
                 break
 
+            # TrackAllocation contains only primitive int fields; shallow copy is sufficient.
             track_ctx.run.allocation = runtime.allocation.model_copy(
                 update={
                     "search_quota": min(
@@ -740,7 +747,6 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                         runtime.allocation.fetch_used + budget[1],
                     ),
                 },
-                deep=True,
             )
             track_ctx.run.limits.max_queries_per_round = max(
                 1,
@@ -806,7 +812,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     used_fetch=delta_fetch,
                     lock_manager=lock_manager,
                 )
-            track_ctx.run.allocation = runtime.allocation.model_copy(deep=True)
+            # TrackAllocation contains only primitive int fields; shallow copy is sufficient.
+            track_ctx.run.allocation = runtime.allocation.model_copy()
             ctx.run.explore_resolved_relative_links += delta_explore_links
 
             runtime.completed_rounds = len(track_ctx.run.history)
@@ -851,8 +858,10 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
     def _resolve_question_cards(
         self, ctx: ResearchStepContext
     ) -> list[ResearchThemePlanCard]:
+        # Cards are shallow-copied here; nested lists (seed_queries, evidence_focus)
+        # are deep-copied in _build_track_context where tracks take ownership.
         return [
-            item.model_copy(deep=True)
+            item.model_copy()
             for item in ctx.task.cards[
                 : max(1, ctx.run.limits.max_question_cards_effective)
             ]
@@ -887,6 +896,10 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         request = root.request.model_copy(
             update={"themes": card.question, "json_schema": None}
         )
+        # ResearchLimits has only primitive int/str fields; shallow copy suffices.
+        limits_copy = root.run.limits.model_copy()
+        # QuerySourceSpec fields are primitives or list of immutable str; shallow copy suffices.
+        seed_queries_copy = [q.model_copy() for q in card.seed_queries]
         track = RoundStepContext(
             request=request,
             request_id=f"{root.request_id}:track:{card.question_id}",
@@ -896,24 +909,28 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                 structured=None,
             ),
             question_id=card.question_id,
+            # ResearchTask has mutable lists; deep copy for track isolation.
             task=root.task.model_copy(deep=True),
             run=RoundState(
-                limits=root.run.limits.model_copy(deep=True),
+                limits=limits_copy,
                 allocation=TrackAllocation(),
                 stop=False,
                 stop_reason="",
                 round_index=0,
-                next_queries=[q.model_copy(deep=True) for q in card.seed_queries],
+                next_queries=seed_queries_copy,
                 link_candidates={},
                 link_candidates_round=0,
                 notes=[f"Track initialized for question `{card.question_id}`."],
                 current=None,
                 history=[],
             ),
+            # ResearchKnowledge.sources can be large; deep copy for track isolation.
             knowledge=root.knowledge.model_copy(deep=True),
         )
         track.task.question = card.question
-        track.task.cards = [card.model_copy(deep=True)]
+        # card's nested lists already isolated via seed_queries_copy above;
+        # evidence_focus is read-only in downstream steps.
+        track.task.cards = [card.model_copy()]
         return track
 
     def _determine_stop_reason(
@@ -949,12 +966,15 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
         """Finalize a track and extract results.
 
         Data is copied OUT from RoundStepContext to ResearchStepContext.
-        Subreport rendering uses an isolated knowledge copy to avoid cross-track
-        mutation. Track knowledge is merged into the global corpus afterward.
+        Subreport rendering modifies knowledge (marking sources used), so
+        an isolated deep copy is required to preserve track_ctx.knowledge
+        for the subsequent merge into global corpus.
         """
         render_ctx = self._create_render_context(
             ctx,
             track_ctx,
+            # Deep copy required: render_step modifies knowledge.sources and
+            # report_used_source_ids; we must preserve original for merge.
             knowledge=track_ctx.knowledge.model_copy(deep=True),
         )
         rendered = await self.render_step.run(render_ctx)
@@ -1032,9 +1052,16 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
 
         Uses track_state to provide access to track execution state
         without duplicating fields in ResearchRun.
+
+        Copy strategy:
+        - track_runtimes: shallow copy (allocation has primitive fields, read-only)
+        - limits: shallow copy (all primitive int/str fields)
+        - track_state: deep copy (complex nested mutable structures like history)
+        - notes: explicit list() copy (list of immutable strings)
         """
+        # ResearchTrackRuntime.allocation has primitive fields; shallow copy suffices.
         track_runtimes_copy = {
-            qid: runtime.model_copy(deep=True)
+            qid: runtime.model_copy()
             for qid, runtime in root.run.track_runtimes.items()
         }
 
@@ -1045,7 +1072,8 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
             task=track_ctx.task,
             run=ResearchRun(
                 mode=root.run.mode,
-                limits=track_ctx.run.limits.model_copy(deep=True),
+                # ResearchLimits has only primitive fields; shallow copy suffices.
+                limits=track_ctx.run.limits.model_copy(),
                 budget=GlobalBudget(
                     total_search=track_ctx.run.allocation.search_quota,
                     total_fetch=track_ctx.run.allocation.fetch_quota,
@@ -1053,14 +1081,17 @@ class ResearchLoopStep(StepBase[ResearchStepContext]):
                     fetch_used=track_ctx.run.allocation.fetch_used,
                     tier=root.run.budget.tier,
                 ),
-                track_runtimes=track_runtimes_copy,  # Include all track runtimes
+                track_runtimes=track_runtimes_copy,
                 stop=track_ctx.run.stop,
                 stop_reason=track_ctx.run.stop_reason,
+                # notes is a list of immutable strings; list() creates shallow copy.
                 notes=list(track_ctx.run.notes),
                 explore_resolved_relative_links=track_ctx.run.explore_resolved_relative_links,
             ),
             knowledge=knowledge,
             result=ResearchResult(content="", structured=None, tracks=[]),
+            # RoundState has complex nested structures (history, current, link_candidates);
+            # deep copy required to isolate from potential render modifications.
             track_state=track_ctx.run.model_copy(deep=True),
         )
 

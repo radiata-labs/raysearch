@@ -33,6 +33,12 @@ class AnswerGenerateStep(StepBase[AnswerStepContext]):
     llm: LLMClientBase = Depends()
 
     @override
+    async def should_run(self, ctx: AnswerStepContext) -> bool:
+        """Generate always runs (produces final answer)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         schema = (

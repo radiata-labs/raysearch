@@ -29,6 +29,12 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
+    async def should_run(self, ctx: ResearchStepContext) -> bool:
+        """Theme planning always runs (first step in research pipeline)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         model = resolve_research_model(
@@ -160,8 +166,9 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 question_id=f"q{index}",
                 question=item.question,
                 priority=item.priority,
+                # QuerySourceSpec fields are primitives or list[str]; shallow copy suffices.
                 seed_queries=[
-                    query.model_copy(deep=True) for query in list(item.seed_queries)
+                    query.model_copy() for query in list(item.seed_queries)
                 ],
                 evidence_focus=list(item.evidence_focus),
                 expected_gain=item.expected_gain,

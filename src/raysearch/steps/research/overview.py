@@ -41,12 +41,17 @@ class ResearchOverviewStep(StepBase[RoundStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
+    async def should_run(self, ctx: RoundStepContext) -> bool:
+        """Execute only when round is ready for review (no pending I/O or budget wait)."""
+        if ctx.run.stop or ctx.run.current is None:
+            return False
+        return ctx.run.current.is_review_ready
+
+    @override
     async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        if ctx.run.stop or ctx.run.current is None:
-            return ctx
-        if not ctx.run.current.is_review_ready:
-            return ctx
+        # Pre-condition: should_run() already verified is_review_ready
+        assert ctx.run.current is not None
 
         all_sources = list(ctx.knowledge.sources)
         if not all_sources:

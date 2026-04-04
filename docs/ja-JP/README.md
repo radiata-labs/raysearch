@@ -38,7 +38,13 @@ cp .env.example .env
 サービスを起動：
 
 ```bash
-docker compose up -d --build
+docker compose up -d
+```
+
+開発モード（ホットリロード）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml up
 ```
 
 Compose 設定は以下を読み込み：

@@ -38,6 +38,12 @@ class ResearchSubreportStep(StepBase[ResearchStepContext]):
     ranker: RankerBase = Depends()
 
     @override
+    async def should_run(self, ctx: ResearchStepContext) -> bool:
+        """Subreport always runs (generates track-level output)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         await self._render_subreport(

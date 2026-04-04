@@ -8,6 +8,12 @@ from raysearch.steps.base import StepBase
 
 class SearchFinalizeStep(StepBase[SearchStepContext]):
     @override
+    async def should_run(self, ctx: SearchStepContext) -> bool:
+        """Finalize always runs (produces output even if empty)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         """Finalize output list from precomputed rank candidates.
         Args:

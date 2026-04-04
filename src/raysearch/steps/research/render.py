@@ -51,6 +51,12 @@ class ResearchRenderStep(StepBase[ResearchStepContext]):
     llm: LLMClientBase = Depends()
 
     @override
+    async def should_run(self, ctx: ResearchStepContext) -> bool:
+        """Render always runs (generates final output)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
         schema = (

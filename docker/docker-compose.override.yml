@@ -1,0 +1,20 @@
+# =============================================================================
+# RaySearch API - Docker Compose Override (Development)
+# =============================================================================
+# Usage: docker compose -f docker-compose.yml -f docker-compose.override.yml up
+# =============================================================================
+# Adds hot reload, debug port, and source code mount for development.
+# =============================================================================
+
+services:
+  raysearch-api:
+    build:
+      target: dev                    # Use dev stage with hot reload
+    environment:
+      - DEBUG=1
+      - LOG_LEVEL=debug
+    ports:
+      - "127.0.0.1:5678:5678"        # Python remote debugger (debugpy)
+    volumes:
+      - "../src:/app/src"            # Source code for hot reload
+    command: ["uvicorn", "raysearch.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

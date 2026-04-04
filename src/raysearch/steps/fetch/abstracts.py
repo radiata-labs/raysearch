@@ -107,27 +107,18 @@ _LOWER_CONTINUATION_DOT_ABBR = {
 
 class FetchAbstractBuildStep(StepBase[FetchStepContext]):
     @override
-    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless failed, no abstract request, or no doc."""
         if ctx.error.failed:
-            return ctx
-        req = ctx.analysis.abstracts.request
-        if req is None:
-            return ctx
-        if ctx.page.doc is None:
-            await self.tracker.error(
-                name="fetch.abstract_build.failed",
-                request_id=ctx.request_id,
-                step="fetch.abstract_build",
-                error_code="fetch_abstract_build_failed",
-                error_message="missing extracted content",
-                data={
-                    "url": ctx.url,
-                    "url_index": int(ctx.url_index),
-                    "crawl_mode": str(ctx.page.crawl_mode),
-                    "fatal": False,
-                },
-            )
-            return ctx
+            return False
+        if ctx.analysis.abstracts.request is None:
+            return False
+        return ctx.page.doc is not None
+
+    @override
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+        # Pre-condition: should_run() verified doc exists
+        assert ctx.page.doc is not None
         markdown = str(
             ctx.page.doc.content.abstract_text or ctx.page.doc.content.markdown or ""
         )

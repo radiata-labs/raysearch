@@ -8,6 +8,12 @@ from raysearch.steps.base import StepBase
 
 class ResearchFinalizeStep(StepBase[ResearchStepContext]):
     @override
+    async def should_run(self, ctx: ResearchStepContext) -> bool:
+        """Finalize always runs (last step, emits telemetry)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         mode_depth = ctx.run.limits
         theme_plan = ctx.task

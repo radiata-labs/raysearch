@@ -32,18 +32,17 @@ class ResearchDecideStep(StepBase[RoundStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
-    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
+    async def should_run(self, ctx: RoundStepContext) -> bool:
+        """Execute when round exists and doesn't need budget resume."""
         if ctx.run.current is None:
-            return ctx
+            return False
+        return not ctx.run.current.needs_resume
 
+    @override
+    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
+        assert ctx.run.current is not None
         budget = ctx.run.limits
         round_state = ctx.run.current
-        if round_state.needs_resume:
-            round_state.waiting_for_budget = True
-            round_state.waiting_reason = (
-                round_state.waiting_reason or "budget_resume_required"
-            )
-            return ctx
 
         unresolved_conflict_topics = self._get_unresolved_conflict_topics(
             content_review=round_state.content_review

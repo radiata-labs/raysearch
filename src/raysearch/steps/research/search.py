@@ -28,14 +28,20 @@ class ResearchSearchStep(StepBase[RoundStepContext]):
     search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER)
 
     @override
-    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
+    async def should_run(self, ctx: RoundStepContext) -> bool:
+        """Execute only for search round action (not explore)."""
         if ctx.run.stop or ctx.run.current is None:
-            return ctx
+            return False
         round_action = (ctx.run.current.round_action or "search").casefold()
+        # First round is always search; explore only possible after round 1.
         if ctx.run.current.round_index <= 1:
             round_action = "search"
-        if round_action != "search":
-            return ctx
+        return round_action == "search"
+
+    @override
+    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
+        # Pre-condition: should_run() already verified round_action == "search"
+        assert ctx.run.current is not None
         if (
             ctx.run.current.search_fetched_candidates
             and not ctx.run.current.pending_search_jobs
@@ -93,8 +99,9 @@ class ResearchSearchStep(StepBase[RoundStepContext]):
                     runtime=SearchRuntimeState(
                         disable_internal_llm=True,
                         engine_selection_subsystem="research",
+                        # QuerySourceSpec fields are primitives or list[str]; shallow copy suffices.
                         additional_queries=[
-                            item.model_copy(deep=True)
+                            item.model_copy()
                             for item in list(job.additional_queries or [])
                         ],
                     ),

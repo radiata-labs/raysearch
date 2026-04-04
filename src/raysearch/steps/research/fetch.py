@@ -126,18 +126,27 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         }
 
     @override
-    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
+    async def should_run(self, ctx: RoundStepContext) -> bool:
+        """Execute only for explore round action (not search).
+
+        Note: First round (round_index <= 1) is always search, never explore.
+        """
         if ctx.run.stop or ctx.run.current is None:
-            return ctx
-        round_action = (ctx.run.current.round_action or "search").casefold()
+            return False
         if ctx.run.current.round_index <= 1:
-            round_action = "search"
-        if round_action != "explore":
-            return ctx
+            return False
+        round_action = (ctx.run.current.round_action or "search").casefold()
+        return round_action == "explore"
+
+    @override
+    async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
+        # Pre-condition: should_run() already verified round_action == "explore"
+        assert ctx.run.current is not None
         executed = await self._run_explore_fetch(ctx)
         if executed:
             ctx.run.current.search_fetched_candidates = []
             return ctx
+        # Fallback: no valid explore targets, reset to search mode
         ctx.run.current.round_action = "search"
         ctx.run.current.explore_target_source_ids = []
         return ctx
@@ -310,7 +319,7 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         if len(links) > cap:
             ranked_indexes = await self._rank_link_indexes(ctx=ctx, links=links)
             links = [
-                links[idx].model_copy(deep=True)
+                links[idx].model_copy()
                 for idx in ranked_indexes[:cap]
                 if idx < len(links)
             ]
@@ -431,14 +440,15 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         *,
         candidate: SearchFetchedCandidate,
     ) -> list[ExtractRef]:
+        # ExtractRef has only primitive fields (text, url); shallow copy suffices.
         out = [
-            item.model_copy(deep=True)
+            item.model_copy()
             for item in list(candidate.links or [])
             if item.url
         ]
         for links in list(candidate.subpage_links or []):
             out.extend(
-                item.model_copy(deep=True) for item in list(links or []) if item.url
+                item.model_copy() for item in list(links or []) if item.url
             )
         return out
 
