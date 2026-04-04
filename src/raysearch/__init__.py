@@ -35,6 +35,9 @@ from raysearch.models.app.response import (
     FetchResponse,
     FetchSubpagesResult,
     ResearchResponse,
+    ResearchTaskListResponse,
+    ResearchTaskResponse,
+    ResearchTaskStatus,
     SearchResponse,
 )
 from raysearch.settings.load import load_settings
@@ -80,6 +83,9 @@ __all__ = [
     "ResearchSearchMode",
     "ResearchRequest",
     "ResearchResponse",
+    "ResearchTaskStatus",
+    "ResearchTaskResponse",
+    "ResearchTaskListResponse",
     "Overrides",
     "load_settings",
 ]

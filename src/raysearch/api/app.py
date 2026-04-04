@@ -15,11 +15,13 @@ from raysearch import (
     FetchRequest,
     FetchResponse,
     ResearchRequest,
-    ResearchResponse,
+    ResearchTaskListResponse,
+    ResearchTaskResponse,
     SearchRequest,
     SearchResponse,
     load_settings,
 )
+from raysearch.api.research_tasks import ResearchTaskManager
 from raysearch.settings.models import AppSettings
 
 if TYPE_CHECKING:
@@ -123,11 +125,14 @@ def create_api_app(
     async def lifespan(app: Any) -> AsyncIterator[None]:
         engine = Engine.from_settings(settings=app_settings)
         await engine.ainit()
+        task_manager = ResearchTaskManager()
         app.state.engine = engine
         app.state.app_settings = app_settings
+        app.state.research_task_manager = task_manager
         try:
             yield
         finally:
+            await task_manager.close()
             await engine.aclose()
 
     docs_url = "/docs" if app_settings.api.enable_docs else None
@@ -163,6 +168,15 @@ def create_api_app(
                 detail="engine is not ready",
             )
         return engine
+
+    def get_research_task_manager(request: Any) -> ResearchTaskManager:
+        manager = getattr(request.app.state, "research_task_manager", None)
+        if not isinstance(manager, ResearchTaskManager):
+            raise http_exception_cls(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="research task manager is not ready",
+            )
+        return manager
 
     async def _run_operation(
         operation: Callable[[], Awaitable[Any]],
@@ -233,17 +247,70 @@ def create_api_app(
 
     @app.post(
         "/v1/research",
-        response_model=ResearchResponse,
+        response_model=ResearchTaskResponse,
         dependencies=[depends(require_auth)],
     )
-    async def research_endpoint(
+    async def create_research_task_endpoint(
         payload: ResearchRequest,
         engine: Engine = depends(get_engine),
-    ) -> ResearchResponse:
+        task_manager: ResearchTaskManager = depends(get_research_task_manager),
+    ) -> ResearchTaskResponse:
         return await _run_operation(
-            lambda: engine.research(payload),
-            error_detail="research request failed",
+            lambda: task_manager.create_task(payload, engine),
+            error_detail="research task creation failed",
         )
+
+    @app.get(
+        "/v1/research",
+        response_model=ResearchTaskListResponse,
+        dependencies=[depends(require_auth)],
+    )
+    async def list_research_tasks_endpoint(
+        cursor: str | None = None,
+        limit: int = 10,
+        task_manager: ResearchTaskManager = depends(get_research_task_manager),
+    ) -> ResearchTaskListResponse:
+        try:
+            return await task_manager.list_tasks(cursor=cursor, limit=limit)
+        except ValueError as exc:
+            raise http_exception_cls(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+
+    @app.delete(
+        "/v1/research/{research_id}",
+        response_model=ResearchTaskResponse,
+        dependencies=[depends(require_auth)],
+    )
+    async def cancel_research_task_endpoint(
+        research_id: str,
+        task_manager: ResearchTaskManager = depends(get_research_task_manager),
+    ) -> ResearchTaskResponse:
+        try:
+            return await task_manager.cancel_task(research_id)
+        except KeyError as exc:
+            raise http_exception_cls(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="research task not found",
+            ) from exc
+
+    @app.get(
+        "/v1/research/{research_id}",
+        response_model=ResearchTaskResponse,
+        dependencies=[depends(require_auth)],
+    )
+    async def get_research_task_endpoint(
+        research_id: str,
+        task_manager: ResearchTaskManager = depends(get_research_task_manager),
+    ) -> ResearchTaskResponse:
+        try:
+            return await task_manager.get_task(research_id)
+        except KeyError as exc:
+            raise http_exception_cls(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="research task not found",
+            ) from exc
 
     return app
 

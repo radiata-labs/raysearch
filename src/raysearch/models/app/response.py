@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -12,6 +12,7 @@ from pydantic import (
 )
 
 from raysearch.models.app.base import BaseResponse
+from raysearch.models.app.request import ResearchSearchMode
 from raysearch.utils import normalize_iso8601_string
 
 FetchErrorTag = Literal[
@@ -21,6 +22,14 @@ FetchErrorTag = Literal[
     "SOURCE_NOT_AVAILABLE",
     "UNSUPPORTED_URL",
     "CRAWL_UNKNOWN_ERROR",
+]
+
+ResearchTaskStatus = Literal[
+    "pending",
+    "running",
+    "completed",
+    "canceled",
+    "failed",
 ]
 
 
@@ -115,6 +124,37 @@ class ResearchResponse(BaseResponse):
     structured: object | None = None
 
 
+class ResearchTaskResponse(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+    research_id: str
+    create_at: int
+    themes: str
+    search_mode: ResearchSearchMode
+    json_schema: dict[str, Any] | None = None
+    status: ResearchTaskStatus
+    output: ResearchResponse | None = None
+    finished_at: int | None = None
+    error: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):  # type: ignore[no-untyped-def]
+        payload = handler(self)
+        if payload.get("output") is None:
+            payload.pop("output", None)
+        if payload.get("finished_at") is None:
+            payload.pop("finished_at", None)
+        if payload.get("error") is None:
+            payload.pop("error", None)
+        return payload
+
+
+class ResearchTaskListResponse(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+    data: list[ResearchTaskResponse] = Field(default_factory=list)
+    has_more: bool
+    next_cursor: str = ""
+
+
 __all__ = [
     "FetchOthersResult",
     "FetchErrorTag",
@@ -127,9 +167,14 @@ __all__ = [
     "AnswerCitation",
     "AnswerResponse",
     "ResearchResponse",
+    "ResearchTaskStatus",
+    "ResearchTaskResponse",
+    "ResearchTaskListResponse",
 ]
 FetchResultItem.model_rebuild()
 FetchStatusError.model_rebuild()
 FetchStatusItem.model_rebuild()
 FetchResponse.model_rebuild()
 SearchResponse.model_rebuild()
+ResearchTaskResponse.model_rebuild()
+ResearchTaskListResponse.model_rebuild()
