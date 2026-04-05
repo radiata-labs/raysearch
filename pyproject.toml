@@ -1,6 +1,6 @@
 [project]
 name = "raysearch"
-version = "0.1.1"
+version = "0.1.2"
 authors = [
     {name = "Kotodama",email = "jameswjj0416@gmail.com"}
 ]

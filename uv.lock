@@ -2267,7 +2267,7 @@ wheels = [
 
 [[package]]
 name = "raysearch"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -2349,6 +2349,27 @@ rank = [
     { name = "scikit-learn" },
     { name = "sentence-transformers" },
 ]
+service = [
+    { name = "beautifulsoup4" },
+    { name = "chardet" },
+    { name = "curl-cffi" },
+    { name = "dashscope" },
+    { name = "fastapi" },
+    { name = "google-genai" },
+    { name = "html-to-markdown" },
+    { name = "openai" },
+    { name = "playwright" },
+    { name = "pymupdf" },
+    { name = "pymupdf4llm" },
+    { name = "pypdf" },
+    { name = "rank-bm25" },
+    { name = "scikit-learn" },
+    { name = "selectolax" },
+    { name = "sentence-transformers" },
+    { name = "structlog" },
+    { name = "trafilatura" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 stopwords = [
     { name = "marisa-trie" },
 ]
@@ -2411,6 +2432,7 @@ requires-dist = [
     { name = "pypdf", marker = "extra == 'extract-pdf'", specifier = ">=5.2.0" },
     { name = "pyyaml" },
     { name = "rank-bm25", marker = "extra == 'rank'" },
+    { name = "raysearch", extras = ["api", "extract", "extract-pdf", "crawl", "rank", "overview", "tracking"], marker = "extra == 'service'" },
     { name = "raysearch", extras = ["extract", "extract-pdf", "crawl", "rank", "cache", "api", "overview", "tracking", "to-zh-tw", "tokenize-ja"], marker = "extra == 'full'" },
     { name = "scikit-learn", marker = "extra == 'rank'", specifier = ">=1.8.0" },
     { name = "selectolax", marker = "extra == 'extract'", specifier = ">=0.3.26" },
@@ -2422,7 +2444,7 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.10,<5" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.27,<1" },
 ]
-provides-extras = ["extract", "extract-pdf", "extract-plus", "crawl", "rank", "cache", "api", "overview", "to-zh-tw", "tokenize-ja", "stopwords", "tracking", "full"]
+provides-extras = ["extract", "extract-pdf", "extract-plus", "crawl", "rank", "cache", "api", "overview", "to-zh-tw", "tokenize-ja", "stopwords", "tracking", "service", "full"]
 
 [package.metadata.requires-dev]
 dev = [
