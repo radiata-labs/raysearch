@@ -32,8 +32,8 @@ RaySearch 是一個異步優先的搜尋編排引擎，用於 AI 概覽式工作
 ## 使用 Docker Compose 啟動
 
 ```bash
-git clone <repo-url>
-cd google-ai-overview-api/docker
+git clone https://github.com/radiata-labs/raysearch.git
+cd raysearch/docker
 cp .env.example .env
 ```
 

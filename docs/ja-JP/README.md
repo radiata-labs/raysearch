@@ -32,8 +32,8 @@ RaySearch は AI オーバービュー形式のワークフロー向けの非同
 ## Docker Compose で始める
 
 ```bash
-git clone <repo-url>
-cd google-ai-overview-api/docker
+git clone https://github.com/radiata-labs/raysearch.git
+cd raysearch/docker
 cp .env.example .env
 ```
 

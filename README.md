@@ -32,8 +32,8 @@ RaySearch is an async-first search orchestration engine for AI-overview style wo
 ## Start With Docker Compose
 
 ```bash
-git clone <repo-url>
-cd google-ai-overview-api/docker
+git clone https://github.com/radiata-labs/raysearch.git
+cd raysearch/docker
 cp .env.example .env
 ```
 
