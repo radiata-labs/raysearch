@@ -14,27 +14,16 @@ class FetchExtractStep(StepBase[FetchStepContext]):
     extractor: ExtractorBase = Depends()
 
     @override
-    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless previous step failed or no raw content."""
         if ctx.error.failed:
-            return ctx
-        if ctx.page.raw is None:
-            ctx.error.failed = True
-            ctx.error.tag = "SOURCE_NOT_AVAILABLE"
-            ctx.error.detail = "missing fetch result"
-            await self.tracker.error(
-                name="fetch.extract.failed",
-                request_id=ctx.request_id,
-                step="fetch.extract",
-                error_code="fetch_load_failed",
-                error_message="missing fetch result",
-                data={
-                    "url": ctx.url,
-                    "url_index": int(ctx.url_index),
-                    "crawl_mode": str(ctx.page.crawl_mode),
-                    "fatal": True,
-                },
-            )
-            return ctx
+            return False
+        return ctx.page.raw is not None
+
+    @override
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+        # Pre-condition: should_run() verified raw content exists
+        assert ctx.page.raw is not None
         collect_links = bool(
             ctx.related.enabled
             and (

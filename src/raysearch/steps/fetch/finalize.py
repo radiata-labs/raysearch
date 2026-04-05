@@ -10,27 +10,16 @@ from raysearch.utils import normalize_iso8601_string
 
 class FetchFinalizeStep(StepBase[FetchStepContext]):
     @override
-    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless failed or no extracted doc."""
         if ctx.error.failed:
-            return ctx
-        if ctx.page.doc is None:
-            ctx.error.failed = True
-            ctx.error.tag = "SOURCE_NOT_AVAILABLE"
-            ctx.error.detail = "missing extracted content"
-            await self.tracker.error(
-                name="fetch.finalize.failed",
-                request_id=ctx.request_id,
-                step="fetch.finalize",
-                error_code="fetch_extract_failed",
-                error_message="missing extracted content",
-                data={
-                    "url": ctx.url,
-                    "url_index": int(ctx.url_index),
-                    "crawl_mode": str(ctx.page.crawl_mode),
-                    "fatal": True,
-                },
-            )
-            return ctx
+            return False
+        return ctx.page.doc is not None
+
+    @override
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+        # Pre-condition: should_run() verified doc exists
+        assert ctx.page.doc is not None
         content = str(ctx.page.doc.content.output_markdown or "")
         abstracts = [
             str(item.text) for item in list(ctx.analysis.abstracts.ranked or [])

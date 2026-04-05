@@ -1,191 +1,100 @@
 ![cover-v5-optimized](../../images/GitHub_README.png)
 
-<div align="center">
+<p align="center">
   <a href="../../README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
   <a href="../zh-TW/README.md"><img alt="繁體中文文件" src="https://img.shields.io/badge/繁體中文-d9d9d9"></a>
   <a href="../zh-CN/README.md"><img alt="简体中文文件" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
   <a href="../ja-JP/README.md"><img alt="日本語のREADME" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
-</div>
+</p>
 
 # RaySearch
 
-RaySearch は、複数のプロバイダー、クローラー、抽出器、ランカー、LLM バックエンドを組み合わせて AI オーバービュー形式のワークフローを構築するための、非同期ファーストの検索オーケストレーションエンジンです。
+RaySearch は AI オーバービュー形式のワークフロー向けの非同期ファースト検索オーケストレーションエンジンです。以下の形式で利用可能：
 
-4つの高レベルパイプラインを提供します：
+- Python パッケージ（`Engine`）
+- パーソナル HTTP API サービス
+- Docker または Docker Compose デプロイ
+
+## コア機能
 
 - `search`：複数プロバイダー検索、オプションのフェッチとリランキングステージ
 - `fetch`：ページクローリング、抽出、要約、オーバービュー生成、関連リンク
-- `answer`：検索と引用付き回答生成
+- `answer`：引用付きの根拠ベース回答生成
 - `research`：統合と構造化出力を含む多回合計レポート生成
 
-## RaySearchを選ぶ理由
-
-- コンポーネントベースのアーキテクチャ、プラグイン可能なプロバイダー、クローラー、抽出器、ランカー、キャッシュ、LLM クライアント
-- 完全非同期ランタイム、単一の `Engine` エントリーポイント
-- YAML/JSON 設定ローダー、プロバイダーとモデルのシークレットに環境変数注入
-- 可観測性のための内蔵トラッキングとメータリング出力
-- 検索集中型・研究集中型エージェントワークフロー向け設計（チャットのみの用途ではない）
-
-## インストール
-
-コアインストール：
+## Docker Compose で始める
 
 ```bash
-uv pip install raysearch
+git clone <repo-url>
+cd google-ai-overview-api/docker
+cp .env.example .env
 ```
 
-一般的な完全インストール：
+`.env` を編集して値を設定。最低限：
+
+- `RAYSEARCH_API_KEY` を設定
+- `answer`、`research`、LLM駆動オーバービュー機能を使用する場合は `OPENAI_API_KEY` を設定
+
+サービスを起動：
 
 ```bash
-uv pip install "raysearch[extract,extract_pdf,crawl,rank,cache,api,overview,tracking]"
+docker compose up -d
 ```
 
-Playwright ベースのクローリング使用時は、ブラウザバイナリを別途インストール：
+開発モード（ホットリロード）：
 
 ```bash
-playwright install
+docker compose -f docker-compose.yml -f docker-compose.override.yml up
 ```
 
-## 公開 API
+Compose 設定は以下を読み込み：
 
-```python
-from raysearch import Engine, SearchRequest, load_settings
+- `docker/.env` からの環境変数
+- `docker/raysearch.example.yaml` からのサービス設定
+
+別の設定ファイルを使用する場合、`docker/raysearch.example.yaml` をコピーし、`.env` の `RAYSEARCH_CONFIG_FILE` でそのファイルを指定。
+
+## uv で始める
+
+リポジトリルートから：
+
+```bash
+uv run --extra service --env-file docker/.env raysearch-api --config docker/raysearch.example.yaml
 ```
 
-主要エントリーポイント：
+または `docker` ディレクトリ内から：
 
-- `load_settings(path=None, env=None)`
-- `Engine.from_settings(setting_file=None, *, settings=None, overrides=None)`
-- `await engine.search(request)`
-- `await engine.fetch(request)`
-- `await engine.answer(request)`
-- `await engine.research(request)`
+```bash
+uv run --project .. --extra service --env-file .env raysearch-api --config raysearch.example.yaml
+```
 
-## クイックスタート
+## Python パッケージの使用
 
 ```python
 from raysearch import Engine, SearchRequest
 
 async def main() -> None:
-    async with Engine.from_settings("demo/search_config_example.yaml") as engine:
+    async with Engine.from_settings("docker/raysearch.example.yaml") as engine:
         response = await engine.search(
             SearchRequest(
                 query="latest multimodal model papers",
+                user_location="US",
                 mode="deep",
                 max_results=8,
+                fetchs={"content": True},
             )
         )
-        for item in response.results:
-            print(item.title, item.url)
+        print(response.results)
 ```
 
-## 設定
+## パーソナル API
 
-RaySearch は以下の順序で設定を読み込みます：
+パーソナル API は以下を公開：
 
-1. `load_settings(...)` に渡された明示的な `path`
-2. `RAYSEARCH_CONFIG_PATH` 環境変数
-3. `raysearch.yaml` ファイル
-4. コード内デフォルト値
+- `GET /healthz`
+- `POST /v1/search`
+- `POST /v1/fetch`
+- `POST /v1/answer`
+- `POST /v1/research`
 
-主要設定グループ：
-
-- `components`：provider、crawl、extract、rank、llm、cache、tracking、metering、http、レート制限
-- `telemetry`：トラッキングとメータリングエミッターの動作
-- `search`：検索モードプロファイルとクエリ拡張動作
-- `fetch`：抽出、要約、オーバービュー調整
-- `answer`：計画と生成モデル選択
-- `research`：レポート生成バジェットとモデルルーティング
-- `runner`：並行性とキューリミット
-
-コンポーネントファミリーはシンプルなデフォルト＋インスタンス構造を使用：
-
-```yaml
-components:
-  provider:
-    default: google
-    google:
-      enabled: true
-      cookies:
-        CONSENT: "YES+"
-    duckduckgo:
-      enabled: true
-      base_url: https://html.duckduckgo.com/html
-      allow_redirects: false
-```
-
-参考設定：
-
-- `demo/search_config_example.yaml`
-
-## プロバイダーとパイプライン
-
-内蔵プロバイダー対応：
-
-- `google`
-- `google_news`
-- `duckduckgo`
-- `searxng`
-- `github`
-- `reddit`
-- `reuters`
-- `openalex`
-- `semantic_scholar`
-- `wikidata`
-- `wikipedia`
-- `arxiv`
-- `marginalia`
-- `blend`（複数プロバイダー統合用）
-
-内蔵パイプライン対応：
-
-- 検索結果拡張とリランキング
-- Markdownファーストのフェッチ抽出
-- 要約生成とページオーバービュー統合
-- 引用付き回答生成
-- 多回合計レポート生成
-
-## 環境変数
-
-ローダーは `AppSettings.runtime_env` に完全なプロセス環境を保持し、コンポーネント設定モデルが必要時にそこから値を取得します。
-
-一般的な例：
-
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `GEMINI_API_KEY`
-- `GEMINI_BASE_URL`
-- `DASHSCOPE_API_KEY`
-- `DASHSCOPE_BASE_URL`
-- プロバイダー固有のオーバーライド（`GITHUB_TOKEN`、`SEARXNG_BASE_URL` 等）
-
-## トラッキングとメータリング
-
-トラッキングとメータリングはリクエストパイプラインから独立して設定されます。
-
-デフォルトアーティファクト名はパッケージ名に従います：
-
-- トラッキング JSONL：`.raysearch_tracking.jsonl`
-- メータリング JSONL：`.raysearch_metering.jsonl`
-- メータリング SQLite：`.raysearch_metering.sqlite3`
-- キャッシュ SQLite：`.raysearch_cache.sqlite3`
-
-## 開発
-
-リポジトリには実行可能なデモが含まれます：
-
-- `demo/search.py`
-- `demo/fetch.py`
-- `demo/answer.py`
-- `demo/research.py`
-
-サンプル設定：
-
-- `demo/search_config_example.yaml`
-
-## 注意事項
-
-- `search.mode` は `fast`、`auto`、`deep` をサポート
-- RaySearch は非同期専用
-- コンポーネント探索は `raysearch.components` から読み込み
-- JS集中型クローリングには Playwright とインストール済みブラウザが必要
+`api.bearer_token` または `RAYSEARCH_API_KEY` から単一の共有静的ベアラトークンを使用。このサービスは単一ユーザーまたはプライベート信頼環境向けです。

@@ -20,29 +20,22 @@ class FetchAbstractRankStep(StepBase[FetchStepContext]):
     ranker: RankerBase = Depends()
 
     @override
-    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless failed or no abstracts/overview requested."""
         if ctx.error.failed:
-            return ctx
+            return False
         abstracts_req = ctx.analysis.abstracts.request
         overview_req = ctx.analysis.overview.request
         if abstracts_req is None and overview_req is None:
-            return ctx
+            return False
+        return bool(ctx.analysis.abstracts.prepared)
+
+    @override
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+        # Pre-condition: should_run() verified prepared abstracts exist
+        abstracts_req = ctx.analysis.abstracts.request
+        overview_req = ctx.analysis.overview.request
         candidates = list(ctx.analysis.abstracts.prepared or [])
-        if not candidates:
-            await self.tracker.error(
-                name="fetch.rank.failed",
-                request_id=ctx.request_id,
-                step="fetch.rank",
-                error_code="fetch_abstract_rank_failed",
-                error_message="no prepared abstracts",
-                data={
-                    "url": ctx.url,
-                    "url_index": int(ctx.url_index),
-                    "crawl_mode": str(ctx.page.crawl_mode),
-                    "fatal": False,
-                },
-            )
-            return ctx
         abstracts_query = ""
         raw_scored = []
         fetch_cfg = self.settings.fetch

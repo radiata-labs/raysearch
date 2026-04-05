@@ -202,23 +202,30 @@ def _build_tree_text(repo_root: Path) -> str:
     lines: list[str] = ["."]
 
     def _is_shallow_dir(path: Path) -> bool:
+        """build and dist only show their name, no recursion."""
         rel_parts = path.relative_to(repo_root).parts
         return len(rel_parts) == 1 and rel_parts[0] in DIRS_SHOW_ONLY_NAME
 
-    def _is_in_src_subtree(path: Path) -> bool:
+    def _is_in_codex_subtree(path: Path) -> bool:
+        """Check if path is under .codex directory."""
         rel_parts = path.relative_to(repo_root).parts
-        return len(rel_parts) > 0 and rel_parts[0] == "src"
+        return len(rel_parts) > 0 and rel_parts[0] == ".codex"
+
+    def _show_files_in_dir(path: Path) -> bool:
+        """Only show files in root directory and .codex subtree."""
+        if path == repo_root:
+            return True
+        return _is_in_codex_subtree(path)
 
     def walk(current: Path, prefix: str) -> None:
         children = _sorted_tree_children(current, repo_root)
         dirs = [child for child in children if child.is_dir()]
-        if _is_shallow_dir(current) or _is_in_src_subtree(current):
-            visible_files: list[Path] = []
+        if _show_files_in_dir(current):
+            visible_files: list[Path] = [child for child in children if child.is_file()]
         else:
-            visible_files = [child for child in children if child.is_file()]
+            visible_files = []
         for child in dirs:
             lines.append(f"{prefix}|- {child.name}/")
-            # Only recurse if child is not a shallow directory
             if not _is_shallow_dir(child):
                 walk(child, prefix + "|  ")
         lines.extend(f"{prefix}|- {child.name}" for child in visible_files)

@@ -27,6 +27,12 @@ class ResearchPrepareStep(StepBase[ResearchStepContext]):
     }
 
     @override
+    async def should_run(self, ctx: ResearchStepContext) -> bool:
+        """Prepare always runs (first step, initializes context)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: ResearchStepContext) -> ResearchStepContext:
         mode = self._normalize_search_mode(ctx.request.search_mode)
         themes = ctx.request.themes.strip()

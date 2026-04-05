@@ -31,16 +31,23 @@ class ResearchPlanStep(StepBase[RoundStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
+    async def should_run(self, ctx: RoundStepContext) -> bool:
+        """Execute unless stopped or waiting for budget resume."""
+        if ctx.run.stop:
+            return False
+        return not (
+            ctx.run.current is not None
+            and (
+                ctx.run.current.pending_search_jobs
+                or ctx.run.current.search_fetched_candidates
+                or ctx.run.current.waiting_for_budget
+            )
+        )
+
+    @override
     async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
         now_utc = datetime.fromtimestamp(self.clock.now_ms() / 1000, tz=UTC)
-        if ctx.run.stop:
-            return ctx
-        if ctx.run.current is not None and (
-            ctx.run.current.pending_search_jobs
-            or ctx.run.current.search_fetched_candidates
-            or ctx.run.current.waiting_for_budget
-        ):
-            return ctx
+        # Pre-condition: should_run() already verified no pending I/O or budget wait
         budget = ctx.run.limits
         if ctx.run.round_index >= budget.max_rounds:
             ctx.run.stop = True

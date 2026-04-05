@@ -1,0 +1,89 @@
+# Python
+__pycache__
+*.py[c,o]
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv
+venv
+ENV
+env
+.env
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker (avoid recursive builds)
+docker/
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+docs/
+README.md
+README*.md
+LICENSE
+CLAUDE.md
+AGENTS.md
+.codex/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+raysearch.egg-info/
+
+# Test artifacts
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+
+# Cache and data
+.cache
+*.cache
+data/
+
+# Logs
+*.log
+logs/
+
+# Demo scripts
+demo/
+
+# Scripts (not needed in container)
+scripts/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Type stubs
+typeshed-fallback/
+pyrightconfig.json

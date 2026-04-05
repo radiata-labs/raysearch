@@ -20,6 +20,19 @@ else:
 
 
 class StepBase(WorkUnit, ABC, Generic[TContext]):
+    @abstractmethod
+    async def should_run(self, ctx: TContext) -> bool:
+        """Return True if this step should execute for the given context.
+
+        Override this method to implement conditional execution.
+        Every subclass MUST explicitly declare its execution conditions.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def run_inner(self, ctx: TContext) -> TContext:
+        raise NotImplementedError
+
     async def run(self, ctx: TContext) -> TContext:
         request_id = str(getattr(ctx, "request_id", "") or "anonymous")
         step_name = type(self).__name__
@@ -50,10 +63,6 @@ class StepBase(WorkUnit, ABC, Generic[TContext]):
                 error_message=str(exc),
             )
             raise
-
-    @abstractmethod
-    async def run_inner(self, ctx: TContext) -> TContext:
-        raise NotImplementedError
 
 
 RunnerKind = Literal["search", "fetch", "child_fetch"]
@@ -319,7 +328,8 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                     try:
                         out = task.ctx
                         for step in self._steps:
-                            out = await step.run(out)
+                            if await step.should_run(out):
+                                out = await step.run(out)
                         result: TContext | Exception = out
                     except Exception as exc:  # noqa: BLE001
                         result = (

@@ -20,16 +20,20 @@ class FetchSubpageStep(StepBase[FetchStepContext]):
     ranker: RankerBase = Depends()
 
     @override
-    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless failed, subpages disabled, or no candidates."""
         if ctx.error.failed:
-            return ctx
+            return False
         if not ctx.related.enabled:
-            return ctx
+            return False
         if not ctx.related.subpages.enabled or ctx.related.subpages.limit <= 0:
-            return ctx
+            return False
+        return bool(ctx.related.subpages.candidates)
+
+    @override
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+        # Pre-condition: should_run() verified subpages enabled with candidates
         candidates = list(ctx.related.subpages.candidates or [])
-        if not candidates:
-            return ctx
         keywords = list(ctx.related.subpages.keywords or [])
         max_subpages = max(1, int(ctx.related.subpages.limit))
 

@@ -16,9 +16,13 @@ class FetchParallelEnrichStep(StepBase[FetchStepContext]):
     subpages_step: FetchSubpageStep = Depends()
 
     @override
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless failed (runs overview and subpages in parallel)."""
+        return not ctx.error.failed
+
+    @override
     async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
-        if ctx.error.failed:
-            return ctx
+        # Pre-condition: should_run() verified no prior error
 
         async def _run_overview() -> None:
             await self.overview_step.run(ctx)

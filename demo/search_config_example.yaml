@@ -336,3 +336,9 @@ runner:
   fetch_limit: 48
   child_fetch_limit: 48
   queue_size: 256
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  bearer_token: ""
+  enable_docs: false

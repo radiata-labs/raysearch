@@ -30,6 +30,12 @@ class SearchQueryPlanStep(StepBase[SearchStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
+    async def should_run(self, ctx: SearchStepContext) -> bool:
+        """Query planning always runs (first step in search pipeline)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         ctx.plan.aborted = False
         ctx.plan.abort_reason = ""

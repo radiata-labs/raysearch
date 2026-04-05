@@ -35,18 +35,20 @@ class AnswerSearchStep(StepBase[AnswerStepContext]):
     search_runner: RunnerBase[SearchStepContext] = Depends(SEARCH_RUNNER)
 
     @override
+    async def should_run(self, ctx: AnswerStepContext) -> bool:
+        """Execute when sub-questions exist."""
+        sub_questions = self._resolve_sub_questions(ctx)
+        return bool(sub_questions)
+
+    @override
     async def run_inner(self, ctx: AnswerStepContext) -> AnswerStepContext:
         sub_questions = self._resolve_sub_questions(ctx)
         requests = [
             self._build_search_request(ctx=ctx, query=item.search_query)
             for item in sub_questions
         ]
-        if not requests:
-            ctx.search.request = None
-            ctx.search.search_mode = _FIXED_SEARCH_MODE
-            ctx.search.sub_searches = []
-            ctx.search.results = []
-            return ctx
+        # Pre-condition: should_run() verified sub_questions exist
+        assert requests
         ctx.search.request = requests[0].model_copy(deep=True)
         ctx.search.search_mode = _FIXED_SEARCH_MODE
         search_contexts = [

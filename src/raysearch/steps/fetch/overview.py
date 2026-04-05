@@ -19,12 +19,18 @@ class FetchOverviewStep(StepBase[FetchStepContext]):
     cache: CacheBase = Depends()
 
     @override
-    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+    async def should_run(self, ctx: FetchStepContext) -> bool:
+        """Execute unless failed or overview not requested."""
         if ctx.error.failed:
-            return ctx
+            return False
         enabled, req = self._resolve_overview_request(ctx)
-        if not enabled or req is None:
-            return ctx
+        return enabled and req is not None
+
+    @override
+    async def run_inner(self, ctx: FetchStepContext) -> FetchStepContext:
+        # Pre-condition: should_run() verified overview is enabled and requested
+        _, req = self._resolve_overview_request(ctx)
+        assert req is not None
         source_items = self._build_source_items(ctx)
         if not source_items:
             await self.tracker.error(

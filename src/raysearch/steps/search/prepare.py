@@ -20,6 +20,12 @@ from raysearch.utils import clean_whitespace
 
 class SearchPrepareStep(StepBase[SearchStepContext]):
     @override
+    async def should_run(self, ctx: SearchStepContext) -> bool:
+        """Prepare always runs (initializes search context)."""
+        _ = ctx
+        return True
+
+    @override
     async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         query = clean_whitespace(ctx.request.query or "")
         mode = self._normalize_mode(ctx.request.mode)

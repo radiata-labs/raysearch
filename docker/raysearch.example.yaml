@@ -1,0 +1,148 @@
+components:
+  http:
+    default: httpx
+    httpx:
+      enabled: true
+      trust_env: true
+
+  provider:
+    default: blend
+    blend:
+      enabled: true
+      default_sources: ["google", "duckduckgo"]
+      include_sources: ["arxiv", "duckduckgo", "github", "google", "google_news", "openalex", "reddit", "reuters", "semantic_scholar", "wikipedia"]
+    google:
+      enabled: true
+      cookies:
+        CONSENT: "YES+"
+    google_news:
+      enabled: true
+    duckduckgo:
+      enabled: true
+    github:
+      enabled: true
+    reddit:
+      enabled: true
+    reuters:
+      enabled: true
+    openalex:
+      enabled: true
+      mailto: ""
+    semantic_scholar:
+      enabled: true
+    wikipedia:
+      enabled: true
+      default_language: en
+    arxiv:
+      enabled: true
+
+  crawl:
+    default: auto
+    auto:
+      enabled: true
+      timeout_s: 10.0
+      inflight_enabled: true
+      inflight_timeout_s: 60.0
+    curl_cffi:
+      enabled: true
+    playwright:
+      enabled: true
+    reddit:
+      enabled: true
+    doi:
+      enabled: true
+
+  extract:
+    default: auto
+    auto:
+      enabled: true
+    html:
+      enabled: true
+    pdf:
+      enabled: true
+    paper:
+      enabled: true
+    github:
+      enabled: true
+    reddit:
+      enabled: true
+    doi:
+      enabled: true
+
+  rank:
+    default: blend
+    blend:
+      enabled: true
+      providers:
+        bm25: 0.5
+        tfidf: 0.5
+    tfidf:
+      enabled: true
+    bm25:
+      enabled: true
+
+  cache:
+    default: memory
+    memory:
+      enabled: true
+
+  llm:
+    default: router
+    router:
+      enabled: true
+    openai:
+      enabled: true
+      models:
+        - name: gpt-4.1-mini
+          model: gpt-4.1-mini
+
+  tracking:
+    default: log
+    log:
+      enabled: true
+    jsonl:
+      enabled: true
+      jsonl_path: ./.cache/.raysearch_tracking.jsonl
+
+  metering:
+    default: jsonl
+    jsonl:
+      enabled: true
+      jsonl_path: ./.cache/.raysearch_metering.jsonl
+
+  rate_limit:
+    default: basic
+    basic:
+      enabled: true
+
+search:
+  select_engines: true
+  expansion:
+    llm_model: gpt-4.1-mini
+
+fetch:
+  overview:
+    use_model: gpt-4.1-mini
+
+answer:
+  select_engines: true
+  plan:
+    use_model: gpt-4.1-mini
+  generate:
+    use_model: gpt-4.1-mini
+
+research:
+  select_engines: true
+  models:
+    plan: gpt-4.1-mini
+    link_select: gpt-4.1-mini
+    abstract_analyze: gpt-4.1-mini
+    content_analyze: gpt-4.1-mini
+    synthesize: gpt-4.1-mini
+    markdown: gpt-4.1-mini
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  bearer_token: ""
+  enable_docs: false

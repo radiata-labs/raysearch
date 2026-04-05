@@ -32,19 +32,17 @@ class SearchStep(StepBase[SearchStepContext]):
     provider: SearchProviderBase = Depends()
 
     @override
-    async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
+    async def should_run(self, ctx: SearchStepContext) -> bool:
+        """Execute unless aborted or no query jobs."""
         if bool(ctx.plan.aborted):
-            ctx.retrieval.urls = []
-            ctx.retrieval.published_dates = {}
-            ctx.retrieval.snippet_context = {}
-            ctx.retrieval.query_hit_stats = {}
-            ctx.retrieval.pre_fetched_items = {}
-            ctx.fetch.candidates = []
-            ctx.output.results = []
-            return ctx
+            return False
+        query_jobs = list(ctx.plan.query_jobs or [])
+        return bool(query_jobs)
+
+    @override
+    async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
+        # Pre-condition: should_run() verified query jobs exist and not aborted
         query_jobs: list[SearchQueryJob] = list(ctx.plan.query_jobs or [])
-        if not query_jobs:
-            return ctx
         provider_responses: list[list[SearchProviderResult] | None] = [
             None for _ in query_jobs
         ]

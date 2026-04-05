@@ -25,14 +25,14 @@ class SearchRerankStep(StepBase[SearchStepContext]):
     ranker: RankerBase = Depends()
 
     @override
-    async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
+    async def should_run(self, ctx: SearchStepContext) -> bool:
+        """Execute unless aborted or no candidates to rank."""
         if bool(ctx.plan.aborted):
-            ctx.rank = SearchRankState()
-            ctx.output.results = []
-            return ctx
-        if not ctx.output.results and not ctx.fetch.candidates:
-            ctx.rank = SearchRankState()
-            return ctx
+            return False
+        return bool(ctx.output.results or ctx.fetch.candidates)
+
+    @override
+    async def run_inner(self, ctx: SearchStepContext) -> SearchStepContext:
         options = self._build_rank_options(ctx)
         candidates = self._resolve_candidates(ctx)
         ranked, stats, context_scores = await self._rank_candidates(
