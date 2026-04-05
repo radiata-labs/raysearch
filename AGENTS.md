@@ -61,6 +61,7 @@ Root directory and `.codex` show files; all other directories show only folder s
 |  |  |  |  |- files/
 |  |- raysearch.egg-info/
 |- AGENTS.md
+|- API.md
 |- CLAUDE.md
 |- LICENSE
 |- pyproject.toml

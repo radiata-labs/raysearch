@@ -1,6 +1,13 @@
 ![cover-v5-optimized](./images/GitHub_README.png)
 
 <p align="center">
+  <a href="./API.md">API Documentation</a> ·
+  <a href="./docs/zh-TW/API.md">API 文檔</a> ·
+  <a href="./docs/zh-CH/API.md">API 文档</a> ·
+  <a href="./docs/ja-JP/API.md">API ドキュメント</a> ·
+</p>
+
+<p align="center">
   <a href="./README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
   <a href="./docs/zh-TW/README.md"><img alt="Traditional Chinese README" src="https://img.shields.io/badge/Traditional_Chinese-d9d9d9"></a>
   <a href="./docs/zh-CN/README.md"><img alt="Simplified Chinese README" src="https://img.shields.io/badge/Simplified_Chinese-d9d9d9"></a>
@@ -25,8 +32,8 @@ RaySearch is an async-first search orchestration engine for AI-overview style wo
 ## Start With Docker Compose
 
 ```bash
-git clone <repo-url>
-cd google-ai-overview-api/docker
+git clone https://github.com/radiata-labs/raysearch.git
+cd raysearch/docker
 cp .env.example .env
 ```
 

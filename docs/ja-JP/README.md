@@ -1,5 +1,12 @@
 ![cover-v5-optimized](../../images/GitHub_README.png)
 
+<div align="center">
+  <a href="../../API.md">API Documentation</a> ·
+  <a href="../zh-TW/API.md">API 文檔</a> ·
+  <a href="../zh-CH/API.md">API 文档</a> ·
+  <a href="../ja-JP/API.md">API ドキュメント</a> ·
+</div>
+
 <p align="center">
   <a href="../../README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
   <a href="../zh-TW/README.md"><img alt="繁體中文文件" src="https://img.shields.io/badge/繁體中文-d9d9d9"></a>
@@ -25,8 +32,8 @@ RaySearch は AI オーバービュー形式のワークフロー向けの非同
 ## Docker Compose で始める
 
 ```bash
-git clone <repo-url>
-cd google-ai-overview-api/docker
+git clone https://github.com/radiata-labs/raysearch.git
+cd raysearch/docker
 cp .env.example .env
 ```
 
