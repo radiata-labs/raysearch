@@ -3,8 +3,8 @@
 <div align="center">
   <a href="../../API.md">API Documentation</a> ·
   <a href="../zh-TW/API.md">API 文檔</a> ·
-  <a href="../zh-CH/API.md">API 文档</a> ·
-  <a href="../ja-JP/API.md">API ドキュメント</a> ·
+  <a href="../zh-CN/API.md">API 文档</a> ·
+  <a href="../ja-JP/API.md">API ドキュメント</a>
 </div>
 
 <p align="center">
