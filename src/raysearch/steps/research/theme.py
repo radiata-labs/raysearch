@@ -167,9 +167,7 @@ class ResearchThemeStep(StepBase[ResearchStepContext]):
                 question=item.question,
                 priority=item.priority,
                 # QuerySourceSpec fields are primitives or list[str]; shallow copy suffices.
-                seed_queries=[
-                    query.model_copy() for query in list(item.seed_queries)
-                ],
+                seed_queries=[query.model_copy() for query in list(item.seed_queries)],
                 evidence_focus=list(item.evidence_focus),
                 expected_gain=item.expected_gain,
             )

@@ -441,15 +441,9 @@ class ResearchFetchStep(StepBase[RoundStepContext]):
         candidate: SearchFetchedCandidate,
     ) -> list[ExtractRef]:
         # ExtractRef has only primitive fields (text, url); shallow copy suffices.
-        out = [
-            item.model_copy()
-            for item in list(candidate.links or [])
-            if item.url
-        ]
+        out = [item.model_copy() for item in list(candidate.links or []) if item.url]
         for links in list(candidate.subpage_links or []):
-            out.extend(
-                item.model_copy() for item in list(links or []) if item.url
-            )
+            out.extend(item.model_copy() for item in list(links or []) if item.url)
         return out
 
     def _build_explore_fetch_contexts(

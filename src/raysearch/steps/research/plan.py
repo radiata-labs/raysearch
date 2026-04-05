@@ -35,7 +35,14 @@ class ResearchPlanStep(StepBase[RoundStepContext]):
         """Execute unless stopped or waiting for budget resume."""
         if ctx.run.stop:
             return False
-        return not (ctx.run.current is not None and (ctx.run.current.pending_search_jobs or ctx.run.current.search_fetched_candidates or ctx.run.current.waiting_for_budget))
+        return not (
+            ctx.run.current is not None
+            and (
+                ctx.run.current.pending_search_jobs
+                or ctx.run.current.search_fetched_candidates
+                or ctx.run.current.waiting_for_budget
+            )
+        )
 
     @override
     async def run_inner(self, ctx: RoundStepContext) -> RoundStepContext:
