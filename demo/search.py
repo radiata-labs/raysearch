@@ -60,7 +60,7 @@ async def main(
             crawl_mode="fallback",  # Options: never, fallback, preferred, always
             crawl_timeout=30.0,  # Timeout in seconds for crawling
             content=FetchContentRequest(
-                detail="concise",  # Options: concise, standard, full
+                detail="standard",  # Options: concise, standard, full
                 max_chars=3000,  # Maximum characters for content extraction
             ),
             abstracts=FetchAbstractsRequest(
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     # Classic search query: Latest developments in quantum computing
     out = anyio.run(
         main,
-        "Latest developments in quantum computing 2024",
+        "张雪峰",
         "US",
         "fast",
         5,

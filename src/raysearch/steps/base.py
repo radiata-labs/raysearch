@@ -34,6 +34,8 @@ class StepBase(WorkUnit, ABC, Generic[TContext]):
         raise NotImplementedError
 
     async def run(self, ctx: TContext) -> TContext:
+        if not await self.should_run(ctx):
+            return ctx
         request_id = str(getattr(ctx, "request_id", "") or "anonymous")
         step_name = type(self).__name__
         started_ms = int(self.clock.now_ms())
@@ -328,8 +330,7 @@ class RunnerBase(WorkUnit, Generic[TContext]):
                     try:
                         out = task.ctx
                         for step in self._steps:
-                            if await step.should_run(out):
-                                out = await step.run(out)
+                            out = await step.run(out)
                         result: TContext | Exception = out
                     except Exception as exc:  # noqa: BLE001
                         result = (
